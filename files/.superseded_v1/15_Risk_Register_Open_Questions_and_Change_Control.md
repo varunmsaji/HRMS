@@ -1,0 +1,552 @@
+# Document 15 — Risk Register, Open Questions & Change Control
+
+**Version:** 1.0
+**Audience:** Project Manager, Client Sponsor, Tech Lead
+**Sign-off required from:** Client
+
+---
+
+## 0. How to Use This Document
+
+This is the only document in the set that is expected to change every week. It holds the three
+things that determine whether the project lands on time:
+
+1. **§1–§2 Risk register** — what could go wrong, who owns it, what we do about it.
+2. **§3 Open questions Q1–Q10** — decisions only the client can make, with the date each is needed.
+3. **§4 Assumption log A1–A13** — what we have assumed in the absence of those decisions, for
+   explicit client acceptance or rejection.
+4. **§5–§7 Change control** — how scope changes are requested, priced and approved after sign-off.
+
+**Standing rule:** an unanswered question does not stop the project — it converts into an
+assumption, and the assumption is built. Reversing a built assumption later is a change request
+with cost. §3 gives the "required by" date for each question precisely so that this trade is
+visible in advance rather than argued about afterwards.
+
+Review cadence: risk register reviewed in every sprint review; open questions reviewed in every
+weekly client call until closed.
+
+---
+
+## 1. Risk Scoring Method
+
+| Likelihood | Meaning |
+|---|---|
+| L1 Rare | < 10% chance over the project |
+| L2 Possible | 10–35% |
+| L3 Likely | 35–70% |
+| L4 Near-certain | > 70% |
+
+| Impact | Meaning |
+|---|---|
+| I1 Minor | < 1 week slip or < 2% cost; no customer impact |
+| I2 Moderate | 1–3 week slip, or a workaround degrades a feature |
+| I3 Major | 3–8 week slip, or a Phase 1 module is materially reduced |
+| I4 Severe | Launch cannot proceed; legal, financial or reputational exposure |
+
+**Severity = Likelihood × Impact.** Anything scoring L3×I3 or above requires a named mitigation
+owner and a written contingency, not just an intention.
+
+| | I1 | I2 | I3 | I4 |
+|---|---|---|---|---|
+| **L4** | Medium | High | **Critical** | **Critical** |
+| **L3** | Low | Medium | **High** | **Critical** |
+| **L2** | Low | Low | Medium | **High** |
+| **L1** | Low | Low | Low | Medium |
+
+---
+
+## 2. Risk Register
+
+### 2.1 Critical & High Risks
+
+---
+
+**R-01 — Payroll statutory calculations are wrong in production**
+*Category:* Product correctness · *Likelihood:* L3 · *Impact:* I4 · **Severity: Critical**
+*Owner:* Payroll/Compliance Consultant (accountable) + Tech Lead (delivery)
+
+Indian payroll has more edge cases than any other part of this system: PF wage ceiling and the
+₹15,000 threshold with voluntary contribution, ESI eligibility crossing mid-cycle and the
+continuation-until-contribution-period-end rule, state-wise PT slabs, both income-tax regimes with
+declaration and proof windows, LWF frequency by state, gratuity's 4-years-240-days rule, bonus
+eligibility limits. A single wrong figure is a legal exposure for the customer and an existential
+credibility problem for the product.
+
+*Triggers to watch:* golden dataset failures clustering in one statutory area; the compliance
+consultant not yet engaged by Sprint 2; parallel run mismatches above 0%.
+
+*Mitigation:*
+- Compliance consultant engaged from **Sprint 1**, not at UAT (Doc 12 §6)
+- Golden dataset of ≥200 employee-months, expected values signed by the client's payroll team, not
+  by engineering (Doc 13 §3)
+- Statutory rates stored as effective-dated data, never hard-coded (Doc 04 §7.3)
+- Two clean parallel payroll cycles required before go-live — non-negotiable (Doc 13 §10)
+- Calculation trace on every payslip line so any figure can be defended to an auditor
+
+*Contingency:* if the parallel run does not clear, go live with attendance/leave/ESS and run
+payroll in parallel for a third cycle. Never launch payroll on a partial match.
+
+---
+
+**R-02 — Biometric device integration takes far longer than estimated**
+*Category:* Integration · *Likelihood:* L4 · *Impact:* I3 · **Severity: Critical**
+*Owner:* Integration Lead
+
+Device SDKs are poorly documented, vendor firmware varies within the same model line, and the
+on-prem agent must survive customer networks we do not control. Doc 09 §2 flags this as the
+highest-risk integration in the project; the ~110 dev-day Phase 1 integration estimate is most
+likely to be wrong here.
+
+*Triggers:* no physical devices in hand by Sprint 3; a device brand appearing in a sales
+conversation that is not on the Day-1 list; agent installation requiring customer IT escalation in
+pilot.
+
+*Mitigation:*
+- **Buy physical devices of the target brands in Sprint 0** — no integration work against
+  documentation alone
+- Ship the file-import fallback (CSV/Excel punch upload) in the same sprint as the first device
+  adapter, so attendance is never blocked on hardware
+- Limit Day-1 support to the brands named in Q5; everything else is a paid adapter
+- The on-prem agent is a single binary with a local buffer, auto-update and a health beacon
+  (Doc 09 §2.4)
+
+*Contingency:* mobile GPS punch + web punch + CSV import cover every attendance use case without a
+device. A tenant can go live on Day 1 without biometric and add it later.
+
+---
+
+**R-03 — Scope expands because "22 modules" was read as a Phase 1 commitment**
+*Category:* Scope · *Likelihood:* L4 · *Impact:* I3 · **Severity: Critical**
+*Owner:* Project Manager + Client Sponsor
+
+The blueprint lists 22 modules and 10 AI features on one page. The reading effort is identical for
+all of them; the build effort is not. Phase 1 is 14 items (A11). Every module added to Phase 1
+without removing another moves the date.
+
+*Triggers:* feature requests arriving through demo feedback rather than the change process; the
+phrase "just a small addition"; sprint scope growing mid-sprint.
+
+*Mitigation:*
+- Signed SRS as the fixed-price baseline (Doc 12 §2)
+- OOTB / Configurable / Custom classification table in BRD §10 — the answer to most requests is
+  "that is configuration, here is how"
+- Change control process in §5 below applied without exception, including for small items
+- Demo every sprint so the client sees progress and does not compensate for uncertainty by
+  requesting more
+
+*Contingency:* the scope reduction menu in Doc 12 §8, ordered least-to-most damaging, with an
+explicit never-cut list.
+
+---
+
+**R-04 — Cross-tenant data leakage**
+*Category:* Security · *Likelihood:* L2 · *Impact:* I4 · **Severity: High**
+*Owner:* Tech Lead
+
+One tenant seeing another's employee or salary data ends the product commercially. Multi-tenancy is
+enforced at four layers (RLS, repository predicate, CI lint, automated tests) precisely because any
+single layer will eventually be bypassed by a developer in a hurry.
+
+*Triggers:* any raw SQL bypassing the repository layer; a new endpoint added without the isolation
+test auto-generating; RLS disabled in any environment for debugging.
+
+*Mitigation:*
+- PostgreSQL RLS as the last line of defence — it holds even when application code is wrong
+- Cross-tenant isolation suite auto-generated from the OpenAPI spec, so new endpoints are covered
+  by default (Doc 13 §6)
+- 404 rather than 403 on cross-tenant access, so existence is not disclosed
+- Penetration test with remediation before go-live — a hard gate (Doc 10 §9)
+
+*Contingency:* incident runbook 4 (Doc 14 §9), DPDP breach notification readiness, customer
+communication template pre-drafted.
+
+---
+
+**R-05 — Key statutory or messaging lead times block launch**
+*Category:* External dependency · *Likelihood:* L3 · *Impact:* I3 · **Severity: High**
+*Owner:* Project Manager
+
+DLT registration for SMS and Meta template approval for WhatsApp each take 1–3 weeks and depend on
+client entity documents we do not hold. Both are outside engineering's control and both are on the
+critical path for notifications (Doc 09 §4).
+
+*Triggers:* client dependency D-list items still open at Sprint 4.
+
+*Mitigation:* start registrations in **Sprint 1**; track as client dependencies D1–D7 in BRD §12
+with named client owners and dates; email is the always-available fallback channel so no HR
+operation depends on SMS or WhatsApp.
+
+---
+
+**R-06 — Attendance rules per industry are more varied than modelled**
+*Category:* Product · *Likelihood:* L3 · *Impact:* I3 · **Severity: High**
+*Owner:* Business Analyst + Tech Lead
+
+Manufacturing OT slabs, hotel split shifts, healthcare rotating rosters with credential rules,
+retail weekly-off rotation, construction offline sites — the attendance engine must express all of
+these as configuration (A5). If any industry needs code, the configuration model is wrong and the
+cost multiplies across eight sectors.
+
+*Mitigation:* validate the shift/roster configuration model against **real rosters from at least
+three industries in Sprint 0**, before the engine is built. Pilot customers deliberately chosen
+from two different industries (Doc 13 §10).
+
+*Contingency:* narrow Phase 1 to the two pilot industries and treat the remaining six as
+post-launch template work.
+
+---
+
+**R-07 — Team ramp-up is slower than the plan assumes**
+*Category:* Resourcing · *Likelihood:* L3 · *Impact:* I3 · **Severity: High**
+*Owner:* Engineering Manager
+
+The plan needs ~11.5 FTE average across 12 roles, including a payroll-literate BA and a mobile
+developer in the chosen framework (Q9). HRMS domain knowledge is scarce and onboarding a developer
+into effective-dated payroll logic is not a one-week exercise.
+
+*Mitigation:* hire the payroll BA and the payroll backend engineer first; staged ramp per Doc 12
+§6; the 5-day new-engineer productivity target with documentation (Doc 14 §11); no single-person
+knowledge areas — payroll and RBAC each have two engineers who can work in them.
+
+---
+
+**R-08 — Client-side decision latency**
+*Category:* Governance · *Likelihood:* L4 · *Impact:* I2 · **Severity: High**
+*Owner:* Client Sponsor
+
+Ten blocking questions (§3) plus per-sprint approvals. If decisions take two weeks each, the
+schedule absorbs it silently until it doesn't.
+
+*Mitigation:* named client decision-maker with authority; weekly call with the open-question list
+as a standing agenda item; the assumption-conversion rule at the top of this document so that
+silence has a defined, agreed consequence rather than becoming a dispute.
+
+---
+
+### 2.2 Medium Risks
+
+| ID | Risk | L | I | Owner | Mitigation summary |
+|---|---|---|---|---|---|
+| R-09 | AI features fail their evaluation gates and cannot ship | L3 | I2 | AI Lead | Every AI feature has a manual fallback (P2, Doc 08); AI is additive, so a failed gate delays a feature, not the release |
+| R-10 | LLM API cost exceeds the ≤8% of PEPM revenue target | L2 | I2 | AI Lead | Per-tenant quotas, caching, small models for classification, cost dashboard with anomaly alerting (Doc 14 §6.1) |
+| R-11 | Performance degrades at scale on attendance and payroll | L2 | I3 | Tech Lead | Partitioned punch table, separate ingestion path, load tests at 3× target from Sprint 8, performance budgets in CI |
+| R-12 | Mobile offline sync produces duplicate or lost punches | L3 | I2 | Mobile Lead | Client-generated idempotency keys, server-side dedupe window, explicit offline UI state (Doc 11 §7), clock-skew test matrix |
+| R-13 | Data import from customer spreadsheets is messier than the importer handles | L4 | I2 | BA | Dry-run with a validation report before commit (BR-15); assisted onboarding offered for mid-market; migration explicitly out of scope (A13) |
+| R-14 | UAT reveals HR workflow mismatches late | L3 | I2 | Product | Usability-test the 6 core flows with real HR practitioners during design, not at UAT (Doc 11 §10) |
+| R-15 | Third-party provider outage during payroll week | L2 | I2 | DevOps | Multi-provider email, circuit breakers, degradable integrations (Doc 09 §1), payroll never depends on an external call |
+| R-16 | Statutory rate change lands mid-project | L3 | I2 | Compliance | Rates are effective-dated data; a change is a data update plus a regression run, not a code change |
+| R-17 | Design system work becomes a bottleneck for frontend | L2 | I2 | Design Lead | Component library delivered in Sprint 0–2 ahead of feature screens; screens specified before they are built (Doc 11 §6) |
+| R-18 | Key-person dependency on the payroll engineer | L3 | I3 | Eng Manager | Pair on payroll from the start; ADRs and calculation trace make the logic inspectable; golden dataset documents intent independently of the author |
+| R-19 | Pilot customers disengage during UAT | L2 | I3 | PM | Two pilots, not one; commercial incentive agreed up front; UAT scenarios written in business language with a fixed time commitment (Doc 13 §10) |
+| R-20 | Fixed-price contract signed against an unsigned SRS | L2 | I4 | PM | Do not sign a fixed price without a signed SRS. This is a commercial control, not a technical one (Doc 12 §2) |
+
+### 2.3 Accepted Risks (no mitigation planned)
+
+| ID | Risk | Why accepted |
+|---|---|---|
+| R-21 | Multi-country payroll demand emerges in year 1 | Architecture allows it (A1); the cost is 6–10 dev-weeks per country and will be a funded change request, not absorbed |
+| R-22 | An enterprise prospect demands on-premise deployment | Offered from Phase 3 as a priced add-on (A2); the modular monolith makes it feasible |
+| R-23 | Competitor feature parity pressure | Product decision, not a delivery risk; handled through the roadmap |
+
+---
+
+## 3. Open Questions — Impact Analysis & Required-By Dates
+
+Dates are expressed relative to the sprint plan in Doc 12 §4. "Required by" is the date after which
+the assumption is treated as final and reversal becomes a change request.
+
+---
+
+**Q1 — Which countries must payroll support for statutory compliance?**
+*Blocks:* Payroll module design, statutory master data, compliance consultant scope
+*Assumed:* India only (A1)
+*Required by:* **End of Sprint 1**
+*If India only:* proceed as documented. *If multi-country:* the statutory engine needs a
+country-abstraction layer designed before the payroll data model is finalised — retrofitting it
+after Sprint 8 is a rewrite of the payroll core, not an extension.
+*Cost of late reversal:* 6–10 dev-weeks per country if designed in; 12–16 weeks if retrofitted.
+
+---
+
+**Q2 — Deployment model: pure multi-tenant SaaS, or on-premise per enterprise client?**
+*Blocks:* Architecture, DevOps, licensing, support model
+*Assumed:* Multi-tenant SaaS; on-premise as a Phase 3 enterprise add-on (A2)
+*Required by:* **End of Sprint 0**
+*If on-premise is required in Phase 1:* add installer packaging, offline licensing, customer-managed
+upgrade paths, per-customer support, and a very different release cadence. Roughly +8 weeks and a
+permanent increase in operating cost per customer.
+
+---
+
+**Q3 — Expected scale at 12 months (tenant companies and total employees)?**
+*Blocks:* Infrastructure sizing, cost model, partitioning strategy, pricing viability
+*Assumed:* ~500 tenants / ~150,000 employees (used in Doc 04 §11 volume estimates and Doc 14 §1.1
+sizing)
+*Required by:* **End of Sprint 2**
+*If materially larger:* partitioning strategy and read-replica topology change; if materially
+smaller, infrastructure cost can be cut roughly in half at launch. Either way the architecture
+holds — this is a sizing and cost question, not a design question.
+
+---
+
+**Q4 — Is white-labelling required (client logo, custom domain, custom email sender)?**
+*Blocks:* Multi-Company module, notification templates, DNS/certificate automation
+*Assumed:* Logo and colour theming yes; custom domain and custom email sender no
+*Required by:* **End of Sprint 3**
+*If full white-label:* add per-tenant domain provisioning, ACM certificate automation, per-tenant
+SES/DKIM sender verification, and tenant-branded mobile builds if requested. ≈3–4 dev-weeks for
+web; tenant-branded mobile apps are a much larger commitment and should be resisted in Phase 1.
+
+---
+
+**Q5 — Which biometric device brands must be supported on Day 1?**
+*Blocks:* Attendance integration, device procurement, on-prem agent scope (see R-02)
+*Assumed:* ZKTeco and eSSL via ADMS push, plus CSV import fallback (Doc 09 §2)
+*Required by:* **End of Sprint 1** — devices must be physically procured before the adapter work
+starts in Sprint 5.
+*Cost of each additional brand:* 5–15 dev-days depending on protocol quality. Cloud-API devices are
+cheaper; serial/SDK-only devices are the expensive ones.
+
+---
+
+**Q6 — Is there a hard data-residency requirement?**
+*Blocks:* Region selection, DR region, sub-processor list, DPA drafting
+*Assumed:* India-only residency; all data in ap-south-1 with DR in another Indian region (A6, Doc 10 §6)
+*Required by:* **End of Sprint 0**
+*Note:* this also constrains AI provider selection — if data may not leave India, the hosted-LLM
+assumption A8 is affected and Q10 must be answered consistently with it.
+
+---
+
+**Q7 — Which accounting/ERP system for the Phase 1 integration?**
+*Blocks:* Integration scope and sequencing
+*Assumed:* Generic CSV journal voucher plus bank payment files for five banks ship first; Tally XML
+via the on-prem agent as the first named integration (Doc 09 §7)
+*Required by:* **End of Sprint 4**
+*If SAP or Oracle:* file-based exchange only in Phase 1; direct API integration is a separate
+scoped item requiring customer-side ERP access that is rarely granted quickly.
+
+---
+
+**Q8 — Contract model: fixed-price scope-locked, or time & material?**
+*Blocks:* Change control strictness, estimation buffer, milestone payment structure
+*Assumed:* Fixed price for Phase 1 against a signed SRS; T&M for Phase 2 onward (Doc 12 §2)
+*Required by:* **Before contract signature**
+*Note:* this question determines how §5 operates. Under fixed price, every change is a priced CR.
+Under T&M, changes are backlog re-prioritisation and the process can be lighter. Mixing the two —
+fixed price with informal scope changes — is the single most common cause of project disputes and
+is explicitly not on offer.
+
+---
+
+**Q9 — Mobile framework: React Native, Flutter, or native?**
+*Blocks:* Mobile hiring, design tokens, offline architecture
+*Assumed:* React Native (A6) for code sharing with the web team and hiring availability
+*Required by:* **End of Sprint 2** — mobile work starts Sprint 6 and hiring lead time is 4–8 weeks.
+*If native:* two mobile developers instead of one, roughly +40% mobile effort, but better biometric
+and background-location behaviour. If the construction/logistics offline-first requirement proves
+demanding in Sprint 0 validation, revisit this.
+
+---
+
+**Q10 — Does "AI-powered" require in-house models, or is a third-party LLM API acceptable?**
+*Blocks:* AI architecture, cost model, privacy posture, data residency (interacts with Q6)
+*Assumed:* Hosted LLM API plus classical ML for scoring; no training from scratch in Phase 1 (A8)
+*Required by:* **End of Sprint 3**
+*If in-house models are mandated:* add ML engineering capacity, GPU infrastructure, a training data
+pipeline and a model governance process. Realistically +12–16 weeks and a materially different team.
+The honest recommendation is hosted APIs for Phase 1 with a documented exit path, because the AI
+features that matter here (parsing, matching, assistant) are not differentiated by owning the model.
+
+---
+
+## 4. Assumption Confirmation Log
+
+Client to mark each **Confirmed** or **Rejected**. A rejected assumption immediately becomes an open
+question with an impact analysis, and if it arrives after the corresponding Q-date, a change request.
+
+| ID | Assumption | Doc ref | Cost flag | Client decision | Date | Notes |
+|---|---|---|---|---|---|---|
+| A1 | India-only payroll statutory for Phase 1 | 00 §3.1 | **[COST]** | ☐ Confirm ☐ Reject | | |
+| A2 | Multi-tenant SaaS delivery; on-prem from Phase 3 | 00 §3.1 | | ☐ Confirm ☐ Reject | | |
+| A3 | PEPM pricing with plan-based feature entitlements enforced in-product | 00 §3.1 | | ☐ Confirm ☐ Reject | | |
+| A4 | "70–80% automation" = ≥75% of routine transactions with no HR data entry | 00 §3.1 | | ☐ Confirm ☐ Reject | | |
+| A5 | 8 industries served by configuration and templates, not code forks | 00 §3.1 | | ☐ Confirm ☐ Reject | | |
+| A6 | Stack: PostgreSQL / NestJS / Next.js / React Native / Redis / FastAPI on AWS ap-south-1 | 00 §3.2 | | ☐ Confirm ☐ Reject | | |
+| A7 | Shared DB + `company_id` + PostgreSQL RLS for tenant isolation | 00 §3.2 | | ☐ Confirm ☐ Reject | | |
+| A8 | Hosted LLM API + classical ML; no model training in Phase 1 | 00 §3.2 | **[COST]** | ☐ Confirm ☐ Reject | | |
+| A9 | UTC storage; company-timezone boundaries for payroll and attendance | 00 §3.2 | | ☐ Confirm ☐ Reject | | |
+| A10 | Money as integer minor units with explicit currency | 00 §3.2 | | ☐ Confirm ☐ Reject | | |
+| A11 | Phase 1 = the client's 14 listed items; other 8 modules are Phase 2/3 | 00 §3.3 | **[COST]** | ☐ Confirm ☐ Reject | | |
+| A12 | Mobile Phase 1 = employee + manager only; HR admin is web | 00 §3.3 | | ☐ Confirm ☐ Reject | | |
+| A13 | Data migration out of scope; generic validated Excel importer in scope | 00 §3.3 | **[COST]** | ☐ Confirm ☐ Reject | | |
+
+**Sign-off:**
+
+| Role | Name | Signature | Date |
+|---|---|---|---|
+| Client Sponsor | | | |
+| Project Manager | | | |
+| Tech Lead | | | |
+
+---
+
+## 5. Change Control Process
+
+Applies from the date the SRS (Doc 02A) is signed. Before that date, changes are free and expected —
+that is what Sprint 0 and the requirements phase are for.
+
+```
+Request raised (any channel)
+        │
+        ▼
+  Logged as CR-nnn by the PM within 1 working day
+        │
+        ▼
+  Triage (PM + Tech Lead) — 2 working days
+        │
+        ├─▶ Clarification (already in scope)      → answered, closed, no CR
+        ├─▶ Configuration (achievable in-product) → documented as guidance, closed, no CR
+        ├─▶ Defect (does not match signed SRS)    → moved to the defect process, no charge
+        └─▶ Genuine scope change                  → impact analysis
+                    │
+                    ▼
+      Impact analysis (Tech Lead + BA) — 3–5 working days
+      Scope · Schedule · Cost · Risk · Alternatives
+                    │
+                    ▼
+      Client decision within 5 working days
+                    │
+        ┌───────────┼───────────┬──────────────┐
+        ▼           ▼           ▼              ▼
+     Approved   Rejected   Deferred to    Approved with
+     as quoted             Phase 2        trade-off
+        │                                  (something removed)
+        ▼
+  Baseline documents updated · version incremented · backlog updated
+```
+
+**The four triage outcomes matter more than the form.** In practice most requests are clarifications
+or configuration, and treating everything as a CR makes the client defensive and slows the project.
+Reserve the formal path for genuine scope change.
+
+### Authority levels
+
+| Impact | Approver | Turnaround target |
+|---|---|---|
+| No schedule or cost impact | Project Manager | 2 days |
+| ≤ 5 person-days | PM + Client Project Lead | 5 days |
+| 6–20 person-days | Client Sponsor | 10 days |
+| > 20 person-days, or any scope removal | Client Sponsor + Steering review | 15 days |
+
+### Emergency changes
+Statutory changes (a budget announcement altering PF/PT/TDS rules, for example) bypass the queue and
+are implemented on a best-effort basis, with the CR raised retrospectively within 5 working days.
+Compliance does not wait for paperwork.
+
+---
+
+## 6. Change Request Template
+
+Copy this block for each CR. Keep them in a single register with the ID, title, status and decision
+date visible at a glance.
+
+```
+CHANGE REQUEST
+
+CR ID:              CR-nnn
+Title:
+Raised by:                              Date raised:
+Requested for phase:                    Priority: Critical / High / Medium / Low
+
+1. DESCRIPTION
+   What is being asked for, in the requester's words.
+
+2. BUSINESS JUSTIFICATION
+   What problem this solves, who is affected, and what happens if it is not done.
+
+3. CURRENT BEHAVIOUR (per signed baseline)
+   Document and section reference:
+   What the system does today / is specified to do:
+
+4. PROPOSED BEHAVIOUR
+   Specific, testable description. Include acceptance criteria.
+
+5. TRIAGE CLASSIFICATION
+   ☐ Clarification — already in scope, no CR needed
+   ☐ Configuration — achievable in-product, guidance provided
+   ☐ Defect — does not match signed SRS, no charge
+   ☐ Scope change — proceed with impact analysis
+
+6. IMPACT ANALYSIS                                   (completed by Tech Lead + BA)
+   Modules affected:
+   Documents requiring update:
+   Data model change required:      Yes / No    Migration required: Yes / No
+   API contract change:             Yes / No    Breaking: Yes / No
+   Effort — backend / frontend / mobile / QA / design:        ___ person-days
+   Total effort including 20% contingency:                    ___ person-days
+   Schedule impact:                 ___ weeks   Affects critical path: Yes / No
+   Cost impact:                     ___
+   New risks introduced:
+   Testing impact:
+   Alternatives considered (including "do nothing" and the configuration workaround):
+
+7. TRADE-OFF OPTIONS
+   Option A — Add to current phase, extend timeline by ___ weeks, cost ___
+   Option B — Add to current phase, remove [item] of equivalent effort, no timeline change
+   Option C — Defer to Phase 2, no impact on the current phase
+   Recommended option and why:
+
+8. DECISION
+   ☐ Approved as quoted   ☐ Approved with trade-off (Option ___)
+   ☐ Deferred to Phase ___   ☐ Rejected
+   Approved by:                            Role:                    Date:
+   Rationale:
+
+9. IMPLEMENTATION
+   Target sprint:              Assigned to:
+   Baseline documents updated: ☐    New version numbers:
+   Backlog items created:
+   Completed and verified:                 Date:
+```
+
+---
+
+## 7. Document Version Control
+
+All 16 documents in this set are versioned independently using `MAJOR.MINOR`.
+
+| Change type | Version increment | Re-sign-off required |
+|---|---|---|
+| Typo, formatting, clarification with no behavioural change | MINOR | No |
+| New detail added within an already-agreed requirement | MINOR | No |
+| Requirement added, removed or materially altered | **MAJOR** | **Yes, from the document's sign-off owner (Doc 00 §1)** |
+| Architecture or data model decision reversed | **MAJOR** | **Yes, Tech Lead + affected owners** |
+| Assumption confirmed or rejected in §4 | MINOR on Doc 00 and 15 | Client initials on the log |
+
+Every document carries a change log at its end:
+
+| Version | Date | Author | Change | Approved by |
+|---|---|---|---|---|
+| 1.0 | Aug 2026 | — | Initial baseline derived from Client Blueprint v1.0 | Pending |
+
+**Rule:** the signed baseline is whatever version was signed, not the latest file. When a MAJOR
+version is issued, the previous version is archived, not overwritten, and any CR referencing it
+cites the version explicitly. Disputes about scope are almost always disputes about which version
+someone was reading.
+
+---
+
+## 8. Standing Agenda — Weekly Client Call
+
+Ten minutes, every week, in this order. It exists so that §2 and §3 never go stale.
+
+1. Sprint progress against the plan (2 min)
+2. **Open questions — any answered this week? Any Q-date approaching?** (3 min)
+3. **New or escalated risks** (2 min)
+4. Change requests awaiting client decision (2 min)
+5. Client dependencies (BRD §12) — status of D1–D7 (1 min)
+
+If a question has passed its required-by date, it is stated aloud that the assumption is now
+baselined and reversal is a change request. Say it every time. The purpose is not process
+enforcement — it is that no one is surprised in month seven.

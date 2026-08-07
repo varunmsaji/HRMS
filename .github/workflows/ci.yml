@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  api:
+    name: API — lint, typecheck, boundaries, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-path: apps/api/uv.lock
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy (core package)
+        run: uv run mypy src/hrms
+
+      - name: Import boundaries
+        run: uv run lint-imports
+
+      - name: Unit tests
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev
+          REDIS_URL: redis://localhost:6380/0
+          JWT_ACCESS_SECRET: ci-test-access-secret-min-16
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
+        run: uv run pytest

@@ -1,0 +1,14 @@
+{
+  "name": "hrms-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "HRMS Platform monorepo",
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "start": "bash scripts/dev.sh",
+    "dev:up": "docker compose up -d",
+    "dev:down": "docker compose down",
+    "dev:api": "cd apps/api && uv run uvicorn entrypoints.api:app --reload --port 8000",
+    "dev:web": "cd apps/web && npm run dev"
+  }
+}

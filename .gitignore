@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.pnp/
+.pnp.js
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.import_linter_cache/
+.venv/
+apps/api/.venv/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Real per-environment env files under apps/api/env/ — only the committed *.example templates
+# (Doc 14 §2 reference set) should ever be tracked; a real file dropped here must never be
+# committed by accident.
+apps/api/env/.env.*
+!apps/api/env/.env.*.example
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Prisma (removed — backend is Python/Alembic only)
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Local dev process logs
+.dev-logs/

@@ -1,0 +1,10 @@
+[importlinter]
+root_package = hrms
+
+[importlinter:contract:layers]
+name = Modules depend on shared and core only
+type = layers
+layers =
+    hrms.modules
+    hrms.shared
+    hrms.core

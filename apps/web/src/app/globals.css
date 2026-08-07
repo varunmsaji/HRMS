@@ -1,0 +1,146 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens per docs/design/01_Design_System.md §9 (light) / §10 (dark).
+ * Every color is a light/dark PAIR, never a single value with a filter.
+ * Consumed by apps/web/tailwind.config.ts via var(--color-*).
+ *
+ * Precedence (low -> high): :root (light default) -> prefers-color-scheme
+ * (system dark, unless explicitly overridden to light) -> [data-theme]
+ * (explicit user override, always wins). No JS toggle exists yet — that
+ * lands with the app shell (Task 1.4.x) — this just makes the tokens ready.
+ */
+:root {
+  /* Surfaces & text — §9 light mode */
+  --color-background: #fbfbfe; /* near-white, very slightly warm to reduce eye strain */
+  --color-surface: #ffffff;
+  --color-border: #e4e4e7;
+  --color-border-strong: #d4d4d8;
+  --color-foreground: #18181b; /* near-black, not pure black */
+  --color-foreground-secondary: #52525b;
+  --color-foreground-muted: #71717a;
+  --color-foreground-disabled: #a1a1aa;
+
+  /* Brand hue — indigo family anchored at #4F46E5 (§1.3) */
+  --color-primary: #4f46e5;
+  --color-primary-hover: #4338ca;
+  --color-primary-active: #3730a3;
+  --color-primary-subtle: #eef2ff;
+  --color-primary-disabled: #c7d2fe;
+  --color-on-primary: #ffffff;
+
+  /* Semantic set (§1.4) */
+  --color-success: #16a34a;
+  --color-success-subtle: #f0fdf4;
+  --color-warning: #f59e0b;
+  --color-warning-subtle: #fffbeb;
+  --color-danger: #dc2626;
+  --color-danger-subtle: #fef2f2;
+  --color-info: #2563eb;
+  --color-info-subtle: #eff6ff;
+
+  /* HRMS status states (§1.4) — violet distinct from brand indigo by design */
+  --color-on-leave: #8b5cf6;
+  --color-on-leave-subtle: #f5f3ff;
+  --color-holiday: #64748b;
+  --color-holiday-subtle: #f1f5f9;
+  --color-half-day: #f59e0b;
+  --color-half-day-subtle: #fffbeb;
+  --color-wfh: #0d9488;
+  --color-wfh-subtle: #f0fdfa;
+
+  /* Neutral-subtle surface — backs shadcn's muted/secondary/accent slots
+   * (see tailwind.config.ts), none of which the design system distinguishes. */
+  --color-muted: #f4f4f5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-background: #131316; /* deep neutral, never pure black — §10 */
+    --color-surface: #1c1c21; /* one step lighter than background = elevation */
+    --color-border: rgba(228, 228, 231, 0.12);
+    --color-border-strong: rgba(228, 228, 231, 0.2);
+    --color-foreground: #f4f4f5; /* off-white, not pure white */
+    --color-foreground-secondary: #d4d4d8;
+    --color-foreground-muted: #a1a1aa;
+    --color-foreground-disabled: #71717a;
+
+    --color-primary: #6366f1; /* lightened one step from light-mode value */
+    --color-primary-hover: #818cf8;
+    --color-primary-active: #a5b4fc;
+    --color-primary-subtle: #1e1b4b;
+    --color-primary-disabled: #3730a3;
+    --color-on-primary: #ffffff;
+
+    --color-success: #4ade80;
+    --color-success-subtle: #052e16;
+    --color-warning: #fbbf24;
+    --color-warning-subtle: #451a03;
+    --color-danger: #f87171;
+    --color-danger-subtle: #450a0a;
+    --color-info: #60a5fa;
+    --color-info-subtle: #172554;
+
+    --color-on-leave: #a78bfa;
+    --color-on-leave-subtle: #2e1065;
+    --color-holiday: #94a3b8;
+    --color-holiday-subtle: #1e293b;
+    --color-half-day: #fbbf24;
+    --color-half-day-subtle: #451a03;
+    --color-wfh: #2dd4bf;
+    --color-wfh-subtle: #042f2e;
+
+    --color-muted: #27272a;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-background: #131316;
+  --color-surface: #1c1c21;
+  --color-border: rgba(228, 228, 231, 0.12);
+  --color-border-strong: rgba(228, 228, 231, 0.2);
+  --color-foreground: #f4f4f5;
+  --color-foreground-secondary: #d4d4d8;
+  --color-foreground-muted: #a1a1aa;
+  --color-foreground-disabled: #71717a;
+
+  --color-primary: #6366f1;
+  --color-primary-hover: #818cf8;
+  --color-primary-active: #a5b4fc;
+  --color-primary-subtle: #1e1b4b;
+  --color-primary-disabled: #3730a3;
+  --color-on-primary: #ffffff;
+
+  --color-success: #4ade80;
+  --color-success-subtle: #052e16;
+  --color-warning: #fbbf24;
+  --color-warning-subtle: #451a03;
+  --color-danger: #f87171;
+  --color-danger-subtle: #450a0a;
+  --color-info: #60a5fa;
+  --color-info-subtle: #172554;
+
+  --color-on-leave: #a78bfa;
+  --color-on-leave-subtle: #2e1065;
+  --color-holiday: #94a3b8;
+  --color-holiday-subtle: #1e293b;
+  --color-half-day: #fbbf24;
+  --color-half-day-subtle: #451a03;
+  --color-wfh: #2dd4bf;
+  --color-wfh-subtle: #042f2e;
+
+  --color-muted: #27272a;
+}
+
+/*
+ * No explicit font-family here: Tailwind's Preflight applies
+ * theme.fontFamily.sans (Inter, wired in tailwind.config.ts from the
+ * next/font variable in layout.tsx) to <html> automatically, so the whole
+ * document inherits it from one config source instead of two.
+ */
+body {
+  color: var(--color-foreground);
+  background: var(--color-background);
+}
