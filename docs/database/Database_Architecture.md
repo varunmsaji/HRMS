@@ -1,6 +1,6 @@
 # Database Architecture
 
-**Developer guide** — full data dictionary: `files/08_Database_Architecture.md` (100+ tables).
+**Developer guide** — full data dictionary: `docs/product/08_Database_Architecture.md` (100+ tables).
 
 ---
 
@@ -12,7 +12,7 @@
 | Shared schema multi-tenant | Operational simplicity for solo/small team; `company_id` on tenant tables |
 | Async SQLAlchemy + asyncpg | Fits FastAPI; connection pooling per worker process |
 | Raw SQL where needed | Payroll aggregation, statutory reports — SQLAlchemy Core inside repositories |
-| UTC storage | All `TIMESTAMPTZ`; company timezone for boundaries only (`files/03`, ADR-0010) |
+| UTC storage | All `TIMESTAMPTZ`; company timezone for boundaries only (`docs/product/03`, ADR-0010) |
 
 Extensions (init): `pgcrypto`, `btree_gist`, `vector` (pgvector for AI embeddings).
 
@@ -27,7 +27,7 @@ Extensions (init): `pgcrypto`, `btree_gist`, `vector` (pgvector for AI embedding
 | Database | `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` per tenant table |
 | Policy | `company_id = current_setting('app.company_id')::uuid` |
 
-**Cross-tenant access returns 404**, not 403 (`files/09` §1.4).
+**Cross-tenant access returns 404**, not 403 (`docs/product/09` §1.4).
 
 `company` table is the tenant root — no `company_id` on itself.
 
@@ -56,7 +56,7 @@ Not used for core payroll money or leave balances — those stay relational.
 
 ## 5. Effective-dated records
 
-Pattern (`files/08` §1.2, ADR-0003):
+Pattern (`docs/product/08` §1.2, ADR-0003):
 
 - Child tables: `effective_from`, `effective_to` (NULL = current).
 - `EXCLUDE USING gist` prevents overlapping periods per employee.
@@ -91,11 +91,11 @@ No application `UPDATE`/`DELETE` on audit tables; DB role has no update grant on
 |---------|-------|
 | Tenant list queries | `(company_id, …)` composite |
 | Effective dating | `(employee_id, effective_from)` |
-| Punch / audit high volume | Partitioned tables + BRIN or time-range indexes (`files/08`) |
+| Punch / audit high volume | Partitioned tables + BRIN or time-range indexes (`docs/product/08`) |
 | Full-text / search | OpenSearch for employee search; pgvector for AI similarity |
 | Foreign keys | Index on all FK columns used in joins |
 
-Review every migration for lock time on large tables (`files/08` §14).
+Review every migration for lock time on large tables (`docs/product/08` §14).
 
 ---
 
@@ -108,7 +108,7 @@ Review every migration for lock time on large tables (`files/08` §14).
 | Autogenerate | Routine column/table adds |
 | Hand-written | RLS, policies, partitioning, exclusion constraints |
 | Direction | Forward-only in production; expand-contract for destructive changes |
-| Review | Lock behaviour, reversibility, payroll blackout window (`files/16` §2) |
+| Review | Lock behaviour, reversibility, payroll blackout window (`docs/product/16` §2) |
 | SQL assets | `apps/api/scripts/sql/` for reusable policy blocks |
 
 Commands:

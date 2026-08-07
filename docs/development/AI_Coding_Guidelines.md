@@ -7,9 +7,9 @@ Rules for **human developers and AI agents** (Cursor, Claude Code, etc.) working
 ## 1. Before writing code
 
 1. **Read architecture docs** — start at [`docs/README.md`](../README.md).
-2. **Read the product spec** for your module — `files/17` or `files/18`.
-3. **Read data model** for your tables — `files/08` (relevant sections).
-4. **Read API conventions** — `files/09`, RBAC — `files/19`.
+2. **Read the product spec** for your module — `docs/product/17` or `docs/product/18`.
+3. **Read data model** for your tables — `docs/product/08` (relevant sections).
+4. **Read API conventions** — `docs/product/09`, RBAC — `docs/product/19`.
 5. **Check ADRs** — [`docs/adr/README.md`](../adr/README.md) — do not contradict accepted decisions.
 
 ---
@@ -61,11 +61,11 @@ When you change architecture or conventions, update:
 |-------------|--------|
 | New dependency / tool | `pyproject.toml` + ADR if significant |
 | New module | This guide's module list in Backend Structure |
-| New permission domain | `files/19` + module `permissions.py` |
+| New permission domain | `docs/product/19` + module `permissions.py` |
 | Schema change | Alembic + note in PR |
 | API contract change | Ensure OpenAPI reflects change; flag breaking changes |
 
-Do not edit `files/` casually — change control in `files/26`.
+Do not edit `docs/product/` casually — change control in `docs/product/26`.
 
 ---
 
@@ -122,4 +122,4 @@ Do not jump to payroll/attendance until auth + RBAC foundations exist.
 - [FastAPI Development Standards](FastAPI_Development_Standards.md)
 - [Module Standard](../architecture/02_Module_Standard.md)
 - [Auth Architecture](../security/Auth_Architecture.md)
-- Product index: `files/00_README_Document_Index.md`
+- Product index: `docs/product/00_README_Document_Index.md`

@@ -1,7 +1,7 @@
 # HRMS — Developer Documentation (Sprint 0)
 
 This folder is the **operational architecture guide** for building on the FastAPI backend.
-The full product specification remains in [`files/`](../../files/00_README_Document_Index.md).
+The full product specification remains in [`docs/product/`](product/00_README_Document_Index.md).
 
 ## Read order (new contributor or AI agent)
 
@@ -26,7 +26,7 @@ The full product specification remains in [`files/`](../../files/00_README_Docum
 | Migrations | `apps/api/alembic/` |
 | Frontend | `apps/web/` |
 | Design foundation | `docs/design/` |
-| Product specs | `files/` |
+| Product specs | `docs/product/` |
 | Architecture decisions | `docs/adr/` |
 
 ## Local start

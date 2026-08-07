@@ -24,7 +24,7 @@ module (search, approvals, notifications, identity) lives in the top bar, on eve
 
 ## 2. Desktop (≥1024px) — primary target for HR/Admin
 
-Layout: **persistent left sidebar + top bar + content area**, per `files/24` §6 (1024–1440px is
+Layout: **persistent left sidebar + top bar + content area**, per `docs/product/24` §6 (1024–1440px is
 "standard desktop; primary target for HR/admin"; >1440px removes max-width constraints on dense
 data screens).
 
@@ -58,13 +58,13 @@ data screens).
 **Content area:**
 - Forms, dashboards, detail views: centered, max 1280px (§3 of [`01_Design_System.md`](01_Design_System.md)).
 - Tables (Directory, Attendance Matrix, Payroll reports): full width, sticky header row and first
-  column, virtualized for 1,000+ rows (`files/24` §4.2), no max-width above 1440px.
+  column, virtualized for 1,000+ rows (`docs/product/24` §4.2), no max-width above 1440px.
 
 ---
 
 ## 3. Tablet (640–1024px)
 
-Per `files/24` §6: two-column forms collapse to one column; tables scroll horizontally with a
+Per `docs/product/24` §6: two-column forms collapse to one column; tables scroll horizontally with a
 sticky first column.
 
 - **Sidebar collapses by default** to the icon-only 64px rail, expandable on tap with an
@@ -77,14 +77,14 @@ sticky first column.
   specific screens show an explicit "Best viewed on desktop" notice rather than rendering a broken
   layout, consistent with the "interface never lies about state" rule (§4 principle 7,
   [`00_UI_Vision.md`](00_UI_Vision.md)).
-- Manager approval flows (`files/24` §4.5) and ESS screens work fully at this breakpoint — they're
+- Manager approval flows (`docs/product/24` §4.5) and ESS screens work fully at this breakpoint — they're
   designed mobile-first and simply gain breathing room here.
 
 ---
 
 ## 4. Mobile (<640px)
 
-Per `files/24` §6 and §2.3: mobile carries **ESS and manager-approval patterns**; most HR/admin
+Per `docs/product/24` §6 and §2.3: mobile carries **ESS and manager-approval patterns**; most HR/admin
 screens redirect to "Open on desktop" rather than attempting a cramped port.
 
 ```
@@ -100,7 +100,7 @@ screens redirect to "Open on desktop" rather than attempting a cramped port.
 └───────────────────────────┘
 ```
 
-**Bottom navigation — five items maximum** (`files/24` §2.3):
+**Bottom navigation — five items maximum** (`docs/product/24` §2.3):
 
 | Slot | Item | Notes |
 |---|---|---|
@@ -111,7 +111,7 @@ screens redirect to "Open on desktop" rather than attempting a cramped port.
 | 5 | More | Leave, payslips, tax, profile, documents, directory, policies, helpdesk — everything else, in a simple list, not a nested menu |
 
 **Why punch is centered and elevated, not just "in the row":** for a field worker in logistics or
-construction, this is functionally the entire product (`files/24` §2.3). It gets a visually
+construction, this is functionally the entire product (`docs/product/24` §2.3). It gets a visually
 distinct treatment (raised circular button, brand-colored) so it's findable without reading labels,
 the same pattern camera apps use for the shutter button.
 
@@ -144,7 +144,7 @@ Present, in some form, on every breakpoint — the one navigational constant.
 | Logo / company switcher | Left-aligned, opens company selector if the user has cross-company access | Collapsed into the "≡" menu |
 | Breadcrumbs | Center-left, see §3 below | Replaced by a single page title (no breadcrumb trail — insufficient width) |
 | Global search | Persistent input, expands on focus | Icon only, opens full-screen search overlay on tap |
-| Approvals | Icon with badge count, opens the unified inbox (`files/24` §4.5) | Present as a bottom-nav item instead, not duplicated in the top bar |
+| Approvals | Icon with badge count, opens the unified inbox (`docs/product/24` §4.5) | Present as a bottom-nav item instead, not duplicated in the top bar |
 | Notifications | Icon with badge count, opens a dropdown panel | Icon only, opens full-screen panel |
 | Profile menu | Avatar, opens dropdown | Avatar, opens dropdown (same content, full-width) |
 
@@ -161,13 +161,13 @@ result needs to know **where they are and how to get back up**, not just what pa
   [`02_Information_Architecture.md`](02_Information_Architecture.md) defines it — breadcrumbs are a
   rendering of the IA, never an independent path (no breadcrumb ever points somewhere the sidebar
   wouldn't).
-- The Employee 360° hub (`files/24` §4.1) is the one place breadcrumbs may show a person's name as
+- The Employee 360° hub (`docs/product/24` §4.1) is the one place breadcrumbs may show a person's name as
   a mid-trail segment even when arrived at via a shortcut (§4 of
   [`02_Information_Architecture.md`](02_Information_Architecture.md)) — reflecting that the
   underlying navigation model treats a person as a valid pivot point, not just a leaf record.
 - Not shown on: the dashboard (nothing above it), first-level module landing pages (redundant with
   the active sidebar state), and any full-screen wizard (pay run creation, employee onboarding
-  wizard) — wizards use a step indicator instead (`files/24` §4.4), which serves the "where am I"
+  wizard) — wizards use a step indicator instead (`docs/product/24` §4.4), which serves the "where am I"
   need more precisely than a breadcrumb would for a linear flow.
 
 ---
@@ -190,7 +190,7 @@ One search, reachable from every screen, not a per-module search box.
   whose approvals are pending" — turning search into a second, faster entry point into daily work,
   not just a lookup tool.
 - Distinguished from module-local **filtering** (e.g., filtering the Directory table, or the
-  Attendance Matrix filter panel in `files/24` §4.2) — global search finds *records across the
+  Attendance Matrix filter panel in `docs/product/24` §4.2) — global search finds *records across the
   whole system*; in-module filters narrow a list you're already looking at. They are visually and
   behaviorally different components, never conflated.
 
@@ -207,13 +207,13 @@ One search, reachable from every screen, not a per-module search box.
   request"). Conflating them into one list would bury actionable work inside a stream of FYI
   messages — a common HRMS design failure this product deliberately avoids.
 - Preferences (channel, frequency, per-category opt-out) live in Settings → Notification templates
-  for admins and a personal Notification preferences screen for every user (`files/24` §3.9).
+  for admins and a personal Notification preferences screen for every user (`docs/product/24` §3.9).
 
 ---
 
 ## 10. Approvals inbox
 
-The unified, cross-module inbox specified in `files/24` §4.5, surfaced from the top bar (desktop/
+The unified, cross-module inbox specified in `docs/product/24` §4.5, surfaced from the top bar (desktop/
 tablet) and as a bottom-nav item (mobile) — deliberately **not** nested inside any single module's
 sidebar section, because approvals span Leave, Attendance (regularisation), Expenses, Assets,
 Recruitment (offers) and Exit (resignations) simultaneously.
@@ -225,7 +225,7 @@ Recruitment (offers) and Exit (resignations) simultaneously.
 - Swipe-to-approve / swipe-to-reject on mobile, with bulk-select on desktop for leave and
   regularisation specifically (the two request types with the highest volume).
 - Optimistic UI on every action — the card animates away immediately, restored with an explanation
-  only on failure (`files/24` §4.5, `00_UI_Vision.md` §4 principle 5).
+  only on failure (`docs/product/24` §4.5, `00_UI_Vision.md` §4 principle 5).
 
 ---
 
@@ -246,7 +246,7 @@ Help & documentation
 Sign out
 ```
 
-Impersonation (Super Admin only, per `files/19` §7) adds a persistent, unmissable banner above the
+Impersonation (Super Admin only, per `docs/product/19` §7) adds a persistent, unmissable banner above the
 top bar for the duration of the session — never folded into the profile menu, because it must be
 impossible to forget you're impersonating someone.
 
@@ -254,7 +254,7 @@ impossible to forget you're impersonating someone.
 
 ## 12. Responsive behavior summary
 
-Restated from `files/24` §6 for direct reference alongside the mechanics above:
+Restated from `docs/product/24` §6 for direct reference alongside the mechanics above:
 
 | Breakpoint | Sidebar | Admin screens | ESS / approval screens |
 |---|---|---|---|

@@ -71,7 +71,7 @@ boundary erosion compounds silently and a solo project cannot afford to discover
 | ADR | Every architecturally significant decision — a new dependency that shapes module structure, a change to the tenancy model, a new external integration pattern, anything a future reader would ask "why was it done this way?" about | `/docs/adr/`, one file per decision, using the format in `/docs/adr/README.md` |
 | OpenAPI spec | Always current — it is generated automatically from FastAPI route definitions and Pydantic schemas, never hand-maintained | Served at `/v1/openapi.json`, CI-validated against a snapshot so an accidental breaking change is caught (Document 09 §8) |
 | Module `README.md` (optional but recommended for the five most complex modules: payroll, attendance, workflow, ai, integration) | When a module's internal logic is non-obvious enough that Document 07's generic module shape doesn't explain *this module's* specific quirks | `modules/<name>/README.md` |
-| This document set (`files/`) | Updated whenever a decision documented here changes | Change control process in Document 26 |
+| This document set (`docs/product/`) | Updated whenever a decision documented here changes | Change control process in Document 26 |
 
 **The standard this project holds itself to:** a new contributor — a future second developer, a
 contractor brought in for a security review, or the original developer returning after months away

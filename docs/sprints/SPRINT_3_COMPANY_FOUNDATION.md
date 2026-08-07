@@ -10,22 +10,22 @@
 
 ## 0. Scope Decisions (binding — do not relitigate mid-implementation)
 
-These are judgment calls made once, here, so no implementation session has to make an architectural decision on its own. Each is a deliberate resolution of an ambiguity in the source specs (`files/17`, `files/08`, `files/24`, `docs/product/VERSION_1_ROADMAP.md`).
+These are judgment calls made once, here, so no implementation session has to make an architectural decision on its own. Each is a deliberate resolution of an ambiguity in the source specs (`docs/product/17`, `docs/product/08`, `docs/product/24`, `docs/product/VERSION_1_ROADMAP.md`).
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | **"Work Locations" is not a separate table or module. It is the existing `branch` table.** `files/17` §3.1's own hierarchy diagram writes the node as "Branch / Location" — one concept. `docs/product/VERSION_1_ROADMAP.md` §5 row 9 lists them as one module ("Branches / Work Locations"). The **Branch Management** screen is the only screen built; "Work Locations" in the sprint brief's screen list is an alias for the same screen, not a second CRUD surface. Do not create a `work_location` table. | Avoids a duplicate table holding the same address/geofence/state data, which would immediately desync. |
-| D2 | **Grade is built alongside Designation, not deferred**, even though the sprint brief's flow list doesn't name it separately. `files/17` FR-ORG-006/007 makes Designation reference `grade_id`, and the existing `designation`/`grade` stub tables are already FK-linked in the current schema. Building Designation without Grade would leave a dangling FK the UI can't populate. | Designation's grade reference is not optional in the data model already in the repo. |
+| D1 | **"Work Locations" is not a separate table or module. It is the existing `branch` table.** `docs/product/17` §3.1's own hierarchy diagram writes the node as "Branch / Location" — one concept. `docs/product/VERSION_1_ROADMAP.md` §5 row 9 lists them as one module ("Branches / Work Locations"). The **Branch Management** screen is the only screen built; "Work Locations" in the sprint brief's screen list is an alias for the same screen, not a second CRUD surface. Do not create a `work_location` table. | Avoids a duplicate table holding the same address/geofence/state data, which would immediately desync. |
+| D2 | **Grade is built alongside Designation, not deferred**, even though the sprint brief's flow list doesn't name it separately. `docs/product/17` FR-ORG-006/007 makes Designation reference `grade_id`, and the existing `designation`/`grade` stub tables are already FK-linked in the current schema. Building Designation without Grade would leave a dangling FK the UI can't populate. | Designation's grade reference is not optional in the data model already in the repo. |
 | D3 | **Leave Policy in this sprint is configuration only — type master, policy bundles, and org-segment assignment rules.** No `leave_ledger`, no accrual job, no application/approval flow, no balance computation. Those depend on Employee Management (Sprint 4) and the approval-routing core (Sprint 5) per `docs/product/VERSION_1_ROADMAP.md` §6's hard sequencing constraints — an employee-less company cannot accrue or apply for leave. | Matches the sprint brief's own instruction: "Configure Leave Policies," not "Apply for leave." Building the ledger now would create a leave-balance UI with nothing to display. |
-| D4 | **Payroll Policy in this sprint is pay-cycle/cut-off/pay-date configuration only** (`files/17` FR-ORG-009) — no salary components, no salary structures, no formula builder, no statutory master. Those are Sprint 9 (`docs/product/VERSION_1_ROADMAP.md` §14) and depend on Employee Management for CTC assignment. | Same reasoning as D3 — "Configure Payroll Policies" in the brief means the cycle/date rules, not the computation engine. |
-| D5 | **Shift in this sprint is the shift master only** (`files/17` FR-ATT-001) — name, timings, breaks, grace, OT eligibility flag. No shift **assignment**, no roster, no rotation-pattern generator (FR-ATT-002). Assignment requires employees to assign shifts to, which don't exist until Sprint 4. | A shift definition is organization config; assigning it to a person is an Attendance-module concern per `docs/product/VERSION_1_ROADMAP.md` §6. |
-| D6 | **Custom Fields (`files/17` FR-ORG-012) are deferred to Sprint 4.** The spec defines them as extra fields on Employee/Candidate/Asset — none of which exist yet. Building the custom-field engine with nothing to attach it to has no demo value this sprint. | Explicitly listed as a documentation follow-up risk in `docs/product/VERSION_1_ROADMAP.md` §17 if skipped silently — flagging it here instead. |
-| D7 | **Number Series is built, scoped to exactly one series type: `EMPLOYEE_CODE`.** `files/17` FR-ORG-011 lists five series types (employee, candidate, offer, asset, ticket); only Employee Management (next sprint) needs one immediately, and Recruitment is out of V1 entirely. The `number_series` table and race-safe allocator are built generically so Sprint 4 adds new `entity_type` rows without a schema change. | Building the generic mechanism now avoids Sprint 4 needing a migration for something that could have shipped now; scoping usage to one row avoids speculative UI for series that will never fire in V1. |
-| D8 | **Industry-specific template seeding (`files/17` FR-ORG-002) is scoped down to one static default template, not per-industry variants.** On company creation, seed: 12 Indian statutory leave types (FR-LEV-002), one default general shift (09:00–18:00), a default `PERMANENT` + `PROBATION` employment type pair, and an empty current-year holiday calendar the admin populates in the wizard. No industry-selection-driven branching logic. | True industry templating needs a content library (multiple shift patterns, leave sets, designation lists per vertical) that doesn't exist yet and isn't specified beyond the one-line FR. Shipping one sensible default unblocks the wizard without inventing unspecified content. |
+| D4 | **Payroll Policy in this sprint is pay-cycle/cut-off/pay-date configuration only** (`docs/product/17` FR-ORG-009) — no salary components, no salary structures, no formula builder, no statutory master. Those are Sprint 9 (`docs/product/VERSION_1_ROADMAP.md` §14) and depend on Employee Management for CTC assignment. | Same reasoning as D3 — "Configure Payroll Policies" in the brief means the cycle/date rules, not the computation engine. |
+| D5 | **Shift in this sprint is the shift master only** (`docs/product/17` FR-ATT-001) — name, timings, breaks, grace, OT eligibility flag. No shift **assignment**, no roster, no rotation-pattern generator (FR-ATT-002). Assignment requires employees to assign shifts to, which don't exist until Sprint 4. | A shift definition is organization config; assigning it to a person is an Attendance-module concern per `docs/product/VERSION_1_ROADMAP.md` §6. |
+| D6 | **Custom Fields (`docs/product/17` FR-ORG-012) are deferred to Sprint 4.** The spec defines them as extra fields on Employee/Candidate/Asset — none of which exist yet. Building the custom-field engine with nothing to attach it to has no demo value this sprint. | Explicitly listed as a documentation follow-up risk in `docs/product/VERSION_1_ROADMAP.md` §17 if skipped silently — flagging it here instead. |
+| D7 | **Number Series is built, scoped to exactly one series type: `EMPLOYEE_CODE`.** `docs/product/17` FR-ORG-011 lists five series types (employee, candidate, offer, asset, ticket); only Employee Management (next sprint) needs one immediately, and Recruitment is out of V1 entirely. The `number_series` table and race-safe allocator are built generically so Sprint 4 adds new `entity_type` rows without a schema change. | Building the generic mechanism now avoids Sprint 4 needing a migration for something that could have shipped now; scoping usage to one row avoids speculative UI for series that will never fire in V1. |
+| D8 | **Industry-specific template seeding (`docs/product/17` FR-ORG-002) is scoped down to one static default template, not per-industry variants.** On company creation, seed: 12 Indian statutory leave types (FR-LEV-002), one default general shift (09:00–18:00), a default `PERMANENT` + `PROBATION` employment type pair, and an empty current-year holiday calendar the admin populates in the wizard. No industry-selection-driven branching logic. | True industry templating needs a content library (multiple shift patterns, leave sets, designation lists per vertical) that doesn't exist yet and isn't specified beyond the one-line FR. Shipping one sensible default unblocks the wizard without inventing unspecified content. |
 | D9 | **The Company Setup Wizard is a guided, resumable, but not strictly enforced sequence.** A Company Admin can complete steps out of order or skip to the dashboard early (`ORG.COMPANY.MANAGE` grants access to every step's screen directly via the nav, not only via the wizard). The wizard is a first-run UX affordance, not an access gate — this matches `docs/design/00_UI_Vision.md`'s "interface never lies about state" principle: a step marked incomplete is informational, never a hard block, because a real company may legitimately want to configure Departments before Branches. | Hard-gating step order would contradict the existing IA, where every org screen (`docs/design/02_Information_Architecture.md` §2, Settings section) is independently reachable from the sidebar once setup begins. |
 | D10 | **`head_employee_id` on `department` and `next_designation_id` on `designation` are built as nullable FK columns but have no UI control this sprint.** Both reference the `employee` table, which has no real rows until Sprint 4. The columns exist now so Sprint 4 doesn't need a migration to add them. | Same forward-compatible-schema-now, feature-later pattern as D7. |
 | D11 | **Company Registration is self-service and creates a brand-new tenant** (`Company` + first `User` + `UserCompany` + a company-scoped `COMPANY_ADMIN` role seeded with every permission this sprint introduces). This is distinct from Sprint B1's seed script, which only pre-populates two demo companies for local dev/tests — that script is untouched. | `docs/product/VERSION_1_ROADMAP.md` §5 row 4 ("Company Setup") is explicitly "Not started" — B1 shipped login against pre-seeded tenants only, never a public registration endpoint. |
-| D12 | **Roles beyond `COMPANY_ADMIN` are not built this sprint.** Every permission introduced below is granted to the seeded Company Admin role only. `HR_MANAGER`, `HR_EXECUTIVE`, etc. (`files/19` §4) are deferred — there's no HR staff to invite until Sprint 4's user management screens exist, and no non-admin workflow in this sprint's scope needs a second role to demonstrate. | Keeps RBAC catalogue growth tied to modules that actually ship this sprint, per `docs/architecture/01_Backend_Structure.md` §5's "create only when building that block" rule. |
+| D12 | **Roles beyond `COMPANY_ADMIN` are not built this sprint.** Every permission introduced below is granted to the seeded Company Admin role only. `HR_MANAGER`, `HR_EXECUTIVE`, etc. (`docs/product/19` §4) are deferred — there's no HR staff to invite until Sprint 4's user management screens exist, and no non-admin workflow in this sprint's scope needs a second role to demonstrate. | Keeps RBAC catalogue growth tied to modules that actually ship this sprint, per `docs/architecture/01_Backend_Structure.md` §5's "create only when building that block" rule. |
 
 ---
 
@@ -41,7 +41,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 
 **Definition of Done for the sprint** (all must be true, not "mostly true"):
 
-- [ ] Every endpoint listed in §5 exists, is permission-gated, is tenant-isolated (RLS + repository predicate), and returns the standard envelope (`files/09` §1.3).
+- [ ] Every endpoint listed in §5 exists, is permission-gated, is tenant-isolated (RLS + repository predicate), and returns the standard envelope (`docs/product/09` §1.3).
 - [ ] Every table listed in §4 exists via Alembic migration with RLS enabled (`docs/database/Database_Architecture.md` §2–3) and required indexes (§4.8 below).
 - [ ] Every screen listed in §3 is built, wired to real APIs (no mock data), and matches its Empty/Loading/Error/Success states.
 - [ ] `pytest`, `mypy --strict`, `ruff check`, `ruff format --check`, `lint-imports` all pass in CI (existing gates, unchanged).
@@ -98,7 +98,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 
 ### Feature 1.2 — shadcn/ui component installation
 
-**Objective:** Install and configure shadcn/ui as the component primitive layer, matching `files/24` §5's component library list where shadcn provides a direct equivalent, and establish the project's convention for components shadcn doesn't cover (Money display, Employee picker, Permission-gated wrapper — built in later features as needed).
+**Objective:** Install and configure shadcn/ui as the component primitive layer, matching `docs/product/24` §5's component library list where shadcn provides a direct equivalent, and establish the project's convention for components shadcn doesn't cover (Money display, Employee picker, Permission-gated wrapper — built in later features as needed).
 
 #### Task 1.2.1 — shadcn/ui base install
 - **Objective:** Run `shadcn` init against the Tailwind config from 1.1.1, add the base primitive set needed by Epics 2–5: Button, Input, Select, Checkbox, RadioGroup, Switch, Textarea, Label, Form (react-hook-form wrapper), Table, Card, Tabs, Dialog, Sheet (drawer), DropdownMenu, Popover, Tooltip, Toast (Sonner), Badge, Avatar, Skeleton, Separator, Breadcrumb, Pagination, Command (for search), Calendar, Combobox pattern.
@@ -123,10 +123,10 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** S
 
 #### Task 1.2.3 — Composite components shadcn doesn't cover
-- **Objective:** Build the product-specific components `files/24` §5 lists that have no shadcn equivalent: **Money display** (currency + minor-unit aware, per `shared/value_objects/money.py`'s shape), **Status pill** (semantic color + glyph pair, never color alone, per `01_Design_System.md` §1.4), **Empty state** (icon + message + primary action slot), **Permission-gated wrapper** (renders children only if a permission code is present in the current user's permission set — absent, not disabled, per `docs/design/00_UI_Vision.md` §4 principle 8), **Data table** (wraps shadcn Table with sort/filter/pagination/column-visibility, built once here and reused by every list screen in Epics 3–4).
+- **Objective:** Build the product-specific components `docs/product/24` §5 lists that have no shadcn equivalent: **Money display** (currency + minor-unit aware, per `shared/value_objects/money.py`'s shape), **Status pill** (semantic color + glyph pair, never color alone, per `01_Design_System.md` §1.4), **Empty state** (icon + message + primary action slot), **Permission-gated wrapper** (renders children only if a permission code is present in the current user's permission set — absent, not disabled, per `docs/design/00_UI_Vision.md` §4 principle 8), **Data table** (wraps shadcn Table with sort/filter/pagination/column-visibility, built once here and reused by every list screen in Epics 3–4).
 - **Dependencies:** 1.2.1
 - **Backend Work:** None.
-- **Frontend Work:** `apps/web/src/components/hrms/money-display.tsx`, `status-pill.tsx`, `empty-state.tsx`, `permission-gate.tsx`, `data-table.tsx` (+ `data-table-column-header.tsx`, `data-table-pagination.tsx` following the standard shadcn data-table recipe, extended with server-side pagination since every list API in this sprint is cursor/offset-paginated per `files/09` §1.5).
+- **Frontend Work:** `apps/web/src/components/hrms/money-display.tsx`, `status-pill.tsx`, `empty-state.tsx`, `permission-gate.tsx`, `data-table.tsx` (+ `data-table-column-header.tsx`, `data-table-pagination.tsx` following the standard shadcn data-table recipe, extended with server-side pagination since every list API in this sprint is cursor/offset-paginated per `docs/product/09` §1.5).
 - **Database Work:** None.
 - **API Work:** None.
 - **Testing Requirements:** Component tests for `PermissionGate` (renders/hides correctly given a mock permission set) and `MoneyDisplay` (formats minor units + currency correctly, including negative amounts) — these two carry real logic, unlike the purely presentational ones.
@@ -137,7 +137,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 
 ### Feature 1.3 — API client & data-fetching layer
 
-**Objective:** A typed HTTP client matching `files/09` §1's conventions (envelope unwrapping, required headers, error mapping), plus TanStack Query for server-state caching.
+**Objective:** A typed HTTP client matching `docs/product/09` §1's conventions (envelope unwrapping, required headers, error mapping), plus TanStack Query for server-state caching.
 
 #### Task 1.3.1 — Typed API client
 - **Objective:** Build `apps/web/src/lib/api-client.ts` — a `fetch` wrapper that attaches `Authorization: Bearer`, `X-Company-Id`, `X-Request-Id` (generated per request), reads `DataEnvelope`/`ListEnvelope`/`ErrorEnvelope` shapes matching `apps/api/src/hrms/shared/pagination.py` exactly, and throws a typed `ApiError` (code, message, details, request_id) on the error envelope shape.
@@ -220,13 +220,13 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** M
 
 #### Task 1.5.2 — Login page
-- **Objective:** Build `/login` per `files/24` §3.1 screen inventory item "Login."
+- **Objective:** Build `/login` per `docs/product/24` §3.1 screen inventory item "Login."
 - **Dependencies:** 1.4.3 (public layout), 1.5.1, 1.6.1 (form infra)
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(public)/login/page.tsx` — email + password form (react-hook-form + zod), calls `POST /v1/auth/login`, on success writes session state and redirects to `/dashboard` (or the wizard, per Task 2.4's resume logic). Multi-company response (`companies[]` in `TokenResponseData`) triggers a company-picker step inline if `>1` membership, matching the existing login response shape — **no new backend field needed.**
 - **Database Work:** None.
 - **API Work:** None (consumes existing `POST /v1/auth/login`).
-- **Testing Requirements:** Component test: invalid credentials show the server's error message inline (not a generic toast, since `files/09` error envelope carries a display-safe message); valid credentials redirect.
+- **Testing Requirements:** Component test: invalid credentials show the server's error message inline (not a generic toast, since `docs/product/09` error envelope carries a display-safe message); valid credentials redirect.
 - **Acceptance Criteria:** Matches Empty/Loading/Error/Success states defined in §3 screen spec for Login below.
 - **Estimated Complexity:** M
 
@@ -251,7 +251,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Objective:** Standardize on react-hook-form + zod, with a `<FormField>` wrapper (label, help text, error message, required indicator) composing shadcn's Form primitive from 1.2.1.
 - **Dependencies:** 1.2.1
 - **Backend Work:** None.
-- **Frontend Work:** `apps/web/src/components/form/*` — `form-field.tsx`, `form-section.tsx` (grouped fields with a heading, used heavily in Epic 3/4's multi-section forms like Legal Entity), `server-error-banner.tsx` (renders an `ApiError`'s field-level `details[]` mapped onto the matching form fields, plus a top-level banner for non-field errors — implements `files/09` §1.3's error envelope `details[].field` mapping generically, once).
+- **Frontend Work:** `apps/web/src/components/form/*` — `form-field.tsx`, `form-section.tsx` (grouped fields with a heading, used heavily in Epic 3/4's multi-section forms like Legal Entity), `server-error-banner.tsx` (renders an `ApiError`'s field-level `details[]` mapped onto the matching form fields, plus a top-level banner for non-field errors — implements `docs/product/09` §1.3's error envelope `details[].field` mapping generically, once).
 - **Database Work:** None.
 - **API Work:** None.
 - **Testing Requirements:** Component test: a mocked `ApiError` with `details: [{field: 'code', message: '...'}]` correctly sets the `code` field's error state, not just a generic banner.
@@ -277,14 +277,14 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 2.1 — Company registration (backend)
 
 #### Task 2.1.1 — `company` table migration + registration fields
-- **Objective:** Extend the existing `company` table (already has `id, name, legal_name, subdomain, country_code, currency, timezone, status, ...` per `apps/api/scripts/sql/001_init_schema.sql`) with the remaining `files/08` §3.1 columns not yet present: `industry_code VARCHAR(40)`, `fy_start_month SMALLINT DEFAULT 4`, `logo_url TEXT`, `theme_json JSONB`, `onboarded_at TIMESTAMPTZ`, `trial_ends_at TIMESTAMPTZ`, `data_region VARCHAR(20)`.
+- **Objective:** Extend the existing `company` table (already has `id, name, legal_name, subdomain, country_code, currency, timezone, status, ...` per `apps/api/scripts/sql/001_init_schema.sql`) with the remaining `docs/product/08` §3.1 columns not yet present: `industry_code VARCHAR(40)`, `fy_start_month SMALLINT DEFAULT 4`, `logo_url TEXT`, `theme_json JSONB`, `onboarded_at TIMESTAMPTZ`, `trial_ends_at TIMESTAMPTZ`, `data_region VARCHAR(20)`.
 - **Dependencies:** None.
 - **Backend Work:** Alembic migration `apps/api/alembic/versions/<rev>_company_registration_fields.py` (autogenerate against updated `Company` model, review before applying per `docs/database/Database_Architecture.md` §9). Update `hrms/core/db/models/identity.py::Company` with the new `Mapped[...]` columns.
 - **Frontend Work:** None (schema only).
 - **Database Work:** As above. No RLS change needed (`company` has no `company_id` — it is the tenant root, already correctly excluded from RLS per `scripts/sql/002_row_level_security.sql`).
 - **API Work:** None (this task only).
 - **Testing Requirements:** Migration up/down test (existing pattern — confirm `alembic downgrade -1` then `upgrade head` is clean).
-- **Acceptance Criteria:** `Company` model has every column `files/08` §3.1 specifies; mypy strict passes on the updated model.
+- **Acceptance Criteria:** `Company` model has every column `docs/product/08` §3.1 specifies; mypy strict passes on the updated model.
 - **Estimated Complexity:** S
 
 #### Task 2.1.2 — `modules/organisation/` package scaffold
@@ -301,7 +301,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 #### Task 2.1.3 — Company registration endpoint
 - **Objective:** `POST /v1/companies/register` (public, unauthenticated) — creates `Company`, `User` (the registering admin), `UserCompany` (`is_primary=true`), a company-scoped `Role` (code `COMPANY_ADMIN`, `is_system=true`), grants it every permission code registered by this sprint's modules (see §6 catalogue), links via `RolePermission` + `UserRole`, then returns the same `TokenResponseData` shape `POST /v1/auth/login` returns (immediate authenticated session — no separate login step required post-registration, matching the sprint demo script's step 1→2 transition).
 - **Dependencies:** 2.1.2, all permission codes from Epics 3–4 must be registered in the permission catalogue seed (this task references them by constant, so implement it **last** within Epic 2, after Epic 3/4's `permissions.py` modules exist — or seed a placeholder subset now and extend the grant list as later tasks land; either is acceptable, but the final state must grant 100% of this sprint's permission codes to `COMPANY_ADMIN`).
-- **Backend Work:** `modules/organisation/schemas.py::CompanyRegistrationRequest` (name, industry_code, country_code, currency, timezone, fy_start_month, admin_email, admin_password, admin_full_name — wait, no `full_name` field exists on `User` yet; add `first_name`/`last_name VARCHAR(100)` nullable columns to `user` in this task's migration, matching `files/08` §3.2's implied profile fields not yet modeled). `modules/organisation/service.py::OrganisationService.register_company()` — orchestrates: subdomain uniqueness check (`ConflictError` on duplicate), password strength validation (reuse `core/auth/passwords.py` hashing, add a minimum-strength check consistent with whatever B1 already enforces at login, if any — if none exists, add a simple length+complexity check here since this is the first path that creates a password), transactional creation of all rows, calls `AuditService.record()` with `action="COMPANY_REGISTERED"`, then delegates to `IdentityService`'s token-issuance logic (extract the existing `_issue_tokens` private method on `IdentityService` into a shared/importable form, or call it via a public method — do not duplicate JWT-issuance logic between modules). `modules/organisation/repository.py::OrganisationRepository` — inserts for `Company`, `User`, `UserCompany`, `Role`, `RolePermission`, `UserRole` (reuse patterns already established in `seed/bootstrap.py`'s `_ensure_*` helpers, but as real repository methods, not seed-script helpers). `modules/organisation/router.py` — `POST /register`, no `Depends(require_permission(...))` (public), but still runs through the standard exception handlers.
+- **Backend Work:** `modules/organisation/schemas.py::CompanyRegistrationRequest` (name, industry_code, country_code, currency, timezone, fy_start_month, admin_email, admin_password, admin_full_name — wait, no `full_name` field exists on `User` yet; add `first_name`/`last_name VARCHAR(100)` nullable columns to `user` in this task's migration, matching `docs/product/08` §3.2's implied profile fields not yet modeled). `modules/organisation/service.py::OrganisationService.register_company()` — orchestrates: subdomain uniqueness check (`ConflictError` on duplicate), password strength validation (reuse `core/auth/passwords.py` hashing, add a minimum-strength check consistent with whatever B1 already enforces at login, if any — if none exists, add a simple length+complexity check here since this is the first path that creates a password), transactional creation of all rows, calls `AuditService.record()` with `action="COMPANY_REGISTERED"`, then delegates to `IdentityService`'s token-issuance logic (extract the existing `_issue_tokens` private method on `IdentityService` into a shared/importable form, or call it via a public method — do not duplicate JWT-issuance logic between modules). `modules/organisation/repository.py::OrganisationRepository` — inserts for `Company`, `User`, `UserCompany`, `Role`, `RolePermission`, `UserRole` (reuse patterns already established in `seed/bootstrap.py`'s `_ensure_*` helpers, but as real repository methods, not seed-script helpers). `modules/organisation/router.py` — `POST /register`, no `Depends(require_permission(...))` (public), but still runs through the standard exception handlers.
 - **Frontend Work:** None (this task).
 - **Database Work:** Migration for `user.first_name`, `user.last_name` (nullable `VARCHAR(100)`).
 - **API Work:** `POST /v1/companies/register` per above. Request/response documented in §5.1.
@@ -314,7 +314,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 2.2 — Company registration (frontend)
 
 #### Task 2.2.1 — Registration page
-- **Objective:** Build `/register` per `files/24` §3.1 "Company registration wizard (5 steps)" — scoped down to a **single-page form** for this sprint (name, industry, country, currency, timezone, admin name/email/password), not a 5-step wizard, since `files/17` FR-ORG-001's field list is short enough for one screen and the *actual* multi-step wizard experience the sprint brief describes is the **post-registration Setup Wizard** (Feature 2.4), not registration itself. This resolves an apparent overlap between `files/24`'s "registration wizard" framing and the sprint brief's distinct "Company Registration" → "Company Setup Wizard" two-step flow: registration is one form, setup is the wizard.
+- **Objective:** Build `/register` per `docs/product/24` §3.1 "Company registration wizard (5 steps)" — scoped down to a **single-page form** for this sprint (name, industry, country, currency, timezone, admin name/email/password), not a 5-step wizard, since `docs/product/17` FR-ORG-001's field list is short enough for one screen and the *actual* multi-step wizard experience the sprint brief describes is the **post-registration Setup Wizard** (Feature 2.4), not registration itself. This resolves an apparent overlap between `docs/product/24`'s "registration wizard" framing and the sprint brief's distinct "Company Registration" → "Company Setup Wizard" two-step flow: registration is one form, setup is the wizard.
 - **Dependencies:** 1.5.1, 1.6.1, 2.1.3
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(public)/register/page.tsx` — form per Task 1.6.1 pattern, calls `POST /v1/companies/register`, on success stores session and redirects to `/setup` (Task 2.4.2). Industry/country/currency/timezone as `<Select>` with a small static option list (industry: a fixed ~15-value list per common verticals — IT/ITES, Manufacturing, Retail, Healthcare, Construction, etc.; country/currency/timezone: standard ISO lists, a small static JSON asset, not an API call).
@@ -344,7 +344,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 2.4 — Company Setup Wizard (frontend)
 
 #### Task 2.4.1 — Setup Checklist screen
-- **Objective:** Build the checklist/overview screen (`files/24` §3.1 "Setup checklist") listing all 9 steps (Company Profile, Branches, Departments, Designations & Grades, Employment Types, Holiday Calendar, Shifts, Leave Policies, Payroll Policies) with completion state from Task 2.3.1, each linking to its real screen (built in Epic 3/4).
+- **Objective:** Build the checklist/overview screen (`docs/product/24` §3.1 "Setup checklist") listing all 9 steps (Company Profile, Branches, Departments, Designations & Grades, Employment Types, Holiday Calendar, Shifts, Leave Policies, Payroll Policies) with completion state from Task 2.3.1, each linking to its real screen (built in Epic 3/4).
 - **Dependencies:** 2.3.1, 1.4.3
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(app)/setup/page.tsx` — reads `GET /v1/companies/current/setup-progress`, renders a `Stepper`-style checklist (not a locked linear stepper per D9 — every step is a direct link, always clickable regardless of prior-step completion), a "Go to Dashboard" affordance always visible (D9 — never a hard gate), and a completion banner once all steps are done.
@@ -372,8 +372,8 @@ These are judgment calls made once, here, so no implementation session has to ma
 #### Task 2.5.1 — Company profile update endpoints
 - **Objective:** `GET/PATCH /v1/companies/current` (extends the existing stub `get_company` read path in `identity/router.py` — **move this endpoint's ownership to `organisation` module**, since company profile management is an org-setup concern, not an identity concern; identity keeps only what's session/auth-scoped). Fields: name, legal_name, industry_code, country_code, currency, timezone, fy_start_month, logo_url.
 - **Dependencies:** 2.1.1, 2.1.2
-- **Backend Work:** `organisation/schemas.py::CompanyProfileUpdate`, `organisation/service.py::update_company_profile()` (optimistic locking via `version` column per `files/09` §1.7 — `PATCH` requires `If-Match` header, `409 STALE_RESOURCE` on mismatch), `organisation/repository.py::update_company()`. Audit every field change (`AuditService.record` with before/after JSON). Deprecate/remove the now-redundant `GET /v1/auth/companies/{id}` from `identity/router.py` **only if** nothing else depends on it — check for frontend usage before removing; if kept for backward compatibility within this same sprint, that's acceptable since nothing external consumes it yet.
-- **Frontend Work:** `apps/web/src/app/(app)/settings/company/page.tsx` — the "Company Profile" screen (`files/24` §3.10 "Company settings"), a single form using Task 1.6.1 patterns, `ETag`/`If-Match` handled transparently inside the `useAppMutation` wrapper (Task 1.6.2) so individual screens don't hand-roll concurrency handling.
+- **Backend Work:** `organisation/schemas.py::CompanyProfileUpdate`, `organisation/service.py::update_company_profile()` (optimistic locking via `version` column per `docs/product/09` §1.7 — `PATCH` requires `If-Match` header, `409 STALE_RESOURCE` on mismatch), `organisation/repository.py::update_company()`. Audit every field change (`AuditService.record` with before/after JSON). Deprecate/remove the now-redundant `GET /v1/auth/companies/{id}` from `identity/router.py` **only if** nothing else depends on it — check for frontend usage before removing; if kept for backward compatibility within this same sprint, that's acceptable since nothing external consumes it yet.
+- **Frontend Work:** `apps/web/src/app/(app)/settings/company/page.tsx` — the "Company Profile" screen (`docs/product/24` §3.10 "Company settings"), a single form using Task 1.6.1 patterns, `ETag`/`If-Match` handled transparently inside the `useAppMutation` wrapper (Task 1.6.2) so individual screens don't hand-roll concurrency handling.
 - **Database Work:** None beyond 2.1.1.
 - **API Work:** `GET/PATCH /v1/companies/current` per §5.1.
 - **Testing Requirements:** Integration test: concurrent `PATCH` with stale `If-Match` returns `409`; successful update produces an audit log entry with correct before/after.
@@ -385,18 +385,18 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 2.6 — Legal Entity management
 
 #### Task 2.6.1 — Legal Entity backend
-- **Objective:** Expand the existing `legal_entity` stub table (currently `id, company_id, name, pan, gstin` per `scripts/sql/001_init_schema.sql`) to the full `files/08` §4 shape and build full CRUD.
+- **Objective:** Expand the existing `legal_entity` stub table (currently `id, company_id, name, pan, gstin` per `scripts/sql/001_init_schema.sql`) to the full `docs/product/08` §4 shape and build full CRUD.
 - **Dependencies:** 2.1.2
 - **Backend Work:** Migration adding: `registered_address TEXT`, `tan VARCHAR(20)`, `cin VARCHAR(30)`, `pf_code VARCHAR(30)`, `esi_code VARCHAR(30)`, `lwf_reg VARCHAR(30)`, `signatory_name VARCHAR(150)`, `signatory_designation VARCHAR(150)`, `signature_image_url TEXT`, `is_active BOOLEAN DEFAULT true`, `version INTEGER DEFAULT 1` (optimistic locking, consistent with `company`). `organisation/models.py::LegalEntity`. `organisation/schemas.py::LegalEntityCreate/Update/Read`. `organisation/service.py::LegalEntityService`-equivalent methods on `OrganisationService` (or a dedicated nested service class if the module grows large — implementer's call, consistent with keeping `service.py` as the module's one public interface per `02_Module_Standard.md`). `organisation/repository.py` — CRUD with `company_id` predicate on every query. `organisation/permissions.py::ORG_LEGAL_ENTITY_MANAGE = "ORG.LEGAL_ENTITY.MANAGE"`. Deactivation (soft delete via `is_active=false` / `deleted_at`) blocked if any active `branch` references it (FR-ORG-014 — "never hard-delete," blocking list returned in the error `details[]`).
 - **Frontend Work:** None (this task).
 - **Database Work:** Migration + RLS for `legal_entity` (already has `company_id`, confirm existing RLS block in `002_row_level_security.sql` still applies — it does, already listed).
 - **API Work:** `GET/POST /v1/legal-entities`, `GET/PATCH/DELETE /v1/legal-entities/{id}` per §5.2.
 - **Testing Requirements:** Unit: service-layer validation (PAN format regex, GSTIN format regex). Integration: full CRUD; deactivation blocked when a branch references it, with the blocking branch listed in the response.
-- **Acceptance Criteria:** All `files/08` §4 `legal_entity` columns present; cross-tenant access to another company's legal entity returns 404.
+- **Acceptance Criteria:** All `docs/product/08` §4 `legal_entity` columns present; cross-tenant access to another company's legal entity returns 404.
 - **Estimated Complexity:** M
 
 #### Task 2.6.2 — Legal Entity frontend
-- **Objective:** Build the Legal Entity list + form screens (`files/24` §3.10 "Legal entity list/form").
+- **Objective:** Build the Legal Entity list + form screens (`docs/product/24` §3.10 "Legal entity list/form").
 - **Dependencies:** 2.6.1, 1.2.3, 1.6.1
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(app)/settings/legal-entities/page.tsx` (list, using `DataTable` from 1.2.3), `.../legal-entities/new/page.tsx`, `.../legal-entities/[id]/page.tsx` (edit). This screen is embedded as **part of** the "Configure Company" wizard step (Feature 2.4) — a company typically has exactly one legal entity at setup time, so the wizard step shows an inline single-entity form with an "Add another legal entity" affordance for multi-entity companies, rather than forcing every company through a separate list screen first.
@@ -414,21 +414,21 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 3.1 — Branch (= Work Location, per D1) management
 
 #### Task 3.1.1 — Branch backend
-- **Objective:** Expand the existing `branch` stub (`id, company_id, legal_entity_id, name, state, timezone` per current schema) to the full `files/08` §4 shape and build full CRUD.
+- **Objective:** Expand the existing `branch` stub (`id, company_id, legal_entity_id, name, state, timezone` per current schema) to the full `docs/product/08` §4 shape and build full CRUD.
 - **Dependencies:** 2.6.1 (branch FKs to legal_entity)
 - **Backend Work:** Migration adding: `code VARCHAR(30)`, `address_line1 VARCHAR(200)`, `address_line2 VARCHAR(200)`, `city VARCHAR(100)`, `state_code VARCHAR(10)` (replaces free-text `state` — write a data migration step converting existing `state` values or, since this is pre-launch with only seed data, drop and recreate the column), `pincode VARCHAR(10)`, `latitude NUMERIC(9,6)`, `longitude NUMERIC(9,6)`, `geofence_radius_m INTEGER`, `holiday_calendar_id UUID NULL` (FK, added once `holiday_calendar` is expanded in Feature 4.1 — sequence this FK addition as a **follow-up migration in Feature 4.1**, not here, to avoid a forward reference; `branch` ships in this task without the FK, Feature 4.1 adds it), `week_off_pattern_id UUID NULL` (FK to new `week_off_pattern` table — same forward-reference handling: added when `week_off_pattern` is created in Task 3.1.3), `is_active BOOLEAN DEFAULT true`, `version INTEGER DEFAULT 1`. `organisation/models.py::Branch`. Full CRUD in `service.py`/`repository.py`. `permissions.py::ORG_BRANCH_MANAGE = "ORG.BRANCH.MANAGE"`. Deactivation blocked if referenced by an active `department` or (later) employee (FR-ORG-014).
 - **Frontend Work:** None (this task).
 - **Database Work:** Migration + confirm RLS (already covered).
 - **API Work:** `GET/POST /v1/branches`, `GET/PATCH/DELETE /v1/branches/{id}` per §5.2.
 - **Testing Requirements:** Unit: `state_code` validated against the ISO 3166-2:IN state list (a static constant — needed because state drives PT slab and holiday calendar per FR-ORG-004, even though PT/statutory computation itself is out of scope this sprint). Integration: full CRUD; geofence fields accept null (not every branch needs geofencing yet) and a valid radius when present.
-- **Acceptance Criteria:** All `files/08` §4 `branch` columns present (holiday_calendar_id/week_off_pattern_id land via Feature 4.1/3.1.3 follow-ups); cross-tenant isolation verified.
+- **Acceptance Criteria:** All `docs/product/08` §4 `branch` columns present (holiday_calendar_id/week_off_pattern_id land via Feature 4.1/3.1.3 follow-ups); cross-tenant isolation verified.
 - **Estimated Complexity:** M
 
 #### Task 3.1.2 — Branch frontend
 - **Objective:** Build Branch Management — list + form, doubling as the "Work Locations" screen per D1 (same component, no separate route needed beyond a possible `/settings/branches` being the canonical path; do not build `/settings/work-locations` as a duplicate route).
 - **Dependencies:** 3.1.1, 1.2.3, 1.6.1
 - **Backend Work:** None.
-- **Frontend Work:** `apps/web/src/app/(app)/settings/branches/page.tsx` (list), `.../branches/new/page.tsx`, `.../branches/[id]/page.tsx`. Map-based address entry (`files/24` §3.10 "Branch list/form (with map)") — scoped down for this sprint to **manual lat/long entry fields** with a static map preview image (e.g., an embedded OpenStreetMap tile via a static URL pattern, no interactive map picker library) rather than a full interactive geofence-radius map editor (`files/24` §3.4 "Geofence map editor" is a separate, more complex screen scheduled for the Attendance sprint where geofencing is actually enforced against punches) — this sprint just needs to **store** the coordinates correctly.
+- **Frontend Work:** `apps/web/src/app/(app)/settings/branches/page.tsx` (list), `.../branches/new/page.tsx`, `.../branches/[id]/page.tsx`. Map-based address entry (`docs/product/24` §3.10 "Branch list/form (with map)") — scoped down for this sprint to **manual lat/long entry fields** with a static map preview image (e.g., an embedded OpenStreetMap tile via a static URL pattern, no interactive map picker library) rather than a full interactive geofence-radius map editor (`docs/product/24` §3.4 "Geofence map editor" is a separate, more complex screen scheduled for the Attendance sprint where geofencing is actually enforced against punches) — this sprint just needs to **store** the coordinates correctly.
 - **Database Work:** None.
 - **API Work:** Consumes 3.1.1.
 - **Testing Requirements:** Component test for form validation (pincode format, lat/long range); E2E: create branch → appears in Departments' branch picker (cross-feature check with 3.2).
@@ -436,7 +436,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** M
 
 #### Task 3.1.3 — Week-off pattern backend (supporting entity)
-- **Objective:** Build `week_off_pattern` (`files/08` §4: `id, company_id, name, pattern JSONB, is_active`) since `branch` references it. Minimal CRUD, no dedicated screen this sprint — surfaced as a simple pattern picker (fixed weekly-off, e.g. "All Saturdays + Sundays off") inline within the Branch form, with only 2–3 pre-seeded patterns (Sun-only, Sat+Sun, Alternate-Saturdays) rather than a full pattern builder UI.
+- **Objective:** Build `week_off_pattern` (`docs/product/08` §4: `id, company_id, name, pattern JSONB, is_active`) since `branch` references it. Minimal CRUD, no dedicated screen this sprint — surfaced as a simple pattern picker (fixed weekly-off, e.g. "All Saturdays + Sundays off") inline within the Branch form, with only 2–3 pre-seeded patterns (Sun-only, Sat+Sun, Alternate-Saturdays) rather than a full pattern builder UI.
 - **Dependencies:** 3.1.1
 - **Backend Work:** `organisation/models.py::WeekOffPattern`. `organisation/service.py` — `list_week_off_patterns()` (read-only from the frontend's perspective this sprint; patterns are seeded, not user-authored, per the scope-down above), seeded on company registration (Task 2.1.3) alongside the other D8 defaults. Add the deferred `branch.week_off_pattern_id` FK from Task 3.1.1 in this task's migration.
 - **Frontend Work:** A `<Select>` of the 2–3 seeded patterns embedded in the Branch form (Task 3.1.2) — no standalone screen.
@@ -451,7 +451,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 3.2 — Department management
 
 #### Task 3.2.1 — Department backend
-- **Objective:** Expand the existing `department` stub (`id, company_id, branch_id, name, code, parent_id`) to support the hierarchy rules in FR-ORG-005 (cycle rejection, max 5 levels) and the remaining `files/08` §4 columns.
+- **Objective:** Expand the existing `department` stub (`id, company_id, branch_id, name, code, parent_id`) to support the hierarchy rules in FR-ORG-005 (cycle rejection, max 5 levels) and the remaining `docs/product/08` §4 columns.
 - **Dependencies:** 3.1.1, 2.1.2
 - **Backend Work:** Migration adding: `head_employee_id UUID NULL` (FK to `employee`, per D10 — no UI this sprint), `cost_centre_id UUID NULL` (FK to new `cost_centre` table — see Task 3.2.2), `is_active BOOLEAN DEFAULT true`, `version INTEGER DEFAULT 1`. `organisation/models.py::Department` — self-referential `parent_id` FK. `service.py::create_department()`/`update_department()` — **cycle detection**: before setting `parent_id`, walk up the candidate parent's ancestor chain (recursive query, depth-capped at 5 per FR-ORG-005) and reject if the new department's own id appears (`409 CONFLICT`, code `DEPARTMENT_CYCLE_DETECTED`); reject if depth would exceed 5. `GET /v1/departments/tree` — returns the full hierarchy as a nested structure (single recursive CTE query in `repository.py`, not N+1 application-side tree-walking). `permissions.py::ORG_DEPARTMENT_MANAGE`.
 - **Frontend Work:** None (this task).
@@ -462,7 +462,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** L
 
 #### Task 3.2.2 — Cost Centre backend (supporting entity)
-- **Objective:** Build `cost_centre` (`files/08` §4: `id, company_id, code, name, gl_code`) since `department` references it. Minimal CRUD, no dedicated screen — a simple inline creatable `<Combobox>` within the Department form (create-on-the-fly, matching how lightweight lookups are typically handled, rather than a separate settings screen for what's a thin 3-field entity this sprint).
+- **Objective:** Build `cost_centre` (`docs/product/08` §4: `id, company_id, code, name, gl_code`) since `department` references it. Minimal CRUD, no dedicated screen — a simple inline creatable `<Combobox>` within the Department form (create-on-the-fly, matching how lightweight lookups are typically handled, rather than a separate settings screen for what's a thin 3-field entity this sprint).
 - **Dependencies:** 3.2.1
 - **Backend Work:** `organisation/models.py::CostCentre`, minimal `service.py` methods (`list_cost_centres`, `create_cost_centre`). `permissions.py::ORG_COST_CENTRE_MANAGE`. Add the deferred `department.cost_centre_id` FK.
 - **Frontend Work:** Inline creatable combobox in the Department form (Task 3.2.3).
@@ -473,10 +473,10 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** S
 
 #### Task 3.2.3 — Department frontend
-- **Objective:** Build the Department tree screen (`files/24` §3.10 "Department tree") — this is one of the two places (with Org Chart, deferred to Sprint 4 since it visualizes reporting lines that don't exist yet) where a tree visualization is the primary UI, not a flat table.
+- **Objective:** Build the Department tree screen (`docs/product/24` §3.10 "Department tree") — this is one of the two places (with Org Chart, deferred to Sprint 4 since it visualizes reporting lines that don't exist yet) where a tree visualization is the primary UI, not a flat table.
 - **Dependencies:** 3.2.1, 3.2.2, 1.2.3
 - **Backend Work:** None.
-- **Frontend Work:** `apps/web/src/app/(app)/settings/departments/page.tsx` — tree view (expand/collapse per node, per `files/24` §4.1-style density patterns) built on `GET /v1/departments/tree`, with inline "Add sub-department" per node and a form drawer (shadcn `Sheet`) for create/edit rather than a full page navigation, since department edits are typically quick single-field changes made while looking at the tree.
+- **Frontend Work:** `apps/web/src/app/(app)/settings/departments/page.tsx` — tree view (expand/collapse per node, per `docs/product/24` §4.1-style density patterns) built on `GET /v1/departments/tree`, with inline "Add sub-department" per node and a form drawer (shadcn `Sheet`) for create/edit rather than a full page navigation, since department edits are typically quick single-field changes made while looking at the tree.
 - **Database Work:** None.
 - **API Work:** Consumes 3.2.1, 3.2.2.
 - **Testing Requirements:** Component test: tree renders correct nesting from a sample API response; attempting to drag/assign a parent that would create a cycle is prevented client-side too (defense in depth — the real guard is server-side per 3.2.1, but the UI should not offer an obviously-invalid option in the parent picker, i.e. a department's own descendants are excluded from its own "choose parent" combobox options).
@@ -488,7 +488,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 3.3 — Designation & Grade management
 
 #### Task 3.3.1 — Grade backend
-- **Objective:** Expand the existing `grade` stub (`id, company_id, code, name, rank`) to the full `files/08` §4 shape. **Built before Designation** since Designation FKs to it (per D2).
+- **Objective:** Expand the existing `grade` stub (`id, company_id, code, name, rank`) to the full `docs/product/08` §4 shape. **Built before Designation** since Designation FKs to it (per D2).
 - **Dependencies:** 2.1.2
 - **Backend Work:** Migration adding: `level INTEGER` (rename/repurpose `rank` → `level` if semantically identical, or add `level` alongside and deprecate `rank` — implementer's call; prefer a clean rename via `op.alter_column` since `rank` has no real data yet), `min_ctc BIGINT NULL` (minor units per ADR-0006, nullable since grade can exist before compensation bands are decided), `max_ctc BIGINT NULL`, `notice_period_days INTEGER NULL`, `probation_days INTEGER NULL`, `leave_policy_id UUID NULL` (FK — added as a follow-up in Feature 4.3 once `leave_policy` exists, same forward-reference pattern as branch/holiday_calendar), `approval_limit BIGINT NULL` (minor units), `is_active BOOLEAN DEFAULT true`, `version INTEGER DEFAULT 1`. `organisation/models.py::Grade`. Full CRUD. `permissions.py::ORG_GRADE_MANAGE`.
 - **Frontend Work:** None (this task).
@@ -499,18 +499,18 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** M
 
 #### Task 3.3.2 — Designation backend
-- **Objective:** Expand the existing `designation` stub (`id, company_id, department_id, title`) to the full `files/08` §4 shape.
+- **Objective:** Expand the existing `designation` stub (`id, company_id, department_id, title`) to the full `docs/product/08` §4 shape.
 - **Dependencies:** 3.3.1, 3.2.1
 - **Backend Work:** Migration adding: `code VARCHAR(30)`, `grade_id UUID NULL` (FK to `grade`), `next_designation_id UUID NULL` (self FK, per D10 — no UI this sprint; `jd_document_id` explicitly **not** added — no document-management module exists to reference, deferred to whenever that module ships, not tracked as a forward-reference placeholder since unlike the others there's no concrete near-term consumer), `is_active BOOLEAN DEFAULT true`, `version INTEGER DEFAULT 1`. `organisation/models.py::Designation`. Full CRUD. `permissions.py::ORG_DESIGNATION_MANAGE`. Deactivation blocked if referenced by an active employee (future) — for now, blocked if `next_designation_id` of another designation points to it (can't remove a career-path target still in use).
 - **Frontend Work:** None (this task).
 - **Database Work:** Migration.
 - **API Work:** `GET/POST /v1/designations`, `GET/PATCH/DELETE /v1/designations/{id}` per §5.2.
-- **Testing Requirements:** Integration: full CRUD; `department_id` optional (per `files/17` FR-ORG-006 "department (optional)" — a designation can be department-agnostic, e.g. "CEO").
+- **Testing Requirements:** Integration: full CRUD; `department_id` optional (per `docs/product/17` FR-ORG-006 "department (optional)" — a designation can be department-agnostic, e.g. "CEO").
 - **Acceptance Criteria:** `department_id` is genuinely nullable end-to-end (schema, service, form).
 - **Estimated Complexity:** M
 
 #### Task 3.3.3 — Designation & Grade frontend
-- **Objective:** Build both list screens (`files/24` §3.10 "Designation list," "Grade list") as one combined wizard step ("Designations & Grades") since they're tightly coupled and configured together in practice.
+- **Objective:** Build both list screens (`docs/product/24` §3.10 "Designation list," "Grade list") as one combined wizard step ("Designations & Grades") since they're tightly coupled and configured together in practice.
 - **Dependencies:** 3.3.1, 3.3.2, 1.2.3
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(app)/settings/designations/page.tsx` (list + create/edit drawer, includes an inline Grade sub-tab or split-pane so both are configured without leaving the screen — implementer's call on exact layout, but both entities must be reachable from one wizard step per the sprint goal's flow).
@@ -525,7 +525,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 3.4 — Employment Types management
 
 #### Task 3.4.1 — Employment Type backend
-- **Objective:** Build the new `employment_type` table per `files/08` §4 (`id, company_id, code, name, is_pf_applicable, is_esi_applicable, is_gratuity_eligible, is_leave_eligible, is_ot_eligible`) — this table does not exist yet in any form (unlike the others, which were Prisma-era stubs).
+- **Objective:** Build the new `employment_type` table per `docs/product/08` §4 (`id, company_id, code, name, is_pf_applicable, is_esi_applicable, is_gratuity_eligible, is_leave_eligible, is_ot_eligible`) — this table does not exist yet in any form (unlike the others, which were Prisma-era stubs).
 - **Dependencies:** 2.1.2
 - **Backend Work:** Migration creating `employment_type` (add `is_active BOOLEAN DEFAULT true`, `version INTEGER DEFAULT 1` per the standard column conventions, plus `deleted_at`). `organisation/models.py::EmploymentType`. Full CRUD. `permissions.py::ORG_EMPLOYMENT_TYPE_MANAGE`. Seed two rows on registration per D8 (`PERMANENT`, `PROBATION`) with sensible statutory-flag defaults (`is_pf_applicable=true, is_esi_applicable=true, is_gratuity_eligible=true, is_leave_eligible=true, is_ot_eligible=false` for `PERMANENT`; same but `is_gratuity_eligible=false` for `PROBATION` — gratuity eligibility typically starts post-confirmation).
 - **Frontend Work:** None (this task).
@@ -554,13 +554,13 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 4.1 — Holiday Calendar management
 
 #### Task 4.1.1 — Holiday Calendar backend
-- **Objective:** Expand the existing `holiday_calendar` (`id, company_id, name`) and `holiday` (`id, calendar_id, date, name, is_optional`) stubs to the full `files/08` §4 shape.
+- **Objective:** Expand the existing `holiday_calendar` (`id, company_id, name`) and `holiday` (`id, calendar_id, date, name, is_optional`) stubs to the full `docs/product/08` §4 shape.
 - **Dependencies:** 3.1.1
 - **Backend Work:** Migration: `holiday_calendar` adds `year INTEGER NOT NULL`, `state_code VARCHAR(10) NULL` (per-state calendars, per FR-ORG-008), `is_active BOOLEAN DEFAULT true`. `holiday` replaces `is_optional BOOLEAN` with `type VARCHAR(20)` (`FIXED`/`OPTIONAL`/`RESTRICTED`, `CHECK` constraint per `docs/database/Database_Architecture.md` §1 rule 4 — StrEnum mapped to VARCHAR+CHECK, never a native PG enum) and adds `is_paid BOOLEAN DEFAULT true`. `organisation/models.py::HolidayCalendar`, `Holiday`. `service.py::create_calendar()`, `add_holiday()`, `remove_holiday()` — reject duplicate dates within the same calendar. Add the deferred `branch.holiday_calendar_id` FK from Task 3.1.1 in this task's migration. `permissions.py::ORG_HOLIDAY_MANAGE`.
 - **Frontend Work:** None (this task).
 - **Database Work:** Migration + RLS for both tables (already tenant tables via `company_id`/parent join per existing RLS script pattern — `holiday` has no direct `company_id`, relies on `calendar_id` join + app predicate, matching the documented exception in `docs/database/Database_Architecture.md` §3 for tables "one join away").
 - **API Work:** `GET/POST /v1/holiday-calendars`, `POST /v1/holiday-calendars/{id}/holidays`, `GET /v1/holidays?year=&branch_id=` per §5.3.
-- **Testing Requirements:** Unit: duplicate-date rejection within a calendar. Integration: `AC-ORG-008.1` from `files/17` — a Kerala branch and a Karnataka branch each see their own state holidays plus shared national ones (verify via the `GET /v1/holidays?branch_id=` query resolving through `branch.holiday_calendar_id` → `holiday_calendar.state_code` correctly, plus a company-wide/`state_code IS NULL` calendar unioned in for national holidays).
+- **Testing Requirements:** Unit: duplicate-date rejection within a calendar. Integration: `AC-ORG-008.1` from `docs/product/17` — a Kerala branch and a Karnataka branch each see their own state holidays plus shared national ones (verify via the `GET /v1/holidays?branch_id=` query resolving through `branch.holiday_calendar_id` → `holiday_calendar.state_code` correctly, plus a company-wide/`state_code IS NULL` calendar unioned in for national holidays).
 - **Acceptance Criteria:** The `AC-ORG-008.1` acceptance test from the source SRS passes as an automated integration test, not just manually verified.
 - **Estimated Complexity:** L
 
@@ -576,7 +576,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** XS
 
 #### Task 4.1.3 — Holiday Calendar frontend
-- **Objective:** Build the Holiday Calendar screen (`files/24` §3.5 "Holiday calendar," "Holiday form").
+- **Objective:** Build the Holiday Calendar screen (`docs/product/24` §3.5 "Holiday calendar," "Holiday form").
 - **Dependencies:** 4.1.1, 4.1.2, 1.2.3
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(app)/settings/holiday-calendar/page.tsx` — calendar-year view (a simple date-list grouped by month is acceptable for v1, a full calendar-grid widget is a nice-to-have, not required) with an "Add holiday" form (date, name, type, is_paid) and a state-code selector to create additional per-state calendars beyond the default company-wide one.
@@ -613,7 +613,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** XS
 
 #### Task 4.2.3 — Shift frontend
-- **Objective:** Build the Shift Management screen (`files/24` §3.4 "Shift list," "Shift form" — master only, roster/roster-calendar/roster-pattern-generator screens explicitly **not** built this sprint per D5).
+- **Objective:** Build the Shift Management screen (`docs/product/24` §3.4 "Shift list," "Shift form" — master only, roster/roster-calendar/roster-pattern-generator screens explicitly **not** built this sprint per D5).
 - **Dependencies:** 4.2.1, 4.2.2, 1.2.3
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(app)/settings/shifts/page.tsx` — list + form with a visual timeline preview of the shift window (start/end/breaks as a simple horizontal bar, not a complex scheduling widget).
@@ -630,7 +630,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 #### Task 4.3.1 — Leave Type backend
 - **Objective:** Build `leave_type` per FR-LEV-001/002, full field set, no ledger/accrual-job logic (that's Sprint 8).
 - **Dependencies:** 3.3.1 (leave types can reference grades for applicability), 3.4.1 (and employment types)
-- **Backend Work:** New table: `id, company_id, code, name, is_paid BOOLEAN, accrual_method VARCHAR(20) [MONTHLY/QUARTERLY/YEARLY/ON_JOINING/NONE], accrual_rate NUMERIC(6,3), pro_rata_on_joining BOOLEAN, pro_rata_on_exit BOOLEAN, max_balance_cap NUMERIC(6,2) NULL, carry_forward_allowed BOOLEAN, carry_forward_cap NUMERIC(6,2) NULL, encashable BOOLEAN, encashment_basis VARCHAR(20) NULL [BASIC/BASIC_DA/GROSS], lapse_rule VARCHAR(20) NULL, negative_balance_allowed BOOLEAN DEFAULT false, negative_balance_limit NUMERIC(6,2) NULL, applicable_gender VARCHAR(10) NULL [ANY/MALE/FEMALE], applicable_employment_type_ids UUID[] NULL, applicable_grade_ids UUID[] NULL, min_days_per_application NUMERIC(4,2) NULL, max_days_per_application NUMERIC(4,2) NULL, notice_days_required INTEGER NULL, backdated_allowed BOOLEAN DEFAULT false, backdated_limit_days INTEGER NULL, requires_document_after_days INTEGER NULL, counts_sandwich_holidays BOOLEAN DEFAULT false, half_day_allowed BOOLEAN DEFAULT true, hourly_leave_allowed BOOLEAN DEFAULT false, is_active, deleted_at, version`. **Note on array columns:** `applicable_employment_type_ids`/`applicable_grade_ids` as native Postgres `UUID[]` is an accepted deviation from "no arrays for core business data" since these are simple applicability filters, not relational data requiring joins/reports — equivalent in spirit to `scope_ref_ids UUID[]` already used on `user_role` (`files/08` §3.4). `organisation/models.py::LeaveType`. Full CRUD. `permissions.py::LEAVE_TYPE_MANAGE = "LEAVE.TYPE.MANAGE"` (namespaced `LEAVE.*` per `files/19` §3.3 even though the `leave` module itself doesn't exist until Sprint 8 — the permission catalogue is forward-consistent with the eventual module boundary, living in `organisation` module's `permissions.py` for now with an explicit code comment noting the future home).
+- **Backend Work:** New table: `id, company_id, code, name, is_paid BOOLEAN, accrual_method VARCHAR(20) [MONTHLY/QUARTERLY/YEARLY/ON_JOINING/NONE], accrual_rate NUMERIC(6,3), pro_rata_on_joining BOOLEAN, pro_rata_on_exit BOOLEAN, max_balance_cap NUMERIC(6,2) NULL, carry_forward_allowed BOOLEAN, carry_forward_cap NUMERIC(6,2) NULL, encashable BOOLEAN, encashment_basis VARCHAR(20) NULL [BASIC/BASIC_DA/GROSS], lapse_rule VARCHAR(20) NULL, negative_balance_allowed BOOLEAN DEFAULT false, negative_balance_limit NUMERIC(6,2) NULL, applicable_gender VARCHAR(10) NULL [ANY/MALE/FEMALE], applicable_employment_type_ids UUID[] NULL, applicable_grade_ids UUID[] NULL, min_days_per_application NUMERIC(4,2) NULL, max_days_per_application NUMERIC(4,2) NULL, notice_days_required INTEGER NULL, backdated_allowed BOOLEAN DEFAULT false, backdated_limit_days INTEGER NULL, requires_document_after_days INTEGER NULL, counts_sandwich_holidays BOOLEAN DEFAULT false, half_day_allowed BOOLEAN DEFAULT true, hourly_leave_allowed BOOLEAN DEFAULT false, is_active, deleted_at, version`. **Note on array columns:** `applicable_employment_type_ids`/`applicable_grade_ids` as native Postgres `UUID[]` is an accepted deviation from "no arrays for core business data" since these are simple applicability filters, not relational data requiring joins/reports — equivalent in spirit to `scope_ref_ids UUID[]` already used on `user_role` (`docs/product/08` §3.4). `organisation/models.py::LeaveType`. Full CRUD. `permissions.py::LEAVE_TYPE_MANAGE = "LEAVE.TYPE.MANAGE"` (namespaced `LEAVE.*` per `docs/product/19` §3.3 even though the `leave` module itself doesn't exist until Sprint 8 — the permission catalogue is forward-consistent with the eventual module boundary, living in `organisation` module's `permissions.py` for now with an explicit code comment noting the future home).
 - **Frontend Work:** None (this task).
 - **Database Work:** New migration + RLS.
 - **API Work:** `GET/POST /v1/leave-types`, `GET/PATCH/DELETE /v1/leave-types/{id}` per §5.4.
@@ -650,9 +650,9 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** S
 
 #### Task 4.3.3 — Leave Policy (bundle) + assignment backend
-- **Objective:** Build `leave_policy` and its assignment mechanism per `files/08` §7.2 ("`leave_policy` / `leave_policy_assignment`") — a named bundle of leave types (with optional per-policy overrides) assignable to org segments (grade/employment-type/department/company-wide).
+- **Objective:** Build `leave_policy` and its assignment mechanism per `docs/product/08` §7.2 ("`leave_policy` / `leave_policy_assignment`") — a named bundle of leave types (with optional per-policy overrides) assignable to org segments (grade/employment-type/department/company-wide).
 - **Dependencies:** 4.3.1
-- **Backend Work:** New tables: `leave_policy (id, company_id, name, description, is_default BOOLEAN, is_active, deleted_at, version)`; `leave_policy_item (id, leave_policy_id FK, leave_type_id FK, override_accrual_rate NUMERIC NULL, override_max_balance_cap NUMERIC NULL, UNIQUE(leave_policy_id, leave_type_id))`; `leave_policy_assignment (id, company_id, leave_policy_id FK, scope_type VARCHAR(20) [COMPANY/GRADE/EMPLOYMENT_TYPE/DEPARTMENT], scope_ref_id UUID NULL, effective_from DATE, is_active)`. `organisation/service.py` — `create_leave_policy()`, `add_leave_type_to_policy()`, `assign_policy()` (reject overlapping assignments for the same `scope_type`+`scope_ref_id` combination with `effective_from` overlap — simpler than full effective-dating since this is a config-time assignment, not a payroll-grade time-series; a straightforward "one active assignment per scope at a time" uniqueness check is sufficient this sprint, not a full `EXCLUDE USING gist` — flagged as an acceptable simplification since assignment *history* isn't a requirement yet). Add the deferred `grade.leave_policy_id` FK from Task 3.3.1 here **if** the single-FK-per-grade model is kept — re-evaluate at implementation time whether `grade.leave_policy_id` (single) or `leave_policy_assignment` (flexible, multi-scope) is the actual assignment mechanism; **decision: use `leave_policy_assignment` as the real mechanism** (matches `files/08`'s own naming) and treat `grade.leave_policy_id` from the source table spec as **not implemented** — drop it from Task 3.3.1's deferred-FK list rather than adding two competing assignment mechanisms. Document this override inline in Task 3.3.1 when implemented.
+- **Backend Work:** New tables: `leave_policy (id, company_id, name, description, is_default BOOLEAN, is_active, deleted_at, version)`; `leave_policy_item (id, leave_policy_id FK, leave_type_id FK, override_accrual_rate NUMERIC NULL, override_max_balance_cap NUMERIC NULL, UNIQUE(leave_policy_id, leave_type_id))`; `leave_policy_assignment (id, company_id, leave_policy_id FK, scope_type VARCHAR(20) [COMPANY/GRADE/EMPLOYMENT_TYPE/DEPARTMENT], scope_ref_id UUID NULL, effective_from DATE, is_active)`. `organisation/service.py` — `create_leave_policy()`, `add_leave_type_to_policy()`, `assign_policy()` (reject overlapping assignments for the same `scope_type`+`scope_ref_id` combination with `effective_from` overlap — simpler than full effective-dating since this is a config-time assignment, not a payroll-grade time-series; a straightforward "one active assignment per scope at a time" uniqueness check is sufficient this sprint, not a full `EXCLUDE USING gist` — flagged as an acceptable simplification since assignment *history* isn't a requirement yet). Add the deferred `grade.leave_policy_id` FK from Task 3.3.1 here **if** the single-FK-per-grade model is kept — re-evaluate at implementation time whether `grade.leave_policy_id` (single) or `leave_policy_assignment` (flexible, multi-scope) is the actual assignment mechanism; **decision: use `leave_policy_assignment` as the real mechanism** (matches `docs/product/08`'s own naming) and treat `grade.leave_policy_id` from the source table spec as **not implemented** — drop it from Task 3.3.1's deferred-FK list rather than adding two competing assignment mechanisms. Document this override inline in Task 3.3.1 when implemented.
 - **Frontend Work:** None (this task).
 - **Database Work:** New migrations + RLS for all three tables.
 - **API Work:** `GET/POST /v1/leave-policies`, `GET/PATCH/DELETE /v1/leave-policies/{id}`, `POST /v1/leave-policies/{id}/items`, `POST /v1/leave-policies/{id}/assignments` per §5.4.
@@ -661,7 +661,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Estimated Complexity:** L
 
 #### Task 4.3.4 — Leave Policy frontend
-- **Objective:** Build Leave Types + Leave Policy screens (`files/24` §3.5 "Leave types list," "Leave type form," "Leave policy list," "Leave policy form") as one wizard step ("Leave Policies") covering both, since a policy is meaningless without its constituent types.
+- **Objective:** Build Leave Types + Leave Policy screens (`docs/product/24` §3.5 "Leave types list," "Leave type form," "Leave policy list," "Leave policy form") as one wizard step ("Leave Policies") covering both, since a policy is meaningless without its constituent types.
 - **Dependencies:** 4.3.1, 4.3.2, 4.3.3, 1.2.3
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(app)/settings/leave-policies/page.tsx` — tabbed or split view: "Leave Types" tab (list of the 12 seeded + custom ones, edit form with the full field set from 4.3.1 grouped into `FormSection`s per Task 1.6.1: Eligibility, Accrual, Balance & Carry-forward, Application Rules), "Policies" tab (policy list, item picker, assignment UI — a simple "assign to: [scope type] [scope value]" form, not a drag-and-drop builder).
@@ -683,7 +683,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 - **Database Work:** New migration + RLS + the partial unique index.
 - **API Work:** `GET/PUT /v1/payroll-policy` (singular resource per company, `PUT` not `POST` since it's create-or-replace-the-one-active-policy — a deliberate deviation from the standard `POST` collection pattern, justified because this is genuinely a singleton config resource, not a list) per §5.5.
 - **Testing Requirements:** Unit: `CUSTOM` cycle requires `custom_cycle_start_day`; `FIXED_DAY` pay-date rule requires `fixed_pay_day`; both validated as mutually-conditional-required fields. Integration: only one active policy per company enforced even under concurrent creation attempts.
-- **Acceptance Criteria:** No `salary_component`, `salary_structure`, or `statutory_master` table created as scope creep from reading `files/08` §8 too broadly — confirmed absent.
+- **Acceptance Criteria:** No `salary_component`, `salary_structure`, or `statutory_master` table created as scope creep from reading `docs/product/08` §8 too broadly — confirmed absent.
 - **Estimated Complexity:** M
 
 #### Task 4.4.2 — Payroll Policy frontend
@@ -702,13 +702,13 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 4.5 — Number Series (supporting, per D7)
 
 #### Task 4.5.1 — Number Series backend
-- **Objective:** Build the race-safe `number_series` allocator per `files/08` §4's explicit note: "allocation uses `UPDATE ... RETURNING` inside the same transaction... never `SELECT max()+1`."
+- **Objective:** Build the race-safe `number_series` allocator per `docs/product/08` §4's explicit note: "allocation uses `UPDATE ... RETURNING` inside the same transaction... never `SELECT max()+1`."
 - **Dependencies:** 2.1.2
 - **Backend Work:** New table: `id, company_id, entity_type VARCHAR(30) [seeded with EMPLOYEE_CODE only, per D7], prefix VARCHAR(10), separator VARCHAR(3) DEFAULT '-', current_number INTEGER DEFAULT 0, padding INTEGER DEFAULT 4, reset_rule VARCHAR(10) [NEVER/YEARLY], last_reset_at TIMESTAMPTZ NULL`. `organisation/repository.py::allocate_next_number(entity_type)` — implemented as `UPDATE number_series SET current_number = current_number + 1 WHERE company_id = :cid AND entity_type = :type RETURNING current_number`, executed via SQLAlchemy Core `Update(...).returning(...)` against the async session, **not** the ORM identity-map path, exactly per the documented pattern. `permissions.py::ORG_NUMBER_SERIES_MANAGE`. Seed one `EMPLOYEE_CODE` row on registration (default prefix `"EMP"`, separator `"-"`, padding `4` → produces `EMP-0001`).
 - **Frontend Work:** None (this task) — this sprint exposes only a settings form to view/edit the prefix/padding/reset-rule, not the allocation call itself (that's consumed by Sprint 4's employee-creation flow).
 - **Database Work:** New migration + RLS.
 - **API Work:** `GET/PATCH /v1/number-series` per §5.1.
-- **Testing Requirements:** **Concurrency test** (matches `AC-ORG-011.1` from `files/17`): 50 concurrent `allocate_next_number()` calls against the same series produce 50 unique, sequential, gap-free numbers — implemented with `asyncio.gather` over 50 concurrent session/transaction pairs against a real (testcontainer) Postgres, not mocked, since this is precisely the kind of race the `SELECT max()+1` anti-pattern would fail.
+- **Testing Requirements:** **Concurrency test** (matches `AC-ORG-011.1` from `docs/product/17`): 50 concurrent `allocate_next_number()` calls against the same series produce 50 unique, sequential, gap-free numbers — implemented with `asyncio.gather` over 50 concurrent session/transaction pairs against a real (testcontainer) Postgres, not mocked, since this is precisely the kind of race the `SELECT max()+1` anti-pattern would fail.
 - **Acceptance Criteria:** `AC-ORG-011.1` passes as an automated test, exactly as specified in the source SRS.
 - **Estimated Complexity:** M
 
@@ -726,7 +726,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 
 ## Epic 5 — Company Dashboard
 
-**Goal:** The Company Admin dashboard variant (`files/24` §3.2, one of six) with real aggregates from Epics 2–4 — the screen the sprint demo script ends on.
+**Goal:** The Company Admin dashboard variant (`docs/product/24` §3.2, one of six) with real aggregates from Epics 2–4 — the screen the sprint demo script ends on.
 
 ### Feature 5.1 — Dashboard backend
 
@@ -746,7 +746,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 5.2 — Dashboard frontend
 
 #### Task 5.2.1 — Company Admin dashboard screen
-- **Objective:** Build `/dashboard` per `files/24` §3.2 "Company Admin" dashboard variant, scoped to what this sprint's data supports — headcount/attrition/compliance/payroll-status widgets from the full spec are **not** buildable yet (no employees, no attendance, no payroll) and are explicitly deferred; this sprint's dashboard shows **org-setup completion and structure counts** instead, which is the honest available content.
+- **Objective:** Build `/dashboard` per `docs/product/24` §3.2 "Company Admin" dashboard variant, scoped to what this sprint's data supports — headcount/attrition/compliance/payroll-status widgets from the full spec are **not** buildable yet (no employees, no attendance, no payroll) and are explicitly deferred; this sprint's dashboard shows **org-setup completion and structure counts** instead, which is the honest available content.
 - **Dependencies:** 5.1.1, 1.4.3, 1.2.3
 - **Backend Work:** None.
 - **Frontend Work:** `apps/web/src/app/(app)/dashboard/page.tsx` — a card grid: setup-completion progress card (links back to `/setup`), and one stat card per count from 5.1.1 (Branches, Departments, Designations, Employment Types, Holiday Calendars, Shifts, Leave Types, Leave Policies, Payroll Policy configured Y/N), each card linking to its respective settings screen. Uses the `MoneyDisplay`/`StatusPill` primitives from 1.2.3 where relevant (e.g., a status pill for "Payroll Policy: Configured/Not configured").
@@ -765,7 +765,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 ### Feature 6.1 — Backend test suite completion
 
 #### Task 6.1.1 — RBAC permission-matrix test for this sprint's catalogue
-- **Objective:** Extend the RBAC test suite (`files/19` §8 requirement 1) to cover every permission code introduced in §6 below — for every (role, endpoint) pair, assert expected allow/deny. This sprint only has one role (`COMPANY_ADMIN`, per D12), so the matrix is narrow but must still be explicit and automated, not assumed.
+- **Objective:** Extend the RBAC test suite (`docs/product/19` §8 requirement 1) to cover every permission code introduced in §6 below — for every (role, endpoint) pair, assert expected allow/deny. This sprint only has one role (`COMPANY_ADMIN`, per D12), so the matrix is narrow but must still be explicit and automated, not assumed.
 - **Dependencies:** All Epic 2–5 backend tasks complete.
 - **Backend Work:** `apps/api/tests/security/test_permission_matrix_sprint3.py` — parametrized test iterating every new endpoint × `COMPANY_ADMIN` (expect allow) × a user with zero permissions (expect deny, `403`).
 - **Frontend Work:** None.
@@ -778,7 +778,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 #### Task 6.1.2 — Cross-tenant isolation suite for new tables
 - **Objective:** Extend the cross-tenant leakage suite (pattern established in `apps/api/tests/integration/auth/test_auth_security.py`) to cover every new tenant table from §4.
 - **Dependencies:** All Epic 2–4 backend tasks complete.
-- **Backend Work:** `apps/api/tests/security/test_tenant_isolation_sprint3.py` — for each new resource type, create data under Company A, attempt access as a Company B user, assert `404` (never `403`, per `files/09` §1.4).
+- **Backend Work:** `apps/api/tests/security/test_tenant_isolation_sprint3.py` — for each new resource type, create data under Company A, attempt access as a Company B user, assert `404` (never `403`, per `docs/product/09` §1.4).
 - **Frontend Work:** None.
 - **Database Work:** None (verifies RLS + repository predicates from §4).
 - **API Work:** None (test only).
@@ -861,7 +861,7 @@ These are judgment calls made once, here, so no implementation session has to ma
 
 ### 3.1 Roadmap table
 
-Per-screen summary — Purpose, User, Priority, Dependencies, and the two orderings requested (Design order = when visual/UX design should be finalized; Implementation order = when the build task actually lands, which follows Epic order above and is not always identical to design order since design can run one step ahead per `files/24` §7's "one sprint ahead of the build" rule).
+Per-screen summary — Purpose, User, Priority, Dependencies, and the two orderings requested (Design order = when visual/UX design should be finalized; Implementation order = when the build task actually lands, which follows Epic order above and is not always identical to design order since design can run one step ahead per `docs/product/24` §7's "one sprint ahead of the build" rule).
 
 | # | Screen | Purpose | Primary User | Priority | Dependencies | Design Order | Implementation Order |
 |---|---|---|---|---|---|:--:|:--:|
@@ -879,7 +879,7 @@ Per-screen summary — Purpose, User, Priority, Dependencies, and the two orderi
 | 12 | Payroll Policy | Configure pay cycle and pay-date rules | Company Admin | P0 | Epic 4.4 | 12 | 12 |
 | 13 | Company Dashboard | Landing page showing setup completion + org counts | Company Admin | P0 | Epic 5 (needs data from all above) | 13 | 13 |
 
-**Note on ordering:** unlike a typical sprint where design runs ahead of build, this sprint's design and implementation orders are identical because there is no separate design team/phase in this AI-driven workflow — each screen's design decisions (empty/loading/error/success states, field lists, validation) are specified in this same document, consumed directly by the implementing session. This collapses `files/24` §7's "one sprint ahead" gap intentionally for this project's operating model.
+**Note on ordering:** unlike a typical sprint where design runs ahead of build, this sprint's design and implementation orders are identical because there is no separate design team/phase in this AI-driven workflow — each screen's design decisions (empty/loading/error/success states, field lists, validation) are specified in this same document, consumed directly by the implementing session. This collapses `docs/product/24` §7's "one sprint ahead" gap intentionally for this project's operating model.
 
 ---
 
@@ -903,10 +903,10 @@ Each screen below follows the same 14-attribute template. Screens that share sta
 | **Validation Rules** | Email format (client-side, mirrors `EmailStr` server validation); password non-empty; no client-side password-strength check on login (only on registration/change) |
 | **Empty State** | N/A (form screen, not a list) |
 | **Loading State** | Submit button shows a spinner, disabled during request; no skeleton needed (single-action form) |
-| **Error State** | Invalid credentials → inline banner with the server's `message` (not a generic "something went wrong" — the error envelope's message is display-safe per `files/09` §1.3); account locked → distinct message surfacing the lockout, no countdown timer required this sprint; network failure → distinct "couldn't reach the server" message with retry |
+| **Error State** | Invalid credentials → inline banner with the server's `message` (not a generic "something went wrong" — the error envelope's message is display-safe per `docs/product/09` §1.3); account locked → distinct message surfacing the lockout, no countdown timer required this sprint; network failure → distinct "couldn't reach the server" message with retry |
 | **Success State** | Redirect to `/setup` or `/dashboard` per Task 2.4.2's resume logic |
 | **Accessibility Requirements** | Form labeled correctly (`<label>` associated via `htmlFor`), error banner announced via `aria-live="assertive"`, focus moves to the first invalid field on submit failure, submit reachable via Enter key from either field |
-| **Future Extension Points** | Mobile OTP, MFA challenge, "Forgot password," invitation acceptance — all listed in `files/24` §3.1 but explicitly out of scope this sprint (no backend for any of them exists; not started here) |
+| **Future Extension Points** | Mobile OTP, MFA challenge, "Forgot password," invitation acceptance — all listed in `docs/product/24` §3.1 but explicitly out of scope this sprint (no backend for any of them exists; not started here) |
 
 ---
 
@@ -963,7 +963,7 @@ Each screen below follows the same 14-attribute template. Screens that share sta
 | **Required APIs** | `GET/PATCH /v1/companies/current` (Task 2.5.1), `GET/POST/PATCH /v1/legal-entities` (Task 2.6.1), `GET/PATCH /v1/number-series` (Task 4.5.1, embedded section per 4.5.2) |
 | **Database Tables** | `company`, `legal_entity`, `number_series` |
 | **Components Needed** | `FormSection` × (Company Info, Legal Entity, Employee ID Format), `FormField`s throughout, inline "Add another legal entity" affordance |
-| **Validation Rules** | PAN format regex (`[A-Z]{5}[0-9]{4}[A-Z]{1}`), GSTIN format regex, required-field rules per `files/17` FR-ORG-001/003 |
+| **Validation Rules** | PAN format regex (`[A-Z]{5}[0-9]{4}[A-Z]{1}`), GSTIN format regex, required-field rules per `docs/product/17` FR-ORG-001/003 |
 | **Empty State** | Legal entity section shows an inline empty prompt ("No legal entity yet — add one") if none exists (shouldn't happen post-registration if 2.1.3 seeds one, but must degrade correctly if it doesn't) |
 | **Loading State** | Skeleton form while both `GET` calls resolve |
 | **Error State** | `409 STALE_RESOURCE` on concurrent edit → banner offering to reload latest values (discarding local unsaved changes, with an explicit confirm since this is a data-loss action per the irreversibility principle) |
@@ -990,7 +990,7 @@ Each screen below follows the same 14-attribute template. Screens that share sta
 | **Error State** | List load failure → error panel + retry, preserving any filter state; deactivation blocked (referenced by an active department) → the blocking list shown in the confirm dialog itself, not a separate error page |
 | **Success State** | Toast on create/update/deactivate; new/edited row reflected in the table without a full reload |
 | **Accessibility Requirements** | Real `<table>` semantics per the Directory screen spec's established pattern (`docs/design/screens/01_Employee_List_Directory.md` §11); sortable columns get `aria-sort` |
-| **Future Extension Points** | Interactive geofence map editor (`files/24` §3.4), bulk branch import, multi-branch week-off pattern builder |
+| **Future Extension Points** | Interactive geofence map editor (`docs/product/24` §3.4), bulk branch import, multi-branch week-off pattern builder |
 
 ---
 
@@ -1158,7 +1158,7 @@ Each screen below follows the same 14-attribute template. Screens that share sta
 | **Error State** | Summary fetch failure → error panel + retry, dashboard shell (sidebar/topbar) remains usable |
 | **Success State** | N/A (read-only landing page) |
 | **Accessibility Requirements** | Stat cards use real heading hierarchy (card title as `<h3>`), numbers are not the sole content of a card (each paired with a label) |
-| **Future Extension Points** | Headcount/attrition/compliance/payroll-status widgets once Employee Management, Attendance, Leave, and Payroll modules exist (`files/24` §3.2's full Company Admin dashboard spec) |
+| **Future Extension Points** | Headcount/attrition/compliance/payroll-status widgets once Employee Management, Attendance, Leave, and Payroll modules exist (`docs/product/24` §3.2's full Company Admin dashboard spec) |
 
 
 ---
@@ -1293,7 +1293,7 @@ All models live in one `models.py` under the `organisation` module per `docs/arc
 
 ## 5. API Endpoint Catalogue
 
-Conventions unchanged from `files/09_API_Standards.md`: every response wrapped in `DataEnvelope`/`ListEnvelope`; every mutating endpoint requires `X-Company-Id` (resolved via existing `get_tenant_context`); list endpoints support `page`/`per_page`/`sort`/`filter[...]`/`search` per §1.5 where noted; `PATCH` endpoints on versioned resources require `If-Match`. Base path `/v1`.
+Conventions unchanged from `docs/product/09_API_Standards.md`: every response wrapped in `DataEnvelope`/`ListEnvelope`; every mutating endpoint requires `X-Company-Id` (resolved via existing `get_tenant_context`); list endpoints support `page`/`per_page`/`sort`/`filter[...]`/`search` per §1.5 where noted; `PATCH` endpoints on versioned resources require `If-Match`. Base path `/v1`.
 
 ### 5.1 Company, Registration & Number Series
 
@@ -1400,7 +1400,7 @@ Conventions unchanged from `files/09_API_Standards.md`: every response wrapped i
 
 ## 6. RBAC & Permission Catalogue
 
-Per D12, every code below is granted **only** to the seeded `COMPANY_ADMIN` role this sprint. Codes are namespaced per `files/19` §2 (`<MODULE>.<RESOURCE>.<ACTION>`) and registered in each owning module's `permissions.py`, following the existing `identity/permissions.py` pattern (`B1_PERMISSIONS` list of `(code, domain, description)` tuples consumed by the seed/registration path).
+Per D12, every code below is granted **only** to the seeded `COMPANY_ADMIN` role this sprint. Codes are namespaced per `docs/product/19` §2 (`<MODULE>.<RESOURCE>.<ACTION>`) and registered in each owning module's `permissions.py`, following the existing `identity/permissions.py` pattern (`B1_PERMISSIONS` list of `(code, domain, description)` tuples consumed by the seed/registration path).
 
 | Code | Domain | Description | Granted at |
 |---|---|---|---|
@@ -1428,7 +1428,7 @@ Per D12, every code below is granted **only** to the seeded `COMPANY_ADMIN` role
 |---|:--:|
 | All 15 codes above | ● |
 
-**Data scope for every endpoint this sprint:** `COMPANY` (per `hrms/core/rbac/types.py::DataScopeLevel.COMPANY`, the only scope level meaningfully exercised — `TEAM`/`SELF` scoping has no meaning yet since no employee-linked user exists). No field-level masking rules apply this sprint (`files/19` §6's `RESTRICTED`/`SENSITIVE` classifications govern employee/compensation data, none of which is in scope).
+**Data scope for every endpoint this sprint:** `COMPANY` (per `hrms/core/rbac/types.py::DataScopeLevel.COMPANY`, the only scope level meaningfully exercised — `TEAM`/`SELF` scoping has no meaning yet since no employee-linked user exists). No field-level masking rules apply this sprint (`docs/product/19` §6's `RESTRICTED`/`SENSITIVE` classifications govern employee/compensation data, none of which is in scope).
 
 **Forward-compatibility note:** `LEAVE.*` and `PAYROLL.*` codes are introduced now, living in the `organisation` module's `permissions.py`, so that Sprint 8/9's `leave`/`payroll` modules can import and reuse these exact codes rather than redefining them — when those modules are scaffolded, move the constant definitions (not the semantics) into the new module's own `permissions.py` and update imports; this is a mechanical relocation, not a new design decision.
 
@@ -1463,7 +1463,7 @@ One `OrganisationService` class — the module's sole public interface, per `02_
 
 ### 7.5 Routers (`hrms/modules/organisation/router.py`)
 
-One `APIRouter(prefix="", tags=["organisation"])` (sub-paths as listed in §5, no `/organisation` prefix — resources are top-level per `files/09` §1.1's flat resource convention) mounted in `hrms/app.py` alongside `identity_router` and `health_router`. Thin per `02_Module_Standard.md` §3's router example — one service call per endpoint, no business logic.
+One `APIRouter(prefix="", tags=["organisation"])` (sub-paths as listed in §5, no `/organisation` prefix — resources are top-level per `docs/product/09` §1.1's flat resource convention) mounted in `hrms/app.py` alongside `identity_router` and `health_router`. Thin per `02_Module_Standard.md` §3's router example — one service call per endpoint, no business logic.
 
 ### 7.6 Schemas (`hrms/modules/organisation/schemas.py`)
 

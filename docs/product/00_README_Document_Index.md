@@ -2,7 +2,7 @@
 
 **Version:** 2.0 — restructured for the Python/FastAPI backend architecture decision (2026-08-03).
 Supersedes the v1.0 document set (documents 00–15, NestJS/Node.js-based), archived unedited at
-[`files/.superseded_v1/`](.superseded_v1/) for historical reference. **Do not build against the
+[`docs/archive/superseded-v1-nestjs/`](.superseded_v1/) for historical reference. **Do not build against the
 archived documents — they describe a rejected architecture.**
 
 ---

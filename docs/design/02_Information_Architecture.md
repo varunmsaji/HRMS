@@ -4,11 +4,11 @@
 Status: Foundational. This is the sitemap every route, sidebar and breadcrumb in the product
 derives from.
 
-**Reconciles two existing sources into one canonical tree:** the web IA in `files/24` §2.1–2.2
+**Reconciles two existing sources into one canonical tree:** the web IA in `docs/product/24` §2.1–2.2
 (Dashboard/Employees/Recruitment/… as originally scoped) and the full module/permission catalogue
-in `files/19` §3 (which additionally defines Onboarding, Exit, Workflow, Asset, Expense, Helpdesk,
+in `docs/product/19` §3 (which additionally defines Onboarding, Exit, Workflow, Asset, Expense, Helpdesk,
 Learning as first-class modules). This document is the merged, current answer — supersede
-`files/24` §2 for navigation purposes; `files/24` remains authoritative for screen-level detail and
+`docs/product/24` §2 for navigation purposes; `docs/product/24` remains authoritative for screen-level detail and
 copy rules.
 
 ---
@@ -16,17 +16,17 @@ copy rules.
 ## 1. Design rules behind this IA
 
 1. **Nav reflects how people think about their job, not how tables are named in the database.**
-   "People" not "Employee records"; "Leave" not "Leave application entity" (`files/24` §1.1).
+   "People" not "Employee records"; "Leave" not "Leave application entity" (`docs/product/24` §1.1).
 2. **Lifecycle modules nest under the object they act on.** Onboarding and Exit are moments in an
    employee's lifecycle, not independent destinations — they live inside **People**, reachable both
    from the People section and contextually from an individual's Employee 360° profile
-   (`files/24` §4.1).
+   (`docs/product/24` §4.1).
 3. **Cross-cutting concerns are not top-level nav items.** Approvals and Notifications touch every
    module (leave, expense, asset, recruitment, exit all generate approvals) so they live in the
    **top bar**, not the sidebar — see [`03_Navigation_System.md`](03_Navigation_System.md) §4–5.
    Putting them in the sidebar would force a false choice about which single module they belong to.
 4. **What a role sees is a filter on this same tree, never a different tree.** The IA is one
-   structure; RBAC (`files/19`) determines which branches render for a given user. There is no
+   structure; RBAC (`docs/product/19`) determines which branches render for a given user. There is no
    "HR version" and "employee version" of the sitemap — see §7.
 5. **The Super Admin (platform operator) surface is architecturally separate**, not a branch of the
    tenant sidebar — see §8. A platform operator managing tenants is not "using the HRMS," they're
@@ -147,10 +147,10 @@ Helpdesk                               (ticket submission — icon-level entry; 
 ## 3. Why "People" and not "Employees"
 
 The user-facing prompt for this sprint asks for **People** as the top-level label, which we adopt
-over `files/24`'s original "Employees" for the same reason `files/24` §1.1 states directly: name
+over `docs/product/24`'s original "Employees" for the same reason `docs/product/24` §1.1 states directly: name
 things as people control them, not as the system stores them. "People" reads as the department;
-"Employees" reads as the table. Everything that was under `files/24}`'s Employees section, plus the
-Onboarding and Exit modules from `files/19`, consolidates here because they all act on the same
+"Employees" reads as the table. Everything that was under `docs/product/24}`'s Employees section, plus the
+Onboarding and Exit modules from `docs/product/19`, consolidates here because they all act on the same
 underlying object — a person's record and lifecycle.
 
 ---
@@ -177,7 +177,7 @@ Everything with an approval step ──► Workflow engine ──► Approvals i
 Everything that changes a record ──► Audit log (Settings, and per-record "View audit trail")
 ```
 
-**Design implication:** the Employee 360° profile (`files/24` §4.1) is the hub these relationships
+**Design implication:** the Employee 360° profile (`docs/product/24` §4.1) is the hub these relationships
 converge on — its quick actions ("Apply leave on behalf," "Initiate transfer," "Initiate exit,"
 "Generate letter") are effectively shortcuts into other modules pre-scoped to this one person. Any
 screen that shows a person's name should offer a path back to their 360° profile; this is the one
@@ -206,7 +206,7 @@ mini information architecture in the navigation spec ([`03_Navigation_System.md`
 
 ## 6. Employee Self-Service (ESS) — a subset view, not a separate tree
 
-Per `files/24` §2.2, employees do not get a different sitemap — they get a **reduced view of the
+Per `docs/product/24` §2.2, employees do not get a different sitemap — they get a **reduced view of the
 same tree**, scoped to their own data:
 
 ```
@@ -227,7 +227,7 @@ Policies                 → Settings-authored content, read-only
 Helpdesk                 → ticket submission
 ```
 
-This is a data-scope filter (`files/19` §5), not a UI fork — the same Directory component renders
+This is a data-scope filter (`docs/product/19` §5), not a UI fork — the same Directory component renders
 for HR and for an employee; only the query scope and visible columns differ. This is the mechanism
 that keeps "Future scalability" (§11 of [`00_UI_Vision.md`](00_UI_Vision.md)) real: a new role
 never needs a new screen, only a new scope resolution.
@@ -236,7 +236,7 @@ never needs a new screen, only a new scope resolution.
 
 ## 7. Role-based visibility of top-level nav
 
-Full detail lives in `files/19` §4 (the permission matrix) and
+Full detail lives in `docs/product/19` §4 (the permission matrix) and
 [`04_User_Personas.md`](04_User_Personas.md); this is the IA-level summary — which top-level items
 a role's sidebar renders at all (● = full section, ◐ = scoped subset only, — = absent, not
 disabled):
@@ -264,7 +264,7 @@ role, never a disabled/greyed link (§4 principle 8 of [`00_UI_Vision.md`](00_UI
 
 ## 8. Super Admin: a separate shell, not a branch
 
-The **Super Admin** role operates the platform itself (`files/19` §3.6 `PLATFORM.*` permissions:
+The **Super Admin** role operates the platform itself (`docs/product/19` §3.6 `PLATFORM.*` permissions:
 tenant management, plan management, impersonation, feature flags, system monitoring) — this is not
 "using the HRMS as an admin," it's operating the multi-tenant system the HRMS runs on.
 
@@ -275,7 +275,7 @@ Platform Console (separate from any tenant's sidebar)
 ├─ Tenants                  (list, provision, suspend)
 ├─ Plans & Feature flags
 ├─ System monitoring         (health, jobs, queues)
-├─ Impersonation             (time-boxed, fully logged — files/19 §7)
+├─ Impersonation             (time-boxed, fully logged — docs/product/19 §7)
 └─ Support tools
 ```
 
@@ -294,6 +294,6 @@ complexity that only exists for a handful of internal operators.
   detail for the frontend routing sprint, though it should mirror this tree directly.
 - Per-screen breadcrumb copy — mechanics are defined in
   [`03_Navigation_System.md`](03_Navigation_System.md) §3; exact strings are written screen-by-screen
-  alongside the 185-screen build (`files/24` §3).
-- Helpdesk as a full top-level module — flagged Phase 2 per the confidentiality rules in `files/19`
+  alongside the 185-screen build (`docs/product/24` §3).
+- Helpdesk as a full top-level module — flagged Phase 2 per the confidentiality rules in `docs/product/19`
   §7 (POSH/grievance visibility) and kept as a lightweight top-bar entry point until then.

@@ -1,7 +1,7 @@
 # Backend Package Structure
 
 **Canonical path:** `apps/api/src/hrms/`  
-**Spec reference:** `files/06_Folder_Structure.md`, `files/07_Backend_Architecture.md`
+**Spec reference:** `docs/product/06_Folder_Structure.md`, `docs/product/07_Backend_Architecture.md`
 
 ---
 
@@ -54,7 +54,7 @@ Some guides use alternate folder names. **Use the implemented paths** in code.
 | `core/middleware` | `core/tenancy/middleware.py` + Starlette middleware in `app.py` | |
 | `database/` | `core/db/` + `alembic/` at package root | Migrations live outside package by Alembic convention |
 | `workers/` | `entrypoints/worker.py` + `modules/*/tasks.py` + `core/celery_app.py` | Tasks per module, not a monolithic workers tree |
-| `organization/` | `modules/organisation/` | British spelling per `files/06` |
+| `organization/` | `modules/organisation/` | British spelling per `docs/product/06` |
 | `reports/` | `modules/reporting/` | Per spec module list |
 
 ---
@@ -80,7 +80,7 @@ Planned packages under `modules/` — **create only when building that block**:
 | AI / ML | `ai/` | B9+ |
 | Integration | `integration/` | B5+ |
 
-Sub-packages like `identity/users` are **not used** — one module package with `models.py` / `repository.py` keeps import-linter contracts simple. Split to `models/` package only when a module exceeds ~15 tables (`files/06` §3.2).
+Sub-packages like `identity/users` are **not used** — one module package with `models.py` / `repository.py` keeps import-linter contracts simple. Split to `models/` package only when a module exceeds ~15 tables (`docs/product/06` §3.2).
 
 ---
 

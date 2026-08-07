@@ -8,7 +8,7 @@ visual design is a downstream step against `../01_Design_System.md` tokens.
 "Directory" in-product per the "people, not tables" naming rule (§3 of that document); this spec
 uses "Employee List" and "Directory" interchangeably since that's how the request framed it.
 Listed as **Directory (table + card view) · Filters panel** in the screen inventory
-(`../../../files/24_UIUX_Screen_Inventory_and_Design_System.md` §3.3).
+(`../../product/24_UIUX_Screen_Inventory_and_Design_System.md` §3.3).
 
 **Not a separate screen per role.** Per IA rule 4, this is one component with a data-scope filter
 and a field-visibility mask applied server-side — Company Admin, HR Manager, a Reporting Manager
@@ -52,7 +52,7 @@ Rendered only if the permission exists — absent, not disabled (`../00_UI_Visio
 
 ### 2.2 Row-level actions
 Primary click target on a row/card opens the **Employee 360° profile** (`../04_User_Personas.md`
-persona table; `../../../files/24_UIUX_Screen_Inventory_and_Design_System.md` §4.1) — this is the
+persona table; `../../product/24_UIUX_Screen_Inventory_and_Design_System.md` §4.1) — this is the
 one navigational shortcut allowed to bypass deeper nav (`../02_Information_Architecture.md` §4).
 
 A secondary "⋯" menu per row surfaces contextual shortcuts, each permission-gated independently
@@ -73,7 +73,7 @@ print a letter.
 ## 3. Filters
 
 Filters open in a **dedicated panel** (its own inventoried screen, not an inline row of dropdowns
-— `files/24` §3.3 "Filters panel"), distinct from global search per the nav system's explicit rule
+— `docs/product/24` §3.3 "Filters panel"), distinct from global search per the nav system's explicit rule
 that in-module filtering and cross-system search are different components
 (`../03_Navigation_System.md` §8).
 
@@ -181,7 +181,7 @@ thousands of rows.
 
 Directory is explicitly one of the screens the performance principles name as needing
 **virtualization-first, not classic pagination** — designed assuming 1,000+ rows as the baseline,
-not the edge case (`00_UI_Vision.md` §10, `files/24` §4.2 pattern reused here).
+not the edge case (`00_UI_Vision.md` §10, `docs/product/24` §4.2 pattern reused here).
 
 - **Table view:** windowed/virtualized rendering over a cursor-paginated API — the user scrolls, the
   list fetches the next page transparently as they approach the bottom, sticky header stays pinned.
@@ -222,20 +222,20 @@ Per the rule that the interface never lies about state (`00_UI_Vision.md` §4 pr
 | **Partial load** (e.g. one page of a virtualized scroll fails mid-scroll) | The already-rendered rows stay; a small inline "Couldn't load more — retry" affordance appears at the point of failure, not a full-screen error over data that loaded fine |
 | **Export job fails or times out** | User is notified (via the Notifications system, not a silent failure) with a retry, especially since export runs as a background job and the user may have navigated away |
 | **Bulk action partially fails** (e.g. bulk field update: 18 of 20 succeed) | Never reported as a single pass/fail — the result summary states exactly which records failed and why, per-record, so HR can fix and retry just those |
-| **Stale data-scope cache** | The `REPORTEE_TREE` scope resolution is cached server-side for 60s (`files/19` §5) — if a manager's reporting line just changed, the list may lag up to a minute. Not surfaced as an error; a manual refresh always re-resolves scope, so this is a documented eventual-consistency window, not a bug to design around defensively in the UI |
+| **Stale data-scope cache** | The `REPORTEE_TREE` scope resolution is cached server-side for 60s (`docs/product/19` §5) — if a manager's reporting line just changed, the list may lag up to a minute. Not surfaced as an error; a manual refresh always re-resolves scope, so this is a documented eventual-consistency window, not a bug to design around defensively in the UI |
 | **Offline (mobile/tablet read-only use)** | Last-loaded results remain visible, clearly labeled stale ("Showing cached results — reconnect to refresh"), actions requiring network are disabled with an explanation rather than failing silently on tap |
 
 ---
 
 ## 10. Permissions
 
-Enforced server-side per the access equation in `files/19` §1
+Enforced server-side per the access equation in `docs/product/19` §1
 (`module_enabled ∧ role_has_permission ∧ record_within_data_scope ∧ field_visible_to_role ∧ not
 blocked_by_state`) — the UI's job is to faithfully reflect that, never to be the actual gate
 (`00_UI_Vision.md` §12).
 
-**Row-level (which employees appear at all)** — data scope per `files/19` §5, summarized for this
-screen from the permission matrix (`files/19` §4 "Employee view" row):
+**Row-level (which employees appear at all)** — data scope per `docs/product/19` §5, summarized for this
+screen from the permission matrix (`docs/product/19` §4 "Employee view" row):
 
 | Role | Scope |
 |---|---|
@@ -247,7 +247,7 @@ screen from the permission matrix (`files/19` §4 "Employee view" row):
 | Finance, Auditor | `COMPANY`, read-only (`○`) |
 
 **Column-level (which fields appear per visible row)** — per the field classification in
-`files/19` §6:
+`docs/product/19` §6:
 
 | Classification | Example fields on this screen | Who sees them here |
 |---|---|---|
@@ -256,7 +256,7 @@ screen from the permission matrix (`files/19` §4 "Employee view" row):
 | `SENSITIVE` | Personal mobile/email, address, DOB | HR roles and self only — never a Directory list column, only surfaced inside the 360° profile even for roles allowed to see it, to keep the list itself lower-risk to glance at over someone's shoulder |
 | `RESTRICTED` | CTC, bank details, PAN, Aadhaar | Never rendered on this screen under any role — restricted fields live only behind their own explicit-permission views (Compensation tab, etc.), not in a list |
 
-Masked, not omitted-as-null, per `files/19` §6: if a column configuration would otherwise show a
+Masked, not omitted-as-null, per `docs/product/19` §6: if a column configuration would otherwise show a
 field the role can partially see, it renders in the standard masked format (e.g. bank account
 `******7890`) rather than a blank cell that could be mistaken for missing data.
 

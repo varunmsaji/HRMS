@@ -14,7 +14,7 @@
 | Duplicate `apps/api-py/` | **Removed** | Was empty scaffold |
 | Root npm workspace | **Removed** | Stale `node_modules/` + `package-lock.json` deleted |
 | Frontend | **OK** | `apps/web/` — Next.js 14 |
-| Product specs | **OK** | `files/` v2.0 (FastAPI); v1.0 archived in `files/.superseded_v1/` |
+| Product specs | **OK** | `docs/product/` v2.0 (FastAPI); v1.0 archived in `docs/archive/superseded-v1-nestjs/` |
 | CI | **OK** | `.github/workflows/ci.yml` — ruff, mypy, import-linter, pytest |
 | Docker | **OK** | Postgres 5433, Redis 6380, MinIO 9000/9001 |
 | Developer docs (`docs/`) | **This sprint** | Architecture, database, security, development guides |
@@ -34,8 +34,10 @@ HRMS/
 │   │   ├── tests/
 │   │   └── pyproject.toml
 │   └── web/                 # Next.js frontend
-├── docs/                    # Developer architecture (this tree)
-├── files/                   # Product + engineering spec (source of truth)
+├── docs/
+│   ├── product/             # Product + engineering spec (source of truth)
+│   ├── adr/                 # Architecture Decision Records
+│   └── (architecture, design, development, security, sprints...)
 ├── infra/                   # Postgres init scripts
 ├── scripts/dev.sh           # One-command local start
 └── docker-compose.yml
@@ -47,12 +49,12 @@ HRMS/
 
 | Pattern | Where found | Action |
 |---------|-------------|--------|
-| NestJS / Nest | `files/` migration docs, `README.md` historical notes | **Keep** — documents migration; not implementation |
-| Prisma | `files/`, `docs/adr/0013–0015`, one Alembic comment | **Keep in ADRs**; comment is historical |
-| BullMQ | `files/`, `docs/adr/0014` | **Keep** — explains Celery choice |
+| NestJS / Nest | `docs/product/` migration docs, `README.md` historical notes | **Keep** — documents migration; not implementation |
+| Prisma | `docs/product/`, `docs/adr/0013–0015`, one Alembic comment | **Keep in ADRs**; comment is historical |
+| BullMQ | `docs/product/`, `docs/adr/0014` | **Keep** — explains Celery choice |
 | `apps/api-py/` | — | **Removed** |
 | `@hrms/api` npm package | — | **Removed** with root `node_modules` |
-| `dependency-cruiser` | `files/`, superseded v1 | Replaced by `import-linter` in CI |
+| `dependency-cruiser` | `docs/product/`, superseded v1 | Replaced by `import-linter` in CI |
 | TypeScript **backend** | None in `apps/api/` | N/A — frontend TS is correct |
 
 **No actionable NestJS/Prisma runtime artifacts remain in the codebase.**
@@ -91,5 +93,5 @@ HRMS/
 
 1. **Do not** recreate `apps/api-py` or a second Python package.
 2. **Do not** add NestJS, Prisma, or BullMQ.
-3. **Use** `docs/` for how-to-build; **use** `files/` for what-to-build.
+3. **Use** `docs/` for how-to-build; **use** `docs/product/` for what-to-build.
 4. **Next sprint:** Block B1 — `modules/identity/` + `core/auth/` per [Auth Architecture](../security/Auth_Architecture.md).

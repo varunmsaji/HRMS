@@ -2,7 +2,7 @@
 
 **Replaces:** BullMQ (Node.js)  
 **Chosen system:** **Celery + Redis** (broker and result backend)  
-**Spec reference:** `files/11_Background_Job_Architecture.md`, `files/04` §3
+**Spec reference:** `docs/product/11_Background_Job_Architecture.md`, `docs/product/04` §3
 
 ---
 
@@ -64,7 +64,7 @@ def ping() -> str:
 | Retries | `autoretry_for`, `max_retries`, exponential backoff |
 | Permanent failure | Task marked failed; row in `job_log` (planned) |
 | Poison messages | Max retries then dead-letter queue / alert |
-| Payroll | Never silent fail — alert + block payment (`files/16` runbook 1) |
+| Payroll | Never silent fail — alert + block payment (`docs/product/16` runbook 1) |
 | Outbox | At-least-once delivery; consumers must be idempotent (ADR-0012) |
 
 ---
@@ -91,7 +91,7 @@ Single beat instance in production (ECS service count = 1).
 | OpenTelemetry | Trace propagation via `opentelemetry-instrumentation-celery` |
 | Grafana | Queue depth, task latency dashboards |
 | Sentry | Worker exceptions with same `request_id` / `company_id` tags |
-| Alerts | Oldest task age, worker heartbeat missing (`files/16` §6) |
+| Alerts | Oldest task age, worker heartbeat missing (`docs/product/16` §6) |
 
 ---
 

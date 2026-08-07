@@ -17,7 +17,7 @@ this now rather than leaving it to whoever builds the first screen.
 
 Most B2B SaaS products default to one of: (a) generic blue-on-white, indistinguishable from every
 competitor, or (b) an over-designed consumer palette that fights the actual job — reading a
-40-column payroll table for two hours. `files/24` §1.2 explicitly calls out the risk of the
+40-column payroll table for two hours. `docs/product/24` §1.2 explicitly calls out the risk of the
 default "system-font-everywhere" sameness and asks for a deliberate choice. Here it is, with the
 reasoning.
 
@@ -27,7 +27,7 @@ reasoning.
 
 | System | Role | Why separate |
 |---|---|---|
-| **Neutral scale** | Backgrounds, borders, dividers, body text, disabled states — the surface that 90% of the UI is built from | This product is dominated by dense tabular data (`files/24` D1). A neutral scale that is genuinely neutral (not a tinted "warm gray" or "cool gray" that fights every other color placed on it) is what makes a 12-column attendance matrix legible for hours at a stretch. Tinted neutrals are a common mistake — they look fine in isolation and muddy every semantic color placed against them. |
+| **Neutral scale** | Backgrounds, borders, dividers, body text, disabled states — the surface that 90% of the UI is built from | This product is dominated by dense tabular data (`docs/product/24` D1). A neutral scale that is genuinely neutral (not a tinted "warm gray" or "cool gray" that fights every other color placed on it) is what makes a 12-column attendance matrix legible for hours at a stretch. Tinted neutrals are a common mistake — they look fine in isolation and muddy every semantic color placed against them. |
 | **Brand hue** | Primary actions only: primary buttons, active nav state, focus rings, links, selected states | Spending the brand color everywhere dilutes it to decoration. Reserving it exclusively for "the thing you can click that matters most on this screen" makes it functional — a user's eye learns that the brand color *is* the action color, which speeds up scanning dense screens. This is the same discipline Linear and Notion use, and it is exactly what an enterprise tool full of secondary/tertiary content needs. |
 | **Semantic set** | Status meaning: success/approved, warning/pending, danger/rejected, info, plus HRMS-specific states (absent, on-leave, holiday, half-day, work-from-home) | These carry meaning independent of brand or navigation. They must remain legible and distinguishable regardless of what brand hue a future white-label tenant might request, so they are defined as their own closed set, never derived from the brand hue. |
 
@@ -40,12 +40,12 @@ Reasoning:
 
 - **Trust without cliché.** Blue is the safe, expected choice for enterprise software (banks, HR
   platforms, productivity tools) precisely because it reads as stable and non-alarming over long,
-  repeated use — this is a tool opened forty times a month (`files/24` §1.2), not a landing page
+  repeated use — this is a tool opened forty times a month (`docs/product/24` §1.2), not a landing page
   competing for a five-second first impression. Pure novelty color choices fatigue users who live
   in the product daily.
 - **Indigo over pure blue** shifts the hue slightly toward violet, which is what keeps the palette
   from reading as "generic SaaS blue" while staying inside the same trust register. It's the
-  restrained differentiation `files/24` asks for without gambling on an unusual hue that could
+  restrained differentiation `docs/product/24` asks for without gambling on an unusual hue that could
   clash with the semantic red/green/amber set.
 - **Desaturated, not vivid.** A fully saturated indigo fights for attention against the semantic
   colors that need to stand out (red for rejected, amber for pending). Desaturating the brand hue
@@ -60,7 +60,7 @@ branding — see §11.
 
 ### 1.4 The semantic set: legible without color alone
 
-`files/24` §1.2 makes this a hard requirement, not a nice-to-have: **attendance calendars and
+`docs/product/24` §1.2 makes this a hard requirement, not a nice-to-have: **attendance calendars and
 status indicators must carry meaning through shape/pattern/glyph as well as hue**, because (a)
 color-blind users need it and (b) HR teams still print things in grayscale.
 
@@ -86,7 +86,7 @@ Considered and rejected: a warmer, rounder palette (oranges, warm neutrals) in t
 consumer productivity apps. Rejected because the product's stated personality (§5 of
 [`00_UI_Vision.md`](00_UI_Vision.md)) is "precise, calm, direct" — a warm palette reads as casual,
 which undersells the product in front of the compliance officers, finance controllers and auditors
-who are real users of this system (`files/19` Auditor role) and who judge trustworthiness partly by
+who are real users of this system (`docs/product/19` Auditor role) and who judge trustworthiness partly by
 visual register.
 
 ---
@@ -95,7 +95,7 @@ visual register.
 
 ### 2.1 The requirement that drives the choice
 
-`files/24` §1.2 is explicit: payroll and attendance are number-dense, so **lining tabular figures
+`docs/product/24` §1.2 is explicit: payroll and attendance are number-dense, so **lining tabular figures
 are non-negotiable** — every digit must occupy the same width so columns of numbers align without
 the eye having to hunt. This single requirement eliminates most default system-font choices, which
 either lack tabular figures entirely or require them to be enabled per-context (easy to forget on
@@ -106,8 +106,8 @@ one of 185 screens).
 | Role | Family | Why |
 |---|---|---|
 | **Body / UI (default)** | A grotesk sans with true tabular lining figures as a built-in feature, not an OpenType feature nobody remembers to enable (e.g., Inter, IBM Plex Sans, or a comparable metrics-compatible alternative selected in the component sprint) | Neutral, highly legible at small sizes (12–14px table rows), designed for interface use rather than editorial reading, wide language support for future locales. |
-| **Display (headers, empty states, dashboard hero numbers)** | A distinct but related display face, used sparingly | `files/24` §1.2 explicitly warns against the "default system-font-everywhere" sameness. A small, deliberate departure in headers and empty-state illustration text gives the product a recognizable identity at the moments a user actually looks up from the data — without touching the 95% of the UI that is body/table text, where consistency matters more than personality. |
-| **Numeric-heavy contexts (payslip breakdown, pay run figures)** | Body family, tabular-lining variant, at a slightly increased letter-spacing for amount columns | Money is the highest-stakes content in the product (`files/24` §4.3). It gets the most conservative, most legible treatment — no display face ever touches a currency figure. |
+| **Display (headers, empty states, dashboard hero numbers)** | A distinct but related display face, used sparingly | `docs/product/24` §1.2 explicitly warns against the "default system-font-everywhere" sameness. A small, deliberate departure in headers and empty-state illustration text gives the product a recognizable identity at the moments a user actually looks up from the data — without touching the 95% of the UI that is body/table text, where consistency matters more than personality. |
+| **Numeric-heavy contexts (payslip breakdown, pay run figures)** | Body family, tabular-lining variant, at a slightly increased letter-spacing for amount columns | Money is the highest-stakes content in the product (`docs/product/24` §4.3). It gets the most conservative, most legible treatment — no display face ever touches a currency figure. |
 
 ### 2.3 Type scale
 
@@ -126,7 +126,7 @@ how inconsistency creeps in:
 | `text-3xl` | 40px | Reserved: empty states, marketing-adjacent surfaces (careers page, offer acceptance) |
 
 Base size is **14px, not 16px** — a deliberate departure from typical web defaults, because this is
-a data-density-first product (`files/24` D1) viewed primarily on 1024–1440px+ desktop monitors
+a data-density-first product (`docs/product/24` D1) viewed primarily on 1024–1440px+ desktop monitors
 (§9 of `00_UI_Vision.md`), and 16px body text measurably reduces the number of table columns and
 rows visible without scrolling. Line height compensates (1.5 for body, 1.3 for table rows) to
 protect legibility at the smaller base.
@@ -141,7 +141,7 @@ screens.**
 - Admin/HR pages that are primarily forms or dashboards respect the 1280px max width with centered
   content — matching human reading-line-length expectations for forms.
 - Admin/HR pages that are primarily tables (Attendance Matrix, Directory, Payroll reports) go
-  **full-bleed** at widths above 1440px — `files/24` §6 explicitly states "no max-width stretching
+  **full-bleed** at widths above 1440px — `docs/product/24` §6 explicitly states "no max-width stretching
   of dense data screens" at that breakpoint, because a payroll table gains real value from every
   extra visible column, while prose gains nothing from extra width.
 - Gutter: 24px at desktop, 16px at tablet, 16px at mobile — kept in a 4px-multiple relationship with
@@ -168,7 +168,7 @@ screens.**
 needs — a table row that must fit an approve/reject action pair, a status pill and three data
 columns in one 36px-tall row needs 4px-granular control over internal padding. Every spacing value
 in the entire system is a multiple of 4px, no exceptions, which is what keeps 185 screens built by
-different sessions of AI-assisted development (`files/01` §2) visually consistent without a human
+different sessions of AI-assisted development (`docs/product/01` §2) visually consistent without a human
 eyeballing every screen.
 
 ---
@@ -228,7 +228,7 @@ second icon family.**
 
 ## 8. Animation
 
-**Motion is restricted to state transitions and loading feedback — no ambient animation** (`files/24`
+**Motion is restricted to state transitions and loading feedback — no ambient animation** (`docs/product/24`
 §1.2, and Performance principles in `00_UI_Vision.md` §10).
 
 | Token | Duration | Easing | Use |
@@ -236,7 +236,7 @@ second icon family.**
 | `motion-instant` | 100ms | ease-out | Hover states, focus rings |
 | `motion-fast` | 150ms | ease-in-out | Button press feedback, checkbox/toggle state change |
 | `motion-base` | 200ms | ease-in-out | Dropdown/popover open-close, tab switch |
-| `motion-slow` | 300ms | ease-in-out | Modal/drawer enter-exit, approval-card swipe-away (`files/24` §4.5) |
+| `motion-slow` | 300ms | ease-in-out | Modal/drawer enter-exit, approval-card swipe-away (`docs/product/24` §4.5) |
 
 - No motion durations above 300ms anywhere — this is a tool opened dozens of times a month; slow
   chrome is a tax paid every single time.
@@ -251,7 +251,7 @@ second icon family.**
 
 Light mode is the **primary, default mode** — this is a desktop-first, office-context enterprise
 tool (§9, `00_UI_Vision.md`), and light mode remains the norm in that context (print/screenshot
-parity with payslips and reports also favors light-on-dark-text as the default, per `files/24`
+parity with payslips and reports also favors light-on-dark-text as the default, per `docs/product/24`
 §4.3's password-protected, printable-in-one-page PDF requirement).
 
 | Layer | Treatment |
@@ -268,7 +268,7 @@ parity with payslips and reports also favors light-on-dark-text as the default, 
 
 Dark mode is a **first-class, fully designed second mode** — not an inverted-filter afterthought —
 because shift-based and field workforce users (security, logistics, manufacturing verticals the
-product targets per `files/01`) often use the mobile app in low-light conditions, and because
+product targets per `docs/product/01`) often use the mobile app in low-light conditions, and because
 enterprise buyers increasingly expect it as table stakes.
 
 | Layer | Treatment |

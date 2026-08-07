@@ -78,4 +78,4 @@ Employee, recruitment, payroll, attendance modules.
 
 - [Auth Architecture](../security/Auth_Architecture.md)
 - [SPRINT0 Foundation](../SPRINT0_FOUNDATION.md)
-- Product spec: `files/10_Authentication_Architecture.md`, `files/19_RBAC_and_Permission_Matrix.md`
+- Product spec: `docs/product/10_Authentication_Architecture.md`, `docs/product/19_RBAC_and_Permission_Matrix.md`

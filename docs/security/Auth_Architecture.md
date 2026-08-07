@@ -1,6 +1,6 @@
 # Authentication & Authorization Architecture
 
-**Developer guide** — full spec: `files/10_Authentication_Architecture.md`, `files/19_RBAC_and_Permission_Matrix.md`
+**Developer guide** — full spec: `docs/product/10_Authentication_Architecture.md`, `docs/product/19_RBAC_and_Permission_Matrix.md`
 
 **Implementation status:** Block B1 complete — `core/auth/`, `core/rbac/`, `core/audit/`, `modules/identity/`.
 
@@ -58,10 +58,10 @@ Refresh rotation: each refresh invalidates previous token; reuse of old token re
 
 | Concept | Implementation |
 |---------|----------------|
-| Permission codes | `MODULE.RESOURCE.ACTION` — catalogue in `files/19` |
+| Permission codes | `MODULE.RESOURCE.ACTION` — catalogue in `docs/product/19` |
 | Roles | Per-company `role` + `user_role` |
 | Route guard | `Depends(require_permission("EMPLOYEE.VIEW"))` |
-| Data scope | `DataScope` — self, team, branch, company (`files/19` §4) |
+| Data scope | `DataScope` — self, team, branch, company (`docs/product/19` §4) |
 | Field security | RESTRICTED fields masked unless explicit permission |
 | Cache | Redis permission bitmap per user+company (TTL short) |
 
@@ -80,7 +80,7 @@ Refresh rotation: each refresh invalidates previous token; reuse of old token re
 
 ## 6. MFA (future — interface now)
 
-- TOTP + SMS OTP (`files/10` §2).
+- TOTP + SMS OTP (`docs/product/10` §2).
 - Mandatory for Super Admin / Company Admin.
 - `mfa_enabled` on `user`; secrets encrypted at column level.
 - Login flow: password OK → `mfa_required` response → second step.
@@ -107,7 +107,7 @@ Refresh rotation: each refresh invalidates previous token; reuse of old token re
 ## 9. Security rules (non-negotiable)
 
 - Lockout after 5 failures / 15 min — no account enumeration.
-- Impersonation: audited, time-limited, blocked on payroll finalise (`files/10` §7).
+- Impersonation: audited, time-limited, blocked on payroll finalise (`docs/product/10` §7).
 - Deactivated user: sessions revoked within 60 seconds.
 - Cross-tenant resource ID → 404 always.
 
@@ -115,6 +115,6 @@ Refresh rotation: each refresh invalidates previous token; reuse of old token re
 
 ## 10. Related documents
 
-- `files/14_Security_Architecture.md`
+- `docs/product/14_Security_Architecture.md`
 - [ADR-001 FastAPI backend](../adr/ADR-001-FastAPI-as-Core-Backend.md)
 - [Module standard](02_Module_Standard.md) — `permissions.py` per module

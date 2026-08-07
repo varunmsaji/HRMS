@@ -1,7 +1,7 @@
 # Module Architecture Standard
 
 Every business module under `src/hrms/modules/<name>/` follows the same shape.
-**Spec reference:** `files/06` §3.1, `files/07` §1.
+**Spec reference:** `docs/product/06` §3.1, `docs/product/07` §1.
 
 ---
 
@@ -116,7 +116,7 @@ class LeaveRepository:
 | `router.py` | `tests/unit/modules/<name>/test_router.py` |
 | `repository.py` | `tests/integration/modules/<name>/test_repository.py` |
 
-Payroll, RBAC, tenancy: **≥95% coverage** (`files/05` §4).
+Payroll, RBAC, tenancy: **≥95% coverage** (`docs/product/05` §4).
 
 ---
 

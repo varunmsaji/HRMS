@@ -42,7 +42,7 @@
 |------|--------|
 | `docs/adr/README.md` | Index Sprint 0 ADRs + numbering guide |
 | `README.md` | Link to `docs/README.md` |
-| `files/27_Architecture_Migration_Summary.md` | Repo state (prior session) |
+| `docs/product/27_Architecture_Migration_Summary.md` | Repo state (prior session) |
 
 ---
 
@@ -87,9 +87,9 @@
 ## 6. Document hierarchy
 
 ```text
-files/     → WHAT to build (product spec, signed baseline)
-docs/      → HOW to build (architecture for developers & AI agents)
-docs/adr/  → WHY decisions were made
+docs/product/  → WHAT to build (product spec, signed baseline)
+docs/          → HOW to build (architecture for developers & AI agents)
+docs/adr/      → WHY decisions were made
 ```
 
 Both trees must stay aligned on stack: **FastAPI, SQLAlchemy, Alembic, Celery, PostgreSQL 16** — not NestJS, Prisma, or BullMQ.

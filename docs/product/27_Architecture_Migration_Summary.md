@@ -9,7 +9,7 @@ before writing the first line of production FastAPI code.
 
 This document closes the documentation audit requested when the backend stack was changed from
 NestJS/Node.js to Python/FastAPI. Documents 01–16 are the **updated source of truth**; v1.0
-documents are archived at [`files/.superseded_v1/`](.superseded_v1/) and must not be used for
+documents are archived at [`docs/archive/superseded-v1-nestjs/`](.superseded_v1/) and must not be used for
 implementation.
 
 ---
@@ -99,7 +99,7 @@ Phase 1 (Doc 04 §3), separate AI microservice for Phase 1 (Doc 12 §2).
 
 ### 3.3 Archived (do not implement)
 
-All files in [`files/.superseded_v1/`](.superseded_v1/) — original indices 00–15.
+All files in [`docs/archive/superseded-v1-nestjs/`](.superseded_v1/) — original indices 00–15.
 
 ---
 
@@ -272,10 +272,10 @@ contracts unless explicitly noted in Doc 09 change log.
 
 ## 10. Verification Checklist (Documentation Complete?)
 
-- [x] All 16 requested architecture documents exist in v2.0 form under `files/`
+- [x] All 16 requested architecture documents exist in v2.0 form under `docs/product/`
 - [x] Stack-independent business docs renumbered and cross-referenced
 - [x] ADRs 0013–0015 accepted; 0001 and 0012 amended
-- [x] v1.0 archived under `files/.superseded_v1/`
+- [x] v1.0 archived under `docs/archive/superseded-v1-nestjs/`
 - [x] Celery chosen with documented comparison (Doc 04 §3)
 - [x] Enterprise FastAPI folder structure and DI specified (Doc 06, 07)
 - [x] Multi-tenancy, audit, events, jobs, auth mechanics documented

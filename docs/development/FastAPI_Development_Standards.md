@@ -1,7 +1,7 @@
 # FastAPI Development Standards
 
 **Operational guide for daily development.**  
-**Canonical standard:** `files/05_Development_Standards.md`
+**Canonical standard:** `docs/product/05_Development_Standards.md`
 
 ---
 
@@ -41,7 +41,7 @@
 | Router | Never build error JSON manually |
 | Unexpected | Log + Sentry + generic 500 envelope (no stack trace to client) |
 
-Envelope format: `files/09` §1.3 — `ErrorEnvelope` with `code`, `message`, `details`, `request_id`.
+Envelope format: `docs/product/09` §1.3 — `ErrorEnvelope` with `code`, `message`, `details`, `request_id`.
 
 ---
 
@@ -128,5 +128,5 @@ uv run pytest
 ## 11. Related
 
 - [AI Coding Guidelines](AI_Coding_Guidelines.md)
-- `files/09_API_Standards.md`
+- `docs/product/09_API_Standards.md`
 - `apps/api/README.md`

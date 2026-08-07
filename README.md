@@ -1,41 +1,43 @@
 # HRMS Platform
 
 Enterprise multi-tenant HRMS — modular monolith on **Python 3.12 / FastAPI**, PostgreSQL 16,
-Redis 7, and Celery. The canonical specification lives in [`files/`](files/00_README_Document_Index.md).
+Redis 7, and Celery. The canonical specification lives in [`docs/product/`](docs/product/00_README_Document_Index.md).
 Read the document index first; it maps every spec file and lists open client questions that block
 specific modules.
 
 **Developer architecture (Sprint 0):** [`docs/README.md`](docs/README.md) — how to build on FastAPI.  
-**Product spec:** [`files/00_README_Document_Index.md`](files/00_README_Document_Index.md) — what to build.
+**Product spec:** [`docs/product/00_README_Document_Index.md`](docs/product/00_README_Document_Index.md) — what to build.
 
 **Stack decision (v2.0):** the backend is a single Python codebase (API, workers, device
-ingestion, AI/ML) — not NestJS/Node.js. See [Product Vision §2](files/01_Product_Vision.md) and
-[Migration Summary](files/27_Architecture_Migration_Summary.md).
+ingestion, AI/ML) — not NestJS/Node.js. See [Product Vision §2](docs/product/01_Product_Vision.md) and
+[Migration Summary](docs/product/27_Architecture_Migration_Summary.md).
 
 ## Read order for a new developer
 
-1. [`files/00_README_Document_Index.md`](files/00_README_Document_Index.md) — map and assumptions
-2. [`files/01_Product_Vision.md`](files/01_Product_Vision.md) — what and why
-3. [`files/03_System_Architecture.md`](files/03_System_Architecture.md) — deployables and tenancy
-4. [`files/04_Technology_Stack.md`](files/04_Technology_Stack.md) — official stack
-5. [`files/06_Folder_Structure.md`](files/06_Folder_Structure.md) + [`07_Backend_Architecture.md`](files/07_Backend_Architecture.md)
-6. [`files/08_Database_Architecture.md`](files/08_Database_Architecture.md) — data model
-7. [`files/17_SRS_Phase1_Core_Modules.md`](files/17_SRS_Phase1_Core_Modules.md) — pick your module
-8. [`files/09_API_Standards.md`](files/09_API_Standards.md) — REST conventions
-9. [`files/19_RBAC_and_Permission_Matrix.md`](files/19_RBAC_and_Permission_Matrix.md) — permissions
-10. [`files/13_DevOps_Architecture.md`](files/13_DevOps_Architecture.md) — CI/CD and local dev
+1. [`docs/product/00_README_Document_Index.md`](docs/product/00_README_Document_Index.md) — map and assumptions
+2. [`docs/product/01_Product_Vision.md`](docs/product/01_Product_Vision.md) — what and why
+3. [`docs/product/03_System_Architecture.md`](docs/product/03_System_Architecture.md) — deployables and tenancy
+4. [`docs/product/04_Technology_Stack.md`](docs/product/04_Technology_Stack.md) — official stack
+5. [`docs/product/06_Folder_Structure.md`](docs/product/06_Folder_Structure.md) + [`07_Backend_Architecture.md`](docs/product/07_Backend_Architecture.md)
+6. [`docs/product/08_Database_Architecture.md`](docs/product/08_Database_Architecture.md) — data model
+7. [`docs/product/17_SRS_Phase1_Core_Modules.md`](docs/product/17_SRS_Phase1_Core_Modules.md) — pick your module
+8. [`docs/product/09_API_Standards.md`](docs/product/09_API_Standards.md) — REST conventions
+9. [`docs/product/19_RBAC_and_Permission_Matrix.md`](docs/product/19_RBAC_and_Permission_Matrix.md) — permissions
+10. [`docs/product/13_DevOps_Architecture.md`](docs/product/13_DevOps_Architecture.md) — CI/CD and local dev
 
-Migrating from the archived NestJS docs? Start with [`files/27_Architecture_Migration_Summary.md`](files/27_Architecture_Migration_Summary.md).
+Migrating from the archived NestJS docs? Start with [`docs/product/27_Architecture_Migration_Summary.md`](docs/product/27_Architecture_Migration_Summary.md).
 
 ## Repo layout (target — Document 06)
 
 ```
 apps/
-  api/          Python/FastAPI backend (sole backend — no NestJS / no api-py)
-  web/          Next.js 14 frontend (local dev shell)
-docs/adr/       Architecture Decision Records
-infra/          Postgres init scripts, Terraform (Document 13)
-files/          Canonical spec documents (change control: Document 00 §7)
+  api/            Python/FastAPI backend (sole backend — no NestJS / no api-py)
+  web/            Next.js 14 frontend (local dev shell)
+docs/
+  product/        Canonical spec documents (change control: Document 00 §7)
+  adr/            Architecture Decision Records
+  archive/        Superseded specs + original source PDFs (historical reference only)
+infra/            Postgres init scripts, Terraform (Document 13)
 ```
 
 ### Scaffold status
@@ -123,6 +125,6 @@ Additional repo conventions when Python scaffold lands:
 
 ## Documentation
 
-- Spec set: [`files/00_README_Document_Index.md`](files/00_README_Document_Index.md)
+- Spec set: [`docs/product/00_README_Document_Index.md`](docs/product/00_README_Document_Index.md)
 - ADRs: [`docs/adr/`](docs/adr/README.md)
-- Archived v1.0 (NestJS) specs: [`files/.superseded_v1/`](files/.superseded_v1/) — do not implement
+- Archived v1.0 (NestJS) specs: [`docs/archive/superseded-v1-nestjs/`](docs/archive/superseded-v1-nestjs/) — do not implement

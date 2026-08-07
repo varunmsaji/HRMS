@@ -1,31 +1,12 @@
 # Architecture Decision Records
 
-Two numbering styles coexist:
-
-| Series | Purpose |
-|--------|---------|
-| **ADR-001 … ADR-005** | Sprint 0 summaries — quick onboarding ([below](#sprint-0-summary-adrs)) |
-| **0001 … 0015** | Full decision records — business rules + migration detail |
-
 Developer index: [`docs/README.md`](../README.md)  
-Product architecture: `files/03_System_Architecture.md`  
-Migration closure: [`files/27_Architecture_Migration_Summary.md`](../../files/27_Architecture_Migration_Summary.md)
+Product architecture: `../product/03_System_Architecture.md`  
+Migration closure: [`../product/27_Architecture_Migration_Summary.md`](../product/27_Architecture_Migration_Summary.md)
 
 ---
 
-## Sprint 0 summary ADRs
-
-| Document | Title | Detail ADR |
-|----------|-------|------------|
-| [ADR-001](ADR-001-FastAPI-as-Core-Backend.md) | FastAPI as core backend | [0013](0013-fastapi-python-backend.md) |
-| [ADR-002](ADR-002-PostgreSQL-as-Primary-Database.md) | PostgreSQL as primary database | [0002](0002-postgres-rls-multitenancy.md), [0015](0015-sqlalchemy-alembic-orm.md) |
-| [ADR-003](ADR-003-Modular-Monolith-Architecture.md) | Modular monolith | [0001](0001-modular-monolith.md) |
-| [ADR-004](ADR-004-AI-Service-Architecture.md) | AI service architecture | [0009](0009-ai-non-blocking.md) |
-| [ADR-005](ADR-005-Background-Job-Architecture.md) | Background jobs (Celery) | [0014](0014-celery-redis-job-queue.md) |
-
----
-
-## Numbered ADRs (0001–0015)
+## ADRs (0001–0015)
 
 | # | Title | Status |
 |---|---|---|

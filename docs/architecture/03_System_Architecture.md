@@ -1,8 +1,8 @@
 # System Architecture (FastAPI)
 
 **Version:** Sprint 0 — developer guide  
-**Authoritative product architecture:** `files/03_System_Architecture.md`  
-**Stack detail:** `files/04_Technology_Stack.md`
+**Authoritative product architecture:** `docs/product/03_System_Architecture.md`  
+**Stack detail:** `docs/product/04_Technology_Stack.md`
 
 ---
 
@@ -27,7 +27,7 @@
 
 ## 2. Deployable processes (modular monolith)
 
-One Docker image, four entrypoints (`files/03` §1.1):
+One Docker image, four entrypoints (`docs/product/03` §1.1):
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -78,7 +78,7 @@ sequenceDiagram
     Router-->>Client: DataEnvelope JSON
 ```
 
-Steps map to `files/07` §2.1: each step is a `Depends()` or middleware — not NestJS guards.
+Steps map to `docs/product/07` §2.1: each step is a `Depends()` or middleware — not NestJS guards.
 
 ---
 
@@ -91,7 +91,7 @@ Steps map to `files/07` §2.1: each step is a `Depends()` or middleware — not 
 - **Money** as `BIGINT` minor units + `currency` column (never float).
 - **Effective-dated** child tables with `EXCLUDE USING gist` overlap prevention.
 
-Detail: [Database Architecture](../database/Database_Architecture.md), `files/08`.
+Detail: [Database Architecture](../database/Database_Architecture.md), `docs/product/08`.
 
 ---
 
@@ -111,7 +111,7 @@ API request (e.g. parse resume)
 Hosted LLM calls (OpenAI, Claude, Gemini) from worker or API with timeout budgets.
 Classical ML (scikit-learn, XGBoost) for scoring/matching runs in workers.
 
-Detail: `files/12_AI_Architecture.md`, [ADR-004](../adr/ADR-004-AI-Service-Architecture.md).
+Detail: `docs/product/12_AI_Architecture.md`, [ADR-004](../adr/ADR-004-AI-Service-Architecture.md).
 
 ---
 
@@ -143,7 +143,7 @@ Domain event (e.g. LeaveApproved)
 
 Modules request sends via `shared/notifications_client/` → `notification.service` (planned B5).
 
-Detail: `files/20_Workflow_Approval_Notification_Engine.md`.
+Detail: `docs/product/20_Workflow_Approval_Notification_Engine.md`.
 
 ---
 
@@ -152,7 +152,7 @@ Detail: `files/20_Workflow_Approval_Notification_Engine.md`.
 - **Next.js** (`apps/web/`) calls API at `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`).
 - JWT in memory (web); refresh token HttpOnly cookie (planned B1).
 - Every mutating request: `Authorization`, `X-Company-Id`, `X-Request-Id`.
-- API contract: `files/09_API_Standards.md`, OpenAPI at `/v1/openapi.json`.
+- API contract: `docs/product/09_API_Standards.md`, OpenAPI at `/v1/openapi.json`.
 
 ---
 
@@ -172,4 +172,4 @@ npm run dev → scripts/dev.sh → API :8000 + Web :3000
 | Module layout | [01_Backend_Structure.md](01_Backend_Structure.md) |
 | Auth | [../security/Auth_Architecture.md](../security/Auth_Architecture.md) |
 | Jobs | [04_Background_Job_Architecture.md](04_Background_Job_Architecture.md) |
-| Full data dictionary | `files/08_Database_Architecture.md` |
+| Full data dictionary | `docs/product/08_Database_Architecture.md` |

@@ -19,9 +19,10 @@ hrms/
 │   ├── web/                 # Next.js 14 frontend (unchanged, Document 24)
 │   └── mobile/               # React Native/Expo app (unchanged, Document 24)
 ├── infra/                    # Terraform, Docker Compose, Postgres init scripts (Document 13)
-├── docs/
-│   └── adr/                  # Architecture Decision Records
-└── files/                    # This canonical spec document set
+└── docs/
+    ├── product/               # This canonical spec document set
+    ├── adr/                   # Architecture Decision Records
+    └── archive/               # Superseded specs + original source PDFs
 ```
 
 This document covers `apps/api/` — the Python backend monorepo, which itself contains the four
