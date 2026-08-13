@@ -18,6 +18,7 @@ from hrms.core.db.models.identity import (
     UserRole,
 )
 from hrms.modules.identity.permissions import B1_PERMISSIONS
+from hrms.modules.organisation.permissions import ORGANISATION_PERMISSIONS
 from hrms.seed.constants import (
     ADMIN_EMAIL,
     ADMIN_USER_ID,
@@ -49,7 +50,7 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
             )
 
     permission_rows: dict[str, Permission] = {}
-    for code, domain, description in B1_PERMISSIONS:
+    for code, domain, description in [*B1_PERMISSIONS, *ORGANISATION_PERMISSIONS]:
         row = (
             await session.execute(select(Permission).where(Permission.code == code))
         ).scalar_one_or_none()
@@ -135,7 +136,7 @@ async def clear_b1_seed(session: AsyncSession) -> None:
         )
     )
     await session.execute(delete(Role).where(Role.company_id.in_(company_ids)))
-    for code, _, _ in B1_PERMISSIONS:
+    for code, _, _ in [*B1_PERMISSIONS, *ORGANISATION_PERMISSIONS]:
         await session.execute(delete(Permission).where(Permission.code == code))
     await session.execute(delete(Company).where(Company.id.in_(company_ids)))
     await session.flush()
@@ -150,9 +151,7 @@ async def _ensure_role(
     is_system: bool,
 ) -> Role:
     row = (
-        await session.execute(
-            select(Role).where(Role.company_id == company_id, Role.code == code)
-        )
+        await session.execute(select(Role).where(Role.company_id == company_id, Role.code == code))
     ).scalar_one_or_none()
     if row is not None:
         return row
@@ -218,9 +217,7 @@ async def _ensure_user_company(
     return row
 
 
-async def _ensure_user_role(
-    session: AsyncSession, user_company_id: UUID, role_id: UUID
-) -> None:
+async def _ensure_user_role(session: AsyncSession, user_company_id: UUID, role_id: UUID) -> None:
     exists = (
         await session.execute(
             select(UserRole).where(

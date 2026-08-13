@@ -1,11 +1,35 @@
-from datetime import datetime
+from datetime import datetime, time
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    Time,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from hrms.core.db.base import Base, TimestampMixin
+
+
+def _default_working_days_pattern() -> list[dict[str, Any]]:
+    return [
+        {"day": "MON", "is_working": True},
+        {"day": "TUE", "is_working": True},
+        {"day": "WED", "is_working": True},
+        {"day": "THU", "is_working": True},
+        {"day": "FRI", "is_working": True},
+        {"day": "SAT", "is_working": False},
+        {"day": "SUN", "is_working": False},
+    ]
 
 
 class Company(Base, TimestampMixin):
@@ -15,10 +39,41 @@ class Company(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(200))
     legal_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     subdomain: Mapped[str | None] = mapped_column(String(63), nullable=True)
+    industry_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     country_code: Mapped[str] = mapped_column(String(2), default="IN")
     currency: Mapped[str] = mapped_column(String(3), default="INR")
     timezone: Mapped[str] = mapped_column(String(50), default="Asia/Kolkata")
+    fy_start_month: Mapped[int] = mapped_column(SmallInteger, default=4)
+    logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    theme_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="TRIAL")
+    onboarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data_region: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    registration_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    company_size: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    address_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    address_postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    address_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    locale_language_code: Mapped[str] = mapped_column(String(10), default="en-IN")
+    date_format: Mapped[str] = mapped_column(String(20), default="DD/MM/YYYY")
+    working_days_pattern: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=_default_working_days_pattern
+    )
+    business_hours_start: Mapped[time | None] = mapped_column(Time, nullable=True)
+    business_hours_end: Mapped[time | None] = mapped_column(Time, nullable=True)
+    created_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
 
@@ -30,6 +85,8 @@ class User(Base, TimestampMixin):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0)

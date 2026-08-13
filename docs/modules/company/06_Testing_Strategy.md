@@ -113,13 +113,15 @@ Covered primarily by §2.1 above (the blocking automated suite). Additionally, m
 
 ## 7. Edge Cases
 
-| Edge case | Expected behaviour |
-|---|---|
-| Two registrations racing for the same `subdomain` simultaneously | DB unique constraint is the final backstop even if the application-layer `subdomain_exists` check races — the loser gets `409`, never a duplicate row (test forces the race with concurrent DB sessions, not just sequential calls) |
-| Trial expiring at exactly `sweep_trial_expirations`'s boundary instant | `trial_ends_at = now()` (equal, not less-than) is treated consistently — pin the `<` vs `<=` decision in a test, don't leave it ambiguous |
-| Timezone change requested while a future module reports a locked period | Currently a documented no-op guard ([02_Domain_Model.md §5.5](02_Domain_Model.md#5-validation-rules--business-invariants)) — test asserts the hook is *called* (even though it currently always allows), so wiring in the real guard later is a one-line change verified by an existing test, not a new code path |
-| Malformed/oversized `theme_json` | Rejected at the schema layer with a clear `422`, never reaches Postgres |
-| `fiscal_year.start_month` out of range (`0`, `13`) | `422` before any write |
-| Feature flag conflict: `overrides_plan=false` row somehow enables a feature outside the plan (e.g. the plan itself changes after the flag was written) | `get_subscription_summary`'s resolution logic re-evaluates against the *current* plan on every read, so a stale flag never silently grants access — test changes the plan underneath an existing flag and asserts the feature reports disabled |
-| Concurrent `PATCH` and `transition_status` on the same company | Both go through the same `version`-guarded update path — one wins, the other gets `409`, no lost update |
-| A company with `status = SUSPENDED` calling `PATCH /companies/current` | Blocked at the service layer (write-blocked per [02_Domain_Model.md §7.1](02_Domain_Model.md#71-companystatus-state-machine)) even though the caller has valid `ORG.COMPANY.MANAGE` — test distinguishes this `403`/`423` from the permission-denied case so client error messaging can differ |
+| Edge case | Expected behaviour | Owning task |
+|---|---|---|
+| Two registrations racing for the same `subdomain` simultaneously | DB unique constraint is the final backstop even if the application-layer `subdomain_exists` check races — the loser gets `409`, never a duplicate row (test forces the race with concurrent DB sessions, not just sequential calls) | C-08 |
+| Trial expiring at exactly `sweep_trial_expirations`'s boundary instant | `trial_ends_at = now()` (equal, not less-than) is treated consistently — pin the `<` vs `<=` decision in a test, don't leave it ambiguous | C-13 |
+| Timezone change requested while a future module reports a locked period | Currently a documented no-op guard ([02_Domain_Model.md §5.5](02_Domain_Model.md#5-validation-rules--business-invariants)) — test asserts the hook is *called* (even though it currently always allows), so wiring in the real guard later is a one-line change verified by an existing test, not a new code path | C-09 |
+| Malformed/oversized `theme_json` | Rejected at the schema layer with a clear `422`, never reaches Postgres | C-09 |
+| `fiscal_year.start_month` out of range (`0`, `13`) | `422` before any write | C-09 |
+| Feature flag conflict: `overrides_plan=false` row somehow enables a feature outside the plan (e.g. the plan itself changes after the flag was written) | `get_subscription_summary`'s resolution logic re-evaluates against the *current* plan on every read, so a stale flag never silently grants access — test changes the plan underneath an existing flag and asserts the feature reports disabled | C-11 (already explicit in the backlog) |
+| Concurrent `PATCH` and `transition_status` on the same company | Both go through the same `version`-guarded update path — one wins, the other gets `409`, no lost update | C-13 (exercises both `update_company_profile` from C-09 and `transition_status` from C-13) |
+| A company with `status = SUSPENDED` calling `PATCH /companies/current` | Blocked at the service layer (write-blocked per [02_Domain_Model.md §7.1](02_Domain_Model.md#71-companystatus-state-machine)) even though the caller has valid `ORG.COMPANY.MANAGE` — test distinguishes this `403`/`423` from the permission-denied case so client error messaging can differ | C-09 |
+
+**Audit finding:** previously only one row here (feature-flag drift) was cross-referenced to an owning backlog task; the "Owning task" column above closes that gap so each edge case has a task whose "Testing required" line it belongs under — the task descriptions in `07_Implementation_Backlog.md` were not rewritten to enumerate them individually to keep this document's structure unchanged.

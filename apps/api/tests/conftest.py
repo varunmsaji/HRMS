@@ -16,12 +16,14 @@ from entrypoints.api import app
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import dispose_engine
+from hrms.shared.rate_limit import close_rate_limiter
 
 
 @pytest.fixture(autouse=True)
 async def reset_db_engine() -> None:
     yield
     await dispose_engine()
+    await close_rate_limiter()
     get_settings.cache_clear()
 
 

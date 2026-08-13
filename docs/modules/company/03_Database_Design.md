@@ -127,7 +127,7 @@ No `deleted_at` — this row's lifecycle is bound 1:1 to its `company` row (neve
 | `created_at` / `updated_at` | TIMESTAMPTZ | Standard |
 | `version` | INTEGER | NOT NULL, DEFAULT `1` |
 
-Seed data, not user-created (`docs/database/Database_Architecture.md` §9 — "seed data ... loaded via a seed script rather than Alembic"). No `company_id` — this is a platform catalogue shared by every tenant, structurally identical to how `statutory_master` is global reference data per `docs/product/08`.
+Seed data, not user-created (`docs/product/08_Database_Architecture.md` §14 — "seed data ... loaded via a seed script rather than Alembic — seeds are data, not schema"). No `company_id` — this is a platform catalogue shared by every tenant, structurally identical to how `statutory_master` is global reference data per `docs/product/08`.
 
 ## 5. `plan_feature` (global reference data)
 
@@ -194,12 +194,12 @@ Alembic migrations, in dependency order (autogenerate for routine adds, hand-wri
 
 1. **`company` fix-drift migration** — bring `hrms/core/db/models/identity.py::Company` in sync with the already-deployed SQL schema (no DB change, model-only — see backlog Task C-01). Must land first so every later migration autogenerates cleanly against a non-drifted model.
 2. **`company` gap-fill migration** — `ALTER TABLE company ADD COLUMN ...` for every column in §2.2, plus the two new `CHECK` constraints on `fy_start_month` and `status` noted in §2.1 (added `NOT VALID` then `VALIDATE CONSTRAINT` in a following step per the large-table-safe pattern, even though `company` is low-cardinality — consistency with the documented convention). Plus the two new indexes in §2.5.
-3. **`plan` + `plan_feature`** — new tables, no RLS. Followed by a seed script (not a migration) populating the initial plan catalogue (e.g. `FREE_TRIAL`, `STANDARD`, `ENTERPRISE`) — actual plan definitions are a product/pricing decision outside this design doc's scope.
-4. **`company_setup_progress`** — new table + RLS policy in the same migration (hand-written SQL block, per convention).
-5. **`subscription`** — new table + RLS policy + partial unique index. Depends on `plan` existing (step 3).
+3. **`company_setup_progress`** — new table + RLS policy in the same migration (hand-written SQL block, per convention).
+4. **`plan` + `plan_feature`** — new tables, no RLS. Followed by a seed script (not a migration) populating the initial plan catalogue (e.g. `FREE_TRIAL`, `STANDARD`, `ENTERPRISE`) — actual plan definitions are a product/pricing decision outside this design doc's scope.
+5. **`subscription`** — new table + RLS policy + partial unique index. Depends on `plan` existing (step 4).
 6. **`company_feature_flag`** — new table + RLS policy.
 
-Each RLS-bearing table added here must also add its table name to the `FOREACH tbl IN ARRAY [...]` loop in `scripts/sql/002_row_level_security.sql` (or an equivalent follow-up SQL file per the existing convention of keeping that script as the canonical RLS registry).
+Each RLS-bearing table added here enables and enforces RLS **inline in that table's own migration** — `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `ALTER TABLE ... FORCE ROW LEVEL SECURITY`, `DROP POLICY IF EXISTS ... ; CREATE POLICY ...` inside the migration's `op.execute()` block, matching the pattern already established by `alembic/versions/20260803200000_b1_auth_audit.py` (the `audit_log` table). `scripts/sql/002_row_level_security.sql` is not invoked by any migration in the current codebase (only `001_init_schema.sql` is run by Alembic) and must not be treated as a live RLS registry — do not add new tables to it.
 
 ---
 

@@ -75,9 +75,7 @@ class IdentityRepository:
 
     async def revoke_session(self, session: AsyncSession, session_id: UUID) -> None:
         await session.execute(
-            update(Session)
-            .where(Session.id == session_id)
-            .values(revoked_at=datetime.now(UTC))
+            update(Session).where(Session.id == session_id).values(revoked_at=datetime.now(UTC))
         )
 
     async def create_refresh_token(
@@ -157,7 +155,5 @@ class IdentityRepository:
 
     async def reset_failed_login(self, session: AsyncSession, user_id: UUID) -> None:
         await session.execute(
-            update(User)
-            .where(User.id == user_id)
-            .values(failed_login_count=0, locked_until=None)
+            update(User).where(User.id == user_id).values(failed_login_count=0, locked_until=None)
         )

@@ -1,6 +1,6 @@
 # Company Module — Overview
 
-**Status:** Design — first business module of Version 1.
+**Status:** Implemented (C-01–C-12: registration, profile, setup progress, subscription/feature-flag summary, dashboard — see `07_Implementation_Backlog.md`'s status table); C-13–C-15 (trial-expiry sweep, settings cache, domain events) remain open. First business module of Version 1.
 **Bounded context:** `Company` (tenant root aggregate).
 **Physical package:** `apps/api/src/hrms/modules/organisation/` — see [§3 Boundaries](#3-boundaries) for why this domain does not get its own top-level package.
 **Depends on:** Sprint 0 (foundation), Sprint B1 (`docs/SPRINT_B1_IDENTITY.md` — auth, JWT, RBAC engine, multi-tenancy, audit).

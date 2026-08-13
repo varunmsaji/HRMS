@@ -73,7 +73,7 @@ class IdentityService:
         elif not any(m.company_id == active_company_id for m in memberships):
             raise InvalidCredentialsError("Invalid email or password")
 
-        return await self._issue_tokens(
+        return await self.issue_tokens_for(
             user_id=user.id,
             company_id=active_company_id,
             companies=company_summaries,
@@ -114,7 +114,7 @@ class IdentityService:
                     CompanySummary(id=company.id, name=company.name, is_primary=m.is_primary)
                 )
 
-        return await self._issue_tokens(
+        return await self.issue_tokens_for(
             user_id=record.user_id,
             company_id=record.company_id,
             companies=summaries,
@@ -162,7 +162,7 @@ class IdentityService:
             raise NotFoundError("Resource not found")
         return CompanyDetail(id=company.id, name=company.name, status=company.status)
 
-    async def _issue_tokens(
+    async def issue_tokens_for(
         self,
         *,
         user_id: UUID,
