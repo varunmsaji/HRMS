@@ -2,6 +2,7 @@ import {
   Briefcase,
   Building,
   Building2,
+  Clock,
   Landmark,
   LayoutDashboard,
   Layers,
@@ -26,5 +27,6 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/app/departments", label: "Departments", icon: Network },
   { href: "/app/designations", label: "Designations", icon: Briefcase },
   { href: "/app/grades", label: "Grades", icon: Layers },
+  { href: "/app/shifts", label: "Shifts", icon: Clock },
   { href: "/app/setup", label: "Setup", icon: ListChecks },
 ];

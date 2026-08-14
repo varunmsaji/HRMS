@@ -26,6 +26,7 @@ from hrms.modules.organisation.models import (
     LegalEntity,
     Plan,
     PlanFeature,
+    Shift,
     Subscription,
 )
 
@@ -637,5 +638,55 @@ class OrganisationRepository:
             )
             .values(**values, version=expected_version + 1, updated_at=now)
             .returning(Grade)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def insert_shift(self, session: AsyncSession, *, data: dict[str, Any]) -> Shift:
+        row = Shift(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_shifts(self, session: AsyncSession, *, company_id: UUID) -> list[Shift]:
+        stmt = (
+            select(Shift)
+            .where(Shift.company_id == company_id, Shift.deleted_at.is_(None))
+            .order_by(Shift.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_shift(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+    ) -> Shift | None:
+        # `company_id` is filtered explicitly here (not just relied on via RLS) — the same
+        # belt-and-suspenders convention as `get_grade`, so a guessed `{id}` for another
+        # tenant's row still resolves to nothing.
+        stmt = select(Shift).where(
+            Shift.id == shift_id,
+            Shift.company_id == company_id,
+            Shift.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update_shift(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        shift_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> Shift | None:
+        stmt = (
+            update(Shift)
+            .where(
+                Shift.id == shift_id,
+                Shift.company_id == company_id,
+                Shift.version == expected_version,
+                Shift.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(Shift)
         )
         return (await session.execute(stmt)).scalar_one_or_none()

@@ -1,6 +1,7 @@
 """Business logic for the organisation module — the public interface for other modules."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -12,6 +13,8 @@ from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import ConflictError, NotFoundError, ValidationError
+from hrms.modules.employee.permissions import EMPLOYEE_PERMISSIONS
+from hrms.modules.identity.permissions import EMPLOYEE_VIEW
 from hrms.modules.identity.schemas import CompanySummary, TokenResponseData
 from hrms.modules.identity.service import IdentityService
 from hrms.modules.organisation.exceptions import (
@@ -27,6 +30,8 @@ from hrms.modules.organisation.exceptions import (
     InvalidGradeError,
     InvalidLegalEntityError,
     InvalidParentDepartmentError,
+    InvalidShiftHoursRangeError,
+    InvalidShiftTimeRangeError,
     InvalidWorkingDaysError,
     LegalEntityDeactivationBlockedError,
     StaleResourceError,
@@ -39,6 +44,7 @@ from hrms.modules.organisation.permissions import (
     ORG_DESIGNATION_MANAGE,
     ORG_GRADE_MANAGE,
     ORG_LEGAL_ENTITY_MANAGE,
+    ORG_SHIFT_MANAGE,
 )
 from hrms.modules.organisation.repository import OrganisationRepository
 from hrms.modules.organisation.schemas import (
@@ -68,6 +74,9 @@ from hrms.modules.organisation.schemas import (
     PlanSummary,
     SetupStepDefinition,
     SetupStepSummary,
+    ShiftCreate,
+    ShiftRead,
+    ShiftUpdate,
     SubscriptionSummary,
     branch_to_audit_dict,
     branch_to_read,
@@ -76,6 +85,7 @@ from hrms.modules.organisation.schemas import (
     build_designation_update_values,
     build_grade_update_values,
     build_legal_entity_update_values,
+    build_shift_update_values,
     build_update_values,
     company_to_profile_read,
     count_working_days,
@@ -89,6 +99,8 @@ from hrms.modules.organisation.schemas import (
     legal_entity_to_read,
     profile_to_audit_dict,
     setup_progress_to_summary,
+    shift_to_audit_dict,
+    shift_to_read,
 )
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
 
@@ -252,6 +264,29 @@ class OrganisationService:
             domain="ORG",
             description="Manage grades",
         )
+        shift_manage_perm = await self._repo.get_or_create_permission(
+            self._session,
+            code=ORG_SHIFT_MANAGE,
+            domain="ORG",
+            description="Manage shifts",
+        )
+        employee_view_perm = await self._repo.get_or_create_permission(
+            self._session,
+            code=EMPLOYEE_VIEW,
+            domain="EMPLOYEE",
+            description="View employees within scope",
+        )
+        # `EMPLOYEE_PERMISSIONS` (employee/permissions.py) — granted here, not just seeded,
+        # because this is the live registration path every real company goes through
+        # (`seed/bootstrap.py` only seeds two fixed demo companies). Without this, a newly
+        # registered company's own admin would have zero EMPLOYEE.* access, matching the same
+        # pattern every organisation-module permission already follows in this method.
+        employee_permission_rows = [
+            await self._repo.get_or_create_permission(
+                self._session, code=code, domain=domain, description=description
+            )
+            for code, domain, description in EMPLOYEE_PERMISSIONS
+        ]
 
         role = await self._repo.insert_role(
             self._session,
@@ -282,6 +317,16 @@ class OrganisationService:
         await self._repo.insert_role_permission(
             self._session, role_id=role.id, permission_id=grade_manage_perm.id
         )
+        await self._repo.insert_role_permission(
+            self._session, role_id=role.id, permission_id=shift_manage_perm.id
+        )
+        await self._repo.insert_role_permission(
+            self._session, role_id=role.id, permission_id=employee_view_perm.id
+        )
+        for perm in employee_permission_rows:
+            await self._repo.insert_role_permission(
+                self._session, role_id=role.id, permission_id=perm.id
+            )
         await self._repo.insert_user_role(
             self._session, user_company_id=user_company.id, role_id=role.id
         )
@@ -1450,9 +1495,235 @@ class OrganisationService:
             user_agent=user_agent,
         )
 
+    def _validate_shift_time_range(self, *, is_cross_midnight: bool, start: str, end: str) -> None:
+        """Task 4.2.1's own documented rule (docs/modules/shift-rules/
+        00_SHIFT_RULES_AUDIT.md §6.2): `end_time` before `start_time` is only valid when
+        `is_cross_midnight=true`."""
+        if end <= start and not is_cross_midnight:
+            raise InvalidShiftTimeRangeError()
+
+    def _validate_shift_hours_range(
+        self, half_day_threshold_hours: Decimal | None, min_hours_full_day: Decimal | None
+    ) -> None:
+        """Task 4.2.1's own documented rule (docs/modules/shift-rules/
+        00_SHIFT_RULES_AUDIT.md §6.3): `half_day_threshold_hours` must be less than
+        `min_hours_full_day` when both are present."""
+        if (
+            half_day_threshold_hours is not None
+            and min_hours_full_day is not None
+            and half_day_threshold_hours >= min_hours_full_day
+        ):
+            raise InvalidShiftHoursRangeError()
+
+    async def create_shift(
+        self,
+        company_id: UUID,
+        body: ShiftCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftRead:
+        self._validate_shift_time_range(
+            is_cross_midnight=body.is_cross_midnight,
+            start=body.start_time,
+            end=body.end_time,
+        )
+        self._validate_shift_hours_range(body.half_day_threshold_hours, body.min_hours_full_day)
+
+        now = datetime.now(UTC)
+        shift_id = uuid4()
+        shift = await self._repo.insert_shift(
+            self._session,
+            data={
+                "id": shift_id,
+                "company_id": company_id,
+                "name": body.name,
+                "code": body.code,
+                "start_time": _parse_time(body.start_time),
+                "end_time": _parse_time(body.end_time),
+                "break_minutes_paid": body.break_minutes_paid,
+                "break_minutes_unpaid": body.break_minutes_unpaid,
+                "grace_in_minutes": body.grace_in_minutes,
+                "grace_out_minutes": body.grace_out_minutes,
+                "half_day_threshold_hours": body.half_day_threshold_hours,
+                "min_hours_full_day": body.min_hours_full_day,
+                "is_night_shift": body.is_night_shift,
+                "is_cross_midnight": body.is_cross_midnight,
+                "is_ot_eligible": body.is_ot_eligible,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        read = shift_to_read(shift)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_CREATED",
+            entity_type="shift",
+            entity_id=shift_id,
+            after=shift_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_shifts(self, company_id: UUID) -> list[ShiftRead]:
+        shifts = await self._repo.list_shifts(self._session, company_id=company_id)
+        return [shift_to_read(shift) for shift in shifts]
+
+    async def get_shift(self, company_id: UUID, shift_id: UUID) -> ShiftRead:
+        shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
+        if shift is None:
+            raise NotFoundError("Resource not found")
+        return shift_to_read(shift)
+
+    async def update_shift(
+        self,
+        company_id: UUID,
+        shift_id: UUID,
+        patch: ShiftUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftRead:
+        shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
+        if shift is None:
+            raise NotFoundError("Resource not found")
+
+        effective_cross_midnight = (
+            patch.is_cross_midnight
+            if "is_cross_midnight" in patch.model_fields_set and patch.is_cross_midnight is not None
+            else shift.is_cross_midnight
+        )
+        effective_start = (
+            patch.start_time
+            if "start_time" in patch.model_fields_set
+            else _format_time(shift.start_time)
+        )
+        effective_end = (
+            patch.end_time if "end_time" in patch.model_fields_set else _format_time(shift.end_time)
+        )
+        assert effective_start is not None
+        assert effective_end is not None
+        self._validate_shift_time_range(
+            is_cross_midnight=effective_cross_midnight,
+            start=effective_start,
+            end=effective_end,
+        )
+
+        effective_half_day = (
+            patch.half_day_threshold_hours
+            if "half_day_threshold_hours" in patch.model_fields_set
+            else shift.half_day_threshold_hours
+        )
+        effective_min_hours = (
+            patch.min_hours_full_day
+            if "min_hours_full_day" in patch.model_fields_set
+            else shift.min_hours_full_day
+        )
+        self._validate_shift_hours_range(effective_half_day, effective_min_hours)
+
+        before_read = shift_to_read(shift)
+        # Captured before `update_shift` runs below: that `UPDATE ... RETURNING`
+        # auto-synchronizes the session's identity map, mutating this same already-loaded
+        # `shift` instance in place (same gotcha documented on `update_grade`) — reading
+        # `.is_active` off it afterwards would silently observe the *new* value.
+        was_active_before = shift.is_active
+
+        # No documented dependency-blocking rule applies to Shift deactivation this slice
+        # (FR-ORG-014's only named blocker — active employees — can't be checked since
+        # Employee doesn't exist; see docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md §6.4).
+        deactivating = patch.is_active is False and was_active_before is True
+
+        values = build_shift_update_values(patch)
+        if not values:
+            return before_read
+
+        now = datetime.now(UTC)
+        updated = await self._repo.update_shift(
+            self._session,
+            company_id=company_id,
+            shift_id=shift_id,
+            values=values,
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            current = await self._repo.get_shift(
+                self._session, company_id=company_id, shift_id=shift_id
+            )
+            if current is None:
+                raise NotFoundError("Resource not found")
+            current_read = shift_to_read(current)
+            raise StaleResourceError(
+                "This shift has been modified by another request",
+                current=shift_to_audit_dict(current_read),
+            )
+
+        after_read = shift_to_read(updated)
+        action = (
+            "SHIFT_DEACTIVATED"
+            if deactivating
+            else "SHIFT_REACTIVATED"
+            if patch.is_active is True and was_active_before is False
+            else "SHIFT_UPDATED"
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="shift",
+            entity_id=shift_id,
+            before=shift_to_audit_dict(before_read),
+            after=shift_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def deactivate_shift(
+        self,
+        company_id: UUID,
+        shift_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftRead:
+        """Semantic wrapper around `update_shift` for `DELETE /shifts/{id}` — never a hard
+        delete (FR-ORG-014); flips `is_active` to False via the same business-rule path
+        (audit, optimistic concurrency)."""
+        return await self.update_shift(
+            company_id,
+            shift_id,
+            ShiftUpdate(is_active=False),
+            expected_version=expected_version,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
 
 def _format_optional_timestamp(value: datetime | None) -> str | None:
     if value is None:
         return None
     iso = value.isoformat()
     return iso.replace("+00:00", "Z")
+
+
+def _format_time(value: time | None) -> str | None:
+    if value is None:
+        return None
+    return value.strftime("%H:%M")
+
+
+def _parse_time(value: str) -> time:
+    hour, minute = value.split(":")
+    return time(int(hour), int(minute))

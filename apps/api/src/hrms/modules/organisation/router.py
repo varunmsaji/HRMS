@@ -18,6 +18,7 @@ from hrms.modules.organisation.permissions import (
     ORG_DESIGNATION_MANAGE,
     ORG_GRADE_MANAGE,
     ORG_LEGAL_ENTITY_MANAGE,
+    ORG_SHIFT_MANAGE,
 )
 from hrms.modules.organisation.schemas import (
     BranchCreate,
@@ -40,6 +41,9 @@ from hrms.modules.organisation.schemas import (
     LegalEntityCreate,
     LegalEntityRead,
     LegalEntityUpdate,
+    ShiftCreate,
+    ShiftRead,
+    ShiftUpdate,
     SubscriptionSummary,
 )
 from hrms.modules.organisation.service import OrganisationService
@@ -541,6 +545,90 @@ async def deactivate_grade(
     data = await service.deactivate_grade(
         tenant.company_id,
         grade_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/shifts", status_code=status.HTTP_200_OK)
+async def list_shifts(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> ListEnvelope[ShiftRead]:
+    data = await service.list_shifts(tenant.company_id)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/shifts", status_code=status.HTTP_201_CREATED)
+async def create_shift(
+    body: ShiftCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> DataEnvelope[ShiftRead]:
+    data = await service.create_shift(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/shifts/{shift_id}", status_code=status.HTTP_200_OK)
+async def get_shift(
+    shift_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> DataEnvelope[ShiftRead]:
+    data = await service.get_shift(tenant.company_id, shift_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.patch("/shifts/{shift_id}", status_code=status.HTTP_200_OK)
+async def update_shift(
+    shift_id: UUID,
+    body: ShiftUpdate,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> DataEnvelope[ShiftRead]:
+    data = await service.update_shift(
+        tenant.company_id,
+        shift_id,
+        body,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete("/shifts/{shift_id}", status_code=status.HTTP_200_OK)
+async def deactivate_shift(
+    shift_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> DataEnvelope[ShiftRead]:
+    """Soft deactivation only (FR-ORG-014 — never hard-delete); returns the updated
+    resource with `is_active=false` rather than 204, matching this API's envelope
+    convention."""
+    data = await service.deactivate_shift(
+        tenant.company_id,
+        shift_id,
         expected_version=int(if_match),
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,

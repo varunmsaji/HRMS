@@ -37,6 +37,15 @@ ORG_DESIGNATION_MANAGE = "ORG.DESIGNATION.MANAGE"
 # `department_id` field requiring only ORG.DESIGNATION.MANAGE, not ORG.DEPARTMENT.MANAGE.
 ORG_GRADE_MANAGE = "ORG.GRADE.MANAGE"
 
+# docs/sprints/SPRINT_3_COMPANY_FOUNDATION.md:1416 defines and uses this exact code in the
+# ORG domain (matching where `shift` actually lives — the `organisation` module owns it as
+# org-setup config this slice). docs/product/19_RBAC_and_Permission_Matrix.md:56-58 instead
+# places shift management under `ATTENDANCE.SHIFT_MANAGE` — resolved the same way this
+# series already resolved the Legal Entity naming conflict: the Sprint doc is the more
+# recent, module-scoped, implementation-precise source. See
+# docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md §7.
+ORG_SHIFT_MANAGE = "ORG.SHIFT.MANAGE"
+
 ORGANISATION_PERMISSIONS = [
     (ORG_COMPANY_MANAGE, "ORG", "Manage company settings"),
     (DASHBOARD_COMPANY_VIEW, "DASHBOARD", "View company dashboard"),
@@ -45,4 +54,5 @@ ORGANISATION_PERMISSIONS = [
     (ORG_DEPARTMENT_MANAGE, "ORG", "Manage departments"),
     (ORG_DESIGNATION_MANAGE, "ORG", "Manage designations"),
     (ORG_GRADE_MANAGE, "ORG", "Manage grades"),
+    (ORG_SHIFT_MANAGE, "ORG", "Manage shifts"),
 ]

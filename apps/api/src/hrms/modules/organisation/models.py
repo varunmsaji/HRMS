@@ -1,11 +1,21 @@
 """ORM models owned by the organisation module."""
 
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Time,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -213,6 +223,38 @@ class Designation(Base, TimestampMixin):
     )
     title: Mapped[str] = mapped_column(String(150))
     code: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class Shift(Base, TimestampMixin):
+    """A shift master definition (FR-ATT-001; docs/sprints/SPRINT_3_COMPANY_FOUNDATION.md
+    Decision D5, Task 4.2.1) — timings, breaks, grace, and OT-eligibility only. No
+    assignment/roster/rotation-pattern data (D5 — that's an Attendance-module concern,
+    Sprint 7). `week_off_pattern_id` is intentionally absent — `week_off_pattern` itself was
+    never built (deferred by the Branch slice's own Task 3.1.3, never picked up since); see
+    docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md §2.4."""
+
+    __tablename__ = "shift"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    code: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+    break_minutes_paid: Mapped[int] = mapped_column(Integer, default=0)
+    break_minutes_unpaid: Mapped[int] = mapped_column(Integer, default=0)
+    grace_in_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    grace_out_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    half_day_threshold_hours: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
+    min_hours_full_day: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
+    is_night_shift: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_cross_midnight: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_ot_eligible: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)

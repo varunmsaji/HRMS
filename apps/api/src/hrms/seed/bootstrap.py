@@ -17,6 +17,7 @@ from hrms.core.db.models.identity import (
     UserCompany,
     UserRole,
 )
+from hrms.modules.employee.permissions import EMPLOYEE_PERMISSIONS
 from hrms.modules.identity.permissions import B1_PERMISSIONS
 from hrms.modules.organisation.permissions import ORGANISATION_PERMISSIONS
 from hrms.seed.constants import (
@@ -50,7 +51,11 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
             )
 
     permission_rows: dict[str, Permission] = {}
-    for code, domain, description in [*B1_PERMISSIONS, *ORGANISATION_PERMISSIONS]:
+    for code, domain, description in [
+        *B1_PERMISSIONS,
+        *ORGANISATION_PERMISSIONS,
+        *EMPLOYEE_PERMISSIONS,
+    ]:
         row = (
             await session.execute(select(Permission).where(Permission.code == code))
         ).scalar_one_or_none()
@@ -136,7 +141,7 @@ async def clear_b1_seed(session: AsyncSession) -> None:
         )
     )
     await session.execute(delete(Role).where(Role.company_id.in_(company_ids)))
-    for code, _, _ in [*B1_PERMISSIONS, *ORGANISATION_PERMISSIONS]:
+    for code, _, _ in [*B1_PERMISSIONS, *ORGANISATION_PERMISSIONS, *EMPLOYEE_PERMISSIONS]:
         await session.execute(delete(Permission).where(Permission.code == code))
     await session.execute(delete(Company).where(Company.id.in_(company_ids)))
     await session.flush()

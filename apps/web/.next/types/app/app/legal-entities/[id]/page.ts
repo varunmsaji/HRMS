@@ -1,4 +1,4 @@
-// File: /media/varun/varun3/work/staff-spectrum/HRMS/apps/web/src/app/app/legal-entities/[id]/page.tsx
+// File: /media/varun/varun4/work/staff-spectrum/HRMS/apps/web/src/app/app/legal-entities/[id]/page.tsx
 import * as entry from '../../../../../../src/app/app/legal-entities/[id]/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

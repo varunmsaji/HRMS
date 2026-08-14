@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         Designation,
         Grade,
         LegalEntity,
+        Shift,
     )
     from hrms.modules.organisation.repository import OrganisationRepository
 
@@ -970,4 +971,108 @@ def build_grade_update_values(patch: GradeUpdate) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for field in patch.model_fields_set:
         values[field] = getattr(patch, field)
+    return values
+
+
+_TIME_PATTERN = r"^\d{2}:\d{2}$"
+
+
+class ShiftCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    code: str | None = Field(default=None, max_length=30)
+    start_time: str = Field(pattern=_TIME_PATTERN)
+    end_time: str = Field(pattern=_TIME_PATTERN)
+    break_minutes_paid: int = Field(default=0, ge=0)
+    break_minutes_unpaid: int = Field(default=0, ge=0)
+    grace_in_minutes: int = Field(default=0, ge=0)
+    grace_out_minutes: int = Field(default=0, ge=0)
+    half_day_threshold_hours: Decimal | None = Field(default=None, ge=0)
+    min_hours_full_day: Decimal | None = Field(default=None, ge=0)
+    is_night_shift: bool = False
+    is_cross_midnight: bool = False
+    is_ot_eligible: bool = False
+
+
+class ShiftUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    code: str | None = Field(default=None, max_length=30)
+    start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    end_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    break_minutes_paid: int | None = Field(default=None, ge=0)
+    break_minutes_unpaid: int | None = Field(default=None, ge=0)
+    grace_in_minutes: int | None = Field(default=None, ge=0)
+    grace_out_minutes: int | None = Field(default=None, ge=0)
+    half_day_threshold_hours: Decimal | None = Field(default=None, ge=0)
+    min_hours_full_day: Decimal | None = Field(default=None, ge=0)
+    is_night_shift: bool | None = None
+    is_cross_midnight: bool | None = None
+    is_ot_eligible: bool | None = None
+    is_active: bool | None = None
+
+
+class ShiftRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    name: str
+    code: str | None
+    start_time: str
+    end_time: str
+    break_minutes_paid: int
+    break_minutes_unpaid: int
+    grace_in_minutes: int
+    grace_out_minutes: int
+    half_day_threshold_hours: Decimal | None
+    min_hours_full_day: Decimal | None
+    is_night_shift: bool
+    is_cross_midnight: bool
+    is_ot_eligible: bool
+    is_active: bool
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def shift_to_read(shift: "Shift") -> ShiftRead:
+    return ShiftRead(
+        id=shift.id,
+        company_id=shift.company_id,
+        name=shift.name,
+        code=shift.code,
+        start_time=_format_time(shift.start_time) or "",
+        end_time=_format_time(shift.end_time) or "",
+        break_minutes_paid=shift.break_minutes_paid,
+        break_minutes_unpaid=shift.break_minutes_unpaid,
+        grace_in_minutes=shift.grace_in_minutes,
+        grace_out_minutes=shift.grace_out_minutes,
+        half_day_threshold_hours=shift.half_day_threshold_hours,
+        min_hours_full_day=shift.min_hours_full_day,
+        is_night_shift=shift.is_night_shift,
+        is_cross_midnight=shift.is_cross_midnight,
+        is_ot_eligible=shift.is_ot_eligible,
+        is_active=shift.is_active,
+        version=shift.version,
+        created_at=_format_timestamp(shift.created_at) or "",
+        updated_at=_format_timestamp(shift.updated_at) or "",
+    )
+
+
+def shift_to_audit_dict(shift: ShiftRead) -> dict[str, Any]:
+    return shift.model_dump(mode="json")
+
+
+def build_shift_update_values(patch: ShiftUpdate) -> dict[str, Any]:
+    """Only fields explicitly present in the request are applied — unset fields must not
+    clobber existing values (mirrors `build_grade_update_values`). `start_time`/`end_time`
+    are parsed from `"HH:MM"` to `datetime.time` here, mirroring `CompanyProfileUpdate`'s own
+    `business_hours` handling."""
+    values: dict[str, Any] = {}
+    for field in patch.model_fields_set:
+        value = getattr(patch, field)
+        if field in ("start_time", "end_time") and value is not None:
+            value = _parse_time(value)
+        values[field] = value
     return values

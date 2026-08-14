@@ -196,6 +196,44 @@ class GradeCodeAlreadyExistsError(ConflictError):
         )
 
 
+class InvalidShiftTimeRangeError(ValidationError):
+    """Task 4.2.1's own documented rule (docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md
+    §6.2): `end_time` before `start_time` is only valid when `is_cross_midnight=true`."""
+
+    code = "INVALID_SHIFT_TIME_RANGE"
+
+    def __init__(
+        self, message: str = "end_time must be after start_time unless is_cross_midnight is set"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "end_time", "code": "INVALID_SHIFT_TIME_RANGE", "message": message}],
+        )
+
+
+class InvalidShiftHoursRangeError(ValidationError):
+    """Task 4.2.1's own documented rule (docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md
+    §6.3): `half_day_threshold_hours` must be less than `min_hours_full_day` when both are
+    present."""
+
+    code = "INVALID_SHIFT_HOURS_RANGE"
+
+    def __init__(
+        self,
+        message: str = "half_day_threshold_hours must be less than min_hours_full_day",
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "half_day_threshold_hours",
+                    "code": "INVALID_SHIFT_HOURS_RANGE",
+                    "message": message,
+                }
+            ],
+        )
+
+
 class DepartmentCycleDetectedError(ConflictError):
     """FR-ORG-005 — the department hierarchy must never contain a cycle. Raised when the
     candidate `parent_id` is the department itself or one of its own descendants."""

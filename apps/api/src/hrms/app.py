@@ -44,11 +44,13 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
+    from hrms.modules.employee.router import router as employee_router
     from hrms.modules.identity.router import router as identity_router
     from hrms.modules.organisation.router import router as organisation_router
 
     app.include_router(health_router)
     app.include_router(identity_router, prefix="/v1")
     app.include_router(organisation_router, prefix="/v1")
+    app.include_router(employee_router, prefix="/v1")
 
     return app
