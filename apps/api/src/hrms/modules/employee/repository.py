@@ -8,7 +8,12 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.modules.employee.models import Employee, EmployeeAssignment, Employment
+from hrms.modules.employee.models import (
+    Employee,
+    EmployeeAssignment,
+    EmployeeCompensation,
+    Employment,
+)
 
 
 class EmployeeRepository:
@@ -308,5 +313,108 @@ class EmployeeAssignmentRepository:
             )
             .values(effective_to=effective_to, version=expected_version + 1, updated_at=now)
             .returning(EmployeeAssignment)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class EmployeeCompensationRepository:
+    """E-06 — mirrors `EmployeeAssignmentRepository`'s shape exactly. No general
+    `update_compensation(values=...)` method exists — only `effective_to` is ever written after
+    insert, enforced by `close_compensation` being the only mutation path
+    (`docs/modules/employee/17_EMPLOYEE_COMPENSATION_IMPLEMENTATION_PLAN.md` §6)."""
+
+    async def insert_compensation(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> EmployeeCompensation:
+        row = EmployeeCompensation(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_current_compensation(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> EmployeeCompensation | None:
+        stmt = select(EmployeeCompensation).where(
+            EmployeeCompensation.company_id == company_id,
+            EmployeeCompensation.employee_id == employee_id,
+            EmployeeCompensation.deleted_at.is_(None),
+            EmployeeCompensation.effective_to.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_compensation_as_of(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> EmployeeCompensation | None:
+        """The compensation row (at most one, by `employee_compensation_no_overlap`) covering
+        `as_of` — the shared cross-module contract other modules (Payroll) will later call via
+        `employee.service` (`05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part B7/F)."""
+        stmt = select(EmployeeCompensation).where(
+            EmployeeCompensation.company_id == company_id,
+            EmployeeCompensation.employee_id == employee_id,
+            EmployeeCompensation.deleted_at.is_(None),
+            EmployeeCompensation.effective_from <= as_of,
+            or_(
+                EmployeeCompensation.effective_to.is_(None),
+                EmployeeCompensation.effective_to >= as_of,
+            ),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_compensations(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[EmployeeCompensation]:
+        stmt = (
+            select(EmployeeCompensation)
+            .where(
+                EmployeeCompensation.company_id == company_id,
+                EmployeeCompensation.employee_id == employee_id,
+                EmployeeCompensation.deleted_at.is_(None),
+            )
+            .order_by(EmployeeCompensation.effective_from)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_compensation(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        compensation_id: UUID,
+    ) -> EmployeeCompensation | None:
+        stmt = select(EmployeeCompensation).where(
+            EmployeeCompensation.id == compensation_id,
+            EmployeeCompensation.employee_id == employee_id,
+            EmployeeCompensation.company_id == company_id,
+            EmployeeCompensation.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def close_compensation(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        compensation_id: UUID,
+        effective_to: date,
+        expected_version: int,
+        now: datetime,
+    ) -> EmployeeCompensation | None:
+        """The one allowed edit to an existing compensation row — closes it by setting
+        `effective_to`, never touching a business column. `None` means either a stale `version`
+        (the caller re-fetches to distinguish stale-vs-not-found) or the row no longer matches,
+        mirroring `EmployeeAssignmentRepository.close_assignment`'s own contract."""
+        stmt = (
+            update(EmployeeCompensation)
+            .where(
+                EmployeeCompensation.id == compensation_id,
+                EmployeeCompensation.employee_id == employee_id,
+                EmployeeCompensation.company_id == company_id,
+                EmployeeCompensation.version == expected_version,
+                EmployeeCompensation.deleted_at.is_(None),
+            )
+            .values(effective_to=effective_to, version=expected_version + 1, updated_at=now)
+            .returning(EmployeeCompensation)
         )
         return (await session.execute(stmt)).scalar_one_or_none()

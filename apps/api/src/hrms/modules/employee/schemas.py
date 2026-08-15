@@ -19,7 +19,12 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from hrms.modules.employee.models import Employee, EmployeeAssignment, Employment
+    from hrms.modules.employee.models import (
+        Employee,
+        EmployeeAssignment,
+        EmployeeCompensation,
+        Employment,
+    )
 
 # FR-EMP-014 (docs/product/17_SRS_Phase1_Core_Modules.md:151) — the authoritative 10-value
 # enumeration found in Phase 0 decision verification. Not client-writable (see module
@@ -322,3 +327,68 @@ def assignment_to_read(assignment: "EmployeeAssignment") -> AssignmentRead:
 
 def assignment_to_audit_dict(assignment: AssignmentRead) -> dict[str, Any]:
     return assignment.model_dump(mode="json")
+
+
+# --- Employee Compensation (E-06) -------------------------------------------------------
+#
+# The only place any `revision_type` value set appears in any authoritative document —
+# `docs/product/08_Database_Architecture.md:242` — fully specified, never contradicted
+# (`docs/modules/employee/17_EMPLOYEE_COMPENSATION_IMPLEMENTATION_PLAN.md` §9). Validated at the
+# Pydantic layer as a `Literal`, matching the actually-shipped precedent (`employment.status`,
+# `employee_assignment.change_type`) rather than a DB `CHECK` constraint or a lookup table.
+REVISION_TYPE_VALUES = ("JOINING", "ANNUAL", "PROMOTION", "CORRECTION", "MARKET")
+
+RevisionType = Literal["JOINING", "ANNUAL", "PROMOTION", "CORRECTION", "MARKET"]
+
+
+class CompensationCreate(BaseModel):
+    """Creates a new effective-dated compensation row — closes the employee's current row (if
+    any) and inserts a new one. Unlike `AssignmentCreate`, no field carries forward from the
+    current row: `annual_ctc_minor`, `currency`, `revision_type`, and `revision_reason` are
+    always required, on every write, including an employee's very first compensation row
+    (plan §17.2/§17.3) — a stale CTC carried forward by omission is a materially worse failure
+    mode than a stale org-placement field."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    effective_from: date
+    annual_ctc_minor: int = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3)
+    revision_type: RevisionType
+    revision_reason: str
+
+
+class CompensationRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    annual_ctc_minor: int
+    currency: str
+    revision_type: str
+    revision_reason: str | None
+    effective_from: date
+    effective_to: date | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def compensation_to_read(compensation: "EmployeeCompensation") -> CompensationRead:
+    return CompensationRead(
+        id=compensation.id,
+        company_id=compensation.company_id,
+        employee_id=compensation.employee_id,
+        annual_ctc_minor=compensation.annual_ctc_minor,
+        currency=compensation.currency,
+        revision_type=compensation.revision_type,
+        revision_reason=compensation.revision_reason,
+        effective_from=compensation.effective_from,
+        effective_to=compensation.effective_to,
+        version=compensation.version,
+        created_at=_format_timestamp(compensation.created_at) or "",
+        updated_at=_format_timestamp(compensation.updated_at) or "",
+    )
+
+
+def compensation_to_audit_dict(compensation: CompensationRead) -> dict[str, Any]:
+    return compensation.model_dump(mode="json")

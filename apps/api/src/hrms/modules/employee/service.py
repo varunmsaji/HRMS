@@ -1,5 +1,5 @@
 """Business logic for the employee module — E-01 (identity foundation), E-03 (employment
-lifecycle), and E-04 (employee assignment)."""
+lifecycle), E-04 (employee assignment), and E-06 (employee compensation)."""
 
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
@@ -14,6 +14,8 @@ from hrms.modules.employee.exceptions import (
     AssignmentDatesOverlapError,
     AssignmentFieldsRequiredError,
     AssignmentVersionRequiredError,
+    CompensationDatesOverlapError,
+    CompensationVersionRequiredError,
     EmployeeSeatLimitExceededError,
     EmploymentDatesOverlapError,
     EmploymentNotActiveError,
@@ -32,12 +34,15 @@ from hrms.modules.employee.exceptions import (
 )
 from hrms.modules.employee.repository import (
     EmployeeAssignmentRepository,
+    EmployeeCompensationRepository,
     EmployeeRepository,
     EmploymentRepository,
 )
 from hrms.modules.employee.schemas import (
     AssignmentCreate,
     AssignmentRead,
+    CompensationCreate,
+    CompensationRead,
     EmployeeCreate,
     EmployeeRead,
     EmployeeUpdate,
@@ -49,6 +54,8 @@ from hrms.modules.employee.schemas import (
     assignment_to_read,
     build_employee_update_values,
     build_employment_update_values,
+    compensation_to_audit_dict,
+    compensation_to_read,
     employee_to_audit_dict,
     employee_to_read,
     employment_to_audit_dict,
@@ -830,3 +837,168 @@ class EmployeeAssignmentService:
             self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
         )
         return assignment_to_read(assignment) if assignment is not None else None
+
+
+class EmployeeCompensationService:
+    """E-06 — employee compensation (pay history). One write operation, `create_compensation`,
+    covering an employee's first CTC and every later revision alike
+    (`docs/modules/employee/17_EMPLOYEE_COMPENSATION_IMPLEMENTATION_PLAN.md` §6) — each is an
+    insert of a new effective-dated row, never a column update. No `update_compensation`/
+    `delete_compensation` exists; there is no other mutation path.
+
+    Deliberately does **not** validate `annual_ctc_minor` against the employee's current
+    assignment's grade `min_ctc`/`max_ctc` band — PD-1 (plan §16), no document names this
+    enforcement anywhere, and Grade's CTC fields are informational bands only
+    (`docs/modules/grade/01_Grade_Module.md:141`). Also deliberately does not offer
+    carry-forward semantics for any field (plan §17.2) — every write states the full new CTC
+    explicitly."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = EmployeeCompensationRepository()
+        self._employee_repo = EmployeeRepository()
+        self._employment_repo = EmploymentRepository()
+        self._audit = AuditService()
+
+    async def _assert_employee_exists(self, company_id: UUID, employee_id: UUID) -> None:
+        employee = await self._employee_repo.get_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+    async def create_compensation(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: CompensationCreate,
+        *,
+        expected_version: int | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> CompensationRead:
+        await self._assert_employee_exists(company_id, employee_id)
+
+        covering_employment = await self._employment_repo.get_employment_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=body.effective_from
+        )
+        if covering_employment is None:
+            raise NoActiveEmploymentError()
+
+        current = await self._repo.get_current_compensation(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+
+        if current is not None:
+            if body.effective_from <= current.effective_from:
+                raise InvalidEffectiveFromError()
+            if expected_version is None:
+                raise CompensationVersionRequiredError()
+
+        now = datetime.now(UTC)
+        before_read = compensation_to_read(current) if current is not None else None
+
+        if current is not None:
+            assert expected_version is not None  # narrowed above
+            closed = await self._repo.close_compensation(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                compensation_id=current.id,
+                effective_to=body.effective_from - timedelta(days=1),
+                expected_version=expected_version,
+                now=now,
+            )
+            if closed is None:
+                refreshed = await self._repo.get_compensation(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    compensation_id=current.id,
+                )
+                if refreshed is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This employee's current compensation has been modified by another request",
+                    current=compensation_to_audit_dict(compensation_to_read(refreshed)),
+                )
+
+        compensation_id = uuid4()
+        try:
+            compensation = await self._repo.insert_compensation(
+                self._session,
+                data={
+                    "id": compensation_id,
+                    "company_id": company_id,
+                    "employee_id": employee_id,
+                    "annual_ctc_minor": body.annual_ctc_minor,
+                    "currency": body.currency,
+                    "revision_type": body.revision_type,
+                    "revision_reason": body.revision_reason,
+                    "effective_from": body.effective_from,
+                    "effective_to": None,
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            # `employee_compensation_no_overlap` GiST exclusion constraint — the race-condition
+            # backstop, mirroring `EmployeeAssignmentService.create_assignment`'s exact pattern.
+            raise CompensationDatesOverlapError() from exc
+
+        after_read = compensation_to_read(compensation)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="COMPENSATION_REVISED",
+            entity_type="employee_compensation",
+            entity_id=compensation_id,
+            before=compensation_to_audit_dict(before_read) if before_read is not None else None,
+            after=compensation_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def list_compensations(
+        self, company_id: UUID, employee_id: UUID, *, as_of: date | None = None
+    ) -> list[CompensationRead]:
+        await self._assert_employee_exists(company_id, employee_id)
+        if as_of is not None:
+            compensation = await self._repo.get_compensation_as_of(
+                self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+            )
+            return [compensation_to_read(compensation)] if compensation is not None else []
+        compensations = await self._repo.list_compensations(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [compensation_to_read(compensation) for compensation in compensations]
+
+    async def get_compensation(
+        self, company_id: UUID, employee_id: UUID, compensation_id: UUID
+    ) -> CompensationRead:
+        await self._assert_employee_exists(company_id, employee_id)
+        compensation = await self._repo.get_compensation(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            compensation_id=compensation_id,
+        )
+        if compensation is None:
+            raise NotFoundError("Resource not found")
+        return compensation_to_read(compensation)
+
+    async def get_compensation_as_of(
+        self, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> CompensationRead | None:
+        """The shared cross-module contract (`05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part B7/F)
+        Payroll will call once it exists. Does not assert employee existence, mirroring
+        `EmployeeAssignmentService.get_assignment_as_of`'s exact contract."""
+        compensation = await self._repo.get_compensation_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+        )
+        return compensation_to_read(compensation) if compensation is not None else None

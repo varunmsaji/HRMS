@@ -1,16 +1,15 @@
 """ORM models owned by the employee module.
 
 Covers E-01 (Employee Foundation — `Employee`, `NumberSeries`), E-03 (Employment Lifecycle —
-`Employment`), and E-04 (Employee Assignment — `EmployeeAssignment`). `EmployeeCompensation`
-still belongs to a later slice (E-06 per `docs/modules/employee/01_EMPLOYEE_MODULE_PLAN.md`)
-and is not mapped here.
+`Employment`), E-04 (Employee Assignment — `EmployeeAssignment`), and E-06 (Employee
+Compensation — `EmployeeCompensation`).
 """
 
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -149,6 +148,40 @@ class EmployeeAssignment(Base, TimestampMixin):
     work_location_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     change_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
     change_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    effective_from: Mapped[date] = mapped_column(Date)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class EmployeeCompensation(Base, TimestampMixin):
+    """Pay, effective-dated independently of Assignment — a raise without a transfer, or a
+    transfer without a raise, are both representable without coupling the two tables
+    (`docs/modules/employee/05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part C "Employee
+    Compensation"). Keyed on `employee_id`, **not** `employment_id`, the same rehire-correctness
+    shape as `EmployeeAssignment` (§5/§10 of `docs/modules/employee/
+    17_EMPLOYEE_COMPENSATION_IMPLEMENTATION_PLAN.md`). A GiST exclusion constraint
+    (`employee_compensation_no_overlap`, already live since the very first migration) prevents
+    two rows for the same employee from having overlapping `[effective_from, effective_to]`
+    ranges. `revision_type`/`revision_reason` (E-06) were added by an additive migration on top
+    of the pre-existing table; `salary_structure_id`/`monthly_gross`/`approved_by`/
+    `approval_request_id`/`is_arrears_processed` and the component-breakdown child table are
+    deferred — they depend on modules (Payroll's salary-structure catalogue, the
+    approval-routing engine) that do not exist yet (plan §4.2)."""
+
+    __tablename__ = "employee_compensation"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    annual_ctc_minor: Mapped[int] = mapped_column(BigInteger)
+    currency: Mapped[str] = mapped_column(String(3), default="INR")
+    revision_type: Mapped[str] = mapped_column(String(20), default="JOINING")
+    revision_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

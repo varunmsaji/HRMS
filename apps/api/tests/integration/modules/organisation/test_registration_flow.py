@@ -201,13 +201,14 @@ async def test_registration_success_full_row_graph(
             codes = await rbac.get_permission_codes(user_id, company_id)
             # EMPLOYEE.* codes added by the Employee Foundation (E-01) slice
             # (docs/modules/employee/01_EMPLOYEE_FOUNDATION_AUDIT.md §5), EMPLOYEE.TERMINATE
-            # added by the Employment Lifecycle (E-03) slice, and EMPLOYEE.TRANSFER/.PROMOTE
-            # added by the Employee Assignment (E-04) slice
+            # added by the Employment Lifecycle (E-03) slice, EMPLOYEE.TRANSFER/.PROMOTE
+            # added by the Employee Assignment (E-04) slice, and EMPLOYEE.VIEW_COMPENSATION/
+            # .UPDATE_COMPENSATION added by the Employee Compensation (E-06) slice
             # (docs/modules/employee/permissions.py) — `register_company` now grants the new
             # company's admin role the same EMPLOYEE.VIEW/.VIEW_ALL/.CREATE/.UPDATE/.DEACTIVATE/
-            # .TERMINATE/.TRANSFER/.PROMOTE access every other org-domain permission already gets
-            # here, since without it a freshly registered company's own admin would have zero
-            # Employee access.
+            # .TERMINATE/.TRANSFER/.PROMOTE/.VIEW_COMPENSATION/.UPDATE_COMPENSATION access every
+            # other org-domain permission already gets here, since without it a freshly
+            # registered company's own admin would have zero Employee access.
             assert codes == {
                 ORG_COMPANY_MANAGE,
                 DASHBOARD_COMPANY_VIEW,
@@ -225,6 +226,8 @@ async def test_registration_success_full_row_graph(
                 "EMPLOYEE.TERMINATE",
                 "EMPLOYEE.TRANSFER",
                 "EMPLOYEE.PROMOTE",
+                "EMPLOYEE.VIEW_COMPENSATION",
+                "EMPLOYEE.UPDATE_COMPENSATION",
             }
 
             setup_progress = (

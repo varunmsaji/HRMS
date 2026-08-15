@@ -33,10 +33,19 @@ in the locked 14-code catalogue (`docs/product/19_RBAC_and_Permission_Matrix.md`
 router change (`docs/modules/employee/13_EMPLOYEE_SHIFT_ASSIGNMENT_IMPLEMENTATION_PLAN.md` §12).
 `.VIEW`/`.VIEW_ALL` (already seeded) gate the read endpoints, same as `Employment`'s own reads.
 
-The remaining codes not yet added (`UPDATE_SENSITIVE`, `VIEW_COMPENSATION`, `.VIEW_DOCUMENTS`,
-`.CONFIRM`, etc.) belong to later slices (E-02/E-06/...) — this task's own scope explicitly
-excludes Compensation/Statutory/Banking and the confirmation/probation workflow, so their
-permission codes are not added here either.
+E-06 (Employee Compensation) adds `EMPLOYEE.VIEW_COMPENSATION` and `EMPLOYEE.UPDATE_COMPENSATION`
+— both already named in the locked 14-code catalogue
+(`docs/product/19_RBAC_and_Permission_Matrix.md §3.1`, lines 45-46), not invented here. No naming
+decision was required, unlike `.TERMINATE` above: this is the simplest permission addition of
+any slice so far (`docs/modules/employee/17_EMPLOYEE_COMPENSATION_IMPLEMENTATION_PLAN.md` §12).
+`.VIEW_COMPENSATION` gates both compensation read routes; `.UPDATE_COMPENSATION` gates the
+compensation write route. The entire sub-resource is absent for a caller without
+`.VIEW_COMPENSATION` — CTC is `RESTRICTED`-classified (`docs/product/
+19_RBAC_and_Permission_Matrix.md §6`) — not an individually masked field.
+
+The remaining codes not yet added (`UPDATE_SENSITIVE`, `.VIEW_DOCUMENTS`, `.CONFIRM`, etc.)
+belong to later slices — this task's own scope explicitly excludes Statutory/Banking and the
+confirmation/probation workflow, so their permission codes are not added here either.
 """
 
 EMPLOYEE_VIEW_ALL = "EMPLOYEE.VIEW_ALL"
@@ -46,6 +55,8 @@ EMPLOYEE_DEACTIVATE = "EMPLOYEE.DEACTIVATE"
 EMPLOYEE_TERMINATE = "EMPLOYEE.TERMINATE"
 EMPLOYEE_TRANSFER = "EMPLOYEE.TRANSFER"
 EMPLOYEE_PROMOTE = "EMPLOYEE.PROMOTE"
+EMPLOYEE_VIEW_COMPENSATION = "EMPLOYEE.VIEW_COMPENSATION"
+EMPLOYEE_UPDATE_COMPENSATION = "EMPLOYEE.UPDATE_COMPENSATION"
 
 EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_VIEW_ALL, "EMPLOYEE", "View all employees in the company"),
@@ -55,4 +66,6 @@ EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_TERMINATE, "EMPLOYEE", "Terminate an employee's active employment"),
     (EMPLOYEE_TRANSFER, "EMPLOYEE", "Transfer an employee's branch, department, or manager"),
     (EMPLOYEE_PROMOTE, "EMPLOYEE", "Promote an employee's designation or grade"),
+    (EMPLOYEE_VIEW_COMPENSATION, "EMPLOYEE", "View an employee's compensation history"),
+    (EMPLOYEE_UPDATE_COMPENSATION, "EMPLOYEE", "Record a new compensation revision"),
 ]

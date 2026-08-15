@@ -317,6 +317,54 @@ class ShiftIdRequiredError(ValidationError):
         )
 
 
+class CompensationDatesOverlapError(ConflictError):
+    """Raised when inserting a compensation row would overlap an existing one for the same
+    employee — the `employee_compensation_no_overlap` GiST exclusion constraint's
+    friendly-error backstop, mirroring `AssignmentDatesOverlapError` exactly."""
+
+    code = "COMPENSATION_DATES_OVERLAP"
+
+    def __init__(
+        self,
+        message: str = (
+            "This compensation row's dates overlap an existing compensation row for this employee"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "effective_from",
+                    "code": "COMPENSATION_DATES_OVERLAP",
+                    "message": message,
+                }
+            ],
+        )
+
+
+class CompensationVersionRequiredError(ValidationError):
+    """Raised when a `POST .../compensation` call omits `If-Match` while the employee already
+    has a current compensation row to close — the version being checked belongs to the row
+    being closed, not the row being created, so it cannot be inferred, mirroring
+    `AssignmentVersionRequiredError` exactly. Not required for an employee's very first
+    compensation row, since there is nothing to version-check."""
+
+    code = "COMPENSATION_VERSION_REQUIRED"
+
+    def __init__(
+        self,
+        message: str = (
+            "If-Match is required: this employee already has a current compensation row to close"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "If-Match", "code": "COMPENSATION_VERSION_REQUIRED", "message": message}
+            ],
+        )
+
+
 class InvalidReportingManagerError(ValidationError):
     """Covers both `reporting_manager_id` and `dotted_line_manager_id` — raised when the
     referenced id does not resolve to an existing, same-tenant, non-deleted `Employee`, or

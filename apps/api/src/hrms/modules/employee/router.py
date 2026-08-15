@@ -26,6 +26,7 @@ from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.employee.dependencies import (
     get_employee_assignment_service,
+    get_employee_compensation_service,
     get_employee_service,
     get_employment_service,
 )
@@ -36,11 +37,15 @@ from hrms.modules.employee.permissions import (
     EMPLOYEE_TERMINATE,
     EMPLOYEE_TRANSFER,
     EMPLOYEE_UPDATE,
+    EMPLOYEE_UPDATE_COMPENSATION,
     EMPLOYEE_VIEW_ALL,
+    EMPLOYEE_VIEW_COMPENSATION,
 )
 from hrms.modules.employee.schemas import (
     AssignmentCreate,
     AssignmentRead,
+    CompensationCreate,
+    CompensationRead,
     EmployeeCreate,
     EmployeeRead,
     EmployeeUpdate,
@@ -51,6 +56,7 @@ from hrms.modules.employee.schemas import (
 )
 from hrms.modules.employee.service import (
     EmployeeAssignmentService,
+    EmployeeCompensationService,
     EmployeeService,
     EmploymentService,
 )
@@ -328,6 +334,75 @@ async def create_assignment(
             f"Permission {required_permission} is required", code="PERMISSION_DENIED"
         )
     data = await service.create_assignment(
+        tenant.company_id,
+        employee_id,
+        body,
+        expected_version=int(if_match) if if_match is not None else None,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# --- Employee Compensation (E-06) -----------------------------------------------------------
+#
+# Unlike Assignment's `POST .../assignments`, `.VIEW_COMPENSATION`/`.UPDATE_COMPENSATION` map
+# 1:1 to GET/POST — no dynamic permission selection by request body is needed
+# (`docs/modules/employee/17_EMPLOYEE_COMPENSATION_IMPLEMENTATION_PLAN.md` §23 step 9).
+
+
+@router.get(
+    "/employees/{employee_id}/compensation",
+    status_code=status.HTTP_200_OK,
+)
+async def list_compensations(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW_COMPENSATION))],
+    service: Annotated[EmployeeCompensationService, Depends(get_employee_compensation_service)],
+    as_of: Annotated[date | None, Query()] = None,
+) -> ListEnvelope[CompensationRead]:
+    """Full effective-dated compensation history for the employee, ordered by
+    `effective_from`, or — with `?as_of=YYYY-MM-DD` — the single row (if any) covering that
+    date."""
+    data = await service.list_compensations(tenant.company_id, employee_id, as_of=as_of)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/compensation/{compensation_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_compensation(
+    employee_id: UUID,
+    compensation_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW_COMPENSATION))],
+    service: Annotated[EmployeeCompensationService, Depends(get_employee_compensation_service)],
+) -> DataEnvelope[CompensationRead]:
+    data = await service.get_compensation(tenant.company_id, employee_id, compensation_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/employees/{employee_id}/compensation",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_compensation(
+    employee_id: UUID,
+    body: CompensationCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_UPDATE_COMPENSATION))],
+    service: Annotated[EmployeeCompensationService, Depends(get_employee_compensation_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> DataEnvelope[CompensationRead]:
+    """Closes the employee's current compensation row (if any) and inserts a new one — covers
+    an employee's first CTC and every later revision alike. `If-Match` is required only when a
+    current row exists; nothing to version-check for an employee's very first compensation
+    row."""
+    data = await service.create_compensation(
         tenant.company_id,
         employee_id,
         body,
