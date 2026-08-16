@@ -5,15 +5,24 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import func, literal, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from hrms.modules.employee.models import (
     Employee,
     EmployeeAssignment,
+    EmployeeBank,
     EmployeeCompensation,
+    EmployeeStatutory,
     Employment,
 )
+
+#: `REPORTEE_TREE` recursion depth cap — `docs/product/19_RBAC_and_Permission_Matrix.md §5`'s
+#: reference implementation; bounds query cost against a malformed/cyclic hierarchy (no
+#: write-time cycle guard exists yet, `docs/modules/employee/
+#: 25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §17), does not detect or reject one.
+REPORTEE_TREE_MAX_DEPTH = 20
 
 
 class EmployeeRepository:
@@ -23,12 +32,23 @@ class EmployeeRepository:
         await session.flush()
         return row
 
-    async def list_employees(self, session: AsyncSession, *, company_id: UUID) -> list[Employee]:
-        stmt = (
-            select(Employee)
-            .where(Employee.company_id == company_id, Employee.deleted_at.is_(None))
-            .order_by(Employee.created_at)
-        )
+    async def list_employees(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None = None,
+    ) -> list[Employee]:
+        """`visible_employee_ids=None` means `COMPANY` scope (or the caller didn't resolve a
+        scope at all, e.g. non-data-scoped routes still calling this unchanged) — no extra
+        predicate, identical to this method's pre-data-scope behavior. A non-`None` (possibly
+        empty) set narrows the result to exactly those IDs — applied at the SQL layer, not as an
+        in-Python filter, so it composes correctly once pagination exists
+        (`docs/modules/employee/25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §15)."""
+        conditions = [Employee.company_id == company_id, Employee.deleted_at.is_(None)]
+        if visible_employee_ids is not None:
+            conditions.append(Employee.id.in_(visible_employee_ids))
+        stmt = select(Employee).where(*conditions).order_by(Employee.created_at)
         return list((await session.execute(stmt)).scalars().all())
 
     async def count_active_employees(self, session: AsyncSession, *, company_id: UUID) -> int:
@@ -43,15 +63,29 @@ class EmployeeRepository:
         return int((await session.execute(stmt)).scalar_one())
 
     async def get_employee(
-        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None = None,
     ) -> Employee | None:
         # `company_id` filtered explicitly, not just relied on via RLS — same
         # belt-and-suspenders convention as `OrganisationRepository.get_grade`.
-        stmt = select(Employee).where(
+        #
+        # `visible_employee_ids` (data-scope, `None` = `COMPANY`/unscoped) is applied in this
+        # same query, not as a fetch-then-check — an out-of-scope target produces the identical
+        # "no row" result a cross-tenant or nonexistent ID already produces, which the service
+        # layer already turns into `404` with zero new branching
+        # (`docs/modules/employee/25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §15).
+        conditions = [
             Employee.id == employee_id,
             Employee.company_id == company_id,
             Employee.deleted_at.is_(None),
-        )
+        ]
+        if visible_employee_ids is not None:
+            conditions.append(Employee.id.in_(visible_employee_ids))
+        stmt = select(Employee).where(*conditions)
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def update_employee(
@@ -226,6 +260,64 @@ class EmployeeAssignmentRepository:
         session.add(row)
         await session.flush()
         return row
+
+    async def get_direct_report_ids(
+        self, session: AsyncSession, *, company_id: UUID, manager_employee_id: UUID
+    ) -> set[UUID]:
+        """`REPORTEES` resolution — employees whose *current* assignment row
+        (`effective_to IS NULL`) reports to `manager_employee_id`. One level only; a report's own
+        reports are not included (`docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md` Decision D).
+        Does not include `manager_employee_id` itself — `REPORTEES` never implies `SELF`
+        (`25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §5)."""
+        stmt = select(EmployeeAssignment.employee_id).where(
+            EmployeeAssignment.company_id == company_id,
+            EmployeeAssignment.reporting_manager_id == manager_employee_id,
+            EmployeeAssignment.deleted_at.is_(None),
+            EmployeeAssignment.effective_to.is_(None),
+        )
+        return set((await session.execute(stmt)).scalars().all())
+
+    async def get_reportee_tree_ids(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        manager_employee_id: UUID,
+        max_depth: int = REPORTEE_TREE_MAX_DEPTH,
+    ) -> set[UUID]:
+        """`REPORTEE_TREE` resolution — the transitive closure of `get_direct_report_ids`,
+        walking `reporting_manager_id` outward via a recursive CTE, depth-capped at `max_depth`
+        (reference shape: `docs/product/19_RBAC_and_Permission_Matrix.md §5`). The cap bounds
+        query cost against a cyclic/malformed hierarchy; it does not detect or reject one — a
+        cycle is silently truncated at `max_depth`, not rejected
+        (`docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md` Decision D; no write-time cycle guard
+        exists yet, tracked as a known limitation). Every level is additionally filtered by
+        `company_id` and "current" (`effective_to IS NULL`), matching `get_direct_report_ids`.
+        Does not include `manager_employee_id` itself, same as `get_direct_report_ids`."""
+        base = select(
+            EmployeeAssignment.employee_id.label("employee_id"),
+            literal(1).label("depth"),
+        ).where(
+            EmployeeAssignment.company_id == company_id,
+            EmployeeAssignment.reporting_manager_id == manager_employee_id,
+            EmployeeAssignment.deleted_at.is_(None),
+            EmployeeAssignment.effective_to.is_(None),
+        )
+        tree = base.cte(name="reportee_tree", recursive=True)
+        child = aliased(EmployeeAssignment, name="ea_child")
+        recursive_step = select(
+            child.employee_id.label("employee_id"),
+            (tree.c.depth + 1).label("depth"),
+        ).where(
+            child.company_id == company_id,
+            child.reporting_manager_id == tree.c.employee_id,
+            child.deleted_at.is_(None),
+            child.effective_to.is_(None),
+            tree.c.depth < max_depth,
+        )
+        tree = tree.union_all(recursive_step)
+        stmt = select(tree.c.employee_id).distinct()
+        return set((await session.execute(stmt)).scalars().all())
 
     async def get_current_assignment(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
@@ -416,5 +508,214 @@ class EmployeeCompensationRepository:
             )
             .values(effective_to=effective_to, version=expected_version + 1, updated_at=now)
             .returning(EmployeeCompensation)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class EmployeeStatutoryRepository:
+    """E-07 — mirrors `EmployeeCompensationRepository`'s shape exactly. No general
+    `update_statutory(values=...)` method exists — only `effective_to` is ever written after
+    insert, enforced by `close_statutory` being the only mutation path
+    (`docs/modules/employee/29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §20)."""
+
+    async def insert_statutory(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> EmployeeStatutory:
+        row = EmployeeStatutory(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_current_statutory(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> EmployeeStatutory | None:
+        stmt = select(EmployeeStatutory).where(
+            EmployeeStatutory.company_id == company_id,
+            EmployeeStatutory.employee_id == employee_id,
+            EmployeeStatutory.deleted_at.is_(None),
+            EmployeeStatutory.effective_to.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_statutory_as_of(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> EmployeeStatutory | None:
+        """The statutory row (at most one, by `employee_statutory_no_overlap`) covering
+        `as_of` — the cross-module contract Payroll will call at pay-run snapshot time (plan
+        §13), mirroring `EmployeeCompensationRepository.get_compensation_as_of`'s exact
+        contract."""
+        stmt = select(EmployeeStatutory).where(
+            EmployeeStatutory.company_id == company_id,
+            EmployeeStatutory.employee_id == employee_id,
+            EmployeeStatutory.deleted_at.is_(None),
+            EmployeeStatutory.effective_from <= as_of,
+            or_(
+                EmployeeStatutory.effective_to.is_(None),
+                EmployeeStatutory.effective_to >= as_of,
+            ),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_statutories(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[EmployeeStatutory]:
+        stmt = (
+            select(EmployeeStatutory)
+            .where(
+                EmployeeStatutory.company_id == company_id,
+                EmployeeStatutory.employee_id == employee_id,
+                EmployeeStatutory.deleted_at.is_(None),
+            )
+            .order_by(EmployeeStatutory.effective_from)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_statutory(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        statutory_id: UUID,
+    ) -> EmployeeStatutory | None:
+        stmt = select(EmployeeStatutory).where(
+            EmployeeStatutory.id == statutory_id,
+            EmployeeStatutory.employee_id == employee_id,
+            EmployeeStatutory.company_id == company_id,
+            EmployeeStatutory.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def close_statutory(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        statutory_id: UUID,
+        effective_to: date,
+        expected_version: int,
+        now: datetime,
+    ) -> EmployeeStatutory | None:
+        """The one allowed edit to an existing statutory row — closes it by setting
+        `effective_to`, never touching a business column. `None` means either a stale `version`
+        (the caller re-fetches to distinguish stale-vs-not-found) or the row no longer matches,
+        mirroring `EmployeeCompensationRepository.close_compensation`'s exact contract."""
+        stmt = (
+            update(EmployeeStatutory)
+            .where(
+                EmployeeStatutory.id == statutory_id,
+                EmployeeStatutory.employee_id == employee_id,
+                EmployeeStatutory.company_id == company_id,
+                EmployeeStatutory.version == expected_version,
+                EmployeeStatutory.deleted_at.is_(None),
+            )
+            .values(effective_to=effective_to, version=expected_version + 1, updated_at=now)
+            .returning(EmployeeStatutory)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class EmployeeBankRepository:
+    """E-08 — mirrors `EmployeeStatutoryRepository`'s shape exactly. No general
+    `update_bank(values=...)` method exists — only `effective_to` is ever written after insert,
+    enforced by `close_bank` being the only mutation path
+    (`docs/modules/employee/33_EMPLOYEE_BANKING_IMPLEMENTATION_PLAN.md` §19). Unlike
+    `EmployeeStatutoryRepository`, `close_bank` is never called from
+    `EmploymentService.terminate_employment` — the current bank row survives exit (plan §7)."""
+
+    async def insert_bank(self, session: AsyncSession, *, data: dict[str, Any]) -> EmployeeBank:
+        row = EmployeeBank(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_current_bank(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> EmployeeBank | None:
+        stmt = select(EmployeeBank).where(
+            EmployeeBank.company_id == company_id,
+            EmployeeBank.employee_id == employee_id,
+            EmployeeBank.deleted_at.is_(None),
+            EmployeeBank.effective_to.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_bank_as_of(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> EmployeeBank | None:
+        """The bank row (at most one, by `employee_bank_no_overlap`) covering `as_of` — the
+        cross-module contract Payroll will call at bank-advice-generation time (plan §11),
+        mirroring `EmployeeStatutoryRepository.get_statutory_as_of`'s exact contract."""
+        stmt = select(EmployeeBank).where(
+            EmployeeBank.company_id == company_id,
+            EmployeeBank.employee_id == employee_id,
+            EmployeeBank.deleted_at.is_(None),
+            EmployeeBank.effective_from <= as_of,
+            or_(
+                EmployeeBank.effective_to.is_(None),
+                EmployeeBank.effective_to >= as_of,
+            ),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_banks(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[EmployeeBank]:
+        stmt = (
+            select(EmployeeBank)
+            .where(
+                EmployeeBank.company_id == company_id,
+                EmployeeBank.employee_id == employee_id,
+                EmployeeBank.deleted_at.is_(None),
+            )
+            .order_by(EmployeeBank.effective_from)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_bank(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        bank_id: UUID,
+    ) -> EmployeeBank | None:
+        stmt = select(EmployeeBank).where(
+            EmployeeBank.id == bank_id,
+            EmployeeBank.employee_id == employee_id,
+            EmployeeBank.company_id == company_id,
+            EmployeeBank.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def close_bank(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        bank_id: UUID,
+        effective_to: date,
+        expected_version: int,
+        now: datetime,
+    ) -> EmployeeBank | None:
+        """The one allowed edit to an existing bank row — closes it by setting `effective_to`,
+        never touching a business column. `None` means either a stale `version` (the caller
+        re-fetches to distinguish stale-vs-not-found) or the row no longer matches, mirroring
+        `EmployeeStatutoryRepository.close_statutory`'s exact contract. Called only from
+        `EmployeeBankService.create_bank`'s own close-then-insert revision path — never from
+        `EmploymentService.terminate_employment` (plan §7)."""
+        stmt = (
+            update(EmployeeBank)
+            .where(
+                EmployeeBank.id == bank_id,
+                EmployeeBank.employee_id == employee_id,
+                EmployeeBank.company_id == company_id,
+                EmployeeBank.version == expected_version,
+                EmployeeBank.deleted_at.is_(None),
+            )
+            .values(effective_to=effective_to, version=expected_version + 1, updated_at=now)
+            .returning(EmployeeBank)
         )
         return (await session.execute(stmt)).scalar_one_or_none()

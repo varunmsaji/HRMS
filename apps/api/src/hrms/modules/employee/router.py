@@ -1,14 +1,26 @@
 """HTTP routes for the employee module — thin layer only, per Module Standard §2.
 
 Data-scope enforcement (`SELF`/`REPORTEES`/`REPORTEE_TREE`, `docs/product/
-19_RBAC_and_Permission_Matrix.md` §5) is not implemented in this slice — there is no
-`employee_assignment`/reporting-manager data yet for a scope to resolve against (that's E-04).
-Until then: `EMPLOYEE.VIEW_ALL` gates the company-wide list; `EMPLOYEE.VIEW` gates looking up a
-single employee by id (not scoped to self/team — a known limitation, not a designed behavior,
-`01_EMPLOYEE_FOUNDATION_AUDIT.md` §2.4/§6).
+19_RBAC_and_Permission_Matrix.md` §5) is implemented for every GET and write route in this file
+that targets a specific employee: `list_employees`/`get_employee`/`update_employee`/
+`deactivate_employee` (Identity, `docs/modules/employee/
+25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md`), every Compensation/Statutory/Bank GET route
+(`37_EMPLOYEE_COMPENSATION_STATUTORY_DATA_SCOPE_IMPLEMENTATION_REPORT.md` /
+`33_EMPLOYEE_BANKING_IMPLEMENTATION_PLAN.md` §8/§15 PD-1), and — per `docs/modules/employee/
+39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` (F4/F8/F9) — every Employment/Assignment GET
+route and every write route in this file (`create_employment`/`update_employment`/
+`terminate_employment`/`create_assignment`/`create_compensation`/`create_statutory`/
+`create_bank`). Every one of these routes resolves the caller's `DataScope` (via
+`require_permission`, or — for `create_assignment` only, since its gating permission is chosen
+dynamically by request body, §"Employee Assignment" below — a direct
+`rbac.resolve_data_scope()` call) and passes it, plus the caller's own `employee_id` (from the
+JWT), to the corresponding service, which narrows the result/target to
+`SELF`/`REPORTEES`/`REPORTEE_TREE`/`COMPANY` as appropriate; an out-of-scope target returns
+`404`, identical in shape to a nonexistent or cross-tenant ID, never `403` (which would reveal
+the target's existence).
 
-E-03 (employment lifecycle) adds the `/employees/{employee_id}/employments*` sub-resource
-routes, same scoping caveat as above (`EMPLOYEE.VIEW`, not self/team-scoped).
+`create_employee` (`POST /employees`) has no target employee to scope against — permission alone
+gates it, unchanged.
 """
 
 from datetime import date
@@ -22,12 +34,15 @@ from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.errors.base import PermissionDeniedError
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
+from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.employee.dependencies import (
     get_employee_assignment_service,
+    get_employee_bank_service,
     get_employee_compensation_service,
     get_employee_service,
+    get_employee_statutory_service,
     get_employment_service,
 )
 from hrms.modules.employee.permissions import (
@@ -38,12 +53,17 @@ from hrms.modules.employee.permissions import (
     EMPLOYEE_TRANSFER,
     EMPLOYEE_UPDATE,
     EMPLOYEE_UPDATE_COMPENSATION,
+    EMPLOYEE_UPDATE_SENSITIVE,
     EMPLOYEE_VIEW_ALL,
+    EMPLOYEE_VIEW_BANKING,
     EMPLOYEE_VIEW_COMPENSATION,
+    EMPLOYEE_VIEW_STATUTORY,
 )
 from hrms.modules.employee.schemas import (
     AssignmentCreate,
     AssignmentRead,
+    BankCreate,
+    BankRead,
     CompensationCreate,
     CompensationRead,
     EmployeeCreate,
@@ -53,11 +73,15 @@ from hrms.modules.employee.schemas import (
     EmploymentRead,
     EmploymentTerminate,
     EmploymentUpdate,
+    StatutoryCreate,
+    StatutoryRead,
 )
 from hrms.modules.employee.service import (
     EmployeeAssignmentService,
+    EmployeeBankService,
     EmployeeCompensationService,
     EmployeeService,
+    EmployeeStatutoryService,
     EmploymentService,
 )
 from hrms.modules.identity.permissions import EMPLOYEE_VIEW
@@ -70,10 +94,13 @@ router = APIRouter(tags=["employee"])
 @router.get("/employees", status_code=status.HTTP_200_OK)
 async def list_employees(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW_ALL))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_ALL))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> ListEnvelope[EmployeeRead]:
-    data = await service.list_employees(tenant.company_id)
+    data = await service.list_employees(
+        tenant.company_id, scope=scope, caller_employee_id=user.employee_id
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -99,10 +126,13 @@ async def create_employee(
 async def get_employee(
     employee_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> DataEnvelope[EmployeeRead]:
-    data = await service.get_employee(tenant.company_id, employee_id)
+    data = await service.get_employee(
+        tenant.company_id, employee_id, scope=scope, caller_employee_id=user.employee_id
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -113,7 +143,8 @@ async def update_employee(
     request: Request,
     if_match: Annotated[str, Header(alias="If-Match")],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_UPDATE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> DataEnvelope[EmployeeRead]:
     data = await service.update_employee(
@@ -122,6 +153,8 @@ async def update_employee(
         body,
         expected_version=int(if_match),
         actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
@@ -134,7 +167,8 @@ async def deactivate_employee(
     request: Request,
     if_match: Annotated[str, Header(alias="If-Match")],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_DEACTIVATE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_DEACTIVATE))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
 ) -> DataEnvelope[EmployeeRead]:
     """Soft deactivation only — never a hard delete; returns the updated resource with
@@ -144,6 +178,8 @@ async def deactivate_employee(
         employee_id,
         expected_version=int(if_match),
         actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
@@ -162,7 +198,8 @@ async def create_employment(
     body: EmploymentCreate,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_CREATE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_CREATE))],
     service: Annotated[EmploymentService, Depends(get_employment_service)],
 ) -> DataEnvelope[EmploymentRead]:
     """Creates a new employment episode for an existing employee — covers both a first hire
@@ -173,6 +210,8 @@ async def create_employment(
         employee_id,
         body,
         actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
@@ -186,13 +225,20 @@ async def create_employment(
 async def list_employments(
     employee_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW))],
     service: Annotated[EmploymentService, Depends(get_employment_service)],
     as_of: Annotated[date | None, Query()] = None,
 ) -> ListEnvelope[EmploymentRead]:
     """Full employment history for the employee, ordered by `joining_date`, or — with
     `?as_of=YYYY-MM-DD` — the single episode (if any) covering that date."""
-    data = await service.list_employments(tenant.company_id, employee_id, as_of=as_of)
+    data = await service.list_employments(
+        tenant.company_id,
+        employee_id,
+        as_of=as_of,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -204,10 +250,17 @@ async def get_employment(
     employee_id: UUID,
     employment_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW))],
     service: Annotated[EmploymentService, Depends(get_employment_service)],
 ) -> DataEnvelope[EmploymentRead]:
-    data = await service.get_employment(tenant.company_id, employee_id, employment_id)
+    data = await service.get_employment(
+        tenant.company_id,
+        employee_id,
+        employment_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -222,7 +275,8 @@ async def update_employment(
     request: Request,
     if_match: Annotated[str, Header(alias="If-Match")],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_UPDATE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE))],
     service: Annotated[EmploymentService, Depends(get_employment_service)],
 ) -> DataEnvelope[EmploymentRead]:
     data = await service.update_employment(
@@ -232,6 +286,8 @@ async def update_employment(
         body,
         expected_version=int(if_match),
         actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
@@ -249,7 +305,8 @@ async def terminate_employment(
     request: Request,
     if_match: Annotated[str, Header(alias="If-Match")],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_TERMINATE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_TERMINATE))],
     service: Annotated[EmploymentService, Depends(get_employment_service)],
 ) -> DataEnvelope[EmploymentRead]:
     """Transitions the current episode `ACTIVE` → `TERMINATED` — one-way, never reversed. A
@@ -261,6 +318,8 @@ async def terminate_employment(
         body,
         expected_version=int(if_match),
         actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
@@ -285,13 +344,20 @@ async def terminate_employment(
 async def list_assignments(
     employee_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW))],
     service: Annotated[EmployeeAssignmentService, Depends(get_employee_assignment_service)],
     as_of: Annotated[date | None, Query()] = None,
 ) -> ListEnvelope[AssignmentRead]:
     """Full effective-dated assignment history for the employee, ordered by `effective_from`,
     or — with `?as_of=YYYY-MM-DD` — the single row (if any) covering that date."""
-    data = await service.list_assignments(tenant.company_id, employee_id, as_of=as_of)
+    data = await service.list_assignments(
+        tenant.company_id,
+        employee_id,
+        as_of=as_of,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -303,10 +369,17 @@ async def get_assignment(
     employee_id: UUID,
     assignment_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW))],
     service: Annotated[EmployeeAssignmentService, Depends(get_employee_assignment_service)],
 ) -> DataEnvelope[AssignmentRead]:
-    data = await service.get_assignment(tenant.company_id, employee_id, assignment_id)
+    data = await service.get_assignment(
+        tenant.company_id,
+        employee_id,
+        assignment_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -327,9 +400,18 @@ async def create_assignment(
     """Closes the employee's current assignment row (if any) and inserts a new one — covers
     initial placement, transfer, promotion, and manager change alike, distinguished only by
     `change_type`. `If-Match` is required only when a current row exists (nothing to
-    version-check for an employee's very first assignment)."""
+    version-check for an employee's very first assignment).
+
+    Unlike every other write route in this module, the gating permission is selected by the
+    request body's own `change_type` (module-header note above), so it cannot be expressed as a
+    static `Depends(require_permission(CODE))` — `rbac.resolve_data_scope()` is called directly
+    instead, mirroring `require_permission`'s own `_check_permission` helper
+    (`core/rbac/dependencies.py`) exactly: an empty `DataScope.levels` means the permission is
+    not held at all, `403`; a non-empty result both proves the permission is held and carries
+    the scope `create_assignment` must enforce against the target employee."""
     required_permission = EMPLOYEE_PROMOTE if body.change_type == "PROMOTION" else EMPLOYEE_TRANSFER
-    if not await rbac.has_permission(user.user_id, user.company_id, required_permission):
+    scope = await rbac.resolve_data_scope(user.user_id, user.company_id, required_permission)
+    if not scope.levels:
         raise PermissionDeniedError(
             f"Permission {required_permission} is required", code="PERMISSION_DENIED"
         )
@@ -339,6 +421,8 @@ async def create_assignment(
         body,
         expected_version=int(if_match) if if_match is not None else None,
         actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
@@ -350,6 +434,14 @@ async def create_assignment(
 # Unlike Assignment's `POST .../assignments`, `.VIEW_COMPENSATION`/`.UPDATE_COMPENSATION` map
 # 1:1 to GET/POST — no dynamic permission selection by request body is needed
 # (`docs/modules/employee/17_EMPLOYEE_COMPENSATION_IMPLEMENTATION_PLAN.md` §23 step 9).
+#
+# The two GET routes resolve and apply the caller's `DataScope` (module docstring above) — fixed
+# in `docs/modules/employee/
+# 37_EMPLOYEE_COMPENSATION_STATUTORY_DATA_SCOPE_IMPLEMENTATION_REPORT.md`, closing the
+# "resolve-then-discard" gap found in `docs/architecture/
+# EMPLOYEE_VERTICAL_PRODUCTION_READINESS_AUDIT.md` Finding F3. `create_compensation` now also
+# resolves and enforces `DataScope` against the target employee, closing Finding C/F9 per
+# `docs/modules/employee/39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 2.
 
 
 @router.get(
@@ -359,14 +451,21 @@ async def create_assignment(
 async def list_compensations(
     employee_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW_COMPENSATION))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_COMPENSATION))],
     service: Annotated[EmployeeCompensationService, Depends(get_employee_compensation_service)],
     as_of: Annotated[date | None, Query()] = None,
 ) -> ListEnvelope[CompensationRead]:
     """Full effective-dated compensation history for the employee, ordered by
     `effective_from`, or — with `?as_of=YYYY-MM-DD` — the single row (if any) covering that
     date."""
-    data = await service.list_compensations(tenant.company_id, employee_id, as_of=as_of)
+    data = await service.list_compensations(
+        tenant.company_id,
+        employee_id,
+        as_of=as_of,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -378,10 +477,17 @@ async def get_compensation(
     employee_id: UUID,
     compensation_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_VIEW_COMPENSATION))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_COMPENSATION))],
     service: Annotated[EmployeeCompensationService, Depends(get_employee_compensation_service)],
 ) -> DataEnvelope[CompensationRead]:
-    data = await service.get_compensation(tenant.company_id, employee_id, compensation_id)
+    data = await service.get_compensation(
+        tenant.company_id,
+        employee_id,
+        compensation_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -394,7 +500,8 @@ async def create_compensation(
     body: CompensationCreate,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(EMPLOYEE_UPDATE_COMPENSATION))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_COMPENSATION))],
     service: Annotated[EmployeeCompensationService, Depends(get_employee_compensation_service)],
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
 ) -> DataEnvelope[CompensationRead]:
@@ -408,6 +515,191 @@ async def create_compensation(
         body,
         expected_version=int(if_match) if if_match is not None else None,
         actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# --- Employee Statutory (E-07) --------------------------------------------------------------
+#
+# `.VIEW_STATUTORY`/`.UPDATE_SENSITIVE` map 1:1 to GET/POST, same as Compensation. The two GET
+# routes now resolve and apply the caller's `DataScope` (module docstring above), matching
+# Compensation/Bank — the previous `COMPANY`-only posture (E-07 plan §11.3) contradicted the
+# LOCKED `RBAC_DATA_SCOPE_DECISIONS.md` Decision E, which names `SELF`-scoped self-service as
+# Statutory's intended default; this was the "resolve-then-discard" gap found in
+# `docs/architecture/EMPLOYEE_VERTICAL_PRODUCTION_READINESS_AUDIT.md` Finding F2, fixed per
+# `docs/modules/employee/37_EMPLOYEE_COMPENSATION_STATUTORY_DATA_SCOPE_IMPLEMENTATION_REPORT.md`.
+# No seeded role currently grants `EMPLOYEE.VIEW_STATUTORY` at a non-`COMPANY` scope, so this is
+# behaviorally a no-op for every existing tenant. `create_statutory` now also resolves and
+# enforces `DataScope` against the target employee (Finding C/F9,
+# `39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 2).
+
+
+@router.get(
+    "/employees/{employee_id}/statutory",
+    status_code=status.HTTP_200_OK,
+)
+async def list_statutories(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_STATUTORY))],
+    service: Annotated[EmployeeStatutoryService, Depends(get_employee_statutory_service)],
+    as_of: Annotated[date | None, Query()] = None,
+) -> ListEnvelope[StatutoryRead]:
+    """Full effective-dated statutory history for the employee, ordered by `effective_from`,
+    or — with `?as_of=YYYY-MM-DD` — the single row (if any) covering that date."""
+    data = await service.list_statutories(
+        tenant.company_id,
+        employee_id,
+        as_of=as_of,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/statutory/{statutory_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_statutory(
+    employee_id: UUID,
+    statutory_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_STATUTORY))],
+    service: Annotated[EmployeeStatutoryService, Depends(get_employee_statutory_service)],
+) -> DataEnvelope[StatutoryRead]:
+    data = await service.get_statutory(
+        tenant.company_id,
+        employee_id,
+        statutory_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/employees/{employee_id}/statutory",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_statutory(
+    employee_id: UUID,
+    body: StatutoryCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeStatutoryService, Depends(get_employee_statutory_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> DataEnvelope[StatutoryRead]:
+    """Closes the employee's current statutory row (if any) and inserts a new one — covers an
+    employee's first statutory profile and every later revision alike. `If-Match` is required
+    only when a current row exists; nothing to version-check for an employee's very first
+    statutory row."""
+    data = await service.create_statutory(
+        tenant.company_id,
+        employee_id,
+        body,
+        expected_version=int(if_match) if if_match is not None else None,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# --- Employee Bank (E-08) -------------------------------------------------------------------
+#
+# `.VIEW_BANKING`'s `GET` routes resolve and bind the caller's `DataScope`, same as Compensation/
+# Statutory now do — `RBAC_DATA_SCOPE_DECISIONS.md` Decision E is LOCKED and names `SELF`-scoped
+# self-service as Banking's intended default (`docs/modules/employee/
+# 33_EMPLOYEE_BANKING_IMPLEMENTATION_PLAN.md` §8/§15 PD-1 Option 2) — module docstring above.
+# `create_bank` reuses `.UPDATE_SENSITIVE` (already added by E-07), widened to a second write
+# route, and now also resolves and enforces `DataScope` against the target employee (Finding
+# C/F9, `39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 2).
+
+
+@router.get(
+    "/employees/{employee_id}/bank",
+    status_code=status.HTTP_200_OK,
+)
+async def list_banks(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_BANKING))],
+    service: Annotated[EmployeeBankService, Depends(get_employee_bank_service)],
+    as_of: Annotated[date | None, Query()] = None,
+) -> ListEnvelope[BankRead]:
+    """Full effective-dated bank history for the employee, ordered by `effective_from`, or —
+    with `?as_of=YYYY-MM-DD` — the single row (if any) covering that date."""
+    data = await service.list_banks(
+        tenant.company_id,
+        employee_id,
+        as_of=as_of,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/bank/{bank_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_bank(
+    employee_id: UUID,
+    bank_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_BANKING))],
+    service: Annotated[EmployeeBankService, Depends(get_employee_bank_service)],
+) -> DataEnvelope[BankRead]:
+    data = await service.get_bank(
+        tenant.company_id,
+        employee_id,
+        bank_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/employees/{employee_id}/bank",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_bank(
+    employee_id: UUID,
+    body: BankCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeBankService, Depends(get_employee_bank_service)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+) -> DataEnvelope[BankRead]:
+    """Closes the employee's current bank row (if any) and inserts a new one — covers an
+    employee's first bank account and every later revision alike. `If-Match` is required only
+    when a current row exists; nothing to version-check for an employee's very first bank row.
+    Unlike Statutory/Assignment/Compensation, this row is never closed by
+    `terminate_employment` (plan §7) — it remains available for full-and-final settlement."""
+    data = await service.create_bank(
+        tenant.company_id,
+        employee_id,
+        body,
+        expected_version=int(if_match) if if_match is not None else None,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )

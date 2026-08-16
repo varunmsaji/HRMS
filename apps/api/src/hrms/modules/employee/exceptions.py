@@ -365,12 +365,118 @@ class CompensationVersionRequiredError(ValidationError):
         )
 
 
+class StatutoryDatesOverlapError(ConflictError):
+    """Raised when inserting a statutory row would overlap an existing one for the same
+    employee — the `employee_statutory_no_overlap` GiST exclusion constraint's friendly-error
+    backstop, mirroring `CompensationDatesOverlapError` exactly."""
+
+    code = "STATUTORY_DATES_OVERLAP"
+
+    def __init__(
+        self,
+        message: str = (
+            "This statutory row's dates overlap an existing statutory row for this employee"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "effective_from", "code": "STATUTORY_DATES_OVERLAP", "message": message}
+            ],
+        )
+
+
+class StatutoryVersionRequiredError(ValidationError):
+    """Raised when a `POST .../statutory` call omits `If-Match` while the employee already has
+    a current statutory row to close — the version being checked belongs to the row being
+    closed, not the row being created, so it cannot be inferred, mirroring
+    `CompensationVersionRequiredError` exactly. Not required for an employee's very first
+    statutory row, since there is nothing to version-check."""
+
+    code = "STATUTORY_VERSION_REQUIRED"
+
+    def __init__(
+        self,
+        message: str = (
+            "If-Match is required: this employee already has a current statutory row to close"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "If-Match", "code": "STATUTORY_VERSION_REQUIRED", "message": message}
+            ],
+        )
+
+
+class TaxRegimeSwitchNotAllowedError(ConflictError):
+    """Raised when a statutory revision would change `tax_regime` a second time within the
+    same fiscal year (FR-PAY-006) — at most one tax-regime switch per FY, counted against the
+    current row's own `effective_from` fiscal year. April-March FY is this task's own
+    engineering assumption (`docs/modules/employee/
+    29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §26 item 5) — no source document defines the
+    FY boundary."""
+
+    code = "TAX_REGIME_SWITCH_NOT_ALLOWED"
+
+    def __init__(
+        self,
+        message: str = "tax_regime can only be switched once per fiscal year",
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "tax_regime", "code": "TAX_REGIME_SWITCH_NOT_ALLOWED", "message": message}
+            ],
+        )
+
+
+class BankDatesOverlapError(ConflictError):
+    """Raised when inserting a bank row would overlap an existing one for the same employee —
+    the `employee_bank_no_overlap` GiST exclusion constraint's friendly-error backstop,
+    mirroring `StatutoryDatesOverlapError` exactly."""
+
+    code = "BANK_DATES_OVERLAP"
+
+    def __init__(
+        self,
+        message: str = ("This bank row's dates overlap an existing bank row for this employee"),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "effective_from", "code": "BANK_DATES_OVERLAP", "message": message}],
+        )
+
+
+class BankVersionRequiredError(ValidationError):
+    """Raised when a `POST .../banking` call omits `If-Match` while the employee already has a
+    current bank row to close — the version being checked belongs to the row being closed, not
+    the row being created, so it cannot be inferred, mirroring `StatutoryVersionRequiredError`
+    exactly. Not required for an employee's very first bank row, since there is nothing to
+    version-check."""
+
+    code = "BANK_VERSION_REQUIRED"
+
+    def __init__(
+        self,
+        message: str = (
+            "If-Match is required: this employee already has a current bank row to close"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "If-Match", "code": "BANK_VERSION_REQUIRED", "message": message}],
+        )
+
+
 class InvalidReportingManagerError(ValidationError):
     """Covers both `reporting_manager_id` and `dotted_line_manager_id` — raised when the
     referenced id does not resolve to an existing, same-tenant, non-deleted `Employee`, or
     when it equals the assignment's own `employee_id` (an employee cannot manage themselves —
     a direct-self-reference guard only, not full cycle detection,
-    `09_EMPLOYEE_ASSIGNMENT_IMPLEMENTATION_PLAN.md` §14.5)."""
+    `09_EMPLOYEE_ASSIGNMENT_IMPLEMENTATION_PLAN.md` §14.5). Also raised for
+    `reporting_manager_id` (only) when it equals the *acting user's* own `employee_id` — the
+    self-elevation guard, `27_REPORTING_MANAGER_SECURITY_AUDIT.md`."""
 
     code = "INVALID_REPORTING_MANAGER"
 

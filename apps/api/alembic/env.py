@@ -1,7 +1,9 @@
+import os
 from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
+from dotenv import dotenv_values
 from sqlalchemy import engine_from_config, pool
 
 from hrms.core.config.settings import get_settings
@@ -12,8 +14,29 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 settings = get_settings()
-# Alembic runs synchronously; use asyncpg via sync wrapper URL for migrations.
-sync_url = settings.database_url.replace("+asyncpg", "+psycopg")
+# Migrations run DDL (CREATE TABLE, CREATE POLICY, ...), which requires the schema-owner role.
+# That role must never be the same credential the running application authenticates as (see
+# docs/architecture/POSTGRES_RLS_ROLE_MIGRATION_PLAN.md) — so migrations read a dedicated
+# MIGRATIONS_DATABASE_URL when present, falling back to the app's own DATABASE_URL otherwise (e.g.
+# for environments that haven't set the new variable yet). Read from the real OS environment first
+# (how CI/deploy pipelines supply it) and only then from `.env` (how local dev supplies it) —
+# `Settings` itself deliberately has no field for this, so the app's own process never loads the
+# migration/admin credential into memory.
+db_url = (
+    os.environ.get("MIGRATIONS_DATABASE_URL")
+    or dotenv_values(".env").get("MIGRATIONS_DATABASE_URL")
+    or settings.database_url
+)
+if "?schema=" in db_url:
+    db_url = db_url.split("?", 1)[0]
+# Alembic runs synchronously; use the psycopg sync driver regardless of which async/plain scheme
+# the source URL used.
+if db_url.startswith("postgresql+asyncpg://"):
+    sync_url = db_url.replace("+asyncpg", "+psycopg")
+elif db_url.startswith("postgresql://"):
+    sync_url = "postgresql+psycopg://" + db_url[len("postgresql://") :]
+else:
+    sync_url = db_url
 config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = Base.metadata

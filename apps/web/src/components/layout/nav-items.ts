@@ -8,6 +8,7 @@ import {
   Layers,
   ListChecks,
   Network,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/company", label: "Company", icon: Building2 },
+  { href: "/app/employees", label: "Employees", icon: Users },
   { href: "/app/legal-entities", label: "Legal Entities", icon: Landmark },
   { href: "/app/branches", label: "Branches", icon: Building },
   { href: "/app/departments", label: "Departments", icon: Network },

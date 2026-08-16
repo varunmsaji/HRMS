@@ -1,15 +1,16 @@
 """ORM models owned by the employee module.
 
 Covers E-01 (Employee Foundation — `Employee`, `NumberSeries`), E-03 (Employment Lifecycle —
-`Employment`), E-04 (Employee Assignment — `EmployeeAssignment`), and E-06 (Employee
-Compensation — `EmployeeCompensation`).
+`Employment`), E-04 (Employee Assignment — `EmployeeAssignment`), E-06 (Employee Compensation —
+`EmployeeCompensation`), E-07 (Employee Statutory — `EmployeeStatutory`), and E-08 (Employee
+Banking — `EmployeeBank`).
 """
 
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -184,6 +185,88 @@ class EmployeeCompensation(Base, TimestampMixin):
     revision_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class EmployeeStatutory(Base, TimestampMixin):
+    """The employee's own PF/ESI/PT/LWF applicability and tax-regime profile, effective-dated
+    independently of Assignment/Compensation (`docs/modules/employee/
+    29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §7). Keyed on `employee_id`, **not**
+    `employment_id`, the same rehire-correctness shape as `EmployeeAssignment`/
+    `EmployeeCompensation` (plan §9). A GiST exclusion constraint
+    (`employee_statutory_no_overlap`) prevents two rows for the same employee from having
+    overlapping `[effective_from, effective_to]` ranges. Deliberately excludes `uan` — that stays
+    on `employee.uan_number`, never duplicated here (plan §5) — and every payroll rate/
+    calculation field, which belongs to Payroll, not this table (plan §13)."""
+
+    __tablename__ = "employee_statutory"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    effective_from: Mapped[date] = mapped_column(Date)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    is_pf_applicable: Mapped[bool] = mapped_column(Boolean, default=False)
+    pf_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    pf_wage_ceiling_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    vpf_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    vpf_percentage: Mapped[float | None] = mapped_column(Numeric(9, 4), nullable=True)
+    is_esi_applicable: Mapped[bool] = mapped_column(Boolean, default=False)
+    esi_ip_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    pt_state_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    is_lwf_applicable: Mapped[bool] = mapped_column(Boolean, default=False)
+    tax_regime: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    is_director: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_international_worker: Mapped[bool] = mapped_column(Boolean, default=False)
+    revision_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class EmployeeBank(Base, TimestampMixin):
+    """The employee's own payout-account facts, effective-dated independently of Assignment/
+    Compensation/Statutory (`docs/modules/employee/33_EMPLOYEE_BANKING_IMPLEMENTATION_PLAN.md`
+    §6). Keyed on `employee_id`, **not** `employment_id`, the same rehire-correctness shape as
+    `EmployeeAssignment`/`EmployeeCompensation`/`EmployeeStatutory`. A GiST exclusion constraint
+    (`employee_bank_no_overlap`) prevents two rows for the same employee from having overlapping
+    `[effective_from, effective_to]` ranges.
+
+    Unlike Assignment/Compensation/Statutory, this table's current row is **not** closed by
+    `EmploymentService.terminate_employment` — a locked architecture decision
+    (`05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part C "Employee Bank") keeps it open through and
+    after exit, since it is still needed for full-and-final settlement payout after the
+    employee has left (plan §7). No other Employee sub-resource has this behavior.
+
+    `account_number_enc` is a plain, unencrypted `TEXT` column today — the same posture as
+    `Employee.pan_number_enc`/`aadhaar_number_enc`, an explicitly accepted, documented gap
+    (`HRMS_SYSTEM_DESIGN_BASELINE.md` Decision D-2 Option 2; plan §14/§22 PD-4), not a silent
+    oversight. Real account numbers must not be written here before that decision is revisited."""
+
+    __tablename__ = "employee_bank"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    effective_from: Mapped[date] = mapped_column(Date)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    account_holder_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    account_number_enc: Mapped[str | None] = mapped_column(String, nullable=True)
+    bank_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    ifsc: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    branch_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    payment_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
+    verification_status: Mapped[str] = mapped_column(String(20), default="PENDING")
+    penny_drop_reference: Mapped[str | None] = mapped_column(String(60), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
 

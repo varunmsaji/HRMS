@@ -43,9 +43,48 @@ compensation write route. The entire sub-resource is absent for a caller without
 `.VIEW_COMPENSATION` — CTC is `RESTRICTED`-classified (`docs/product/
 19_RBAC_and_Permission_Matrix.md §6`) — not an individually masked field.
 
-The remaining codes not yet added (`UPDATE_SENSITIVE`, `.VIEW_DOCUMENTS`, `.CONFIRM`, etc.)
-belong to later slices — this task's own scope explicitly excludes Statutory/Banking and the
-confirmation/probation workflow, so their permission codes are not added here either.
+E-07 (Employee Statutory) adds `EMPLOYEE.VIEW_STATUTORY` (**new** — not in the locked 14-code
+catalogue, in code, or in the database; `docs/modules/employee/
+29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §11.2/§14, carried forward from `05_
+EMPLOYEE_ARCHITECTURE_DECISIONS.md` A9's own "safe to finalize immediately" framing) and
+`EMPLOYEE.UPDATE_SENSITIVE` (named in the locked catalogue's write-only description, but present
+in the live database only as an orphaned, unseeded row with zero role grants — adding it here as
+a proper code constant lets `seed_b1_foundation`'s existing idempotent `INSERT ... WHERE NOT
+EXISTS`-shaped check adopt that row cleanly, not create a duplicate, per plan §4/§24 item 5/§27
+item 11). `.VIEW_STATUTORY` gates both statutory read routes; `.UPDATE_SENSITIVE` gates the
+statutory write route only — **not** wired to `employee`'s PAN/Aadhaar/UAN fields (E-02) or
+`employee_bank` (E-08), which do not exist yet (plan §14). Both codes discard their resolved
+`DataScope` and remain `COMPANY`-scoped, matching Compensation's own routes exactly — a
+deliberate, named posture (plan §11.3), not an oversight: no source document proposes `SELF`/
+`REPORTEES`/`REPORTEE_TREE` visibility for PF/PAN-adjacent identifier data, and this codebase
+already treats manager-linked data exposure as something to actively guard
+(`27_REPORTING_MANAGER_SECURITY_AUDIT.md`), not default open.
+
+E-08 (Employee Banking) adds `EMPLOYEE.VIEW_BANKING` (**new** — not in the locked 14-code
+catalogue, in code, or in the database before this slice; `docs/modules/employee/
+33_EMPLOYEE_BANKING_IMPLEMENTATION_PLAN.md` §8/§15 PD-1, carried forward from `05_
+EMPLOYEE_ARCHITECTURE_DECISIONS.md` A9's same "safe to finalize immediately" framing E-07 used
+for `.VIEW_STATUTORY`) and reuses `EMPLOYEE.UPDATE_SENSITIVE` (already added by E-07) on the
+Banking write route — the same code, widened to a second consumer, exactly as that code's own
+E-07 docstring anticipated ("Edit PAN/Aadhaar/bank/statutory" always named both together).
+
+Unlike `.VIEW_STATUTORY`/`.UPDATE_SENSITIVE`, `.VIEW_BANKING` does **not** discard its resolved
+`DataScope` — `RBAC_DATA_SCOPE_DECISIONS.md` Decision E is **LOCKED** and explicitly names
+"Own statutory / banking (once built, E-07/E-08)... `SELF`-scoped by default so an employee can
+verify their own PF number / bank account" as the intended default. Statutory shipped
+`COMPANY`-only as a deliberate, named deviation from this same locked decision (plan §11.3);
+Banking follows the locked decision directly instead of repeating that deviation a second time,
+per the Banking plan's own PD-1 recommendation (§15 Option 2) — `GET .../banking` routes resolve
+the caller's `DataScope` via `EmployeeService.resolve_visible_employee_ids` exactly like
+`GET /employees`/`GET /employees/{id}` already do, so a caller holding `.VIEW_BANKING` with only
+`SELF` scope sees just their own bank record. Managers hold no default grant
+(`RBAC_DATA_SCOPE_DECISIONS.md` Decision F: "No, by default" for Statutory/Banking) — this is
+unaffected by wiring `SELF`, since `REPORTEES`/`REPORTEE_TREE` is never *granted* to any
+manager-shaped role for this code, not merely narrowed at read time.
+
+The remaining codes not yet added (`.VIEW_DOCUMENTS`, `.CONFIRM`, etc.) belong to later slices —
+this task's own scope explicitly excludes the confirmation/probation workflow, so its permission
+codes are not added here either.
 """
 
 EMPLOYEE_VIEW_ALL = "EMPLOYEE.VIEW_ALL"
@@ -57,6 +96,9 @@ EMPLOYEE_TRANSFER = "EMPLOYEE.TRANSFER"
 EMPLOYEE_PROMOTE = "EMPLOYEE.PROMOTE"
 EMPLOYEE_VIEW_COMPENSATION = "EMPLOYEE.VIEW_COMPENSATION"
 EMPLOYEE_UPDATE_COMPENSATION = "EMPLOYEE.UPDATE_COMPENSATION"
+EMPLOYEE_VIEW_STATUTORY = "EMPLOYEE.VIEW_STATUTORY"
+EMPLOYEE_UPDATE_SENSITIVE = "EMPLOYEE.UPDATE_SENSITIVE"
+EMPLOYEE_VIEW_BANKING = "EMPLOYEE.VIEW_BANKING"
 
 EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_VIEW_ALL, "EMPLOYEE", "View all employees in the company"),
@@ -68,4 +110,7 @@ EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_PROMOTE, "EMPLOYEE", "Promote an employee's designation or grade"),
     (EMPLOYEE_VIEW_COMPENSATION, "EMPLOYEE", "View an employee's compensation history"),
     (EMPLOYEE_UPDATE_COMPENSATION, "EMPLOYEE", "Record a new compensation revision"),
+    (EMPLOYEE_VIEW_STATUTORY, "EMPLOYEE", "View an employee's PF/ESI/PT/LWF/tax-regime profile"),
+    (EMPLOYEE_UPDATE_SENSITIVE, "EMPLOYEE", "Edit PAN/Aadhaar/bank/statutory"),
+    (EMPLOYEE_VIEW_BANKING, "EMPLOYEE", "View an employee's bank account details"),
 ]

@@ -134,6 +134,10 @@ class RolePermission(Base):
     permission_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("permission.id"), primary_key=True
     )
+    # `SELF`/`REPORTEES`/`REPORTEE_TREE`/`COMPANY` — `docs/architecture/
+    # RBAC_DATA_SCOPE_DECISIONS.md` Decision A; `DEFAULT 'COMPANY'` (migration
+    # `20260815120000_role_permission_data_scope.py`) preserves every existing grant's behavior.
+    data_scope: Mapped[str] = mapped_column(String(20), default="COMPANY")
 
 
 class UserRole(Base):

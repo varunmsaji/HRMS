@@ -707,9 +707,15 @@ async def test_create_assignment_unknown_reporting_manager_rejected(
 ) -> None:
     employee_id = uuid4()
 
-    async def _get_employee(_session: object, *, company_id: object, employee_id: object) -> object:
-        # First call resolves the assignment's own employee; second call resolves the manager
-        # (`None` — does not exist).
+    async def _get_employee(
+        _session: object,
+        *,
+        company_id: object,
+        employee_id: object,
+        visible_employee_ids: object = None,
+    ) -> object:
+        # First call resolves the assignment's own employee (via `_assert_employee_visible`);
+        # second call resolves the manager (`None` — does not exist).
         if _get_employee.calls == 0:  # type: ignore[attr-defined]
             _get_employee.calls += 1  # type: ignore[attr-defined]
             return _employee(id=employee_id)

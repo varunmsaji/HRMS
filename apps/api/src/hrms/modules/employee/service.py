@@ -1,5 +1,6 @@
 """Business logic for the employee module — E-01 (identity foundation), E-03 (employment
-lifecycle), E-04 (employee assignment), and E-06 (employee compensation)."""
+lifecycle), E-04 (employee assignment), E-06 (employee compensation), E-07 (employee
+statutory), and E-08 (employee banking)."""
 
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
@@ -10,10 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.errors.base import NotFoundError
+from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.employee.exceptions import (
     AssignmentDatesOverlapError,
     AssignmentFieldsRequiredError,
     AssignmentVersionRequiredError,
+    BankDatesOverlapError,
+    BankVersionRequiredError,
     CompensationDatesOverlapError,
     CompensationVersionRequiredError,
     EmployeeSeatLimitExceededError,
@@ -31,16 +35,23 @@ from hrms.modules.employee.exceptions import (
     NoActiveEmploymentError,
     ShiftIdRequiredError,
     StaleResourceError,
+    StatutoryDatesOverlapError,
+    StatutoryVersionRequiredError,
+    TaxRegimeSwitchNotAllowedError,
 )
 from hrms.modules.employee.repository import (
     EmployeeAssignmentRepository,
+    EmployeeBankRepository,
     EmployeeCompensationRepository,
     EmployeeRepository,
+    EmployeeStatutoryRepository,
     EmploymentRepository,
 )
 from hrms.modules.employee.schemas import (
     AssignmentCreate,
     AssignmentRead,
+    BankCreate,
+    BankRead,
     CompensationCreate,
     CompensationRead,
     EmployeeCreate,
@@ -50,8 +61,12 @@ from hrms.modules.employee.schemas import (
     EmploymentRead,
     EmploymentTerminate,
     EmploymentUpdate,
+    StatutoryCreate,
+    StatutoryRead,
     assignment_to_audit_dict,
     assignment_to_read,
+    bank_to_audit_dict,
+    bank_to_read,
     build_employee_update_values,
     build_employment_update_values,
     compensation_to_audit_dict,
@@ -60,6 +75,8 @@ from hrms.modules.employee.schemas import (
     employee_to_read,
     employment_to_audit_dict,
     employment_to_read,
+    statutory_to_audit_dict,
+    statutory_to_read,
 )
 
 
@@ -68,7 +85,57 @@ class EmployeeService:
         self._session = session
         self._settings = settings or get_settings()
         self._repo = EmployeeRepository()
+        self._assignment_repo = EmployeeAssignmentRepository()
         self._audit = AuditService()
+
+    async def resolve_visible_employee_ids(
+        self,
+        company_id: UUID,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> frozenset[UUID] | None:
+        """Turns a `core.rbac` `DataScope` (scope *levels* only — `core/rbac` cannot know about
+        `employee_assignment`, `hrms.core` may not import `hrms.modules`,
+        `apps/api/.importlinter`) into a concrete set of visible employee IDs. `None` means
+        `COMPANY` scope — no filter, identical to this module's pre-data-scope behavior; a
+        (possibly empty) `frozenset` means the caller may only see those specific employees.
+
+        Public and reusable — this is the exact seam a future Attendance/Leave/Payroll module
+        would call via `employee.service.EmployeeService` (Module Standard's cross-module
+        `other_module.service` rule) to resolve "which employee IDs can this caller see," reusing
+        this reporting-hierarchy logic rather than re-deriving it
+        (`docs/modules/employee/25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §7).
+
+        Union semantics for multiple granted levels (`RBAC_DATA_SCOPE_DECISIONS.md` Decision A /
+        `25_...IMPLEMENTATION_PLAN.md` §12): `SELF` and `REPORTEES` are not nested (a manager's
+        own ID is never a member of their own `REPORTEES` set), so a caller holding both grants
+        (e.g. via two roles) must see the union, not just the "widest-sounding" level alone.
+        `COMPANY` always short-circuits to "no filter," regardless of what else is granted, and
+        regardless of `caller_employee_id`.
+        """
+        if DataScopeLevel.COMPANY in scope.levels:
+            return None
+
+        visible: set[UUID] = set()
+
+        if DataScopeLevel.SELF in scope.levels and caller_employee_id is not None:
+            visible.add(caller_employee_id)
+
+        if caller_employee_id is not None:
+            if DataScopeLevel.REPORTEE_TREE in scope.levels:
+                # Superset of REPORTEES for the same root — no need to also run REPORTEES.
+                visible |= await self._assignment_repo.get_reportee_tree_ids(
+                    self._session, company_id=company_id, manager_employee_id=caller_employee_id
+                )
+            elif DataScopeLevel.REPORTEES in scope.levels:
+                visible |= await self._assignment_repo.get_direct_report_ids(
+                    self._session, company_id=company_id, manager_employee_id=caller_employee_id
+                )
+
+        # `caller_employee_id is None` with only SELF/REPORTEES/REPORTEE_TREE granted (no
+        # Employee record for this user — Decisions doc, Decision B edge case): every branch
+        # above is skipped, `visible` stays empty — fails closed, never falls back to COMPANY.
+        return frozenset(visible)
 
     async def _check_seat_limit(self, company_id: UUID) -> None:
         """`EMPLOYEE_SEATS` enforcement (`docs/modules/employee/
@@ -152,13 +219,50 @@ class EmployeeService:
         )
         return read
 
-    async def list_employees(self, company_id: UUID) -> list[EmployeeRead]:
-        employees = await self._repo.list_employees(self._session, company_id=company_id)
+    async def list_employees(
+        self,
+        company_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> list[EmployeeRead]:
+        """`scope=None` (every caller except `GET /employees`) preserves this module's
+        pre-data-scope behavior exactly — company-wide, no filter. `GET /employees` passes its
+        resolved `DataScope` (`router.py`), narrowing the result per
+        `resolve_visible_employee_ids`."""
+        visible_ids = (
+            await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
+            if scope is not None
+            else None
+        )
+        employees = await self._repo.list_employees(
+            self._session, company_id=company_id, visible_employee_ids=visible_ids
+        )
         return [employee_to_read(employee) for employee in employees]
 
-    async def get_employee(self, company_id: UUID, employee_id: UUID) -> EmployeeRead:
+    async def get_employee(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> EmployeeRead:
+        """`scope=None` preserves pre-data-scope behavior exactly (every internal caller of this
+        service method except `GET /employees/{id}` itself). An out-of-scope target raises the
+        same `NotFoundError` → `404` a nonexistent or cross-tenant ID already raises — no new
+        branching, matching the existing cross-tenant convention
+        (`docs/modules/employee/25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §15)."""
+        visible_ids = (
+            await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
+            if scope is not None
+            else None
+        )
         employee = await self._repo.get_employee(
-            self._session, company_id=company_id, employee_id=employee_id
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
         )
         if employee is None:
             raise NotFoundError("Resource not found")
@@ -172,11 +276,26 @@ class EmployeeService:
         *,
         expected_version: int,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> EmployeeRead:
+        """`scope=None` preserves pre-data-scope behavior exactly (every internal caller of
+        this service except `PATCH`/`DELETE /employees/{id}` themselves) — company-wide, no
+        filter. An out-of-scope target raises the same `NotFoundError` -> `404` a nonexistent or
+        cross-tenant ID already raises, matching every read-path route's convention
+        (`docs/modules/employee/39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 2)."""
+        visible_ids = (
+            await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
+            if scope is not None
+            else None
+        )
         employee = await self._repo.get_employee(
-            self._session, company_id=company_id, employee_id=employee_id
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
         )
         if employee is None:
             raise NotFoundError("Resource not found")
@@ -244,6 +363,8 @@ class EmployeeService:
         *,
         expected_version: int,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> EmployeeRead:
@@ -259,6 +380,8 @@ class EmployeeService:
             EmployeeUpdate(is_active=False),
             expected_version=expected_version,
             actor_user_id=actor_user_id,
+            scope=scope,
+            caller_employee_id=caller_employee_id,
             ip_address=ip_address,
             user_agent=user_agent,
         )
@@ -274,11 +397,38 @@ class EmploymentService:
         self._settings = settings or get_settings()
         self._repo = EmploymentRepository()
         self._employee_repo = EmployeeRepository()
+        self._assignment_repo = EmployeeAssignmentRepository()
+        self._compensation_repo = EmployeeCompensationRepository()
+        self._statutory_repo = EmployeeStatutoryRepository()
+        self._employee_service = EmployeeService(session, self._settings)
         self._audit = AuditService()
 
-    async def _assert_employee_exists(self, company_id: UUID, employee_id: UUID) -> None:
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        """`scope=None` preserves this method's pre-data-scope "exists" behavior exactly (every
+        internal caller of this service except the routes that now resolve a real `DataScope`).
+        An out-of-scope target raises the same `NotFoundError` -> `404` a nonexistent or
+        cross-tenant ID already raises — no new branching, mirroring
+        `EmployeeCompensationService._assert_employee_visible`'s exact pattern
+        (`docs/modules/employee/39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 1/2)."""
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
         employee = await self._employee_repo.get_employee(
-            self._session, company_id=company_id, employee_id=employee_id
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
         )
         if employee is None:
             raise NotFoundError("Resource not found")
@@ -305,10 +455,14 @@ class EmploymentService:
         body: EmploymentCreate,
         *,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> EmploymentRead:
-        await self._assert_employee_exists(company_id, employee_id)
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         await self._assert_legal_entity_ownership(company_id, body.legal_entity_id)
 
         previous = await self._repo.get_latest_employment(
@@ -359,9 +513,22 @@ class EmploymentService:
         return read
 
     async def list_employments(
-        self, company_id: UUID, employee_id: UUID, *, as_of: date | None = None
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        as_of: date | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> list[EmploymentRead]:
-        await self._assert_employee_exists(company_id, employee_id)
+        """`scope=None` preserves this service's pre-data-scope behavior exactly (every internal
+        caller except `GET .../employments` itself). `GET .../employments` passes its resolved
+        `DataScope` (`router.py`), narrowing visibility to `SELF`/`REPORTEES`/`REPORTEE_TREE`/
+        `COMPANY` per `_assert_employee_visible`, resolved *before* the `as_of` branch so
+        `as_of` cannot bypass scope."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         if as_of is not None:
             employment = await self._repo.get_employment_as_of(
                 self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
@@ -373,9 +540,19 @@ class EmploymentService:
         return [employment_to_read(employment) for employment in employments]
 
     async def get_employment(
-        self, company_id: UUID, employee_id: UUID, employment_id: UUID
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        employment_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> EmploymentRead:
-        await self._assert_employee_exists(company_id, employee_id)
+        """`scope=None` preserves pre-data-scope behavior exactly, mirroring
+        `list_employments`."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         employment = await self._repo.get_employment(
             self._session,
             company_id=company_id,
@@ -395,10 +572,14 @@ class EmploymentService:
         *,
         expected_version: int,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> EmploymentRead:
-        await self._assert_employee_exists(company_id, employee_id)
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         employment = await self._repo.get_employment(
             self._session,
             company_id=company_id,
@@ -469,14 +650,29 @@ class EmploymentService:
         *,
         expected_version: int,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> EmploymentRead:
         """Transitions the current episode `ACTIVE` → `TERMINATED`, one-way — there is no
         action anywhere in this module that reopens a terminated employment. A later rejoin is
         always a new `create_employment` call, never a reversal of this one
-        (`docs/modules/employee/05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part B2)."""
-        await self._assert_employee_exists(company_id, employee_id)
+        (`docs/modules/employee/05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part B2).
+
+        Also closes the employee's currently-open `employee_assignment`/`employee_compensation`
+        row (if any) at `effective_to = last_working_day`, reusing
+        `EmployeeAssignmentRepository.close_assignment`/`EmployeeCompensationRepository.
+        close_compensation` verbatim — the same "close current" mutation `create_assignment`/
+        `create_compensation` already use, just triggered here instead
+        (`docs/modules/employee/22_TERMINATION_ASSIGNMENT_COMPENSATION_PLAN.md` §7/§21). If the
+        open row's `effective_from` is after `last_working_day`, it is left open: closing it
+        would produce an invalid `effective_to < effective_from` range, and no source document
+        resolves what should happen instead (plan §8/§19 OD-1, deliberately left unresolved
+        here rather than inventing a rule)."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         employment = await self._repo.get_employment(
             self._session,
             company_id=company_id,
@@ -492,6 +688,143 @@ class EmploymentService:
 
         before_read = employment_to_read(employment)
         now = datetime.now(UTC)
+
+        current_assignment = await self._assignment_repo.get_current_assignment(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if (
+            current_assignment is not None
+            and current_assignment.effective_from <= body.last_working_day
+        ):
+            assignment_before = assignment_to_read(current_assignment)
+            closed_assignment = await self._assignment_repo.close_assignment(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                assignment_id=current_assignment.id,
+                effective_to=body.last_working_day,
+                expected_version=current_assignment.version,
+                now=now,
+            )
+            if closed_assignment is None:
+                refreshed_assignment = await self._assignment_repo.get_assignment(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    assignment_id=current_assignment.id,
+                )
+                if refreshed_assignment is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This employee's current assignment has been modified by another request",
+                    current=assignment_to_audit_dict(assignment_to_read(refreshed_assignment)),
+                )
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="ASSIGNMENT_CHANGED",
+                entity_type="employee_assignment",
+                entity_id=current_assignment.id,
+                before=assignment_to_audit_dict(assignment_before),
+                after=assignment_to_audit_dict(assignment_to_read(closed_assignment)),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+
+        current_compensation = await self._compensation_repo.get_current_compensation(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if (
+            current_compensation is not None
+            and current_compensation.effective_from <= body.last_working_day
+        ):
+            compensation_before = compensation_to_read(current_compensation)
+            closed_compensation = await self._compensation_repo.close_compensation(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                compensation_id=current_compensation.id,
+                effective_to=body.last_working_day,
+                expected_version=current_compensation.version,
+                now=now,
+            )
+            if closed_compensation is None:
+                refreshed_compensation = await self._compensation_repo.get_compensation(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    compensation_id=current_compensation.id,
+                )
+                if refreshed_compensation is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This employee's current compensation has been modified by another request",
+                    current=compensation_to_audit_dict(
+                        compensation_to_read(refreshed_compensation)
+                    ),
+                )
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="COMPENSATION_REVISED",
+                entity_type="employee_compensation",
+                entity_id=current_compensation.id,
+                before=compensation_to_audit_dict(compensation_before),
+                after=compensation_to_audit_dict(compensation_to_read(closed_compensation)),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+
+        # Statutory rows survive exit rather than being deleted/merged, but the currently-open
+        # row is closed at the termination date — the same "last row closed" contract Assignment/
+        # Compensation already have (`docs/modules/employee/
+        # 29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §9), reusing `EmployeeStatutoryRepository.
+        # close_statutory` verbatim.
+        current_statutory = await self._statutory_repo.get_current_statutory(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if (
+            current_statutory is not None
+            and current_statutory.effective_from <= body.last_working_day
+        ):
+            statutory_before = statutory_to_read(current_statutory)
+            closed_statutory = await self._statutory_repo.close_statutory(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                statutory_id=current_statutory.id,
+                effective_to=body.last_working_day,
+                expected_version=current_statutory.version,
+                now=now,
+            )
+            if closed_statutory is None:
+                refreshed_statutory = await self._statutory_repo.get_statutory(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    statutory_id=current_statutory.id,
+                )
+                if refreshed_statutory is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This employee's current statutory record has been modified by another request",
+                    current=statutory_to_audit_dict(statutory_to_read(refreshed_statutory)),
+                )
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="STATUTORY_REVISED",
+                entity_type="employee_statutory",
+                entity_id=current_statutory.id,
+                before=statutory_to_audit_dict(statutory_before),
+                after=statutory_to_audit_dict(statutory_to_read(closed_statutory)),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+
         updated = await self._repo.update_employment(
             self._session,
             company_id=company_id,
@@ -545,11 +878,35 @@ class EmployeeAssignmentService:
         self._repo = EmployeeAssignmentRepository()
         self._employee_repo = EmployeeRepository()
         self._employment_repo = EmploymentRepository()
+        self._employee_service = EmployeeService(session, self._settings)
         self._audit = AuditService()
 
-    async def _assert_employee_exists(self, company_id: UUID, employee_id: UUID) -> None:
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        """`scope=None` preserves this method's pre-data-scope "exists" behavior exactly (every
+        internal caller of this service except the routes that now resolve a real `DataScope`).
+        An out-of-scope target raises the same `NotFoundError` -> `404` a nonexistent or
+        cross-tenant ID already raises — no new branching, mirroring
+        `EmployeeCompensationService._assert_employee_visible`'s exact pattern
+        (`docs/modules/employee/39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 1B/2)."""
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
         employee = await self._employee_repo.get_employee(
-            self._session, company_id=company_id, employee_id=employee_id
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
         )
         if employee is None:
             raise NotFoundError("Resource not found")
@@ -635,16 +992,36 @@ class EmployeeAssignmentService:
         *,
         expected_version: int | None,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> AssignmentRead:
-        await self._assert_employee_exists(company_id, employee_id)
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
 
         covering_employment = await self._employment_repo.get_employment_as_of(
             self._session, company_id=company_id, employee_id=employee_id, as_of=body.effective_from
         )
         if covering_employment is None:
             raise NoActiveEmploymentError()
+
+        if (
+            body.reporting_manager_id is not None
+            and caller_employee_id is not None
+            and body.reporting_manager_id == caller_employee_id
+        ):
+            # Self-elevation guard (`docs/modules/employee/27_REPORTING_MANAGER_SECURITY_AUDIT.md`):
+            # `reporting_manager_id` is the sole input to `REPORTEES`/`REPORTEE_TREE` data-scope
+            # resolution, so naming the acting user as the new manager is a scope-widening write,
+            # not an ordinary field change. Rejected unconditionally, regardless of which
+            # permission authorized this write, since no permission in the current catalogue is
+            # scoped to "may expand my own data scope."
+            raise InvalidReportingManagerError(
+                field="reporting_manager_id",
+                message="reporting_manager_id cannot be set to the acting user's own employee_id",
+            )
 
         if body.change_type == "SHIFT_CHANGE" and body.shift_id is None:
             raise ShiftIdRequiredError()
@@ -797,9 +1174,22 @@ class EmployeeAssignmentService:
         return after_read
 
     async def list_assignments(
-        self, company_id: UUID, employee_id: UUID, *, as_of: date | None = None
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        as_of: date | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> list[AssignmentRead]:
-        await self._assert_employee_exists(company_id, employee_id)
+        """`scope=None` preserves this service's pre-data-scope behavior exactly (every internal
+        caller except `GET .../assignments` itself). `GET .../assignments` passes its resolved
+        `DataScope` (`router.py`), narrowing visibility to `SELF`/`REPORTEES`/`REPORTEE_TREE`/
+        `COMPANY` per `_assert_employee_visible`, resolved *before* the `as_of` branch so
+        `as_of` cannot bypass scope."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         if as_of is not None:
             assignment = await self._repo.get_assignment_as_of(
                 self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
@@ -811,9 +1201,19 @@ class EmployeeAssignmentService:
         return [assignment_to_read(assignment) for assignment in assignments]
 
     async def get_assignment(
-        self, company_id: UUID, employee_id: UUID, assignment_id: UUID
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        assignment_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> AssignmentRead:
-        await self._assert_employee_exists(company_id, employee_id)
+        """`scope=None` preserves pre-data-scope behavior exactly, mirroring
+        `list_assignments`."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         assignment = await self._repo.get_assignment(
             self._session,
             company_id=company_id,
@@ -859,11 +1259,34 @@ class EmployeeCompensationService:
         self._repo = EmployeeCompensationRepository()
         self._employee_repo = EmployeeRepository()
         self._employment_repo = EmploymentRepository()
+        self._employee_service = EmployeeService(session, self._settings)
         self._audit = AuditService()
 
-    async def _assert_employee_exists(self, company_id: UUID, employee_id: UUID) -> None:
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        """`scope=None` preserves this method's pre-data-scope "exists" behavior exactly (every
+        internal caller of this service except the two `GET` routes and `create_compensation`,
+        all of which now resolve a real `DataScope`). An out-of-scope target raises the same
+        `NotFoundError` -> `404` a nonexistent or cross-tenant ID already raises — no new
+        branching, mirroring `EmployeeBankService._assert_employee_visible`'s exact pattern."""
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
         employee = await self._employee_repo.get_employee(
-            self._session, company_id=company_id, employee_id=employee_id
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
         )
         if employee is None:
             raise NotFoundError("Resource not found")
@@ -876,10 +1299,14 @@ class EmployeeCompensationService:
         *,
         expected_version: int | None,
         actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> CompensationRead:
-        await self._assert_employee_exists(company_id, employee_id)
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
 
         covering_employment = await self._employment_repo.get_employment_as_of(
             self._session, company_id=company_id, employee_id=employee_id, as_of=body.effective_from
@@ -965,9 +1392,21 @@ class EmployeeCompensationService:
         return after_read
 
     async def list_compensations(
-        self, company_id: UUID, employee_id: UUID, *, as_of: date | None = None
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        as_of: date | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> list[CompensationRead]:
-        await self._assert_employee_exists(company_id, employee_id)
+        """`scope=None` preserves this service's pre-data-scope behavior exactly (every internal
+        caller except `GET .../compensation` itself). `GET .../compensation` passes its resolved
+        `DataScope` (`router.py`), narrowing visibility to `SELF`/`REPORTEES`/`REPORTEE_TREE`/
+        `COMPANY` per `_assert_employee_visible`."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         if as_of is not None:
             compensation = await self._repo.get_compensation_as_of(
                 self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
@@ -979,9 +1418,19 @@ class EmployeeCompensationService:
         return [compensation_to_read(compensation) for compensation in compensations]
 
     async def get_compensation(
-        self, company_id: UUID, employee_id: UUID, compensation_id: UUID
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        compensation_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> CompensationRead:
-        await self._assert_employee_exists(company_id, employee_id)
+        """`scope=None` preserves pre-data-scope behavior exactly, mirroring
+        `list_compensations`."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         compensation = await self._repo.get_compensation(
             self._session,
             company_id=company_id,
@@ -1002,3 +1451,469 @@ class EmployeeCompensationService:
             self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
         )
         return compensation_to_read(compensation) if compensation is not None else None
+
+
+def _fiscal_year(day: date) -> int:
+    """India-centric April-March FY, identified by its starting calendar year — this task's own
+    engineering assumption for FR-PAY-006's "once per FY" rule (`docs/modules/employee/
+    29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §26 item 5); no source document defines the FY
+    boundary."""
+    return day.year if day.month >= 4 else day.year - 1
+
+
+class EmployeeStatutoryService:
+    """E-07 — employee statutory (PF/ESI/PT/LWF/tax-regime profile). One write operation,
+    `create_statutory`, covering an employee's first statutory row and every later revision
+    alike (`docs/modules/employee/29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §20) — each is
+    an insert of a new effective-dated row, never a column update. No `update_statutory`/
+    `delete_statutory` exists; there is no other mutation path.
+
+    Deliberately does **not** validate `is_pf_applicable`/`is_esi_applicable` against their
+    corresponding identifier fields (`pf_number`/`esi_ip_number`), nor against the employing
+    legal entity's own PF/ESI registration — both remain open, undocumented product questions
+    (plan §17, §26 items 6-7), not invented here."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = EmployeeStatutoryRepository()
+        self._employee_repo = EmployeeRepository()
+        self._employment_repo = EmploymentRepository()
+        self._employee_service = EmployeeService(session, self._settings)
+        self._audit = AuditService()
+
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        """`scope=None` preserves this method's pre-data-scope "exists" behavior exactly (every
+        internal caller of this service except the two `GET` routes and `create_statutory`, all
+        of which now resolve a real `DataScope`). An out-of-scope target raises the same
+        `NotFoundError` -> `404` a nonexistent or cross-tenant ID already raises — no new
+        branching, mirroring `EmployeeBankService._assert_employee_visible`'s exact pattern."""
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
+        employee = await self._employee_repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+    async def create_statutory(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: StatutoryCreate,
+        *,
+        expected_version: int | None,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> StatutoryRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+
+        covering_employment = await self._employment_repo.get_employment_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=body.effective_from
+        )
+        if covering_employment is None:
+            raise NoActiveEmploymentError()
+
+        current = await self._repo.get_current_statutory(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+
+        if current is not None:
+            if body.effective_from <= current.effective_from:
+                raise InvalidEffectiveFromError()
+            if expected_version is None:
+                raise StatutoryVersionRequiredError()
+            if body.tax_regime != current.tax_regime and _fiscal_year(
+                current.effective_from
+            ) == _fiscal_year(body.effective_from):
+                raise TaxRegimeSwitchNotAllowedError()
+
+        now = datetime.now(UTC)
+        before_read = statutory_to_read(current) if current is not None else None
+
+        if current is not None:
+            assert expected_version is not None  # narrowed above
+            closed = await self._repo.close_statutory(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                statutory_id=current.id,
+                effective_to=body.effective_from - timedelta(days=1),
+                expected_version=expected_version,
+                now=now,
+            )
+            if closed is None:
+                refreshed = await self._repo.get_statutory(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    statutory_id=current.id,
+                )
+                if refreshed is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This employee's current statutory record has been modified by another request",
+                    current=statutory_to_audit_dict(statutory_to_read(refreshed)),
+                )
+
+        statutory_id = uuid4()
+        try:
+            statutory = await self._repo.insert_statutory(
+                self._session,
+                data={
+                    "id": statutory_id,
+                    "company_id": company_id,
+                    "employee_id": employee_id,
+                    "effective_from": body.effective_from,
+                    "effective_to": None,
+                    "is_pf_applicable": body.is_pf_applicable,
+                    "pf_number": body.pf_number,
+                    "pf_wage_ceiling_opt_out": body.pf_wage_ceiling_opt_out,
+                    "vpf_amount": body.vpf_amount,
+                    "vpf_percentage": body.vpf_percentage,
+                    "is_esi_applicable": body.is_esi_applicable,
+                    "esi_ip_number": body.esi_ip_number,
+                    "pt_state_code": body.pt_state_code,
+                    "is_lwf_applicable": body.is_lwf_applicable,
+                    "tax_regime": body.tax_regime,
+                    "is_director": body.is_director,
+                    "is_international_worker": body.is_international_worker,
+                    "revision_reason": body.revision_reason,
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            # `employee_statutory_no_overlap` GiST exclusion constraint — the race-condition
+            # backstop, mirroring `EmployeeCompensationService.create_compensation`'s exact
+            # pattern.
+            raise StatutoryDatesOverlapError() from exc
+
+        after_read = statutory_to_read(statutory)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="STATUTORY_REVISED",
+            entity_type="employee_statutory",
+            entity_id=statutory_id,
+            before=statutory_to_audit_dict(before_read) if before_read is not None else None,
+            after=statutory_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def list_statutories(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        as_of: date | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> list[StatutoryRead]:
+        """`scope=None` preserves this service's pre-data-scope behavior exactly (every internal
+        caller except `GET .../statutory` itself). `GET .../statutory` passes its resolved
+        `DataScope` (`router.py`), narrowing visibility to `SELF`/`REPORTEES`/`REPORTEE_TREE`/
+        `COMPANY` per `_assert_employee_visible`."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        if as_of is not None:
+            statutory = await self._repo.get_statutory_as_of(
+                self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+            )
+            return [statutory_to_read(statutory)] if statutory is not None else []
+        statutories = await self._repo.list_statutories(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [statutory_to_read(statutory) for statutory in statutories]
+
+    async def get_statutory(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        statutory_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> StatutoryRead:
+        """`scope=None` preserves pre-data-scope behavior exactly, mirroring `list_statutories`."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        statutory = await self._repo.get_statutory(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            statutory_id=statutory_id,
+        )
+        if statutory is None:
+            raise NotFoundError("Resource not found")
+        return statutory_to_read(statutory)
+
+    async def get_statutory_as_of(
+        self, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> StatutoryRead | None:
+        """The cross-module contract (plan §13) Payroll will call, once per pay run, at
+        snapshot time — `get_statutory_as_of(employee_id, date)`. Does not assert employee
+        existence, mirroring `EmployeeCompensationService.get_compensation_as_of`'s exact
+        contract."""
+        statutory = await self._repo.get_statutory_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+        )
+        return statutory_to_read(statutory) if statutory is not None else None
+
+
+class EmployeeBankService:
+    """E-08 — employee banking (payout-account facts). One write operation, `create_bank`,
+    covering an employee's first bank row and every later revision alike
+    (`docs/modules/employee/33_EMPLOYEE_BANKING_IMPLEMENTATION_PLAN.md` §19) — each is an insert
+    of a new effective-dated row, never a column update. No `update_bank`/`delete_bank` exists;
+    there is no other mutation path.
+
+    Reuses `EmploymentRepository.get_employment_as_of` for the covering-employment check exactly
+    as `EmployeeStatutoryService.create_statutory` does (plan §15 PD-2 Option 1) — a write dated
+    on-or-before a `TERMINATED` employment's `last_working_day` succeeds (it falls within the
+    closed episode's range); a write dated strictly after `last_working_day` still has no
+    covering episode and is rejected. This is a known, named limitation for the
+    full-and-final-settlement-correction-after-exit scenario (plan §9), not resolved here since
+    no source document specifies a rule beyond it.
+
+    Deliberately does **not** close the employee's current bank row when
+    `EmploymentService.terminate_employment` runs — unlike Assignment/Compensation/Statutory,
+    the current row must remain open through and after exit for F&F settlement payout (plan §7,
+    `05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part C "Employee Bank"). No change was made to
+    `EmploymentService.terminate_employment` for this slice.
+
+    Same as `EmployeeCompensationService`/`EmployeeStatutoryService`, the two `GET` routes and
+    `create_bank` all accept a resolved `DataScope` and bind it via `EmployeeService.
+    resolve_visible_employee_ids` — `RBAC_DATA_SCOPE_DECISIONS.md` Decision E is **LOCKED** and
+    explicitly names `SELF`-scoped self-service as Banking's intended default (plan §8/§15 PD-1
+    Option 2); write-path scoping was closed per `docs/modules/employee/
+    39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 2."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = EmployeeBankRepository()
+        self._employee_repo = EmployeeRepository()
+        self._employment_repo = EmploymentRepository()
+        self._employee_service = EmployeeService(session, self._settings)
+        self._audit = AuditService()
+
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        """`scope=None` preserves this method's pre-data-scope "exists" behavior exactly (every
+        internal caller of this service except the two `GET` routes and `create_bank`, all of
+        which now resolve a real `DataScope`). An out-of-scope target raises the same
+        `NotFoundError` → `404` a nonexistent or cross-tenant ID already raises — no new
+        branching, mirroring `EmployeeService.get_employee`'s own data-scope convention."""
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
+        employee = await self._employee_repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+    async def create_bank(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: BankCreate,
+        *,
+        expected_version: int | None,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> BankRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+
+        covering_employment = await self._employment_repo.get_employment_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=body.effective_from
+        )
+        if covering_employment is None:
+            raise NoActiveEmploymentError()
+
+        current = await self._repo.get_current_bank(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+
+        if current is not None:
+            if body.effective_from <= current.effective_from:
+                raise InvalidEffectiveFromError()
+            if expected_version is None:
+                raise BankVersionRequiredError()
+
+        now = datetime.now(UTC)
+        before_read = bank_to_read(current) if current is not None else None
+
+        if current is not None:
+            assert expected_version is not None  # narrowed above
+            closed = await self._repo.close_bank(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                bank_id=current.id,
+                effective_to=body.effective_from - timedelta(days=1),
+                expected_version=expected_version,
+                now=now,
+            )
+            if closed is None:
+                refreshed = await self._repo.get_bank(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    bank_id=current.id,
+                )
+                if refreshed is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This employee's current bank record has been modified by another request",
+                    current=bank_to_audit_dict(bank_to_read(refreshed)),
+                )
+
+        bank_id = uuid4()
+        try:
+            bank = await self._repo.insert_bank(
+                self._session,
+                data={
+                    "id": bank_id,
+                    "company_id": company_id,
+                    "employee_id": employee_id,
+                    "effective_from": body.effective_from,
+                    "effective_to": None,
+                    "account_holder_name": body.account_holder_name,
+                    "account_number_enc": body.account_number_enc,
+                    "bank_name": body.bank_name,
+                    "ifsc": body.ifsc,
+                    "branch_name": body.branch_name,
+                    "payment_mode": body.payment_mode,
+                    "is_primary": True,
+                    "verification_status": "PENDING",
+                    "penny_drop_reference": None,
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            # `employee_bank_no_overlap` GiST exclusion constraint — the race-condition
+            # backstop, mirroring `EmployeeStatutoryService.create_statutory`'s exact pattern.
+            raise BankDatesOverlapError() from exc
+
+        after_read = bank_to_read(bank)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="BANK_REVISED",
+            entity_type="employee_bank",
+            entity_id=bank_id,
+            before=bank_to_audit_dict(before_read) if before_read is not None else None,
+            after=bank_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def list_banks(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        as_of: date | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> list[BankRead]:
+        """`scope=None` preserves this service's pre-data-scope behavior exactly (every internal
+        caller except `GET .../bank` itself). `GET .../bank` passes its resolved `DataScope`
+        (`router.py`), narrowing visibility to `SELF`/`REPORTEES`/`REPORTEE_TREE`/`COMPANY` per
+        `_assert_employee_visible` — see class docstring."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        if as_of is not None:
+            bank = await self._repo.get_bank_as_of(
+                self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+            )
+            return [bank_to_read(bank)] if bank is not None else []
+        banks = await self._repo.list_banks(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [bank_to_read(bank) for bank in banks]
+
+    async def get_bank(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        bank_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> BankRead:
+        """`scope=None` preserves pre-data-scope behavior exactly, mirroring `list_banks`."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        bank = await self._repo.get_bank(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            bank_id=bank_id,
+        )
+        if bank is None:
+            raise NotFoundError("Resource not found")
+        return bank_to_read(bank)
+
+    async def get_bank_as_of(
+        self, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> BankRead | None:
+        """The cross-module contract (plan §11) Payroll will call at bank-advice-generation
+        time — `get_bank_as_of(employee_id, date)`. Does not assert employee existence,
+        mirroring `EmployeeStatutoryService.get_statutory_as_of`'s exact contract."""
+        bank = await self._repo.get_bank_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+        )
+        return bank_to_read(bank) if bank is not None else None

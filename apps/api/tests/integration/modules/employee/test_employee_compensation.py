@@ -599,15 +599,14 @@ async def test_rehire_first_compensation_after_gap(
     "no current row" write — no rehire-specific code path exists. Compensation history remains
     attached to the employee's own identity throughout (not reset by the rehire).
 
-    Known limitation (documented in the implementation report, not silently glossed over
-    here, mirroring `test_employee_assignment.py::test_rehire_first_assignment_after_gap`'s own
-    note): terminating the employment does **not** automatically close the still-open
-    `employee_compensation` row from that spell — `create_compensation` is the only mutation
-    path, and nothing in this slice hooks into `EmploymentService.terminate_employment`. The
-    pre-exit compensation row therefore remains open (and, once closed, is closed at the
-    rehire's `effective_from - 1 day`, not the original exit date) — so an as-of-date query
-    during the gap still matches the pre-exit row once it has been closed by the rehire's own
-    write, rather than returning no row."""
+    `EmploymentService.terminate_employment` closes the still-open `employee_compensation` row
+    from the pre-exit spell at `effective_to = last_working_day` (the actual termination date),
+    not at the rehire's `effective_from - 1 day`
+    (`docs/modules/employee/22_TERMINATION_ASSIGNMENT_COMPENSATION_PLAN.md` §7/§9, mirroring
+    `test_employee_assignment.py::test_rehire_first_assignment_after_gap`). As a consequence,
+    `get_current_compensation`/`?as_of=` resolve to nothing during the gap, and the rehire's
+    first `create_compensation` call takes the "no current row" branch — no `If-Match` is
+    supplied or required."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         employee, legal_entity, employment = await _setup_employee_with_employment(
@@ -624,6 +623,18 @@ async def test_rehire_first_compensation_after_gap(
         )
         assert terminate.status_code == 200
 
+        pre_exit_after_terminate = await client.get(
+            f"/v1/employees/{employee['id']}/compensation/{pre_exit['id']}", headers=headers
+        )
+        assert pre_exit_after_terminate.json()["data"]["effective_to"] == "2030-09-30"
+
+        gap_as_of = await client.get(
+            f"/v1/employees/{employee['id']}/compensation",
+            headers=headers,
+            params={"as_of": "2032-01-01"},
+        )
+        assert gap_as_of.json()["data"] == []
+
         rehire_employment = await _create_employment(
             client,
             headers,
@@ -637,7 +648,6 @@ async def test_rehire_first_compensation_after_gap(
             client,
             headers,
             employee_id=employee["id"],
-            if_match=str(pre_exit["version"]),
             effective_from="2034-02-01",
             annual_ctc_minor=16_00_000_00,
             currency="INR",
@@ -651,7 +661,7 @@ async def test_rehire_first_compensation_after_gap(
         pre_exit_after = await client.get(
             f"/v1/employees/{employee['id']}/compensation/{pre_exit['id']}", headers=headers
         )
-        assert pre_exit_after.json()["data"]["effective_to"] == "2034-01-31"
+        assert pre_exit_after.json()["data"]["effective_to"] == "2030-09-30"
 
         # Full history remains attached to the same employee identity, both pre-exit and
         # post-rehire rows visible with a gap in between.
@@ -766,10 +776,16 @@ async def test_cannot_create_compensation_for_other_tenant_employee(
 
 
 async def _create_permission_scoped_user(
-    *, company_id: UUID, permission_codes: list[str]
+    *,
+    company_id: UUID,
+    permission_codes: list[str],
+    data_scope: str = "COMPANY",
+    caller_employee_id: UUID | None = None,
 ) -> tuple[dict[str, str], UUID]:
-    """Registers a second user in the same tenant, granted only the given permission codes —
-    mirrors `test_employee_assignment.py`'s own inline setup exactly."""
+    """Registers a second user in the same tenant, granted only the given permission codes at
+    the given `data_scope` — mirrors `test_employee_assignment.py`'s own inline setup, extended
+    with a `data_scope`/`caller_employee_id` parameter matching `test_employee_statutory.py`'s
+    and `test_employee_banking.py`'s own equivalent helper."""
     from datetime import UTC, datetime, timedelta
     from uuid import uuid4 as _uuid4
 
@@ -809,7 +825,9 @@ async def _create_permission_scoped_user(
         )
         await session.flush()
         for permission in permissions:
-            session.add(RolePermission(role_id=role_id, permission_id=permission.id))
+            session.add(
+                RolePermission(role_id=role_id, permission_id=permission.id, data_scope=data_scope)
+            )
 
         scoped_user_id = _uuid4()
         session.add(
@@ -850,7 +868,7 @@ async def _create_permission_scoped_user(
         user_id=scoped_user_id,
         company_id=company_id,
         session_id=scoped_session_id,
-        employee_id=None,
+        employee_id=caller_employee_id,
     )
     return (
         {"Authorization": f"Bearer {token}", "X-Company-Id": str(company_id)},
@@ -944,4 +962,372 @@ async def test_create_compensation_with_update_permission_succeeds(
         assert response.status_code == 201, response.text
     finally:
         await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+# --- Data-scope enforcement -------------------------------------------------------------------
+#
+# `docs/architecture/EMPLOYEE_VERTICAL_PRODUCTION_READINESS_AUDIT.md` Finding F3: `.
+# VIEW_COMPENSATION`'s two `GET` routes used to resolve a caller's `DataScope` and discard it
+# (bind to `_scope: Annotated[object, ...]`), making every grant company-wide regardless of its
+# stored `data_scope`. Fixed per `docs/modules/employee/
+# 37_EMPLOYEE_COMPENSATION_STATUTORY_DATA_SCOPE_IMPLEMENTATION_REPORT.md` — these tests prove the
+# resolved scope is now actually enforced, mirroring `test_employee_banking.py`'s equivalent
+# `SELF`/`COMPANY` tests and `test_employee_statutory.py`'s `SELF`/`REPORTEES`/`COMPANY` tests.
+
+
+async def test_view_compensation_self_scope_sees_own_record_only(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A caller holding `EMPLOYEE.VIEW_COMPENSATION` at `SELF` scope, whose JWT `employee_id`
+    claim matches the path `employee_id`, sees their own compensation record; another employee's
+    record is invisible (`404`, not `403`, matching every other out-of-scope convention in this
+    module). Direct single-record ID lookup cannot bypass this either."""
+    from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        self_employee, _legal_entity, _employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        other_employee, _legal_entity_2, _employment_2 = await _setup_employee_with_employment(
+            client, headers
+        )
+        self_compensation = await _create_compensation(
+            client, headers, employee_id=self_employee["id"], **_joining_payload()
+        )
+        await _create_compensation(
+            client,
+            headers,
+            employee_id=other_employee["id"],
+            **_joining_payload(annual_ctc_minor=15_00_000_00),
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW_COMPENSATION],
+            data_scope="SELF",
+            caller_employee_id=UUID(self_employee["id"]),
+        )
+
+        own = await client.get(
+            f"/v1/employees/{self_employee['id']}/compensation", headers=scoped_headers
+        )
+        assert own.status_code == 200
+        assert len(own.json()["data"]) == 1
+        assert own.json()["data"][0]["annual_ctc_minor"] == 12_00_000_00
+
+        own_detail = await client.get(
+            f"/v1/employees/{self_employee['id']}/compensation/{self_compensation['id']}",
+            headers=scoped_headers,
+        )
+        assert own_detail.status_code == 200
+
+        other = await client.get(
+            f"/v1/employees/{other_employee['id']}/compensation", headers=scoped_headers
+        )
+        assert other.status_code == 404
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_view_compensation_self_scope_no_employee_id_sees_nothing(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A caller with a `SELF`-scoped `EMPLOYEE.VIEW_COMPENSATION` grant but no linked
+    `employee_id` (JWT claim is `None`) must fail closed — the visible set is empty, never falls
+    back to `COMPANY`."""
+    from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, _legal_entity, _employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        await _create_compensation(
+            client, headers, employee_id=employee["id"], **_joining_payload()
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW_COMPENSATION],
+            data_scope="SELF",
+            caller_employee_id=None,
+        )
+
+        response = await client.get(
+            f"/v1/employees/{employee['id']}/compensation", headers=scoped_headers
+        )
+        assert response.status_code == 404
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_view_compensation_reportees_scope_sees_direct_reports_only(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`RBAC_DATA_SCOPE_DECISIONS.md` Decision F: a manager granted `EMPLOYEE.VIEW_COMPENSATION`
+    at `REPORTEES` scope (not `COMPANY`) sees a direct report's compensation but not an unrelated
+    employee's, and not their own (`REPORTEES` does not imply `SELF`, matching
+    `EmployeeService.resolve_visible_employee_ids`'s existing semantics) — proves the fix applies
+    to every scope level, not just `SELF`."""
+    from datetime import UTC, datetime
+
+    from hrms.modules.employee.models import EmployeeAssignment
+    from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        manager, _legal_entity, _employment = await _setup_employee_with_employment(client, headers)
+        report, _legal_entity_2, _employment_2 = await _setup_employee_with_employment(
+            client, headers
+        )
+        unrelated, _legal_entity_3, _employment_3 = await _setup_employee_with_employment(
+            client, headers
+        )
+        await _create_compensation(client, headers, employee_id=report["id"], **_joining_payload())
+        await _create_compensation(
+            client,
+            headers,
+            employee_id=unrelated["id"],
+            **_joining_payload(annual_ctc_minor=20_00_000_00),
+        )
+
+        factory = get_session_factory()
+        async with factory() as session:
+            now = datetime.now(UTC)
+            session.add(
+                EmployeeAssignment(
+                    id=uuid4(),
+                    company_id=company_id,
+                    employee_id=UUID(report["id"]),
+                    reporting_manager_id=UUID(manager["id"]),
+                    effective_from=date(2027, 6, 1),
+                    effective_to=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW_COMPENSATION],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager["id"]),
+        )
+
+        report_resp = await client.get(
+            f"/v1/employees/{report['id']}/compensation", headers=scoped_headers
+        )
+        assert report_resp.status_code == 200
+
+        unrelated_resp = await client.get(
+            f"/v1/employees/{unrelated['id']}/compensation", headers=scoped_headers
+        )
+        assert unrelated_resp.status_code == 404
+
+        own_resp = await client.get(
+            f"/v1/employees/{manager['id']}/compensation", headers=scoped_headers
+        )
+        assert own_resp.status_code == 404
+    finally:
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                text("DELETE FROM employee_assignment WHERE company_id = :cid"),
+                {"cid": str(company_id)},
+            )
+            await session.commit()
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_view_compensation_company_scope_sees_any_employee(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`COMPANY` scope (the default for every existing seeded role, including `COMPANY_ADMIN`)
+    still sees every employee's compensation record — the fix does not narrow `COMPANY`-scoped
+    access at all, matching every real tenant's current, unchanged behavior."""
+    from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, _legal_entity, _employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        await _create_compensation(
+            client, headers, employee_id=employee["id"], **_joining_payload()
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW_COMPENSATION],
+            data_scope="COMPANY",
+            caller_employee_id=None,
+        )
+
+        response = await client.get(
+            f"/v1/employees/{employee['id']}/compensation", headers=scoped_headers
+        )
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+        assert response.json()["data"][0]["annual_ctc_minor"] == 12_00_000_00
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_view_compensation_as_of_cannot_bypass_scope(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`?as_of=` is a *which historical row*, not a *whose employee* concern (task's own
+    separation of concerns) — an out-of-scope caller cannot use `as_of` to bypass the scope
+    check; the effective-dating short-circuit happens only after `_assert_employee_visible`
+    already raised `404`."""
+    from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        self_employee, _legal_entity, _employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        other_employee, _legal_entity_2, _employment_2 = await _setup_employee_with_employment(
+            client, headers
+        )
+        await _create_compensation(
+            client, headers, employee_id=other_employee["id"], **_joining_payload()
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW_COMPENSATION],
+            data_scope="SELF",
+            caller_employee_id=UUID(self_employee["id"]),
+        )
+
+        response = await client.get(
+            f"/v1/employees/{other_employee['id']}/compensation?as_of=2027-06-01",
+            headers=scoped_headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+# --- Data-scope enforcement (write path, Finding C / F9) ---------------------------------------
+#
+# `docs/modules/employee/39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 2:
+# `create_compensation` now also resolves and enforces the caller's `DataScope` against the
+# target employee, in addition to the bare `EMPLOYEE.UPDATE_COMPENSATION` permission check that
+# already existed. An out-of-scope target behaves exactly like a nonexistent one (`404`, not
+# `403`).
+
+
+async def test_create_compensation_reportees_scope_target_visibility(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A caller holding `EMPLOYEE.UPDATE_COMPENSATION` at `REPORTEES` scope can write a direct
+    report's compensation, but an unrelated employee's is invisible (`404`), never `403`."""
+    from datetime import UTC, datetime
+
+    from hrms.modules.employee.models import EmployeeAssignment
+    from hrms.modules.employee.permissions import EMPLOYEE_UPDATE_COMPENSATION
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        manager, _manager_entity, _manager_employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        report, _report_entity, _report_employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        unrelated, _unrelated_entity, _unrelated_employment = await _setup_employee_with_employment(
+            client, headers
+        )
+
+        factory = get_session_factory()
+        async with factory() as session:
+            now = datetime.now(UTC)
+            session.add(
+                EmployeeAssignment(
+                    id=uuid4(),
+                    company_id=company_id,
+                    employee_id=UUID(report["id"]),
+                    reporting_manager_id=UUID(manager["id"]),
+                    effective_from=date(2027, 6, 1),
+                    effective_to=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_UPDATE_COMPENSATION],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager["id"]),
+        )
+
+        in_scope = await client.post(
+            f"/v1/employees/{report['id']}/compensation",
+            headers=scoped_headers,
+            json=_joining_payload(),
+        )
+        assert in_scope.status_code == 201, in_scope.text
+
+        out_of_scope = await client.post(
+            f"/v1/employees/{unrelated['id']}/compensation",
+            headers=scoped_headers,
+            json=_joining_payload(),
+        )
+        assert out_of_scope.status_code == 404
+    finally:
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                text("DELETE FROM employee_assignment WHERE company_id = :cid"),
+                {"cid": str(company_id)},
+            )
+            await session.commit()
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_create_compensation_cross_tenant_scoped_actor_denied(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Cross-tenant + data-scope composed on `create_compensation`: a `COMPANY`-scoped actor in
+    tenant A cannot write compensation for tenant B's employee, tenant isolation wins first."""
+    from hrms.modules.employee.permissions import EMPLOYEE_UPDATE_COMPENSATION
+
+    headers_a, company_a, user_a = await _register_tenant(client)
+    headers_b, company_b, user_b = await _register_tenant(client)
+    try:
+        _employee_a, _entity_a, _employment_a = await _setup_employee_with_employment(
+            client, headers_a
+        )
+        employee_b, _entity_b, _employment_b = await _setup_employee_with_employment(
+            client, headers_b
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_a,
+            permission_codes=[EMPLOYEE_UPDATE_COMPENSATION],
+            data_scope="COMPANY",
+        )
+
+        response = await client.post(
+            f"/v1/employees/{employee_b['id']}/compensation",
+            headers={**scoped_headers, "X-Company-Id": str(company_a)},
+            json=_joining_payload(),
+        )
+        assert response.status_code == 404
+    finally:
+        await _teardown(company_id=company_a, user_id=user_a)
+        await _teardown(company_id=company_b, user_id=user_b)
         await _cleanup_scoped_users()

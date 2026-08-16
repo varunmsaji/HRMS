@@ -202,13 +202,16 @@ async def test_registration_success_full_row_graph(
             # EMPLOYEE.* codes added by the Employee Foundation (E-01) slice
             # (docs/modules/employee/01_EMPLOYEE_FOUNDATION_AUDIT.md §5), EMPLOYEE.TERMINATE
             # added by the Employment Lifecycle (E-03) slice, EMPLOYEE.TRANSFER/.PROMOTE
-            # added by the Employee Assignment (E-04) slice, and EMPLOYEE.VIEW_COMPENSATION/
-            # .UPDATE_COMPENSATION added by the Employee Compensation (E-06) slice
-            # (docs/modules/employee/permissions.py) — `register_company` now grants the new
-            # company's admin role the same EMPLOYEE.VIEW/.VIEW_ALL/.CREATE/.UPDATE/.DEACTIVATE/
-            # .TERMINATE/.TRANSFER/.PROMOTE/.VIEW_COMPENSATION/.UPDATE_COMPENSATION access every
-            # other org-domain permission already gets here, since without it a freshly
-            # registered company's own admin would have zero Employee access.
+            # added by the Employee Assignment (E-04) slice, EMPLOYEE.VIEW_COMPENSATION/
+            # .UPDATE_COMPENSATION added by the Employee Compensation (E-06) slice,
+            # EMPLOYEE.VIEW_STATUTORY/.UPDATE_SENSITIVE added by the Employee Statutory (E-07)
+            # slice, and EMPLOYEE.VIEW_BANKING added by the Employee Banking (E-08) slice
+            # (docs/modules/employee/permissions.py) — `register_company` now grants the
+            # new company's admin role the same EMPLOYEE.VIEW/.VIEW_ALL/.CREATE/.UPDATE/
+            # .DEACTIVATE/.TERMINATE/.TRANSFER/.PROMOTE/.VIEW_COMPENSATION/.UPDATE_COMPENSATION/
+            # .VIEW_STATUTORY/.UPDATE_SENSITIVE/.VIEW_BANKING access every other org-domain
+            # permission already gets here, since without it a freshly registered company's own
+            # admin would have zero Employee access.
             assert codes == {
                 ORG_COMPANY_MANAGE,
                 DASHBOARD_COMPANY_VIEW,
@@ -228,6 +231,9 @@ async def test_registration_success_full_row_graph(
                 "EMPLOYEE.PROMOTE",
                 "EMPLOYEE.VIEW_COMPENSATION",
                 "EMPLOYEE.UPDATE_COMPENSATION",
+                "EMPLOYEE.VIEW_STATUTORY",
+                "EMPLOYEE.UPDATE_SENSITIVE",
+                "EMPLOYEE.VIEW_BANKING",
             }
 
             setup_progress = (

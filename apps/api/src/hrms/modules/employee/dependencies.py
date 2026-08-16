@@ -9,8 +9,10 @@ from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
 from hrms.modules.employee.service import (
     EmployeeAssignmentService,
+    EmployeeBankService,
     EmployeeCompensationService,
     EmployeeService,
+    EmployeeStatutoryService,
     EmploymentService,
 )
 
@@ -37,3 +39,15 @@ def get_employee_compensation_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EmployeeCompensationService:
     return EmployeeCompensationService(session, get_settings())
+
+
+def get_employee_statutory_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EmployeeStatutoryService:
+    return EmployeeStatutoryService(session, get_settings())
+
+
+def get_employee_bank_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EmployeeBankService:
+    return EmployeeBankService(session, get_settings())

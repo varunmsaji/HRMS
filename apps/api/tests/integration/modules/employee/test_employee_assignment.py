@@ -754,14 +754,13 @@ async def test_rehire_first_assignment_after_gap(
     employment episode starts. The rejoin's first assignment behaves exactly like any other
     "no current row to carry forward from" placement — no rehire-specific code path exists.
 
-    Known limitation (documented in the implementation report, not silently glossed over
-    here): terminating `employment #1` does **not** automatically close the still-open
-    `employee_assignment` row from that spell (E-04's `create_assignment` is the only mutation
-    path, and nothing in this slice hooks into `EmploymentService.terminate_employment`). The
-    pre-exit assignment therefore remains open until the rehire's own `create_assignment` call
-    closes it — at the rehire's `effective_from - 1 day`, not the original exit date. This test
-    asserts that *actual* behavior rather than the idealized "closed exactly at exit" timeline
-    `05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part D illustrates.
+    `EmploymentService.terminate_employment` closes the still-open `employee_assignment` row
+    from the pre-exit spell at `effective_to = last_working_day` (the actual termination date),
+    not at the rehire's `effective_from - 1 day`
+    (`docs/modules/employee/22_TERMINATION_ASSIGNMENT_COMPENSATION_PLAN.md` §7/§9). As a
+    consequence, `get_current_assignment`/`?as_of=` resolve to nothing during the gap, and the
+    rehire's first `create_assignment` call takes the "no current row" branch — no `If-Match`
+    is supplied or required.
     """
     headers, company_id, user_id = await _register_tenant(client)
     try:
@@ -786,6 +785,18 @@ async def test_rehire_first_assignment_after_gap(
         )
         assert terminate.status_code == 200
 
+        pre_exit_after_terminate = await client.get(
+            f"/v1/employees/{employee['id']}/assignments/{pre_exit['id']}", headers=headers
+        )
+        assert pre_exit_after_terminate.json()["data"]["effective_to"] == "2030-09-30"
+
+        gap_as_of = await client.get(
+            f"/v1/employees/{employee['id']}/assignments",
+            headers=headers,
+            params={"as_of": "2032-01-01"},
+        )
+        assert gap_as_of.json()["data"] == []
+
         rehire_employment = await _create_employment(
             client,
             headers,
@@ -799,7 +810,6 @@ async def test_rehire_first_assignment_after_gap(
             client,
             headers,
             employee_id=employee["id"],
-            if_match=str(pre_exit["version"]),
             effective_from="2034-02-01",
             change_type="INITIAL",
             branch_id=org["branch"]["id"],
@@ -813,7 +823,7 @@ async def test_rehire_first_assignment_after_gap(
         pre_exit_after = await client.get(
             f"/v1/employees/{employee['id']}/assignments/{pre_exit['id']}", headers=headers
         )
-        assert pre_exit_after.json()["data"]["effective_to"] == "2034-01-31"
+        assert pre_exit_after.json()["data"]["effective_to"] == "2030-09-30"
 
         history = await client.get(f"/v1/employees/{employee['id']}/assignments", headers=headers)
         history_ids = [row["id"] for row in history.json()["data"]]
@@ -1143,14 +1153,18 @@ async def test_shift_change_with_transfer_permission_succeeds(
         await _cleanup_scoped_users()
 
 
-async def test_rehire_carries_forward_stale_shift_id(
+async def test_rehire_first_assignment_does_not_carry_forward_stale_shift_id(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
-    """Documents the known, flagged (not silently glossed over) rehire behavior: a rehire's
-    first assignment, if it omits `shift_id`, carries forward the pre-exit row's `shift_id` —
-    same carry-forward rule every other field already follows on this same path (plan §10/§19
-    item 1). This is not BR-14 (no cascading default is synthesized); it is the existing
-    carry-forward mechanism applied to one more field."""
+    """Superseded by `docs/modules/employee/22_TERMINATION_ASSIGNMENT_COMPENSATION_PLAN.md`:
+    this used to document a rehire's first assignment carrying `shift_id` forward from the
+    still-open pre-exit row — an artifact of `terminate_employment` never closing that row
+    (the CRITICAL-1 defect the plan fixes). Now that termination closes the pre-exit assignment
+    at the actual exit date, `get_current_assignment` returns `None` at rehire time, so the
+    rehire's first assignment takes the "no current row" branch — mechanically identical to any
+    employee's first assignment (plan §9), no carry-forward from any prior spell, `shift_id`
+    included. An `If-Match` is neither required nor consulted; a caller who wants continuity
+    must re-supply `shift_id` explicitly."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         employee, org, employment = await _setup_employee_with_employment(
@@ -1189,16 +1203,15 @@ async def test_rehire_carries_forward_stale_shift_id(
             client,
             headers,
             employee_id=employee["id"],
-            if_match=str(pre_exit["version"]),
             effective_from="2034-02-01",
             change_type="INITIAL",
             branch_id=org["branch"]["id"],
             department_id=org["department"]["id"],
             designation_id=org["designation"]["id"],
-            # shift_id intentionally omitted — carries forward from the pre-exit row.
+            # shift_id intentionally omitted — no current row exists to carry it forward from.
         )
 
-        assert rehire_assignment["shift_id"] == shift["id"]
+        assert rehire_assignment["shift_id"] is None
     finally:
         await _teardown(company_id=company_id, user_id=user_id)
 
@@ -1277,15 +1290,52 @@ async def test_cannot_reference_other_tenant_branch(
         await _teardown(company_id=company_b, user_id=user_b)
 
 
+async def test_cannot_reference_other_tenant_reporting_manager(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`docs/modules/employee/27_REPORTING_MANAGER_SECURITY_AUDIT.md` §12 acceptance criterion —
+    pre-existing protection (`_assert_manager_reference`'s tenant-scoped `Employee` lookup),
+    re-verified unaffected by the self-elevation guard added alongside it."""
+    headers_a, company_a, user_a = await _register_tenant(client)
+    headers_b, company_b, user_b = await _register_tenant(client)
+    try:
+        employee_a, org_a, _employment_a = await _setup_employee_with_employment(client, headers_a)
+        employee_b, _org_b, _employment_b = await _setup_employee_with_employment(client, headers_b)
+
+        response = await client.post(
+            f"/v1/employees/{employee_a['id']}/assignments",
+            headers=headers_a,
+            json={
+                "effective_from": "2027-06-01",
+                "change_type": "INITIAL",
+                "branch_id": org_a["branch"]["id"],
+                "department_id": org_a["department"]["id"],
+                "designation_id": org_a["designation"]["id"],
+                "reporting_manager_id": employee_b["id"],
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "INVALID_REPORTING_MANAGER"
+    finally:
+        await _teardown(company_id=company_a, user_id=user_a)
+        await _teardown(company_id=company_b, user_id=user_b)
+
+
 # --- Permission matrix -----------------------------------------------------------------------
 
 
 async def _create_permission_scoped_user(
-    *, company_id: UUID, permission_codes: list[str]
+    *,
+    company_id: UUID,
+    permission_codes: list[str],
+    data_scope: str = "COMPANY",
+    caller_employee_id: UUID | None = None,
 ) -> tuple[dict[str, str], UUID]:
-    """Registers a second user in the same tenant, granted only the given permission codes —
-    mirrors `test_employment.py::test_create_employment_without_permission_rejected`'s own
-    inline setup exactly, generalized to an arbitrary code list."""
+    """Registers a second user in the same tenant, granted only the given permission codes at
+    the given `data_scope` — mirrors `test_employment.py::
+    test_create_employment_without_permission_rejected`'s own inline setup, extended with a
+    `data_scope`/`caller_employee_id` parameter matching `test_employee_compensation.py`'s own
+    equivalent helper."""
     from datetime import UTC, datetime, timedelta
     from uuid import uuid4 as _uuid4
 
@@ -1325,7 +1375,9 @@ async def _create_permission_scoped_user(
         )
         await session.flush()
         for permission in permissions:
-            session.add(RolePermission(role_id=role_id, permission_id=permission.id))
+            session.add(
+                RolePermission(role_id=role_id, permission_id=permission.id, data_scope=data_scope)
+            )
 
         scoped_user_id = _uuid4()
         session.add(
@@ -1366,7 +1418,7 @@ async def _create_permission_scoped_user(
         user_id=scoped_user_id,
         company_id=company_id,
         session_id=scoped_session_id,
-        employee_id=None,
+        employee_id=caller_employee_id,
     )
     return (
         {"Authorization": f"Bearer {token}", "X-Company-Id": str(company_id)},
@@ -1457,4 +1509,504 @@ async def test_promotion_requires_promote_not_transfer_permission(
         assert response.json()["error"]["code"] == "PERMISSION_DENIED"
     finally:
         await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+# --- Data-scope enforcement (Finding B / F8) ----------------------------------------------------
+#
+# `docs/modules/employee/39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Finding B: `list_
+# assignments`/`get_assignment` used to bind `_scope: Annotated[object, ...]` — the resolved
+# `DataScope` was thrown away, making every `EMPLOYEE.VIEW` grant company-wide regardless of its
+# stored `data_scope`, and exposing the full reporting line (`reporting_manager_id`,
+# `dotted_line_manager_id`, branch/department/designation/grade) to any caller. Fixed per Phase
+# 1B — these tests prove the resolved scope is now actually enforced. Write-path scope (Finding
+# C, `create_assignment`) is covered further below, per Phase 2.
+
+
+async def test_list_assignments_self_scope_sees_own_only(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A caller holding `EMPLOYEE.VIEW` at `SELF` scope sees their own assignment history; a
+    direct single-record lookup and the list route both agree, and another employee's
+    org-placement/reporting-line fields are invisible (`404`, not `403`)."""
+    from hrms.modules.identity.permissions import EMPLOYEE_VIEW
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        # A single shared org structure — `_setup_employee_with_employment` creates a brand-new
+        # `Grade` (fixed code `L5`) per call, which collides on a second call within the same
+        # tenant; multiple employees safely share one branch/department/designation instead.
+        org = await _setup_org_structure(client, headers)
+        self_employee = await _create_employee(client, headers, first_name="Self")
+        await _create_employment(
+            client,
+            headers,
+            employee_id=self_employee["id"],
+            legal_entity_id=org["legal_entity"]["id"],
+        )
+        self_assignment = await _create_assignment(
+            client,
+            headers,
+            employee_id=self_employee["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org["branch"]["id"],
+            department_id=org["department"]["id"],
+            designation_id=org["designation"]["id"],
+        )
+        other_employee = await _create_employee(client, headers, first_name="Other")
+        await _create_employment(
+            client,
+            headers,
+            employee_id=other_employee["id"],
+            legal_entity_id=org["legal_entity"]["id"],
+        )
+        await _create_assignment(
+            client,
+            headers,
+            employee_id=other_employee["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org["branch"]["id"],
+            department_id=org["department"]["id"],
+            designation_id=org["designation"]["id"],
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW],
+            data_scope="SELF",
+            caller_employee_id=UUID(self_employee["id"]),
+        )
+
+        own_list = await client.get(
+            f"/v1/employees/{self_employee['id']}/assignments", headers=scoped_headers
+        )
+        assert own_list.status_code == 200
+        assert len(own_list.json()["data"]) == 1
+
+        own_detail = await client.get(
+            f"/v1/employees/{self_employee['id']}/assignments/{self_assignment['id']}",
+            headers=scoped_headers,
+        )
+        assert own_detail.status_code == 200
+
+        other_list = await client.get(
+            f"/v1/employees/{other_employee['id']}/assignments", headers=scoped_headers
+        )
+        assert other_list.status_code == 404
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_list_assignments_self_scope_no_employee_id_sees_nothing(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A caller with a `SELF`-scoped `EMPLOYEE.VIEW` grant but no linked `employee_id` (JWT claim
+    is `None`) fails closed — never falls back to `COMPANY`."""
+    from hrms.modules.identity.permissions import EMPLOYEE_VIEW
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, org, _employment = await _setup_employee_with_employment(client, headers)
+        await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org["branch"]["id"],
+            department_id=org["department"]["id"],
+            designation_id=org["designation"]["id"],
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW],
+            data_scope="SELF",
+            caller_employee_id=None,
+        )
+
+        response = await client.get(
+            f"/v1/employees/{employee['id']}/assignments", headers=scoped_headers
+        )
+        assert response.status_code == 404
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_list_assignments_reportees_scope_sees_direct_reports_only(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`RBAC_DATA_SCOPE_DECISIONS.md` Decision F: a manager granted `EMPLOYEE.VIEW` at
+    `REPORTEES` scope sees a direct report's assignment (including reporting-line/org-placement
+    fields) but not an unrelated employee's, and not their own. The out-of-scope single-record
+    route returns a bare `404`, never leaking `reporting_manager_id`/branch/department/
+    designation/grade in the response body."""
+    from hrms.modules.identity.permissions import EMPLOYEE_VIEW
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        # A single shared org structure — `_setup_employee_with_employment` creates a brand-new
+        # `Grade` (fixed code `L5`) per call, which collides on a second call within the same
+        # tenant; multiple employees safely share one branch/department/designation instead.
+        # `report`'s `reporting_manager_id` is set directly on its own (only) assignment row —
+        # a separate bare `EmployeeAssignment` insert for the same employee would collide with
+        # this row under the `employee_assignment_no_overlap` GiST exclusion constraint.
+        org = await _setup_org_structure(client, headers)
+        manager = await _create_employee(client, headers, first_name="Manager")
+        await _create_employment(
+            client, headers, employee_id=manager["id"], legal_entity_id=org["legal_entity"]["id"]
+        )
+        report = await _create_employee(client, headers, first_name="Report")
+        await _create_employment(
+            client, headers, employee_id=report["id"], legal_entity_id=org["legal_entity"]["id"]
+        )
+        report_assignment = await _create_assignment(
+            client,
+            headers,
+            employee_id=report["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org["branch"]["id"],
+            department_id=org["department"]["id"],
+            designation_id=org["designation"]["id"],
+            reporting_manager_id=manager["id"],
+        )
+        unrelated = await _create_employee(client, headers, first_name="Unrelated")
+        await _create_employment(
+            client, headers, employee_id=unrelated["id"], legal_entity_id=org["legal_entity"]["id"]
+        )
+        unrelated_assignment = await _create_assignment(
+            client,
+            headers,
+            employee_id=unrelated["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org["branch"]["id"],
+            department_id=org["department"]["id"],
+            designation_id=org["designation"]["id"],
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager["id"]),
+        )
+
+        report_resp = await client.get(
+            f"/v1/employees/{report['id']}/assignments/{report_assignment['id']}",
+            headers=scoped_headers,
+        )
+        assert report_resp.status_code == 200
+
+        unrelated_resp = await client.get(
+            f"/v1/employees/{unrelated['id']}/assignments/{unrelated_assignment['id']}",
+            headers=scoped_headers,
+        )
+        assert unrelated_resp.status_code == 404
+        assert "branch_id" not in unrelated_resp.json()
+        assert "reporting_manager_id" not in unrelated_resp.json()
+
+        own_resp = await client.get(
+            f"/v1/employees/{manager['id']}/assignments", headers=scoped_headers
+        )
+        assert own_resp.status_code == 404
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_list_assignments_company_scope_sees_any_employee(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`COMPANY` scope (the default for every existing seeded role) still sees every employee's
+    assignment history — the fix does not narrow `COMPANY`-scoped access at all."""
+    from hrms.modules.identity.permissions import EMPLOYEE_VIEW
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, org, _employment = await _setup_employee_with_employment(client, headers)
+        await _create_assignment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org["branch"]["id"],
+            department_id=org["department"]["id"],
+            designation_id=org["designation"]["id"],
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW],
+            data_scope="COMPANY",
+            caller_employee_id=None,
+        )
+
+        response = await client.get(
+            f"/v1/employees/{employee['id']}/assignments", headers=scoped_headers
+        )
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_list_assignments_as_of_cannot_bypass_scope(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`?as_of=` is a *which historical row*, not a *whose employee* concern — an out-of-scope
+    caller cannot use `as_of` to bypass the scope check; the check runs before the `as_of`
+    branch."""
+    from hrms.modules.identity.permissions import EMPLOYEE_VIEW
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        # A single shared org structure (grade-code collision note above).
+        org = await _setup_org_structure(client, headers)
+        self_employee = await _create_employee(client, headers, first_name="Self")
+        await _create_employment(
+            client,
+            headers,
+            employee_id=self_employee["id"],
+            legal_entity_id=org["legal_entity"]["id"],
+        )
+        other_employee = await _create_employee(client, headers, first_name="Other")
+        await _create_employment(
+            client,
+            headers,
+            employee_id=other_employee["id"],
+            legal_entity_id=org["legal_entity"]["id"],
+        )
+        await _create_assignment(
+            client,
+            headers,
+            employee_id=other_employee["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org["branch"]["id"],
+            department_id=org["department"]["id"],
+            designation_id=org["designation"]["id"],
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_VIEW],
+            data_scope="SELF",
+            caller_employee_id=UUID(self_employee["id"]),
+        )
+
+        response = await client.get(
+            f"/v1/employees/{other_employee['id']}/assignments?as_of=2027-06-01",
+            headers=scoped_headers,
+        )
+        assert response.status_code == 404
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_get_assignment_cross_tenant_scoped_actor_denied(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Tenant mismatch is caught before scope even runs (`get_tenant_context`) — a scoped actor
+    in tenant A cannot see tenant B's assignment records by any scope value."""
+    from hrms.modules.identity.permissions import EMPLOYEE_VIEW
+
+    headers_a, company_a, user_a = await _register_tenant(client)
+    headers_b, company_b, user_b = await _register_tenant(client)
+    try:
+        self_employee_a, _org_a, _employment_a = await _setup_employee_with_employment(
+            client, headers_a
+        )
+        employee_b, org_b, _employment_b = await _setup_employee_with_employment(client, headers_b)
+        assignment_b = await _create_assignment(
+            client,
+            headers_b,
+            employee_id=employee_b["id"],
+            effective_from="2027-06-01",
+            change_type="INITIAL",
+            branch_id=org_b["branch"]["id"],
+            department_id=org_b["department"]["id"],
+            designation_id=org_b["designation"]["id"],
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_a,
+            permission_codes=[EMPLOYEE_VIEW],
+            data_scope="COMPANY",
+            caller_employee_id=UUID(self_employee_a["id"]),
+        )
+
+        response = await client.get(
+            f"/v1/employees/{employee_b['id']}/assignments/{assignment_b['id']}",
+            headers={**scoped_headers, "X-Company-Id": str(company_a)},
+        )
+        assert response.status_code == 404
+    finally:
+        await _teardown(company_id=company_a, user_id=user_a)
+        await _teardown(company_id=company_b, user_id=user_b)
+        await _cleanup_scoped_users()
+
+
+# --- Data-scope enforcement (write path, Finding C / F9) ---------------------------------------
+#
+# `docs/modules/employee/39_EMPLOYEE_ACCESS_CONTROL_IMPLEMENTATION_PLAN.md` Phase 2:
+# `create_assignment` now resolves the caller's `DataScope` (via `rbac.resolve_data_scope()`
+# directly, since its gating permission is chosen dynamically by `change_type` — module header
+# note above) and enforces it against the target employee, in addition to the bare permission
+# check that already existed. An out-of-scope target behaves exactly like a nonexistent one
+# (`404`, not `403`). The pre-existing reporting-manager self-elevation guard
+# (`test_employee_data_scope.py`) is unmodified and unaffected by this — verified by that file's
+# own regression suite, not re-tested here.
+
+
+async def test_create_assignment_reportees_scope_target_visibility(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A caller holding `EMPLOYEE.TRANSFER` at `REPORTEES` scope can create an assignment for a
+    direct report, but not for an employee outside their reportee set — the concrete scenario
+    `39_...PLAN.md` §13 names as the write-path risk, applied to Assignment specifically."""
+    from datetime import UTC, date, datetime
+
+    from hrms.modules.employee.models import EmployeeAssignment
+    from hrms.modules.employee.permissions import EMPLOYEE_TRANSFER
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        # A single shared org structure — `_setup_employee_with_employment` creates a brand-new
+        # `Grade` (fixed code `L5`) per call, which collides on a second call within the same
+        # tenant; multiple employees safely share one branch/department/designation instead.
+        org = await _setup_org_structure(client, headers)
+        manager = await _create_employee(client, headers, first_name="Manager")
+        await _create_employment(
+            client, headers, employee_id=manager["id"], legal_entity_id=org["legal_entity"]["id"]
+        )
+        report = await _create_employee(client, headers, first_name="Report")
+        await _create_employment(
+            client, headers, employee_id=report["id"], legal_entity_id=org["legal_entity"]["id"]
+        )
+        unrelated = await _create_employee(client, headers, first_name="Unrelated")
+        await _create_employment(
+            client, headers, employee_id=unrelated["id"], legal_entity_id=org["legal_entity"]["id"]
+        )
+        report_org = unrelated_org = org
+
+        factory = get_session_factory()
+        async with factory() as session:
+            now = datetime.now(UTC)
+            session.add(
+                EmployeeAssignment(
+                    id=uuid4(),
+                    company_id=company_id,
+                    employee_id=UUID(report["id"]),
+                    reporting_manager_id=UUID(manager["id"]),
+                    effective_from=date(2027, 6, 1),
+                    effective_to=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[EMPLOYEE_TRANSFER],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager["id"]),
+        )
+
+        out_of_scope = await client.post(
+            f"/v1/employees/{unrelated['id']}/assignments",
+            headers=scoped_headers,
+            json={
+                "effective_from": "2027-06-01",
+                "change_type": "INITIAL",
+                "branch_id": unrelated_org["branch"]["id"],
+                "department_id": unrelated_org["department"]["id"],
+                "designation_id": unrelated_org["designation"]["id"],
+            },
+        )
+        assert out_of_scope.status_code == 404
+
+        # `report`'s own `EmployeeAssignment` row (the manager-link fixture above) already
+        # counts as its "current" row, so the in-scope write is a `MANAGER_CHANGE`-shaped
+        # `TRANSFER` carrying the existing `If-Match`, not a fresh `INITIAL`.
+        async with factory() as session:
+            current = (
+                await session.execute(
+                    select(EmployeeAssignment).where(
+                        EmployeeAssignment.employee_id == UUID(report["id"]),
+                        EmployeeAssignment.effective_to.is_(None),
+                    )
+                )
+            ).scalar_one()
+            current_version = current.version
+
+        in_scope = await client.post(
+            f"/v1/employees/{report['id']}/assignments",
+            headers={**scoped_headers, "If-Match": str(current_version)},
+            json={
+                "effective_from": "2027-07-01",
+                "change_type": "TRANSFER",
+                "branch_id": report_org["branch"]["id"],
+                "department_id": report_org["department"]["id"],
+                "designation_id": report_org["designation"]["id"],
+            },
+        )
+        assert in_scope.status_code == 201, in_scope.text
+    finally:
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                text("DELETE FROM employee_assignment WHERE company_id = :cid"),
+                {"cid": str(company_id)},
+            )
+            await session.commit()
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_create_assignment_cross_tenant_scoped_actor_denied(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Cross-tenant + data-scope composed on `create_assignment`: a `COMPANY`-scoped actor in
+    tenant A cannot create an assignment for tenant B's employee, tenant isolation wins first."""
+    from hrms.modules.employee.permissions import EMPLOYEE_TRANSFER
+
+    headers_a, company_a, user_a = await _register_tenant(client)
+    headers_b, company_b, user_b = await _register_tenant(client)
+    try:
+        _self_employee_a, _org_a, _employment_a = await _setup_employee_with_employment(
+            client, headers_a
+        )
+        employee_b, org_b, _employment_b = await _setup_employee_with_employment(client, headers_b)
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_a,
+            permission_codes=[EMPLOYEE_TRANSFER],
+            data_scope="COMPANY",
+        )
+
+        response = await client.post(
+            f"/v1/employees/{employee_b['id']}/assignments",
+            headers={**scoped_headers, "X-Company-Id": str(company_a)},
+            json={
+                "effective_from": "2027-06-01",
+                "change_type": "INITIAL",
+                "branch_id": org_b["branch"]["id"],
+                "department_id": org_b["department"]["id"],
+                "designation_id": org_b["designation"]["id"],
+            },
+        )
+        assert response.status_code == 404
+    finally:
+        await _teardown(company_id=company_a, user_id=user_a)
+        await _teardown(company_id=company_b, user_id=user_b)
         await _cleanup_scoped_users()

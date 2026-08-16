@@ -22,7 +22,9 @@ if TYPE_CHECKING:
     from hrms.modules.employee.models import (
         Employee,
         EmployeeAssignment,
+        EmployeeBank,
         EmployeeCompensation,
+        EmployeeStatutory,
         Employment,
     )
 
@@ -392,3 +394,168 @@ def compensation_to_read(compensation: "EmployeeCompensation") -> CompensationRe
 
 def compensation_to_audit_dict(compensation: CompensationRead) -> dict[str, Any]:
     return compensation.model_dump(mode="json")
+
+
+# --- Employee Statutory (E-07) ----------------------------------------------------------
+#
+# The only two values `docs/modules/employee/29_EMPLOYEE_STATUTORY_IMPLEMENTATION_PLAN.md` §16
+# names for `tax_regime` — validated as a `Literal`, matching this module's own precedent
+# (`revision_type`, `employment.status`) rather than a DB `CHECK` constraint.
+TAX_REGIME_VALUES = ("OLD", "NEW")
+
+TaxRegime = Literal["OLD", "NEW"]
+
+
+class StatutoryCreate(BaseModel):
+    """Creates a new effective-dated statutory row — closes the employee's current row (if
+    any) and inserts a new one, mirroring `CompensationCreate` exactly: no field carries
+    forward from the current row, `revision_reason` is required on every write (plan §16/§27
+    item 7), including an employee's very first statutory row."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    effective_from: date
+    is_pf_applicable: bool
+    pf_number: str | None = Field(default=None, max_length=30)
+    pf_wage_ceiling_opt_out: bool = False
+    vpf_amount: int | None = Field(default=None, ge=0)
+    vpf_percentage: float | None = Field(default=None, ge=0)
+    is_esi_applicable: bool
+    esi_ip_number: str | None = Field(default=None, max_length=30)
+    pt_state_code: str | None = Field(default=None, max_length=10)
+    is_lwf_applicable: bool
+    tax_regime: TaxRegime
+    is_director: bool = False
+    is_international_worker: bool = False
+    revision_reason: str
+
+
+class StatutoryRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    effective_from: date
+    effective_to: date | None
+    is_pf_applicable: bool
+    pf_number: str | None
+    pf_wage_ceiling_opt_out: bool
+    vpf_amount: int | None
+    vpf_percentage: float | None
+    is_esi_applicable: bool
+    esi_ip_number: str | None
+    pt_state_code: str | None
+    is_lwf_applicable: bool
+    tax_regime: str | None
+    is_director: bool
+    is_international_worker: bool
+    revision_reason: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def statutory_to_read(statutory: "EmployeeStatutory") -> StatutoryRead:
+    return StatutoryRead(
+        id=statutory.id,
+        company_id=statutory.company_id,
+        employee_id=statutory.employee_id,
+        effective_from=statutory.effective_from,
+        effective_to=statutory.effective_to,
+        is_pf_applicable=statutory.is_pf_applicable,
+        pf_number=statutory.pf_number,
+        pf_wage_ceiling_opt_out=statutory.pf_wage_ceiling_opt_out,
+        vpf_amount=statutory.vpf_amount,
+        vpf_percentage=(
+            float(statutory.vpf_percentage) if statutory.vpf_percentage is not None else None
+        ),
+        is_esi_applicable=statutory.is_esi_applicable,
+        esi_ip_number=statutory.esi_ip_number,
+        pt_state_code=statutory.pt_state_code,
+        is_lwf_applicable=statutory.is_lwf_applicable,
+        tax_regime=statutory.tax_regime,
+        is_director=statutory.is_director,
+        is_international_worker=statutory.is_international_worker,
+        revision_reason=statutory.revision_reason,
+        version=statutory.version,
+        created_at=_format_timestamp(statutory.created_at) or "",
+        updated_at=_format_timestamp(statutory.updated_at) or "",
+    )
+
+
+def statutory_to_audit_dict(statutory: StatutoryRead) -> dict[str, Any]:
+    return statutory.model_dump(mode="json")
+
+
+# --- Employee Bank (E-08) -----------------------------------------------------------------
+#
+# The only four values `docs/product/08_Database_Architecture.md` §5.6 names for
+# `payment_mode` — validated as a `Literal`, matching this module's own precedent
+# (`tax_regime`, `revision_type`, `employment.status`) rather than a DB `CHECK` constraint.
+PAYMENT_MODE_VALUES = ("BANK", "CASH", "CHEQUE", "UPI")
+
+PaymentMode = Literal["BANK", "CASH", "CHEQUE", "UPI"]
+
+
+class BankCreate(BaseModel):
+    """Creates a new effective-dated bank row — closes the employee's current row (if any) and
+    inserts a new one, mirroring `StatutoryCreate`'s write shape. Unlike Statutory, no
+    `revision_reason` field — no source document requires one for Banking
+    (`docs/modules/employee/33_EMPLOYEE_BANKING_IMPLEMENTATION_PLAN.md` §5/§13).
+    `is_primary`/`verification_status`/`penny_drop_reference` are deliberately absent —
+    system-managed, never client-writable (plan §13)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    effective_from: date
+    account_holder_name: str | None = Field(default=None, max_length=150)
+    account_number_enc: str | None = None
+    bank_name: str | None = Field(default=None, max_length=150)
+    ifsc: str | None = Field(default=None, max_length=15)
+    branch_name: str | None = Field(default=None, max_length=150)
+    payment_mode: PaymentMode
+
+
+class BankRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    effective_from: date
+    effective_to: date | None
+    account_holder_name: str | None
+    account_number_enc: str | None
+    bank_name: str | None
+    ifsc: str | None
+    branch_name: str | None
+    payment_mode: str | None
+    is_primary: bool
+    verification_status: str
+    penny_drop_reference: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def bank_to_read(bank: "EmployeeBank") -> BankRead:
+    return BankRead(
+        id=bank.id,
+        company_id=bank.company_id,
+        employee_id=bank.employee_id,
+        effective_from=bank.effective_from,
+        effective_to=bank.effective_to,
+        account_holder_name=bank.account_holder_name,
+        account_number_enc=bank.account_number_enc,
+        bank_name=bank.bank_name,
+        ifsc=bank.ifsc,
+        branch_name=bank.branch_name,
+        payment_mode=bank.payment_mode,
+        is_primary=bank.is_primary,
+        verification_status=bank.verification_status,
+        penny_drop_reference=bank.penny_drop_reference,
+        version=bank.version,
+        created_at=_format_timestamp(bank.created_at) or "",
+        updated_at=_format_timestamp(bank.updated_at) or "",
+    )
+
+
+def bank_to_audit_dict(bank: BankRead) -> dict[str, Any]:
+    return bank.model_dump(mode="json")
