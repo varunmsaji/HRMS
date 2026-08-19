@@ -12,7 +12,8 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
+from tests.integration.auth.test_employee_jwt_linkage import _PASSWORD, _link_user_to_employee
 from tests.integration.modules.attendance.test_attendance_day import (
     _build_wired_employee,
     _cleanup_attendance_day,
@@ -520,3 +521,305 @@ async def test_forged_company_id_header_rejected(
         await _cleanup(company_id=company_a, user_id=user_a)
         await _cleanup_attendance_day(company_id=company_b)
         await _cleanup(company_id=company_b, user_id=user_b)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (W1-W4 stabilization) — `POST /attendance/punches` must verify the *target* employee
+# is actually visible to the caller's resolved DataScope, not just that the caller holds some
+# grant for `ATTENDANCE.PUNCH`/`ATTENDANCE.PUNCH_ON_BEHALF` at all. Reuses
+# `EmployeeService.resolve_visible_employee_ids` via `attendance.service._ensure_employee_visible`
+# — same 404-not-403, don't-leak-existence contract as every other DataScope check in this file.
+# ---------------------------------------------------------------------------
+
+
+async def test_on_behalf_punch_reportees_scope_blocks_target_outside_visible_set(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A `REPORTEES`-scoped `ATTENDANCE.PUNCH_ON_BEHALF` grant proves the caller may punch *some*
+    employees on behalf — but not that the specific target is one of them. Before the Phase 3
+    fix, the router only checked `scope.levels` was non-empty and never intersected the target
+    against the caller's visible set, so this stranger-punch would have succeeded (201) instead
+    of 404."""
+    from hrms.modules.attendance.permissions import ATTENDANCE_PUNCH_ON_BEHALF
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        manager_id = wired["employee"]["id"]
+        reportee = await _add_reportee_employee(
+            client,
+            headers,
+            wired=wired,
+            first_name="Reportee",
+            reporting_manager_id=UUID(manager_id),
+        )
+        stranger = await _add_reportee_employee(
+            client, headers, wired=wired, first_name="Stranger", reporting_manager_id=None
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[ATTENDANCE_PUNCH_ON_BEHALF],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager_id),
+        )
+
+        blocked = await client.post(
+            "/v1/attendance/punches",
+            headers=scoped_headers,
+            json={
+                "employee_id": stranger["id"],
+                "punch_time": "2026-08-10T09:00:00Z",
+                "direction": "IN",
+            },
+        )
+        assert blocked.status_code == 404
+        assert blocked.json()["error"]["code"] == "NOT_FOUND"
+
+        allowed = await client.post(
+            "/v1/attendance/punches",
+            headers=scoped_headers,
+            json={
+                "employee_id": reportee["id"],
+                "punch_time": "2026-08-10T09:00:00Z",
+                "direction": "IN",
+            },
+        )
+        assert allowed.status_code == 201, allowed.text
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_forged_employee_id_punch_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A nonexistent `employee_id` must 404, not surface a raw FK `IntegrityError` — the
+    visibility check runs (and rejects) before any punch row is ever inserted."""
+    from hrms.modules.attendance.permissions import ATTENDANCE_PUNCH_ON_BEHALF
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[ATTENDANCE_PUNCH_ON_BEHALF],
+            data_scope="COMPANY",
+        )
+        response = await client.post(
+            "/v1/attendance/punches",
+            headers=scoped_headers,
+            json={
+                "employee_id": str(uuid4()),
+                "punch_time": "2026-08-10T09:00:00Z",
+                "direction": "IN",
+            },
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_cross_company_employee_id_punch_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`Employee.employee_id` has no composite `(company_id, id)` FK — only a plain
+    `FOREIGN KEY (employee_id) REFERENCES employee.id`. Without the Phase 3 visibility check, a
+    `COMPANY`-scoped caller in company A could punch a *real* employee id that happens to belong
+    to company B, writing a `Punch` row whose `company_id` (A) and `employee_id` (B's employee)
+    disagree. Must 404, proving company_id is enforced, not just FK existence."""
+    from hrms.modules.attendance.permissions import ATTENDANCE_PUNCH_ON_BEHALF
+
+    headers_a, company_a, user_a = await _register_tenant(client)
+    headers_b, company_b, user_b = await _register_tenant(client)
+    try:
+        employee_b = (
+            await client.post("/v1/employees", headers=headers_b, json={"first_name": "OtherCo"})
+        ).json()["data"]
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_a,
+            permission_codes=[ATTENDANCE_PUNCH_ON_BEHALF],
+            data_scope="COMPANY",
+        )
+        response = await client.post(
+            "/v1/attendance/punches",
+            headers=scoped_headers,
+            json={
+                "employee_id": employee_b["id"],
+                "punch_time": "2026-08-10T09:00:00Z",
+                "direction": "IN",
+            },
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+    finally:
+        await _cleanup_attendance_day(company_id=company_a)
+        await _cleanup(company_id=company_a, user_id=user_a)
+        await _cleanup_attendance_day(company_id=company_b)
+        await _cleanup(company_id=company_b, user_id=user_b)
+        await _cleanup_scoped_users()
+
+
+async def test_disabled_employee_remains_a_valid_punch_target(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Documents a deliberate non-change: `Employee.is_active` isn't gated anywhere else in the
+    codebase either (`list_employees`/`get_employee` only filter `deleted_at`) — Phase 5 of the
+    stabilization task is explicit that this task must not invent new behavior, so a disabled
+    employee stays visible/actionable here exactly as it already is on every other employee
+    route. If that ever needs to change, it should change for the whole app, not just punches."""
+    from hrms.modules.attendance.permissions import ATTENDANCE_PUNCH_ON_BEHALF
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee = (
+            await client.post("/v1/employees", headers=headers, json={"first_name": "Disabled"})
+        ).json()["data"]
+        deactivate = await client.patch(
+            f"/v1/employees/{employee['id']}",
+            headers={**headers, "If-Match": str(employee["version"])},
+            json={"is_active": False},
+        )
+        assert deactivate.status_code == 200, deactivate.text
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[ATTENDANCE_PUNCH_ON_BEHALF],
+            data_scope="COMPANY",
+        )
+        response = await client.post(
+            "/v1/attendance/punches",
+            headers=scoped_headers,
+            json={
+                "employee_id": employee["id"],
+                "punch_time": "2026-08-10T09:00:00Z",
+                "direction": "IN",
+            },
+        )
+        assert response.status_code == 201, response.text
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 (W1-W4 stabilization) — the full employee self-service workflow, end to end, off a
+# real `/auth/login`-issued JWT (Phase 2's fix): login -> self punch IN/OUT (no `employee_id` in
+# the body — the router falls back to `user.employee_id`) -> calculate -> view own result ->
+# still can't see a colleague's, still can't punch a colleague without an ON_BEHALF grant.
+# ---------------------------------------------------------------------------
+
+
+async def test_employee_self_service_flow_from_real_login(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`POST /attendance/days/calculate` is deliberately `ATTENDANCE.VIEW_ALL` (COMPANY-scoped,
+    not self-service — see that route's own docstring in `router.py`): the "compute today's
+    attendance" act is admin/manager-triggered, employees only view results. So the admin
+    (`headers`) triggers calculation here; the employee's real-JWT session only punches and
+    views."""
+    from hrms.modules.attendance.permissions import ATTENDANCE_PUNCH, ATTENDANCE_VIEW
+
+    headers, company_id, admin_user_id = await _register_tenant(client)
+    employee_user_id: UUID | None = None
+    try:
+        wired = await _build_wired_employee(client, headers)
+        self_employee_id = wired["employee"]["id"]
+        other_employee = (
+            await client.post("/v1/employees", headers=headers, json={"first_name": "Colleague"})
+        ).json()["data"]
+
+        emp_email = f"selfserve-{uuid4().hex[:8]}@example.com"
+        employee_user_id = await _link_user_to_employee(
+            company_id=company_id,
+            employee_id=UUID(self_employee_id),
+            email=emp_email,
+            data_scope="SELF",
+            permission_codes=(ATTENDANCE_PUNCH, ATTENDANCE_VIEW),
+        )
+
+        login = await client.post(
+            "/v1/auth/login",
+            json={"email": emp_email, "password": _PASSWORD, "company_id": str(company_id)},
+        )
+        assert login.status_code == 200, login.text
+        self_headers = {
+            "Authorization": f"Bearer {login.json()['data']['access_token']}",
+            "X-Company-Id": str(company_id),
+        }
+
+        punch_in = await client.post(
+            "/v1/attendance/punches",
+            headers=self_headers,
+            json={"punch_time": "2026-08-10T09:00:00Z", "direction": "IN"},
+        )
+        assert punch_in.status_code == 201, punch_in.text
+        assert punch_in.json()["data"]["employee_id"] == self_employee_id
+
+        punch_out = await client.post(
+            "/v1/attendance/punches",
+            headers=self_headers,
+            json={"punch_time": "2026-08-10T18:00:00Z", "direction": "OUT"},
+        )
+        assert punch_out.status_code == 201, punch_out.text
+
+        calculated = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": self_employee_id, "date": "2026-08-10"},
+        )
+        assert calculated.status_code == 200, calculated.text
+        own_day_id = calculated.json()["data"]["id"]
+
+        own = await client.get(f"/v1/attendance/days/{own_day_id}", headers=self_headers)
+        assert own.status_code == 200
+
+        other_day = (
+            await client.post(
+                "/v1/attendance/days/calculate",
+                headers=headers,
+                params={"employee_id": other_employee["id"], "date": "2026-08-10"},
+            )
+        ).json()["data"]
+        blocked = await client.get(f"/v1/attendance/days/{other_day['id']}", headers=self_headers)
+        assert blocked.status_code == 404
+
+        # No ON_BEHALF grant -> punching a colleague is 403, never silently redirected to self.
+        cross_punch = await client.post(
+            "/v1/attendance/punches",
+            headers=self_headers,
+            json={
+                "employee_id": other_employee["id"],
+                "punch_time": "2026-08-10T09:00:00Z",
+                "direction": "IN",
+            },
+        )
+        assert cross_punch.status_code == 403
+    finally:
+        extra = (employee_user_id,) if employee_user_id is not None else ()
+        if extra:
+            factory = get_session_factory()
+            async with factory() as session:
+                for uid in extra:
+                    await session.execute(
+                        text("DELETE FROM refresh_token WHERE user_id = :uid"), {"uid": str(uid)}
+                    )
+                    await session.execute(
+                        text("DELETE FROM session WHERE user_id = :uid"), {"uid": str(uid)}
+                    )
+                await session.commit()
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=admin_user_id)
+        if extra:
+            factory = get_session_factory()
+            async with factory() as session:
+                for uid in extra:
+                    await session.execute(
+                        text('DELETE FROM "user" WHERE id = :uid'), {"uid": str(uid)}
+                    )
+                await session.commit()

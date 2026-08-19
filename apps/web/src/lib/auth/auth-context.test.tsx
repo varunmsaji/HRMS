@@ -18,7 +18,13 @@ const mockedGet = vi.mocked(apiClient.get);
 const mockedPost = vi.mocked(apiClient.post);
 
 const SAMPLE_ME = {
-  user: { id: "user-1", email: "user@example.com", company_id: "company-1", permissions: [] },
+  user: {
+    id: "user-1",
+    email: "user@example.com",
+    company_id: "company-1",
+    employee_id: null,
+    permissions: [],
+  },
 };
 const SAMPLE_TOKEN_RESPONSE = {
   access_token: "a1",
