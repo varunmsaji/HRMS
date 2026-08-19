@@ -25,6 +25,7 @@ export interface UserProfile {
   id: string;
   email: string | null;
   company_id: string;
+  employee_id: string | null;
   permissions: string[];
 }
 

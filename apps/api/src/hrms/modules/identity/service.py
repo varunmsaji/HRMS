@@ -136,7 +136,9 @@ class IdentityService:
             entity_id=session_id,
         )
 
-    async def get_me(self, user_id: UUID, company_id: UUID) -> MeResponseData:
+    async def get_me(
+        self, user_id: UUID, company_id: UUID, employee_id: UUID | None
+    ) -> MeResponseData:
         user = await self._repo.get_user_by_id(self._session, user_id)
         if user is None:
             raise InvalidCredentialsError("Invalid email or password")
@@ -146,6 +148,7 @@ class IdentityService:
                 id=user.id,
                 email=user.email,
                 company_id=company_id,
+                employee_id=employee_id,
                 permissions=permissions,
             )
         )
@@ -161,6 +164,16 @@ class IdentityService:
 
             raise NotFoundError("Resource not found")
         return CompanyDetail(id=company.id, name=company.name, status=company.status)
+
+    async def _resolve_employee_id(self, *, user_id: UUID, company_id: UUID) -> UUID | None:
+        """Local, function-scoped import — same cross-module-seam convention as
+        `attendance.service._resolve_visible_employee_ids`. Company admins with no linked
+        `Employee` row are valid (`None` is not an error); employees must get their real
+        `employee_id` so `SELF` data-scope and self-service routes work from the real JWT."""
+        from hrms.modules.employee.service import EmployeeService
+
+        employee_service = EmployeeService(self._session, self._settings)
+        return await employee_service.resolve_employee_id_for_user(company_id, user_id)
 
     async def issue_tokens_for(
         self,
@@ -203,11 +216,13 @@ class IdentityService:
             expires_at=refresh_expires,
         )
 
+        employee_id = await self._resolve_employee_id(user_id=user_id, company_id=company_id)
+
         access = create_access_token(
             user_id=user_id,
             company_id=company_id,
             session_id=session_id,
-            employee_id=None,
+            employee_id=employee_id,
             settings=self._settings,
         )
 

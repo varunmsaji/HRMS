@@ -1807,6 +1807,27 @@ async def _resolve_visible_employee_ids(
     )
 
 
+async def _ensure_employee_visible(
+    session: AsyncSession,
+    company_id: UUID,
+    target_employee_id: UUID,
+    scope: DataScope,
+    caller_employee_id: UUID | None,
+) -> None:
+    """Confirms the caller may act *on* `target_employee_id` — not just that they hold some
+    grant for the permission in question. Reuses `EmployeeService.get_employee`
+    (`resolve_visible_employee_ids` under the hood) rather than re-deriving scope logic, same
+    cross-module-seam convention as `_resolve_visible_employee_ids` above. Raises `NotFoundError`
+    (-> 404) for both a nonexistent/cross-tenant employee id and an out-of-scope one — identical
+    shapes, so the response never reveals which case applies."""
+    from hrms.modules.employee.service import EmployeeService
+
+    employee_service = EmployeeService(session)
+    await employee_service.get_employee(
+        company_id, target_employee_id, scope=scope, caller_employee_id=caller_employee_id
+    )
+
+
 class PunchService:
     """Punch ingestion (architecture §19.1 step 9, WD-11 — punches are immutable, append-only
     once written; corrections are new punches, never an UPDATE/DELETE of this row)."""
@@ -1822,6 +1843,8 @@ class PunchService:
         employee_id: UUID,
         body: PunchCreate,
         *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
         default_source: str,
         actor_user_id: UUID | None,
         ip_address: str | None = None,
@@ -1832,7 +1855,18 @@ class PunchService:
         partial unique index is the concurrency backstop, not the primary check). The
         *load-bearing* dedup mechanism for W4 sources is calculation-time duplicate collapsing
         (`calculation.collapse_duplicate_punches`), not this — see the module note in
-        `models.Punch`."""
+        `models.Punch`.
+
+        `scope`/`caller_employee_id` gate the *target* employee, not just whether the caller
+        holds the `ATTENDANCE.PUNCH`/`ATTENDANCE.PUNCH_ON_BEHALF` permission at all — the router
+        resolving a non-empty `DataScope` only proves the caller has *some* grant; without this,
+        a `REPORTEES`/`REPORTEE_TREE`/`SELF`-scoped `PUNCH_ON_BEHALF` grant could be used to punch
+        an employee entirely outside the caller's visible set. Checked first, before the
+        idempotency lookup, so a forged/out-of-scope `employee_id` never touches punch state."""
+        await _ensure_employee_visible(
+            self._session, company_id, employee_id, scope, caller_employee_id
+        )
+
         if body.idempotency_key:
             existing = await self._repo.get_by_idempotency_key(
                 self._session, company_id=company_id, idempotency_key=body.idempotency_key
@@ -2242,9 +2276,7 @@ class AttendanceDayService:
                         for d in shift_version.duty_blocks
                     ],
                     core_start=(
-                        _parse_time(shift_version.core_start)
-                        if shift_version.core_start
-                        else None
+                        _parse_time(shift_version.core_start) if shift_version.core_start else None
                     ),
                     core_end=(
                         _parse_time(shift_version.core_end) if shift_version.core_end else None

@@ -64,13 +64,14 @@ async def logout(
 @router.get("/me", status_code=status.HTTP_200_OK)
 async def get_me(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[IdentityService, Depends(get_identity_service)],
 ) -> DataEnvelope[MeResponseData]:
     if tenant.user_id is None:
         from hrms.core.errors.auth import UnauthorizedError
 
         raise UnauthorizedError("Authentication required")
-    data = await service.get_me(tenant.user_id, tenant.company_id)
+    data = await service.get_me(tenant.user_id, tenant.company_id, user.employee_id)
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

@@ -137,6 +137,17 @@ class EmployeeService:
         # above is skipped, `visible` stays empty — fails closed, never falls back to COMPANY.
         return frozenset(visible)
 
+    async def resolve_employee_id_for_user(self, company_id: UUID, user_id: UUID) -> UUID | None:
+        """Resolves the `employee_id` claim that login/refresh embeds in the JWT
+        (`hrms.modules.identity.service.IdentityService.issue_tokens_for` — cross-module
+        seam, same lazy-import convention as `attendance.service._resolve_visible_employee_ids`).
+        Returns `None` for users with no linked `Employee` row in this company (company admins
+        without an employee record are a valid, expected case, not an error)."""
+        employee = await self._repo.get_employee_by_user_id(
+            self._session, company_id=company_id, user_id=user_id
+        )
+        return employee.id if employee is not None else None
+
     async def _check_seat_limit(self, company_id: UUID) -> None:
         """`EMPLOYEE_SEATS` enforcement (`docs/modules/employee/
         05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part A6) — reads the plan's resolved seat limit

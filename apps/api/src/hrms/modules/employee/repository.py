@@ -88,6 +88,25 @@ class EmployeeRepository:
         stmt = select(Employee).where(*conditions)
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_employee_by_user_id(
+        self, session: AsyncSession, *, company_id: UUID, user_id: UUID
+    ) -> Employee | None:
+        """Resolves the `Employee` a logged-in `User` is linked to, within one company —
+        `Employee.user_id` has no DB-level uniqueness constraint, so this orders by
+        `created_at` and takes the earliest match to stay deterministic if more than one row
+        was ever mistakenly linked."""
+        stmt = (
+            select(Employee)
+            .where(
+                Employee.company_id == company_id,
+                Employee.user_id == user_id,
+                Employee.deleted_at.is_(None),
+            )
+            .order_by(Employee.created_at)
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def update_employee(
         self,
         session: AsyncSession,

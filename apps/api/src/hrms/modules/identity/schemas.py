@@ -35,6 +35,7 @@ class UserProfile(BaseModel):
     id: UUID
     email: str | None
     company_id: UUID
+    employee_id: UUID | None
     permissions: list[str]
 
 

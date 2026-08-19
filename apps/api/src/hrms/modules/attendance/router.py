@@ -171,9 +171,7 @@ async def create_attendance_policy_version(
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
-@router.get(
-    "/attendance-policies/{policy_id}/versions/resolve", status_code=status.HTTP_200_OK
-)
+@router.get("/attendance-policies/{policy_id}/versions/resolve", status_code=status.HTTP_200_OK)
 async def resolve_attendance_policy_version(
     policy_id: UUID,
     as_of: Annotated[date, Query()],
@@ -554,9 +552,7 @@ async def list_regularization_policy_versions(
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
-@router.post(
-    "/regularization-policies/{policy_id}/versions", status_code=status.HTTP_201_CREATED
-)
+@router.post("/regularization-policies/{policy_id}/versions", status_code=status.HTTP_201_CREATED)
 async def create_regularization_policy_version(
     policy_id: UUID,
     body: RegularizationPolicyVersionCreate,
@@ -576,9 +572,7 @@ async def create_regularization_policy_version(
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
-@router.get(
-    "/regularization-policies/{policy_id}/versions/resolve", status_code=status.HTTP_200_OK
-)
+@router.get("/regularization-policies/{policy_id}/versions/resolve", status_code=status.HTTP_200_OK)
 async def resolve_regularization_policy_version(
     policy_id: UUID,
     as_of: Annotated[date, Query()],
@@ -746,6 +740,8 @@ async def create_punch(
         tenant.company_id,
         target_employee_id,
         body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         default_source="ADMIN" if on_behalf else "WEB",
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
