@@ -1,0 +1,535 @@
+"""Unit tests for the W4 calculation engine (`attendance/calculation.py`) — no DB/HTTP.
+
+Covers the documented punch-pairing sequences from the W4 task brief (IN->OUT, IN->OUT->IN->OUT,
+IN->IN->OUT, IN->OUT->OUT), duplicate collapsing, timezone resolution, cross-midnight window
+computation, break matching, band lookup, and the terminal-status short-circuits."""
+
+from datetime import UTC, date, datetime, time, timedelta
+from uuid import uuid4
+
+from hrms.modules.attendance.calculation import (
+    AttendanceCalculationInput,
+    BandData,
+    OvertimePolicyInputs,
+    PolicyInputs,
+    PunchData,
+    ShiftBreakData,
+    ShiftInputs,
+    calendar_day_window_utc,
+    collapse_duplicate_punches,
+    detect_overtime,
+    evaluate_day,
+    lookup_band,
+    pair_punches,
+    presence_span,
+    resolve_timezone,
+    round_minutes,
+    scheduled_span_utc,
+)
+
+
+def _punch(hour: int, minute: int, direction: str, day: int = 1) -> PunchData:
+    return PunchData(
+        id=uuid4(),
+        punch_time=datetime(2026, 8, day, hour, minute, tzinfo=UTC),
+        direction=direction,
+    )
+
+
+def _policy(**overrides: object) -> PolicyInputs:
+    defaults: dict[str, object] = dict(
+        grace_in_minutes=10,
+        grace_out_minutes=10,
+        punch_rounding="NONE",
+        rounding_minutes=None,
+        missing_punch_behaviour="INCOMPLETE",
+        missing_shift_behaviour="INCOMPLETE",
+        half_day_split="BY_HOURS",
+        half_day_boundary_minutes=None,
+        multi_punch_mode="PAIR_ALL",
+        duplicate_punch_window_seconds=60,
+        core_hours_breach_behaviour="FLAG",
+        early_out_uses_core_end=False,
+        split_shift_missed_block_behaviour="HALF_DAY",
+        excess_break_behaviour="FLAG",
+        incomplete_at_lock_behaviour="TREAT_ABSENT",
+        work_on_leave_behaviour="KEEP_LEAVE",
+    )
+    defaults.update(overrides)
+    return PolicyInputs(**defaults)  # type: ignore[arg-type]
+
+
+def _shift(**overrides: object) -> ShiftInputs:
+    defaults: dict[str, object] = dict(
+        shift_type="FIXED",
+        is_ot_eligible=False,
+        operates_on_holiday=False,
+        operates_on_weekly_off=False,
+        is_cross_midnight=False,
+        breaks=[],
+        duty_blocks=[],
+    )
+    defaults.update(overrides)
+    return ShiftInputs(**defaults)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Timezone (WD-06)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_timezone_prefers_shift_version() -> None:
+    assert (
+        resolve_timezone(
+            shift_version_timezone="America/New_York",
+            branch_timezone="Asia/Kolkata",
+            company_timezone="UTC",
+        )
+        == "America/New_York"
+    )
+
+
+def test_resolve_timezone_falls_back_to_branch_then_company() -> None:
+    assert (
+        resolve_timezone(
+            shift_version_timezone=None, branch_timezone="Europe/London", company_timezone="UTC"
+        )
+        == "Europe/London"
+    )
+    assert (
+        resolve_timezone(
+            shift_version_timezone=None, branch_timezone=None, company_timezone="Asia/Kolkata"
+        )
+        == "Asia/Kolkata"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cross-midnight schedule window (FR-ATT-005)
+# ---------------------------------------------------------------------------
+
+
+def test_scheduled_span_cross_midnight_attributes_to_start_date() -> None:
+    start, end = scheduled_span_utc(
+        attendance_date=date(2026, 8, 10),
+        tz_name="Asia/Kolkata",
+        start_time=time(22, 0),
+        end_time=time(6, 0),
+        is_cross_midnight=True,
+    )
+    assert start.date() == date(2026, 8, 10)
+    assert end.date() == date(2026, 8, 11)
+    assert (end - start) == timedelta(hours=8)
+
+
+def test_calendar_day_window_is_plain_local_midnight_to_midnight() -> None:
+    start, end = calendar_day_window_utc(attendance_date=date(2026, 8, 10), tz_name="UTC")
+    assert start == datetime(2026, 8, 10, tzinfo=UTC)
+    assert end == datetime(2026, 8, 11, tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Duplicate collapsing (§19.1 step 9, FR-ATT-017)
+# ---------------------------------------------------------------------------
+
+
+def test_collapse_duplicate_punches_within_window() -> None:
+    p1 = _punch(9, 0, "IN")
+    p2 = PunchData(id=uuid4(), punch_time=p1.punch_time + timedelta(seconds=30), direction="IN")
+    p3 = _punch(18, 0, "OUT")
+    collapsed = collapse_duplicate_punches([p1, p2, p3], window_seconds=60)
+    assert collapsed == [p1, p3]
+
+
+def test_collapse_duplicate_punches_outside_window_kept() -> None:
+    p1 = _punch(9, 0, "IN")
+    p2 = PunchData(id=uuid4(), punch_time=p1.punch_time + timedelta(seconds=120), direction="IN")
+    collapsed = collapse_duplicate_punches([p1, p2], window_seconds=60)
+    assert collapsed == [p1, p2]
+
+
+# ---------------------------------------------------------------------------
+# Punch pairing — the four documented sequences
+# ---------------------------------------------------------------------------
+
+
+def test_pairing_in_out() -> None:
+    p_in, p_out = _punch(9, 0, "IN"), _punch(18, 0, "OUT")
+    result = pair_punches([p_in, p_out])
+    assert result.pairs == [(p_in, p_out)]
+    assert result.orphans == []
+
+
+def test_pairing_in_out_in_out() -> None:
+    a_in, a_out = _punch(9, 0, "IN"), _punch(13, 0, "OUT")
+    b_in, b_out = _punch(14, 0, "IN"), _punch(18, 0, "OUT")
+    result = pair_punches([a_in, a_out, b_in, b_out])
+    assert result.pairs == [(a_in, a_out), (b_in, b_out)]
+    assert result.orphans == []
+
+
+def test_pairing_in_in_out_orphans_the_earlier_in() -> None:
+    first_in, second_in, out = _punch(9, 0, "IN"), _punch(9, 30, "IN"), _punch(18, 0, "OUT")
+    result = pair_punches([first_in, second_in, out])
+    assert result.pairs == [(second_in, out)]
+    assert result.orphans == [first_in]
+
+
+def test_pairing_in_out_out_orphans_the_second_out() -> None:
+    p_in, first_out, second_out = _punch(9, 0, "IN"), _punch(13, 0, "OUT"), _punch(18, 0, "OUT")
+    result = pair_punches([p_in, first_out, second_out])
+    assert result.pairs == [(p_in, first_out)]
+    assert result.orphans == [second_out]
+
+
+def test_pairing_trailing_unmatched_in_is_orphan() -> None:
+    p_in = _punch(9, 0, "IN")
+    result = pair_punches([p_in])
+    assert result.pairs == []
+    assert result.orphans == [p_in]
+
+
+# ---------------------------------------------------------------------------
+# Presence span — PAIR_ALL vs FIRST_IN_LAST_OUT
+# ---------------------------------------------------------------------------
+
+
+def test_presence_span_pair_all_excludes_gap() -> None:
+    a_in, a_out = _punch(9, 0, "IN"), _punch(12, 0, "OUT")
+    b_in, b_out = _punch(13, 0, "IN"), _punch(17, 0, "OUT")
+    pairing = pair_punches([a_in, a_out, b_in, b_out])
+    first_in, last_out, gross, gaps = presence_span(pairing.pairs, mode="PAIR_ALL")
+    assert gross == 7 * 60  # 3h + 4h, the 1h gap excluded
+    assert gaps == [(a_out.punch_time, b_in.punch_time)]
+    assert first_in == a_in.punch_time
+    assert last_out == b_out.punch_time
+
+
+def test_presence_span_first_in_last_out_includes_gap() -> None:
+    a_in, a_out = _punch(9, 0, "IN"), _punch(12, 0, "OUT")
+    b_in, b_out = _punch(13, 0, "IN"), _punch(17, 0, "OUT")
+    pairing = pair_punches([a_in, a_out, b_in, b_out])
+    _first_in, _last_out, gross, _gaps = presence_span(pairing.pairs, mode="FIRST_IN_LAST_OUT")
+    assert gross == 8 * 60  # full 9:00-17:00 span, gap included
+
+
+# ---------------------------------------------------------------------------
+# Rounding
+# ---------------------------------------------------------------------------
+
+
+def test_round_minutes_up_down_nearest() -> None:
+    assert round_minutes(52, mode="UP", minutes=15) == 60
+    assert round_minutes(52, mode="DOWN", minutes=15) == 45
+    assert round_minutes(52, mode="NEAREST", minutes=15) == 45
+    assert round_minutes(53, mode="NEAREST", minutes=15) == 60
+    assert round_minutes(52, mode="NONE", minutes=15) == 52
+
+
+# ---------------------------------------------------------------------------
+# Band lookup
+# ---------------------------------------------------------------------------
+
+
+def test_lookup_band_matches_ordered_ranges() -> None:
+    bands = [
+        BandData(min_minutes=0, max_minutes=239, classification="ABSENT"),
+        BandData(min_minutes=240, max_minutes=479, classification="HALF_DAY"),
+        BandData(min_minutes=480, max_minutes=None, classification="PRESENT"),
+    ]
+    assert lookup_band(0, bands) == "ABSENT"
+    assert lookup_band(300, bands) == "HALF_DAY"
+    assert lookup_band(500, bands) == "PRESENT"
+
+
+def test_lookup_band_no_match_returns_none() -> None:
+    assert lookup_band(10, []) is None
+
+
+# ---------------------------------------------------------------------------
+# Overtime detection (§12)
+# ---------------------------------------------------------------------------
+
+
+def test_detect_overtime_ineligible_shift_flag() -> None:
+    policy = OvertimePolicyInputs(
+        eligibility="SHIFT_FLAG",
+        min_ot_minutes=15,
+        rounding_minutes=None,
+        rounding_mode="NONE",
+        requires_post_approval=True,
+        daily_cap_minutes=None,
+        comp_off_instead_of_pay=False,
+        night_ot_mode="SHIFT_FLAG",
+        night_window_start=None,
+        night_window_end=None,
+        rate_rows=[],
+    )
+    minutes, classification, eligible = detect_overtime(
+        worked_minutes=600,
+        scheduled_minutes=480,
+        is_shift_ot_eligible=False,
+        is_holiday=False,
+        is_weekly_off=False,
+        is_night=False,
+        policy=policy,
+    )
+    assert (minutes, classification, eligible) == (0, None, False)
+
+
+def test_detect_overtime_below_minimum_not_counted() -> None:
+    policy = OvertimePolicyInputs(
+        eligibility="ALWAYS",
+        min_ot_minutes=30,
+        rounding_minutes=None,
+        rounding_mode="NONE",
+        requires_post_approval=True,
+        daily_cap_minutes=None,
+        comp_off_instead_of_pay=False,
+        night_ot_mode="SHIFT_FLAG",
+        night_window_start=None,
+        night_window_end=None,
+        rate_rows=[],
+    )
+    minutes, _classification, eligible = detect_overtime(
+        worked_minutes=490,
+        scheduled_minutes=480,
+        is_shift_ot_eligible=True,
+        is_holiday=False,
+        is_weekly_off=False,
+        is_night=False,
+        policy=policy,
+    )
+    assert minutes == 0
+    assert eligible is False
+
+
+def test_detect_overtime_caps_at_daily_cap() -> None:
+    policy = OvertimePolicyInputs(
+        eligibility="ALWAYS",
+        min_ot_minutes=15,
+        rounding_minutes=None,
+        rounding_mode="NONE",
+        requires_post_approval=True,
+        daily_cap_minutes=60,
+        comp_off_instead_of_pay=False,
+        night_ot_mode="SHIFT_FLAG",
+        night_window_start=None,
+        night_window_end=None,
+        rate_rows=[],
+    )
+    minutes, _classification, eligible = detect_overtime(
+        worked_minutes=700,
+        scheduled_minutes=480,
+        is_shift_ot_eligible=True,
+        is_holiday=False,
+        is_weekly_off=False,
+        is_night=False,
+        policy=policy,
+    )
+    assert eligible is True
+    assert minutes == 60
+
+
+# ---------------------------------------------------------------------------
+# evaluate_day — terminal statuses
+# ---------------------------------------------------------------------------
+
+
+def _base_input(**overrides: object) -> AttendanceCalculationInput:
+    defaults: dict[str, object] = dict(
+        employee_id=uuid4(),
+        attendance_date=date(2026, 8, 10),
+        timezone="Asia/Kolkata",
+        population_status="ACTIVE",
+        calendar_day_type="WORKING",
+        holiday_name=None,
+        holiday_on_weekly_off=False,
+        shift=_shift(),
+        scheduled_start=datetime(2026, 8, 10, 3, 30, tzinfo=UTC),
+        scheduled_end=datetime(2026, 8, 10, 12, 30, tzinfo=UTC),
+        policy=_policy(),
+        hour_bands=[BandData(min_minutes=240, max_minutes=None, classification="PRESENT")],
+        late_bands=[],
+        early_bands=[],
+        ot_policy=None,
+        punches=[],
+    )
+    defaults.update(overrides)
+    return AttendanceCalculationInput(**defaults)  # type: ignore[arg-type]
+
+
+def test_evaluate_day_not_joined() -> None:
+    result = evaluate_day(_base_input(population_status="NOT_JOINED"))
+    assert result.attendance_status == "NOT_JOINED"
+
+
+def test_evaluate_day_exited() -> None:
+    result = evaluate_day(_base_input(population_status="EXITED"))
+    assert result.attendance_status == "EXITED"
+
+
+def test_evaluate_day_config_error_no_calendar() -> None:
+    result = evaluate_day(_base_input(calendar_day_type=None))
+    assert result.attendance_status == "CONFIG_ERROR"
+    assert result.paid_day_fraction == "0.00"
+    assert result.lop_fraction == "0.00"
+
+
+def test_evaluate_day_config_error_no_policy() -> None:
+    result = evaluate_day(_base_input(policy=None))
+    assert result.attendance_status == "CONFIG_ERROR"
+
+
+def test_evaluate_day_not_expected_holiday_no_punches() -> None:
+    result = evaluate_day(_base_input(calendar_day_type="HOLIDAY", holiday_name="Test Holiday"))
+    assert result.attendance_status == "NOT_EXPECTED"
+    assert result.paid_day_fraction == "1.00"
+
+
+def test_evaluate_day_present_full_day() -> None:
+    punches = [
+        _punch(3, 25, "IN", day=10),
+        _punch(12, 35, "OUT", day=10),
+    ]
+    result = evaluate_day(_base_input(punches=punches))
+    assert result.attendance_status == "PRESENT"
+    assert result.worked_minutes == 550
+    assert result.is_late is False
+    assert result.paid_day_fraction == "1.00"
+
+
+def test_evaluate_day_late_beyond_grace() -> None:
+    punches = [
+        _punch(4, 0, "IN", day=10),
+        _punch(12, 30, "OUT", day=10),
+    ]
+    result = evaluate_day(_base_input(punches=punches))
+    assert result.is_late is True
+    assert result.late_minutes == 20  # 30 min late - 10 min grace
+
+
+def test_evaluate_day_no_punches_working_day_defaults_incomplete() -> None:
+    """§11.5: "ABSENT is harsh and must be an explicit policy choice" — the documented
+    `missing_punch_behaviour` default (INCOMPLETE) applies even to a zero-punch day."""
+    result = evaluate_day(_base_input(punches=[]))
+    assert result.attendance_status == "INCOMPLETE"
+    assert result.lop_fraction == "0.00"
+
+
+def test_evaluate_day_no_punches_absent_when_policy_says_absent() -> None:
+    result = evaluate_day(_base_input(punches=[], policy=_policy(missing_punch_behaviour="ABSENT")))
+    assert result.attendance_status == "ABSENT"
+    assert result.lop_fraction == "1.00"
+
+
+def test_evaluate_day_worked_on_weekly_off() -> None:
+    punches = [
+        _punch(3, 30, "IN", day=10),
+        _punch(8, 30, "OUT", day=10),
+    ]
+    result = evaluate_day(_base_input(calendar_day_type="WEEKLY_OFF", punches=punches))
+    assert result.worked_on_weekly_off is True
+
+
+def test_evaluate_day_missing_shift_no_punches_incomplete_by_default() -> None:
+    result = evaluate_day(_base_input(shift=None, scheduled_start=None, scheduled_end=None))
+    assert result.attendance_status == "INCOMPLETE"
+
+
+def test_evaluate_day_missing_shift_absent_when_policy_says_absent() -> None:
+    result = evaluate_day(
+        _base_input(
+            shift=None,
+            scheduled_start=None,
+            scheduled_end=None,
+            policy=_policy(missing_shift_behaviour="ABSENT"),
+        )
+    )
+    assert result.attendance_status == "ABSENT"
+
+
+# ---------------------------------------------------------------------------
+# Break matching
+# ---------------------------------------------------------------------------
+
+
+def test_unpaid_break_gap_already_excluded_not_double_subtracted() -> None:
+    """§10.2: PAIR_ALL's `gross_minutes` only sums clocked-in intervals — an unpaid break gap
+    between two pairs is already excluded by construction, so `worked_minutes` must equal the
+    sum of the worked intervals exactly, not that sum minus the gap again."""
+    shift = _shift(
+        breaks=[
+            ShiftBreakData(
+                id=uuid4(),
+                break_kind="FIXED_WINDOW",
+                start_time=time(8, 0),
+                end_time=time(9, 0),
+                window_start=None,
+                window_end=None,
+                min_minutes=None,
+                max_minutes=60,
+                is_paid=False,
+                is_mandatory=True,
+            )
+        ]
+    )
+    punches = [
+        _punch(3, 30, "IN", day=10),
+        _punch(8, 30, "OUT", day=10),
+        _punch(9, 30, "IN", day=10),
+        _punch(12, 30, "OUT", day=10),
+    ]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 3, 30, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 12, 30, tzinfo=UTC),
+        )
+    )
+    assert result.unpaid_break_minutes == 60
+    # 5h (3:30-8:30) + 3h (9:30-12:30) = 480m worked; the 60m gap is unpaid but never counted
+    # toward `gross_minutes` in the first place (PAIR_ALL), so no further subtraction applies.
+    assert result.worked_minutes == 480
+
+
+def test_paid_break_gap_added_back_to_worked_minutes() -> None:
+    """§10.2: "paid break minutes are included" — a paid break gap must be added *back* to
+    `worked_minutes` even though the employee was punched out for it."""
+    shift = _shift(
+        breaks=[
+            ShiftBreakData(
+                id=uuid4(),
+                break_kind="FIXED_WINDOW",
+                start_time=time(8, 0),
+                end_time=time(8, 15),
+                window_start=None,
+                window_end=None,
+                min_minutes=None,
+                max_minutes=15,
+                is_paid=True,
+                is_mandatory=False,
+            )
+        ]
+    )
+    punches = [
+        _punch(3, 30, "IN", day=10),
+        _punch(8, 0, "OUT", day=10),
+        _punch(8, 15, "IN", day=10),
+        _punch(12, 30, "OUT", day=10),
+    ]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 3, 30, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 12, 30, tzinfo=UTC),
+        )
+    )
+    assert result.paid_break_minutes == 15
+    # 4.5h (3:30-8:00) + 4h15m (8:15-12:30) = 525m clocked-in, plus the 15m paid break = 540m —
+    # the same as if the employee had never punched out for the paid break at all.
+    assert result.worked_minutes == 540

@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { ShiftForm } from "@/components/shift/shift-form";
+import { ShiftPublishDialog } from "@/components/shift/shift-publish-dialog";
+import { ShiftVersionForm } from "@/components/shift/shift-version-form";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -22,7 +25,8 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
-import type { Shift } from "@/lib/shift/types";
+import { usePermissions } from "@/lib/auth/use-permissions";
+import type { Shift, ShiftVersion } from "@/lib/shift/types";
 import {
   buildUpdatePatch,
   shiftToFormValues,
@@ -30,22 +34,46 @@ import {
   type ShiftFormErrors,
   type ShiftFormValues,
 } from "@/lib/shift/validate-shift";
+import {
+  buildShiftVersionPatch,
+  mapShiftVersionApiErrors,
+  shiftVersionToFormValues,
+  validateShiftVersionForm,
+  type ShiftVersionFormErrors,
+  type ShiftVersionFormValues,
+} from "@/lib/shift/validate-shift-version";
+import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
 
-function DetailField({ label, value }: { label: string; value: string | null | undefined }) {
-  const display = value && value.trim() ? value : "Not configured";
-  return (
-    <div>
-      <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{label}</dt>
-      <dd className={`mt-0.5 text-sm ${value && value.trim() ? "text-foreground" : "text-foreground-muted"}`}>
-        {display}
-      </dd>
-    </div>
-  );
+type TabKey = "overview" | "versions";
+const TABS: Array<{ key: TabKey; label: string }> = [
+  { key: "overview", label: "Overview" },
+  { key: "versions", label: "Versions" },
+];
+
+function formatVersionTiming(version: ShiftVersion): string {
+  if (version.shift_type === "FIXED") {
+    return `${version.start_time ?? "—"}–${version.end_time ?? "—"}${version.is_cross_midnight ? " (crosses midnight)" : ""}`;
+  }
+  if (version.shift_type === "FLEXIBLE") {
+    return `Flexible window ${version.window_start ?? "—"}–${version.window_end ?? "—"}`;
+  }
+  if (version.shift_type === "SPLIT") {
+    return version.duty_blocks
+      .slice()
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((block) => `${block.start_time}–${block.end_time}`)
+      .join(" + ");
+  }
+  return "Not yet configured";
 }
 
 export default function ShiftDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
+  const { can } = usePermissions();
+  const canManage = can("ORG.SHIFT.MANAGE");
+
+  const [tab, setTab] = useState<TabKey>("overview");
 
   const [shift, setShift] = useState<Shift | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,6 +87,29 @@ export default function ShiftDetailPage() {
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
+
+  // --- Versions tab state ---
+  const [versions, setVersions] = useState<ShiftVersion[] | null>(null);
+  const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<WeeklyOffPattern[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+
+  const [draftValues, setDraftValues] = useState<ShiftVersionFormValues | null>(null);
+  const [draftErrors, setDraftErrors] = useState<ShiftVersionFormErrors>({});
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftStaleMessage, setDraftStaleMessage] = useState<string | null>(null);
+
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+
+  const draft = versions?.find((v) => v.status === "DRAFT") ?? null;
+  const currentPublished =
+    versions?.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
+  const historical =
+    versions
+      ?.filter((v) => v.id !== draft?.id && v.id !== currentPublished?.id)
+      .sort((a, b) => (b.effective_from ?? "").localeCompare(a.effective_from ?? "")) ?? [];
 
   const loadShift = useCallback(async () => {
     setLoading(true);
@@ -80,9 +131,39 @@ export default function ShiftDetailPage() {
     }
   }, [params.id]);
 
+  const loadVersions = useCallback(async () => {
+    setVersionsLoading(true);
+    try {
+      const [versionData, patternData] = await Promise.all([
+        apiClient.get<ShiftVersion[]>(`/shifts/${params.id}/versions`),
+        apiClient.get<WeeklyOffPattern[]>("/weekly-off-patterns"),
+      ]);
+      setVersions(versionData);
+      setWeeklyOffPatterns(patternData);
+      return versionData;
+    } catch (err) {
+      toast({
+        title: "Could not load shift versions",
+        description: describeApiError(err),
+        variant: "danger",
+      });
+      return null;
+    } finally {
+      setVersionsLoading(false);
+    }
+  }, [params.id, toast]);
+
   useEffect(() => {
     void loadShift();
   }, [loadShift]);
+
+  useEffect(() => {
+    if (tab === "versions" && versions === null) {
+      void loadVersions();
+    }
+  }, [tab, versions, loadVersions]);
+
+  // --- Identity (Overview) editing ---
 
   function startEditing() {
     if (!shift) return;
@@ -134,19 +215,7 @@ export default function ShiftDetailPage() {
           return;
         }
         if (err.status === 422) {
-          setFormErrors({
-            name: getFieldError(err.details, "name"),
-            startTime: getFieldError(err.details, "start_time"),
-            endTime:
-              getFieldError(err.details, "end_time") ??
-              (err.code === "INVALID_SHIFT_TIME_RANGE"
-                ? "End time must be after start time unless this is a cross-midnight shift."
-                : undefined),
-            minHoursFullDay:
-              err.code === "INVALID_SHIFT_HOURS_RANGE"
-                ? "Min hours for full day must be greater than the half-day threshold."
-                : undefined,
-          });
+          setFormErrors({ name: getFieldError(err.details, "name") });
           return;
         }
         if (err.status === 403) {
@@ -171,7 +240,7 @@ export default function ShiftDetailPage() {
       setEditing(false);
       setFormValues(null);
       setStaleMessage(null);
-      toast({ title: "Shift reloaded", variant: "success" });
+      toast({ title: "Reloaded", variant: "success" });
     }
   }
 
@@ -206,6 +275,121 @@ export default function ShiftDetailPage() {
     }
   }
 
+  // --- Versions tab actions ---
+
+  function startEditingDraft() {
+    if (!draft) return;
+    setDraftValues(shiftVersionToFormValues(draft));
+    setDraftErrors({});
+    setDraftStaleMessage(null);
+  }
+
+  useEffect(() => {
+    if (draft && draftValues === null) startEditingDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.id]);
+
+  async function handleCreateDraft() {
+    setCreatingDraft(true);
+    try {
+      await apiClient.post(`/shifts/${params.id}/versions`, {});
+      toast({ title: "Draft created", variant: "success" });
+      await loadVersions();
+    } catch (err) {
+      toast({
+        title: "Could not create a new draft",
+        description: describeApiError(err),
+        variant: "danger",
+      });
+    } finally {
+      setCreatingDraft(false);
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (!draft || !draftValues) return;
+    const clientErrors = validateShiftVersionForm(draftValues);
+    if (Object.keys(clientErrors).length > 0) {
+      setDraftErrors(clientErrors);
+      toast({ title: "Fix the highlighted fields", variant: "danger" });
+      return;
+    }
+
+    setSavingDraft(true);
+    setDraftErrors({});
+    setDraftStaleMessage(null);
+    try {
+      const patch = buildShiftVersionPatch(draftValues, draft);
+      const updated = await apiClient.patch<ShiftVersion>(
+        `/shifts/${params.id}/versions/${draft.id}`,
+        patch,
+        { ifMatch: String(draft.version) },
+      );
+      setVersions((prev) => (prev ? prev.map((v) => (v.id === updated.id ? updated : v)) : prev));
+      setDraftValues(shiftVersionToFormValues(updated));
+      toast({ title: "Draft saved", variant: "success" });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 409 && err.code === "STALE_RESOURCE") {
+          setDraftStaleMessage("This draft was changed by someone else.");
+          return;
+        }
+        if (err.status === 422) {
+          setDraftErrors(mapShiftVersionApiErrors(err.details));
+          return;
+        }
+      }
+      toast({
+        title: "Could not save draft",
+        description: describeApiError(err),
+        variant: "danger",
+      });
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  async function reloadDraftLatest() {
+    const latest = await loadVersions();
+    if (latest) {
+      setDraftStaleMessage(null);
+      const latestDraft = latest.find((v) => v.status === "DRAFT") ?? null;
+      setDraftValues(latestDraft ? shiftVersionToFormValues(latestDraft) : null);
+      toast({ title: "Reloaded", variant: "success" });
+    }
+  }
+
+  async function handleDiscardDraft() {
+    if (!draft) return;
+    setDiscarding(true);
+    try {
+      await apiClient.delete(`/shifts/${params.id}/versions/${draft.id}`, {
+        ifMatch: String(draft.version),
+      });
+      setDiscardConfirmOpen(false);
+      setDraftValues(null);
+      toast({ title: "Draft discarded", variant: "success" });
+      await loadVersions();
+    } catch (err) {
+      toast({
+        title: "Could not discard draft",
+        description: describeApiError(err),
+        variant: "danger",
+      });
+    } finally {
+      setDiscarding(false);
+    }
+  }
+
+  function handlePublished(_updated: ShiftVersion) {
+    // The now-superseded published version's effective_to is set server-side — refetch the
+    // whole list rather than approximating it here.
+    setDraftValues(null);
+    toast({ title: "Schedule published", variant: "success" });
+    void loadVersions();
+    void loadShift();
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -216,9 +400,9 @@ export default function ShiftDetailPage() {
 
       <PageHeader
         title={shift?.name ?? "Shift"}
-        description="Timings, breaks, and grace period details for this shift."
+        description="Identity on the Overview tab; the actual schedule (timings, breaks, duty blocks) lives on the Versions tab."
         actions={
-          shift && !editing ? (
+          canManage && shift && !editing && tab === "overview" ? (
             <div className="flex items-center gap-2">
               <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)}>
                 {shift.is_active ? "Deactivate" : "Reactivate"}
@@ -231,11 +415,17 @@ export default function ShiftDetailPage() {
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading shift…" /> : null}
+      {loading ? (
+        <Card>
+          <CardContent className="pt-6">
+            <LoadingState label="Loading shift…" />
+          </CardContent>
+        </Card>
+      ) : null}
 
-          {error && !loading ? (
+      {error && !loading ? (
+        <Card>
+          <CardContent className="pt-6">
             <ErrorState
               message={
                 error.status === 403
@@ -246,92 +436,274 @@ export default function ShiftDetailPage() {
               }
               onRetry={error.status === 404 ? undefined : () => void loadShift()}
             />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {!loading && !error && shift ? (
+        <>
+          <div className="flex gap-1 overflow-x-auto border-b border-border" role="tablist">
+            {TABS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="tab"
+                aria-selected={tab === item.key}
+                onClick={() => setTab(item.key)}
+                className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  tab === item.key
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-foreground-muted hover:text-foreground"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          {tab === "overview" ? (
+            <Card>
+              <CardContent className="pt-6">
+                {staleMessage ? (
+                  <ConcurrencyConflictBanner
+                    message={staleMessage}
+                    onReload={() => void reloadLatest()}
+                    onCancel={cancelEditing}
+                  />
+                ) : null}
+
+                {editing && formValues ? (
+                  <div className="space-y-6">
+                    <ShiftForm values={formValues} errors={formErrors} onChange={setFormValues} />
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                        {saving ? "Saving…" : "Save changes"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={cancelEditing}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <Badge variant={shift.is_active ? "secondary" : "outline"}>
+                      {shift.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                    <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                          Shift name
+                        </dt>
+                        <dd className="mt-0.5 text-sm text-foreground">{shift.name}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                          Shift code
+                        </dt>
+                        <dd className="mt-0.5 text-sm text-foreground">{shift.code ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                          Current schedule
+                        </dt>
+                        <dd className="mt-0.5 text-sm text-foreground">
+                          {shift.current_version_id ? (
+                            <Badge variant="secondary">Published</Badge>
+                          ) : (
+                            <span className="text-foreground-muted">Not published yet</span>
+                          )}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                          Draft schedule
+                        </dt>
+                        <dd className="mt-0.5 text-sm text-foreground">
+                          {shift.draft_version_id ? (
+                            <Badge variant="outline">Draft in progress</Badge>
+                          ) : (
+                            <span className="text-foreground-muted">None</span>
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                    <p className="text-xs text-foreground-muted">
+                      Configure timings and breaks on the{" "}
+                      <button
+                        type="button"
+                        className="underline"
+                        onClick={() => setTab("versions")}
+                      >
+                        Versions tab
+                      </button>
+                      .
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           ) : null}
 
-          {staleMessage ? (
-            <div className="mb-4 rounded-md border border-warning/30 bg-warning/5 p-4" role="alert">
-              <p className="text-sm font-medium text-foreground">{staleMessage}</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button type="button" size="sm" onClick={() => void reloadLatest()}>
-                  Reload latest
-                </Button>
-                <Button type="button" size="sm" variant="outline" onClick={cancelEditing}>
-                  Cancel current changes
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {!loading && !error && shift && editing && formValues ? (
+          {tab === "versions" ? (
             <div className="space-y-6">
-              <ShiftForm values={formValues} errors={formErrors} onChange={setFormValues} />
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
-                  {saving ? "Saving…" : "Save changes"}
-                </Button>
-                <Button type="button" variant="outline" onClick={cancelEditing} disabled={saving}>
-                  Cancel
-                </Button>
-              </div>
+              {versionsLoading && versions === null ? (
+                <Card>
+                  <CardContent className="pt-6">
+                    <LoadingState label="Loading versions…" />
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {versions !== null ? (
+                <>
+                  <Card>
+                    <CardContent className="space-y-4 pt-6">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-medium text-foreground">
+                          Currently published
+                        </h3>
+                      </div>
+                      {currentPublished ? (
+                        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                          <div>
+                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                              Type
+                            </dt>
+                            <dd className="mt-0.5 text-sm text-foreground">
+                              {currentPublished.shift_type}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                              Timing
+                            </dt>
+                            <dd className="mt-0.5 text-sm text-foreground">
+                              {formatVersionTiming(currentPublished)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                              Effective from
+                            </dt>
+                            <dd className="mt-0.5 text-sm text-foreground">
+                              {currentPublished.effective_from}
+                            </dd>
+                          </div>
+                        </dl>
+                      ) : (
+                        <p className="text-sm text-foreground-muted">
+                          No published schedule yet — this shift cannot be assigned to employees
+                          until a draft is published.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="space-y-4 pt-6">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-medium text-foreground">Draft</h3>
+                        {canManage && !draft ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleCreateDraft()}
+                            disabled={creatingDraft}
+                          >
+                            {creatingDraft ? "Creating…" : "New draft"}
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      {!draft ? (
+                        <p className="text-sm text-foreground-muted">
+                          No open draft. Start one to change this shift&apos;s schedule.
+                        </p>
+                      ) : null}
+
+                      {draft && draftValues ? (
+                        <div className="space-y-6">
+                          {draftStaleMessage ? (
+                            <ConcurrencyConflictBanner
+                              message={draftStaleMessage}
+                              onReload={() => void reloadDraftLatest()}
+                              onCancel={() => setDraftStaleMessage(null)}
+                            />
+                          ) : null}
+                          <ShiftVersionForm
+                            values={draftValues}
+                            errors={draftErrors}
+                            onChange={setDraftValues}
+                            weeklyOffPatterns={weeklyOffPatterns}
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            {canManage ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  onClick={() => void handleSaveDraft()}
+                                  disabled={savingDraft}
+                                >
+                                  {savingDraft ? "Saving…" : "Save draft"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  onClick={() => setPublishDialogOpen(true)}
+                                  disabled={savingDraft}
+                                >
+                                  Publish…
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => setDiscardConfirmOpen(true)}
+                                  disabled={savingDraft}
+                                >
+                                  Discard draft
+                                </Button>
+                              </>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+
+                  {historical.length > 0 ? (
+                    <Card>
+                      <CardContent className="pt-6">
+                        <h3 className="text-sm font-medium text-foreground">History</h3>
+                        <ul className="mt-3 divide-y divide-border">
+                          {historical.map((version) => (
+                            <li key={version.id} className="py-3 first:pt-0 last:pb-0">
+                              <p className="text-sm font-medium text-foreground">
+                                {version.shift_type} — {formatVersionTiming(version)}
+                              </p>
+                              <p className="mt-0.5 text-xs text-foreground-muted">
+                                {version.effective_from} – {version.effective_to ?? "open"}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                </>
+              ) : null}
             </div>
           ) : null}
+        </>
+      ) : null}
 
-          {!loading && !error && shift && !editing ? (
-            <div className="space-y-8">
-              <div>
-                <Badge variant={shift.is_active ? "secondary" : "outline"}>
-                  {shift.is_active ? "Active" : "Inactive"}
-                </Badge>
-              </div>
-              <section>
-                <h3 className="text-sm font-medium text-foreground">Identity</h3>
-                <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <DetailField label="Shift name" value={shift.name} />
-                  <DetailField label="Shift code" value={shift.code} />
-                </dl>
-              </section>
-              <section>
-                <h3 className="text-sm font-medium text-foreground">Timings</h3>
-                <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <DetailField label="Start time" value={shift.start_time} />
-                  <DetailField label="End time" value={shift.end_time} />
-                  <DetailField label="Crosses midnight" value={shift.is_cross_midnight ? "Yes" : "No"} />
-                  <DetailField label="Night shift" value={shift.is_night_shift ? "Yes" : "No"} />
-                  <DetailField label="Overtime eligible" value={shift.is_ot_eligible ? "Yes" : "No"} />
-                </dl>
-              </section>
-              <section>
-                <h3 className="text-sm font-medium text-foreground">Breaks &amp; grace</h3>
-                <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <DetailField label="Paid break" value={`${shift.break_minutes_paid} minutes`} />
-                  <DetailField label="Unpaid break" value={`${shift.break_minutes_unpaid} minutes`} />
-                  <DetailField label="Grace in" value={`${shift.grace_in_minutes} minutes`} />
-                  <DetailField label="Grace out" value={`${shift.grace_out_minutes} minutes`} />
-                </dl>
-              </section>
-              <section>
-                <h3 className="text-sm font-medium text-foreground">Full-day / half-day hours</h3>
-                <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <DetailField
-                    label="Half-day threshold"
-                    value={
-                      shift.half_day_threshold_hours === null
-                        ? null
-                        : `${shift.half_day_threshold_hours} hours`
-                    }
-                  />
-                  <DetailField
-                    label="Min hours for full day"
-                    value={shift.min_hours_full_day === null ? null : `${shift.min_hours_full_day} hours`}
-                  />
-                </dl>
-              </section>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Dialog open={confirmOpen} onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}>
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{shift?.is_active ? "Deactivate shift?" : "Reactivate shift?"}</DialogTitle>
@@ -361,6 +733,54 @@ export default function ShiftDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={discardConfirmOpen}
+        onOpenChange={(open) => (!discarding ? setDiscardConfirmOpen(open) : null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Discard this draft?</DialogTitle>
+            <DialogDescription>
+              This removes the unpublished changes. The currently published schedule (if any) is
+              unaffected.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDiscardConfirmOpen(false)}
+              disabled={discarding}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleDiscardDraft()}
+              disabled={discarding}
+            >
+              {discarding ? "Discarding…" : "Discard draft"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {draft ? (
+        <ShiftPublishDialog
+          open={publishDialogOpen}
+          onOpenChange={setPublishDialogOpen}
+          shiftId={params.id}
+          draft={draft}
+          currentPublished={currentPublished}
+          onPublished={handlePublished}
+          onStale={(message) => {
+            setPublishDialogOpen(false);
+            setDraftStaleMessage(message);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

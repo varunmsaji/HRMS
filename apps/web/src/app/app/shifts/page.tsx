@@ -82,23 +82,11 @@ export default function ShiftsPage() {
     try {
       await apiClient.post<Shift>("/shifts", buildCreatePayload(formValues));
       setCreateOpen(false);
-      toast({ title: "Shift added", variant: "success" });
+      toast({ title: "Shift added — configure its schedule on the Versions tab", variant: "success" });
       await loadShifts();
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
-        setFormErrors({
-          name: getFieldError(err.details, "name"),
-          startTime: getFieldError(err.details, "start_time"),
-          endTime:
-            getFieldError(err.details, "end_time") ??
-            (err.code === "INVALID_SHIFT_TIME_RANGE"
-              ? "End time must be after start time unless this is a cross-midnight shift."
-              : undefined),
-          minHoursFullDay:
-            err.code === "INVALID_SHIFT_HOURS_RANGE"
-              ? "Min hours for full day must be greater than the half-day threshold."
-              : undefined,
-        });
+        setFormErrors({ name: getFieldError(err.details, "name") });
         return;
       }
       if (err instanceof ApiError && err.status === 403) {
@@ -171,9 +159,13 @@ export default function ShiftsPage() {
                           <span className="text-foreground-muted"> ({shift.code})</span>
                         ) : null}
                       </p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {shift.start_time} – {shift.end_time}
-                        {shift.is_cross_midnight ? " (crosses midnight)" : ""}
+                      <p className="mt-0.5 flex gap-2 text-xs text-foreground-muted">
+                        {shift.current_version_id ? (
+                          <span>Published schedule</span>
+                        ) : (
+                          <span>No published schedule</span>
+                        )}
+                        {shift.draft_version_id ? <span>· Draft in progress</span> : null}
                       </p>
                     </div>
                     <Badge variant={shift.is_active ? "secondary" : "outline"}>

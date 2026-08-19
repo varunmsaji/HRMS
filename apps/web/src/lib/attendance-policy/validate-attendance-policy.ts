@@ -1,0 +1,310 @@
+import type { ErrorDetail } from "@/lib/api/types";
+import type { AttendancePolicy, AttendancePolicyVersion } from "@/lib/attendance-policy/types";
+
+// ---------------------------------------------------------------------------
+// Identity form (name/code)
+// ---------------------------------------------------------------------------
+
+export interface AttendancePolicyFormValues {
+  name: string;
+  code: string;
+}
+
+export const EMPTY_ATTENDANCE_POLICY_FORM_VALUES: AttendancePolicyFormValues = {
+  name: "",
+  code: "",
+};
+
+export interface AttendancePolicyFormErrors {
+  name?: string;
+  code?: string;
+}
+
+export function validateAttendancePolicyForm(
+  values: AttendancePolicyFormValues,
+): AttendancePolicyFormErrors {
+  const errors: AttendancePolicyFormErrors = {};
+  if (!values.name.trim()) errors.name = "Name is required.";
+  return errors;
+}
+
+export function buildAttendancePolicyCreatePayload(
+  values: AttendancePolicyFormValues,
+): Record<string, unknown> {
+  return { name: values.name.trim(), code: values.code.trim() || null };
+}
+
+export function buildAttendancePolicyUpdatePatch(
+  values: AttendancePolicyFormValues,
+  current: AttendancePolicy,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (values.name.trim() !== current.name) patch.name = values.name.trim();
+  const code = values.code.trim() || null;
+  if (code !== current.code) patch.code = code;
+  return patch;
+}
+
+// ---------------------------------------------------------------------------
+// Band rows — one shared shape for hour/late/early-departure bands. `status` maps to
+// `result_status` (hour bands) or `classification` (late/early bands) depending on which array
+// it's serialized into; `countsTowardCap` is ignored for hour bands (there's no cap concept
+// there).
+// ---------------------------------------------------------------------------
+
+export interface PolicyBandFormRow {
+  minMinutes: string;
+  maxMinutes: string;
+  status: string;
+  countsTowardCap: boolean;
+}
+
+export function emptyBandRow(defaultStatus: string): PolicyBandFormRow {
+  return { minMinutes: "", maxMinutes: "", status: defaultStatus, countsTowardCap: true };
+}
+
+export interface PolicyBandRowErrors {
+  minMinutes?: string;
+  maxMinutes?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Version (draft) form
+// ---------------------------------------------------------------------------
+
+export interface AttendancePolicyVersionFormValues {
+  effectiveFrom: string;
+  graceInMinutes: string;
+  graceOutMinutes: string;
+  punchRounding: string;
+  roundingMinutes: string;
+  missingPunchBehaviour: string;
+  autoCloseAfterMinutes: string;
+  autoCloseUsesShiftEnd: boolean;
+  missingShiftBehaviour: string;
+  halfDaySplit: string;
+  halfDayBoundaryMinutes: string;
+  multiPunchMode: string;
+  duplicatePunchWindowSeconds: string;
+  coreHoursBreachBehaviour: string;
+  earlyOutUsesCoreEnd: boolean;
+  splitShiftBlockMandatory: boolean;
+  splitShiftMissedBlockBehaviour: string;
+  splitShiftAllowHoursCompensation: boolean;
+  wfhRequiresPunch: boolean;
+  onDutyRequiresPunch: boolean;
+  wfhUsesShiftHours: boolean;
+  workOnLeaveBehaviour: string;
+  excessBreakBehaviour: string;
+  latesToHalfDayCount: string;
+  earlyDepartureRequiresApproval: boolean;
+  incompleteAtLockBehaviour: string;
+  hourBands: PolicyBandFormRow[];
+  lateBands: PolicyBandFormRow[];
+  earlyDepartureBands: PolicyBandFormRow[];
+}
+
+export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersionFormValues = {
+  effectiveFrom: "",
+  graceInMinutes: "0",
+  graceOutMinutes: "0",
+  punchRounding: "NONE",
+  roundingMinutes: "",
+  missingPunchBehaviour: "INCOMPLETE",
+  autoCloseAfterMinutes: "",
+  autoCloseUsesShiftEnd: true,
+  missingShiftBehaviour: "INCOMPLETE",
+  halfDaySplit: "BY_HOURS",
+  halfDayBoundaryMinutes: "",
+  multiPunchMode: "PAIR_ALL",
+  duplicatePunchWindowSeconds: "60",
+  coreHoursBreachBehaviour: "FLAG",
+  earlyOutUsesCoreEnd: false,
+  splitShiftBlockMandatory: true,
+  splitShiftMissedBlockBehaviour: "HALF_DAY",
+  splitShiftAllowHoursCompensation: false,
+  wfhRequiresPunch: true,
+  onDutyRequiresPunch: false,
+  wfhUsesShiftHours: true,
+  workOnLeaveBehaviour: "KEEP_LEAVE",
+  excessBreakBehaviour: "FLAG",
+  latesToHalfDayCount: "",
+  earlyDepartureRequiresApproval: false,
+  incompleteAtLockBehaviour: "TREAT_ABSENT",
+  hourBands: [],
+  lateBands: [],
+  earlyDepartureBands: [],
+};
+
+export interface AttendancePolicyVersionFormErrors {
+  effectiveFrom?: string;
+  hourBands?: string;
+  hourBandRows?: PolicyBandRowErrors[];
+  lateBandRows?: PolicyBandRowErrors[];
+  earlyDepartureBandRows?: PolicyBandRowErrors[];
+}
+
+function intOrNull(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (Number.isNaN(parsed)) return null;
+  return Math.trunc(parsed);
+}
+
+function bandToFormRow(row: { min_minutes: number; max_minutes: number | null; sort_order: number; counts_toward_cap?: boolean }, status: string): PolicyBandFormRow {
+  return {
+    minMinutes: String(row.min_minutes),
+    maxMinutes: row.max_minutes === null ? "" : String(row.max_minutes),
+    status,
+    countsTowardCap: row.counts_toward_cap ?? true,
+  };
+}
+
+export function attendancePolicyVersionToFormValues(
+  version: AttendancePolicyVersion,
+): AttendancePolicyVersionFormValues {
+  return {
+    effectiveFrom: version.effective_from ?? "",
+    graceInMinutes: String(version.grace_in_minutes),
+    graceOutMinutes: String(version.grace_out_minutes),
+    punchRounding: version.punch_rounding,
+    roundingMinutes: version.rounding_minutes === null ? "" : String(version.rounding_minutes),
+    missingPunchBehaviour: version.missing_punch_behaviour,
+    autoCloseAfterMinutes:
+      version.auto_close_after_minutes === null ? "" : String(version.auto_close_after_minutes),
+    autoCloseUsesShiftEnd: version.auto_close_uses_shift_end,
+    missingShiftBehaviour: version.missing_shift_behaviour,
+    halfDaySplit: version.half_day_split,
+    halfDayBoundaryMinutes:
+      version.half_day_boundary_minutes === null ? "" : String(version.half_day_boundary_minutes),
+    multiPunchMode: version.multi_punch_mode,
+    duplicatePunchWindowSeconds: String(version.duplicate_punch_window_seconds),
+    coreHoursBreachBehaviour: version.core_hours_breach_behaviour,
+    earlyOutUsesCoreEnd: version.early_out_uses_core_end,
+    splitShiftBlockMandatory: version.split_shift_block_mandatory,
+    splitShiftMissedBlockBehaviour: version.split_shift_missed_block_behaviour,
+    splitShiftAllowHoursCompensation: version.split_shift_allow_hours_compensation,
+    wfhRequiresPunch: version.wfh_requires_punch,
+    onDutyRequiresPunch: version.on_duty_requires_punch,
+    wfhUsesShiftHours: version.wfh_uses_shift_hours,
+    workOnLeaveBehaviour: version.work_on_leave_behaviour,
+    excessBreakBehaviour: version.excess_break_behaviour,
+    latesToHalfDayCount:
+      version.lates_to_half_day_count === null ? "" : String(version.lates_to_half_day_count),
+    earlyDepartureRequiresApproval: version.early_departure_requires_approval,
+    incompleteAtLockBehaviour: version.incomplete_at_lock_behaviour,
+    hourBands: version.hour_bands
+      .slice()
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((b) => bandToFormRow(b, b.result_status)),
+    lateBands: version.late_bands
+      .slice()
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((b) => bandToFormRow(b, b.classification)),
+    earlyDepartureBands: version.early_departure_bands
+      .slice()
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((b) => bandToFormRow(b, b.classification)),
+  };
+}
+
+function bandRowsToPayload(
+  rows: PolicyBandFormRow[],
+  statusField: "result_status" | "classification",
+  includeCap: boolean,
+): Record<string, unknown>[] {
+  return rows.map((row, index) => {
+    const base: Record<string, unknown> = {
+      min_minutes: intOrNull(row.minMinutes) ?? 0,
+      max_minutes: intOrNull(row.maxMinutes),
+      [statusField]: row.status,
+      sort_order: index,
+    };
+    if (includeCap) base.counts_toward_cap = row.countsTowardCap;
+    return base;
+  });
+}
+
+/** Builds the `POST/PATCH .../attendance-policies/{id}/versions*` body. Drafts have no external
+ * readers before publish, so (mirroring `buildShiftVersionPatch`) every field is resent
+ * unconditionally rather than diffed. */
+export function buildAttendancePolicyVersionPayload(
+  values: AttendancePolicyVersionFormValues,
+): Record<string, unknown> {
+  return {
+    effective_from: values.effectiveFrom || null,
+    grace_in_minutes: intOrNull(values.graceInMinutes) ?? 0,
+    grace_out_minutes: intOrNull(values.graceOutMinutes) ?? 0,
+    punch_rounding: values.punchRounding,
+    rounding_minutes: intOrNull(values.roundingMinutes),
+    missing_punch_behaviour: values.missingPunchBehaviour,
+    auto_close_after_minutes: intOrNull(values.autoCloseAfterMinutes),
+    auto_close_uses_shift_end: values.autoCloseUsesShiftEnd,
+    missing_shift_behaviour: values.missingShiftBehaviour,
+    half_day_split: values.halfDaySplit,
+    half_day_boundary_minutes: intOrNull(values.halfDayBoundaryMinutes),
+    multi_punch_mode: values.multiPunchMode,
+    duplicate_punch_window_seconds: intOrNull(values.duplicatePunchWindowSeconds) ?? 60,
+    core_hours_breach_behaviour: values.coreHoursBreachBehaviour,
+    early_out_uses_core_end: values.earlyOutUsesCoreEnd,
+    split_shift_block_mandatory: values.splitShiftBlockMandatory,
+    split_shift_missed_block_behaviour: values.splitShiftMissedBlockBehaviour,
+    split_shift_allow_hours_compensation: values.splitShiftAllowHoursCompensation,
+    wfh_requires_punch: values.wfhRequiresPunch,
+    on_duty_requires_punch: values.onDutyRequiresPunch,
+    wfh_uses_shift_hours: values.wfhUsesShiftHours,
+    work_on_leave_behaviour: values.workOnLeaveBehaviour,
+    excess_break_behaviour: values.excessBreakBehaviour,
+    late_count_window: "MONTH",
+    lates_to_half_day_count: intOrNull(values.latesToHalfDayCount),
+    early_departure_requires_approval: values.earlyDepartureRequiresApproval,
+    incomplete_at_lock_behaviour: values.incompleteAtLockBehaviour,
+    hour_bands: bandRowsToPayload(values.hourBands, "result_status", false),
+    late_bands: bandRowsToPayload(values.lateBands, "classification", true),
+    early_departure_bands: bandRowsToPayload(values.earlyDepartureBands, "classification", true),
+  };
+}
+
+/** Light client-side pre-check — the backend is authoritative (publish-time band overlap/
+ * coverage validation is not duplicated here). */
+export function validateAttendancePolicyVersionForm(
+  values: AttendancePolicyVersionFormValues,
+): AttendancePolicyVersionFormErrors {
+  const errors: AttendancePolicyVersionFormErrors = {};
+
+  function checkRows(rows: PolicyBandFormRow[]): PolicyBandRowErrors[] {
+    return rows.map((row) => {
+      const rowErrors: PolicyBandRowErrors = {};
+      if (!row.minMinutes.trim()) rowErrors.minMinutes = "Required.";
+      return rowErrors;
+    });
+  }
+
+  const hourBandRows = checkRows(values.hourBands);
+  if (hourBandRows.some((r) => Object.keys(r).length > 0)) errors.hourBandRows = hourBandRows;
+
+  const lateBandRows = checkRows(values.lateBands);
+  if (lateBandRows.some((r) => Object.keys(r).length > 0)) errors.lateBandRows = lateBandRows;
+
+  const earlyBandRows = checkRows(values.earlyDepartureBands);
+  if (earlyBandRows.some((r) => Object.keys(r).length > 0)) {
+    errors.earlyDepartureBandRows = earlyBandRows;
+  }
+
+  return errors;
+}
+
+/** Maps `ApiError.details` from a 422/409 back onto the form — `hour_bands` (a whole-array
+ * `INVALID_POLICY_BAND` error) surfaces as a single banner message under that section, since the
+ * backend doesn't index which row is at fault for an overlap. */
+export function mapAttendancePolicyVersionApiErrors(
+  details: ErrorDetail[],
+): AttendancePolicyVersionFormErrors {
+  const errors: AttendancePolicyVersionFormErrors = {};
+  for (const detail of details) {
+    if (detail.field === "hour_bands") errors.hourBands = detail.message;
+    if (detail.field === "effective_from") errors.effectiveFrom = detail.message;
+  }
+  return errors;
+}

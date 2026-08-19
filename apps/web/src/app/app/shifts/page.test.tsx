@@ -32,12 +32,12 @@ const sampleShift: Shift = {
   company_id: "company-1",
   name: "General Shift",
   code: "GEN",
-  start_time: "09:00",
-  end_time: "18:00",
+  start_time: "00:00",
+  end_time: "00:00",
   break_minutes_paid: 0,
-  break_minutes_unpaid: 30,
-  grace_in_minutes: 10,
-  grace_out_minutes: 10,
+  break_minutes_unpaid: 0,
+  grace_in_minutes: 0,
+  grace_out_minutes: 0,
   half_day_threshold_hours: null,
   min_hours_full_day: null,
   is_night_shift: false,
@@ -47,6 +47,8 @@ const sampleShift: Shift = {
   version: 1,
   created_at: "2026-08-01T00:00:00Z",
   updated_at: "2026-08-01T00:00:00Z",
+  current_version_id: "version-1",
+  draft_version_id: null,
 };
 
 function mockLoad(shifts: Shift[]) {
@@ -76,13 +78,21 @@ describe("ShiftsPage", () => {
     expect(await screen.findByText(/no shifts have been configured yet/i)).toBeInTheDocument();
   });
 
-  it("renders the list of shifts", async () => {
+  it("renders the list of shifts with schedule status", async () => {
     mockLoad([sampleShift]);
     render(<ShiftsPage />);
 
     expect(await screen.findByText(/General Shift/)).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
-    expect(screen.getByText(/09:00.*18:00/)).toBeInTheDocument();
+    expect(screen.getByText(/published schedule/i)).toBeInTheDocument();
+  });
+
+  it("shows a draft-in-progress marker when a shift has an open draft", async () => {
+    mockLoad([{ ...sampleShift, current_version_id: null, draft_version_id: "version-2" }]);
+    render(<ShiftsPage />);
+
+    expect(await screen.findByText(/no published schedule/i)).toBeInTheDocument();
+    expect(screen.getByText(/draft in progress/i)).toBeInTheDocument();
   });
 
   it("shows an error state when loading fails with forbidden", async () => {
@@ -110,19 +120,14 @@ describe("ShiftsPage", () => {
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText(/shift name/i), "General Shift");
-    await user.type(within(dialog).getByLabelText(/start time/i), "09:00");
-    await user.type(within(dialog).getByLabelText(/end time/i), "18:00");
     await user.click(within(dialog).getByRole("button", { name: /^add shift$/i }));
 
     await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
-    expect(mockedPost).toHaveBeenCalledWith(
-      "/shifts",
-      expect.objectContaining({ name: "General Shift", start_time: "09:00", end_time: "18:00" }),
-    );
+    expect(mockedPost).toHaveBeenCalledWith("/shifts", { name: "General Shift", code: null });
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
   });
 
-  it("shows validation errors when name and timings are missing", async () => {
+  it("shows a validation error when name is missing", async () => {
     mockLoad([]);
     const user = userEvent.setup();
     render(<ShiftsPage />);
@@ -132,26 +137,6 @@ describe("ShiftsPage", () => {
     await user.click(within(dialog).getByRole("button", { name: /^add shift$/i }));
 
     expect(await within(dialog).findByText(/shift name is required/i)).toBeInTheDocument();
-    expect(within(dialog).getByText(/start time is required/i)).toBeInTheDocument();
-    expect(within(dialog).getByText(/end time is required/i)).toBeInTheDocument();
-    expect(mockedPost).not.toHaveBeenCalled();
-  });
-
-  it("shows a client-side error when end time is before start time", async () => {
-    mockLoad([]);
-    const user = userEvent.setup();
-    render(<ShiftsPage />);
-
-    await user.click(await screen.findByRole("button", { name: /add shift/i }));
-    const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText(/shift name/i), "Bad Shift");
-    await user.type(within(dialog).getByLabelText(/start time/i), "18:00");
-    await user.type(within(dialog).getByLabelText(/end time/i), "09:00");
-    await user.click(within(dialog).getByRole("button", { name: /^add shift$/i }));
-
-    expect(
-      await within(dialog).findByText(/end time must be after start time/i),
-    ).toBeInTheDocument();
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -166,8 +151,6 @@ describe("ShiftsPage", () => {
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText(/shift name/i), "General Shift");
-    await user.type(within(dialog).getByLabelText(/start time/i), "09:00");
-    await user.type(within(dialog).getByLabelText(/end time/i), "18:00");
     await user.click(within(dialog).getByRole("button", { name: /^add shift$/i }));
 
     await waitFor(() =>

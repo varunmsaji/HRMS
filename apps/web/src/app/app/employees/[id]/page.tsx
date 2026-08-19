@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { EmployeeAttendancePanel } from "@/components/attendance/employee-attendance-panel";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { AssignmentPanel } from "@/components/employee/assignment-panel";
 import { BankingPanel } from "@/components/employee/banking-panel";
@@ -41,7 +42,14 @@ import {
 } from "@/lib/employee/validate-employee";
 import { cn } from "@/lib/utils";
 
-type TabKey = "overview" | "employment" | "assignment" | "compensation" | "statutory" | "banking";
+type TabKey =
+  | "overview"
+  | "employment"
+  | "assignment"
+  | "compensation"
+  | "statutory"
+  | "banking"
+  | "attendance";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
@@ -50,6 +58,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "compensation", label: "Compensation" },
   { key: "statutory", label: "Statutory" },
   { key: "banking", label: "Banking" },
+  { key: "attendance", label: "Attendance" },
 ];
 
 function employeeName(employee: Employee): string {
@@ -336,6 +345,9 @@ export default function EmployeeDetailPage() {
           {tab === "compensation" ? <CompensationPanel employeeId={employee.id} /> : null}
           {tab === "statutory" ? <StatutoryPanel employeeId={employee.id} /> : null}
           {tab === "banking" ? <BankingPanel employeeId={employee.id} /> : null}
+          {tab === "attendance" ? (
+            <EmployeeAttendancePanel employeeId={employee.id} employeeLabel={employeeName(employee)} />
+          ) : null}
         </div>
       ) : null}
 
