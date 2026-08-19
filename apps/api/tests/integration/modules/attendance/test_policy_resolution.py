@@ -46,9 +46,7 @@ async def _publish_attendance_policy(
             headers=headers,
             json={
                 "effective_from": "2026-01-01",
-                "hour_bands": [
-                    {"min_minutes": 0, "max_minutes": None, "result_status": "PRESENT"}
-                ],
+                "hour_bands": [{"min_minutes": 0, "max_minutes": None, "result_status": "PRESENT"}],
             },
         )
     ).json()["data"]

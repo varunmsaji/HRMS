@@ -29,9 +29,7 @@ class PolicyDraftAlreadyExistsError(ConflictError):
 
     code = "POLICY_DRAFT_ALREADY_EXISTS"
 
-    def __init__(
-        self, message: str = "This policy already has an open draft version"
-    ) -> None:
+    def __init__(self, message: str = "This policy already has an open draft version") -> None:
         super().__init__(
             message,
             details=[
@@ -119,9 +117,7 @@ class PolicyVersionOverlapError(ConflictError):
 class PolicyVersionNotFoundForDateError(NotFoundError):
     code = "POLICY_VERSION_NOT_FOUND_FOR_DATE"
 
-    def __init__(
-        self, message: str = "No published policy version covers this date"
-    ) -> None:
+    def __init__(self, message: str = "No published policy version covers this date") -> None:
         super().__init__(message)
 
 
@@ -175,9 +171,7 @@ class InvalidPolicyRateRowError(ValidationError):
     def __init__(self, message: str) -> None:
         super().__init__(
             message,
-            details=[
-                {"field": "rate_rows", "code": "INVALID_POLICY_RATE_ROW", "message": message}
-            ],
+            details=[{"field": "rate_rows", "code": "INVALID_POLICY_RATE_ROW", "message": message}],
         )
 
 
@@ -226,9 +220,7 @@ class DuplicatePunchIdempotencyKeyError(ConflictError):
 
     code = "DUPLICATE_PUNCH_IDEMPOTENCY_KEY"
 
-    def __init__(
-        self, message: str = "A punch with this idempotency_key already exists"
-    ) -> None:
+    def __init__(self, message: str = "A punch with this idempotency_key already exists") -> None:
         super().__init__(
             message,
             details=[

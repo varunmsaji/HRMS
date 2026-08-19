@@ -79,9 +79,7 @@ async def test_create_policy_has_no_draft_by_default(
 
 
 @pytest.mark.asyncio
-async def test_second_open_draft_rejected(
-    client: AsyncClient, seeded_plan_catalogue: None
-) -> None:
+async def test_second_open_draft_rejected(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
         policy = await _create_policy(client, headers)
@@ -325,9 +323,7 @@ async def test_cross_tenant_policy_not_found(
     headers_b, company_b, user_b = await _register_tenant(client)
     try:
         policy = await _create_policy(client, headers_a)
-        response = await client.get(
-            f"/v1/attendance-policies/{policy['id']}", headers=headers_b
-        )
+        response = await client.get(f"/v1/attendance-policies/{policy['id']}", headers=headers_b)
         assert response.status_code == 404
     finally:
         await _cleanup_attendance(company_id=company_a)

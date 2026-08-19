@@ -1012,9 +1012,7 @@ def build_regularization_policy_version_update_values(
     patch: RegularizationPolicyVersionUpdate,
 ) -> dict[str, Any]:
     return {
-        field: getattr(patch, field)
-        for field in patch.model_fields_set
-        if field != "allowed_types"
+        field: getattr(patch, field) for field in patch.model_fields_set if field != "allowed_types"
     }
 
 

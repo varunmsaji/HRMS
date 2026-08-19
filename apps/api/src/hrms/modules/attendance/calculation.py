@@ -386,9 +386,7 @@ def resolve_schedule_window(
 # ---------------------------------------------------------------------------
 
 
-def collapse_duplicate_punches(
-    punches: list[PunchData], *, window_seconds: int
-) -> list[PunchData]:
+def collapse_duplicate_punches(punches: list[PunchData], *, window_seconds: int) -> list[PunchData]:
     """Consecutive punches of the **same direction** within `window_seconds` of the prior kept
     punch collapse to the first one (device/client resubmission, not a real second event).
     Punches must already be sorted by `punch_time`."""
@@ -440,9 +438,9 @@ def pair_punches(punches: list[PunchData]) -> PairingResult:
     return PairingResult(pairs=pairs, orphans=orphans)
 
 
-def presence_span(pairs: list[tuple[PunchData, PunchData]], *, mode: str) -> tuple[
-    datetime | None, datetime | None, int, list[tuple[datetime, datetime]]
-]:
+def presence_span(
+    pairs: list[tuple[PunchData, PunchData]], *, mode: str
+) -> tuple[datetime | None, datetime | None, int, list[tuple[datetime, datetime]]]:
     """Returns `(first_in, last_out, gross_minutes, gap_intervals)`.
 
     `PAIR_ALL` sums every paired interval independently — gaps between pairs are excluded from
@@ -510,8 +508,10 @@ def match_breaks(
         best: ShiftBreakData | None = None
         for shift_break in shift_breaks:
             if shift_break.break_kind == "FIXED_WINDOW" and shift_break.start_time is not None:
-                if shift_break.start_time <= gap_start_local <= (
-                    shift_break.end_time or shift_break.start_time
+                if (
+                    shift_break.start_time
+                    <= gap_start_local
+                    <= (shift_break.end_time or shift_break.start_time)
                 ):
                     best = shift_break
                     break
@@ -615,9 +615,15 @@ def detect_overtime(
     if policy.daily_cap_minutes is not None:
         excess = min(excess, policy.daily_cap_minutes)
 
-    day_class = "HOLIDAY" if is_holiday else "WEEKLY_OFF" if is_weekly_off else "NIGHT" if (
-        is_night and policy.night_ot_mode in ("WINDOW", "BOTH")
-    ) else "NORMAL"
+    day_class = (
+        "HOLIDAY"
+        if is_holiday
+        else "WEEKLY_OFF"
+        if is_weekly_off
+        else "NIGHT"
+        if (is_night and policy.night_ot_mode in ("WINDOW", "BOTH"))
+        else "NORMAL"
+    )
     classification = next(
         (row.classification_code for row in policy.rate_rows if row.day_class == day_class), None
     )
@@ -673,9 +679,8 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
 
     day_type = inputs.calendar_day_type
     not_expected = day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN")
-    shift_operates = (
-        (day_type == "HOLIDAY" and inputs.shift.operates_on_holiday)
-        or (day_type == "WEEKLY_OFF" and inputs.shift.operates_on_weekly_off)
+    shift_operates = (day_type == "HOLIDAY" and inputs.shift.operates_on_holiday) or (
+        day_type == "WEEKLY_OFF" and inputs.shift.operates_on_weekly_off
     )
 
     collapsed = collapse_duplicate_punches(
@@ -715,8 +720,10 @@ def _terminal_result(
     if reason:
         snapshot["terminal_reason"] = reason
     paid_fraction = "1.00" if status in ("NOT_JOINED", "NOT_EXPECTED") else "0.00"
-    lop_fraction = "0.00" if status in ("NOT_JOINED", "NOT_EXPECTED") else (
-        "1.00" if status in ("ABSENT", "EXITED") else "0.00"
+    lop_fraction = (
+        "0.00"
+        if status in ("NOT_JOINED", "NOT_EXPECTED")
+        else ("1.00" if status in ("ABSENT", "EXITED") else "0.00")
     )
     return AttendanceCalculationResult(
         attendance_status=status,
