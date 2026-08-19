@@ -1,4 +1,11 @@
-"""Unit tests for organisation service Shift methods."""
+"""Unit tests for organisation service Shift (identity) methods.
+
+W2 trimmed `Shift` to identity-only (name/code/active) — the nine legacy schedule/
+evaluation fields (start_time, end_time, breaks, grace, half-day/min-hours, night/cross-
+midnight/OT flags) moved to `ShiftVersion` (see test_shift_version_service.py /
+test_shift_version_validation.py). `create_shift` now also creates an initial empty DRAFT
+`ShiftVersion` in the same transaction.
+"""
 
 from datetime import UTC, datetime, time
 from unittest.mock import AsyncMock, MagicMock
@@ -7,12 +14,8 @@ from uuid import uuid4
 import pytest
 
 from hrms.core.errors.base import NotFoundError
-from hrms.modules.organisation.exceptions import (
-    InvalidShiftHoursRangeError,
-    InvalidShiftTimeRangeError,
-    StaleResourceError,
-)
-from hrms.modules.organisation.models import Shift
+from hrms.modules.organisation.exceptions import StaleResourceError
+from hrms.modules.organisation.models import Shift, ShiftVersion
 from hrms.modules.organisation.schemas import ShiftCreate, ShiftUpdate
 from hrms.modules.organisation.service import OrganisationService
 
@@ -24,12 +27,12 @@ def _shift(**overrides: object) -> Shift:
         "company_id": uuid4(),
         "name": "General Shift",
         "code": "GEN",
-        "start_time": time(9, 0),
-        "end_time": time(18, 0),
+        "start_time": time(0, 0),
+        "end_time": time(0, 0),
         "break_minutes_paid": 0,
-        "break_minutes_unpaid": 30,
-        "grace_in_minutes": 10,
-        "grace_out_minutes": 10,
+        "break_minutes_unpaid": 0,
+        "grace_in_minutes": 0,
+        "grace_out_minutes": 0,
         "half_day_threshold_hours": None,
         "min_hours_full_day": None,
         "is_night_shift": False,
@@ -45,109 +48,97 @@ def _shift(**overrides: object) -> Shift:
     return Shift(**defaults)  # type: ignore[arg-type]
 
 
+def _draft_version(**overrides: object) -> ShiftVersion:
+    now = datetime.now(UTC)
+    defaults: dict[str, object] = {
+        "id": uuid4(),
+        "company_id": uuid4(),
+        "shift_id": uuid4(),
+        "status": "DRAFT",
+        "version": 1,
+        "effective_from": None,
+        "effective_to": None,
+        "shift_type": None,
+        "timezone": None,
+        "start_time": None,
+        "end_time": None,
+        "window_start": None,
+        "window_end": None,
+        "core_start": None,
+        "core_end": None,
+        "required_minutes": None,
+        "scheduled_minutes": None,
+        "min_scheduled_minutes": None,
+        "max_scheduled_minutes": None,
+        "is_night_shift": False,
+        "is_cross_midnight": False,
+        "is_ot_eligible": False,
+        "operates_on_holiday": False,
+        "operates_on_weekly_off": False,
+        "weekly_off_pattern_id": None,
+        "publish_reason": None,
+        "published_at": None,
+        "published_by": None,
+        "created_at": now,
+        "updated_at": now,
+        "deleted_at": None,
+    }
+    defaults.update(overrides)
+    return ShiftVersion(**defaults)  # type: ignore[arg-type]
+
+
 @pytest.fixture
 def service() -> OrganisationService:
     session = MagicMock()
     svc = OrganisationService(session)
     svc._repo = AsyncMock()
+    svc._shift_version_repo = AsyncMock()
     svc._audit = AsyncMock()
     return svc
 
 
 @pytest.mark.asyncio
-async def test_create_shift_records_audit(service: OrganisationService) -> None:
+async def test_create_shift_records_audit_and_creates_initial_draft(
+    service: OrganisationService,
+) -> None:
     company_id = uuid4()
     shift = _shift(company_id=company_id)
     service._repo.insert_shift.return_value = shift
+    service._shift_version_repo.insert.return_value = _draft_version(
+        company_id=company_id, shift_id=shift.id
+    )
 
     result = await service.create_shift(
         company_id,
-        ShiftCreate(name="General Shift", code="GEN", start_time="09:00", end_time="18:00"),
+        ShiftCreate(name="General Shift", code="GEN"),
         actor_user_id=uuid4(),
     )
 
     assert result.name == "General Shift"
-    assert result.start_time == "09:00"
-    assert result.end_time == "18:00"
+    assert result.code == "GEN"
     assert result.is_active is True
-    service._audit.record.assert_awaited_once()
-    assert service._audit.record.call_args.kwargs["action"] == "SHIFT_CREATED"
+    assert result.draft_version_id is not None
+    service._shift_version_repo.insert.assert_awaited_once()
+    shift_insert_data = service._repo.insert_shift.call_args.kwargs["data"]
+    version_insert_data = service._shift_version_repo.insert.call_args.kwargs["data"]
+    assert version_insert_data["status"] == "DRAFT"
+    # Both inserts happen in the same `create_shift` call, keyed on the same freshly
+    # generated shift id — not the mocked return value's own (unrelated) id.
+    assert version_insert_data["shift_id"] == shift_insert_data["id"]
+    # Two audit events: the shift identity itself, and the auto-created draft version.
+    assert service._audit.record.await_count == 2
+    actions = [call.kwargs["action"] for call in service._audit.record.await_args_list]
+    assert actions == ["SHIFT_CREATED", "SHIFT_VERSION_CREATED"]
 
 
 @pytest.mark.asyncio
-async def test_create_shift_end_before_start_rejected(service: OrganisationService) -> None:
-    with pytest.raises(InvalidShiftTimeRangeError):
-        await service.create_shift(
-            uuid4(),
-            ShiftCreate(name="Bad Shift", start_time="18:00", end_time="09:00"),
-            actor_user_id=uuid4(),
-        )
-    service._repo.insert_shift.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_create_shift_end_before_start_allowed_when_cross_midnight(
+async def test_create_shift_rejects_legacy_schedule_fields(
     service: OrganisationService,
 ) -> None:
-    company_id = uuid4()
-    service._repo.insert_shift.return_value = _shift(
-        company_id=company_id,
-        start_time=time(22, 0),
-        end_time=time(6, 0),
-        is_cross_midnight=True,
-    )
-
-    result = await service.create_shift(
-        company_id,
-        ShiftCreate(
-            name="Night Shift", start_time="22:00", end_time="06:00", is_cross_midnight=True
-        ),
-        actor_user_id=uuid4(),
-    )
-
-    assert result.start_time == "22:00"
-    assert result.end_time == "06:00"
-
-
-@pytest.mark.asyncio
-async def test_create_shift_equal_start_end_accepted_when_cross_midnight(
-    service: OrganisationService,
-) -> None:
-    """`end <= start` (including equal) is only rejected when `is_cross_midnight` is not set —
-    per docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md §6.2, no document rejects an equal
-    start/end combined with `is_cross_midnight=true`, so this audit does not invent one."""
-    company_id = uuid4()
-    service._repo.insert_shift.return_value = _shift(
-        company_id=company_id,
-        start_time=time(9, 0),
-        end_time=time(9, 0),
-        is_cross_midnight=True,
-    )
-
-    result = await service.create_shift(
-        company_id,
-        ShiftCreate(name="Full Day", start_time="09:00", end_time="09:00", is_cross_midnight=True),
-        actor_user_id=uuid4(),
-    )
-
-    assert result.start_time == result.end_time == "09:00"
-
-
-@pytest.mark.asyncio
-async def test_create_shift_invalid_hours_range_rejected(service: OrganisationService) -> None:
-    with pytest.raises(InvalidShiftHoursRangeError):
-        await service.create_shift(
-            uuid4(),
-            ShiftCreate(
-                name="Bad Hours",
-                start_time="09:00",
-                end_time="18:00",
-                half_day_threshold_hours=8,
-                min_hours_full_day=4,
-            ),
-            actor_user_id=uuid4(),
-        )
-    service._repo.insert_shift.assert_not_awaited()
+    """`extra="forbid"` on `ShiftCreate` — the nine legacy schedule/evaluation fields are no
+    longer accepted, not just ignored."""
+    with pytest.raises(Exception):  # noqa: B017 — pydantic ValidationError, not our AppError
+        ShiftCreate(name="Bad Shift", start_time="09:00", end_time="18:00")  # type: ignore[call-arg]
 
 
 @pytest.mark.asyncio
@@ -156,6 +147,23 @@ async def test_get_shift_not_found(service: OrganisationService) -> None:
 
     with pytest.raises(NotFoundError):
         await service.get_shift(uuid4(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_get_shift_includes_current_and_draft_version_ids(
+    service: OrganisationService,
+) -> None:
+    shift = _shift()
+    service._repo.get_shift.return_value = shift
+    current = _draft_version(shift_id=shift.id, status="PUBLISHED")
+    draft = _draft_version(shift_id=shift.id, status="DRAFT")
+    service._shift_version_repo.get_current_published.return_value = current
+    service._shift_version_repo.get_open_draft.return_value = draft
+
+    result = await service.get_shift(shift.company_id, shift.id)
+
+    assert result.current_version_id == current.id
+    assert result.draft_version_id == draft.id
 
 
 @pytest.mark.asyncio
@@ -170,44 +178,6 @@ async def test_update_shift_not_found(service: OrganisationService) -> None:
             expected_version=1,
             actor_user_id=uuid4(),
         )
-
-
-@pytest.mark.asyncio
-async def test_update_shift_invalid_time_range_rejected_against_existing_value(
-    service: OrganisationService,
-) -> None:
-    """Patching only `end_time` below the *existing* `start_time` must still be rejected —
-    the effective range is validated, not just the fields present in the patch."""
-    shift = _shift(start_time=time(9, 0), end_time=time(18, 0), is_cross_midnight=False)
-    service._repo.get_shift.return_value = shift
-
-    with pytest.raises(InvalidShiftTimeRangeError):
-        await service.update_shift(
-            shift.company_id,
-            shift.id,
-            ShiftUpdate(end_time="08:00"),
-            expected_version=1,
-            actor_user_id=uuid4(),
-        )
-    service._repo.update_shift.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_update_shift_invalid_hours_range_rejected_against_existing_value(
-    service: OrganisationService,
-) -> None:
-    shift = _shift(half_day_threshold_hours=None, min_hours_full_day=4)
-    service._repo.get_shift.return_value = shift
-
-    with pytest.raises(InvalidShiftHoursRangeError):
-        await service.update_shift(
-            shift.company_id,
-            shift.id,
-            ShiftUpdate(half_day_threshold_hours=8),
-            expected_version=1,
-            actor_user_id=uuid4(),
-        )
-    service._repo.update_shift.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from hrms.core.db.models.identity import (
     UserCompany,
     UserRole,
 )
+from hrms.modules.attendance.permissions import ATTENDANCE_PERMISSIONS
 from hrms.modules.employee.permissions import EMPLOYEE_PERMISSIONS
 from hrms.modules.identity.permissions import B1_PERMISSIONS
 from hrms.modules.organisation.permissions import ORGANISATION_PERMISSIONS
@@ -55,6 +56,7 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
         *B1_PERMISSIONS,
         *ORGANISATION_PERMISSIONS,
         *EMPLOYEE_PERMISSIONS,
+        *ATTENDANCE_PERMISSIONS,
     ]:
         row = (
             await session.execute(select(Permission).where(Permission.code == code))

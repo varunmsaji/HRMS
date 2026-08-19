@@ -864,6 +864,38 @@ class EmploymentService:
         )
         return after_read
 
+    async def get_employment_as_of(
+        self, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> EmploymentRead | None:
+        """The shared cross-module contract (`docs/modules/employee/
+        05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part B7/E) other modules will call once
+        Attendance/Leave/Payroll exist — mirrors `EmployeeAssignmentService.get_assignment_as_of`
+        exactly (same "does not assert employee existence" posture). `None` means no employment
+        episode covers `as_of` (the population gate fails, architecture §19.1 step 1); a caller
+        needing to distinguish `NOT_JOINED` from `EXITED` should also call
+        `get_latest_employment_on_or_before`."""
+        employment = await self._repo.get_employment_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+        )
+        return employment_to_read(employment) if employment is not None else None
+
+    async def get_latest_employment_on_or_before(
+        self, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> EmploymentRead | None:
+        """Most recent employment episode (possibly `TERMINATED`) with `joining_date <= as_of`.
+        Paired with `get_employment_as_of` to distinguish the population gate's two failure
+        modes (architecture §19.1 step 1, WD-21): no matching episode at all means
+        `NOT_JOINED`; a matching episode whose `last_working_day` already passed means
+        `EXITED`."""
+        employments = await self._repo.list_employments(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        candidates = [e for e in employments if e.joining_date <= as_of]
+        if not candidates:
+            return None
+        latest = max(candidates, key=lambda e: e.joining_date)
+        return employment_to_read(latest)
+
 
 class EmployeeAssignmentService:
     """E-04 — employee assignment (org placement + reporting line). One write operation,

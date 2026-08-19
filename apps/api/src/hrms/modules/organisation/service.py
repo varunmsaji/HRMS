@@ -1,7 +1,7 @@
 """Business logic for the organisation module — the public interface for other modules."""
 
-from datetime import UTC, datetime, time, timedelta
-from decimal import Decimal
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -17,40 +17,81 @@ from hrms.modules.employee.permissions import EMPLOYEE_PERMISSIONS
 from hrms.modules.identity.permissions import EMPLOYEE_VIEW
 from hrms.modules.identity.schemas import CompanySummary, TokenResponseData
 from hrms.modules.identity.service import IdentityService
+from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
 from hrms.modules.organisation.exceptions import (
     BranchDeactivationBlockedError,
+    CalendarExceptionDateConflictError,
     CompanyWriteBlockedError,
     CurrencyLockedError,
     DepartmentCycleDetectedError,
     DepartmentMaxDepthExceededError,
     GradeCodeAlreadyExistsError,
+    HolidayCalendarCodeAlreadyExistsError,
+    HolidayDateAlreadyExistsError,
     InvalidBranchError,
     InvalidCtcRangeError,
     InvalidDepartmentError,
     InvalidGradeError,
+    InvalidHolidayCalendarError,
     InvalidLegalEntityError,
     InvalidParentDepartmentError,
-    InvalidShiftHoursRangeError,
-    InvalidShiftTimeRangeError,
+    InvalidPolicyReferenceError,
+    InvalidShiftBreakError,
+    InvalidShiftBreakOverlapError,
+    InvalidShiftVersionCoreHoursError,
+    InvalidShiftVersionDutyBlockCountError,
+    InvalidShiftVersionDutyBlockOverlapError,
+    InvalidShiftVersionDutyBlockSequenceError,
+    InvalidShiftVersionEffectiveFromError,
+    InvalidShiftVersionFlexWindowError,
+    InvalidShiftVersionTimeRangeError,
+    InvalidShiftVersionTypeCombinationError,
+    InvalidWorkCalendarError,
     InvalidWorkingDaysError,
     LegalEntityDeactivationBlockedError,
+    PolicyAssignmentOverlapError,
+    PolicyAssignmentVersionRequiredError,
+    PolicyKindNotSupportedError,
+    ShiftVersionDraftAlreadyExistsError,
+    ShiftVersionNotDraftError,
+    ShiftVersionNotFoundForDateError,
+    ShiftVersionOverlapError,
+    ShiftVersionPreviousVersionRequiredError,
     StaleResourceError,
+    WeeklyOffRuleInvalidError,
+    WorkCalendarCompositionInvalidError,
+    WorkCalendarDeactivationBlockedError,
 )
 from hrms.modules.organisation.permissions import (
     DASHBOARD_COMPANY_VIEW,
     ORG_BRANCH_MANAGE,
+    ORG_CALENDAR_MANAGE,
     ORG_COMPANY_MANAGE,
     ORG_DEPARTMENT_MANAGE,
     ORG_DESIGNATION_MANAGE,
     ORG_GRADE_MANAGE,
+    ORG_HOLIDAY_MANAGE,
     ORG_LEGAL_ENTITY_MANAGE,
     ORG_SHIFT_MANAGE,
 )
-from hrms.modules.organisation.repository import OrganisationRepository
+from hrms.modules.organisation.repository import (
+    CalendarExceptionRepository,
+    HolidayCalendarRepository,
+    HolidayRepository,
+    OrganisationRepository,
+    PolicyAssignmentRepository,
+    ShiftVersionRepository,
+    WeeklyOffPatternRepository,
+    WorkCalendarRepository,
+)
 from hrms.modules.organisation.schemas import (
     BranchCreate,
     BranchRead,
     BranchUpdate,
+    CalendarExceptionCreate,
+    CalendarExceptionRead,
+    CalendarExceptionUpdate,
+    CalendarResolutionRead,
     CompanyDashboardSummary,
     CompanyProfileRead,
     CompanyProfileUpdate,
@@ -58,6 +99,7 @@ from hrms.modules.organisation.schemas import (
     CompanySetupProgressSummary,
     DashboardSetupProgress,
     DashboardSubscription,
+    DayTypeRead,
     DepartmentCreate,
     DepartmentRead,
     DepartmentUpdate,
@@ -68,25 +110,54 @@ from hrms.modules.organisation.schemas import (
     GradeCreate,
     GradeRead,
     GradeUpdate,
+    HolidayCalendarCreate,
+    HolidayCalendarRead,
+    HolidayCalendarUpdate,
+    HolidayCreate,
+    HolidayRead,
+    HolidayUpdate,
     LegalEntityCreate,
     LegalEntityRead,
     LegalEntityUpdate,
     PlanSummary,
+    PolicyAssignmentCreate,
+    PolicyAssignmentRead,
     SetupStepDefinition,
     SetupStepSummary,
+    ShiftBreakCreate,
     ShiftCreate,
+    ShiftDutyBlockCreate,
     ShiftRead,
     ShiftUpdate,
+    ShiftVersionCreate,
+    ShiftVersionPublishRequest,
+    ShiftVersionRead,
+    ShiftVersionUpdate,
     SubscriptionSummary,
+    WeeklyOffPatternCreate,
+    WeeklyOffPatternRead,
+    WeeklyOffPatternUpdate,
+    WeeklyOffRuleInput,
+    WorkCalendarCreate,
+    WorkCalendarRead,
+    WorkCalendarUpdate,
     branch_to_audit_dict,
     branch_to_read,
     build_branch_update_values,
+    build_calendar_exception_update_values,
     build_department_update_values,
     build_designation_update_values,
     build_grade_update_values,
+    build_holiday_calendar_update_values,
+    build_holiday_update_values,
     build_legal_entity_update_values,
     build_shift_update_values,
+    build_shift_version_update_values,
     build_update_values,
+    build_weekly_off_pattern_update_values,
+    build_work_calendar_update_values,
+    calendar_exception_to_audit_dict,
+    calendar_exception_to_read,
     company_to_profile_read,
     count_working_days,
     department_to_audit_dict,
@@ -95,12 +166,24 @@ from hrms.modules.organisation.schemas import (
     designation_to_read,
     grade_to_audit_dict,
     grade_to_read,
+    holiday_calendar_to_audit_dict,
+    holiday_calendar_to_read,
+    holiday_to_audit_dict,
+    holiday_to_read,
     legal_entity_to_audit_dict,
     legal_entity_to_read,
+    policy_assignment_to_audit_dict,
+    policy_assignment_to_read,
     profile_to_audit_dict,
     setup_progress_to_summary,
     shift_to_audit_dict,
     shift_to_read,
+    shift_version_to_audit_dict,
+    shift_version_to_read,
+    weekly_off_pattern_to_audit_dict,
+    weekly_off_pattern_to_read,
+    work_calendar_to_audit_dict,
+    work_calendar_to_read,
 )
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
 
@@ -142,6 +225,14 @@ class OrganisationService:
         self._identity_repo = IdentityRepository()
         self._identity = IdentityService(session, self._settings)
         self._audit = AuditService()
+        self._holiday_calendar_repo = HolidayCalendarRepository()
+        self._holiday_repo = HolidayRepository()
+        self._weekly_off_repo = WeeklyOffPatternRepository()
+        self._work_calendar_repo = WorkCalendarRepository()
+        self._calendar_exception_repo = CalendarExceptionRepository()
+        self._policy_assignment_repo = PolicyAssignmentRepository()
+        self._shift_version_repo = ShiftVersionRepository()
+        self._calendar_resolution = CalendarResolutionService(session)
 
     async def register_company(
         self,
@@ -287,6 +378,36 @@ class OrganisationService:
             )
             for code, domain, description in EMPLOYEE_PERMISSIONS
         ]
+        # Workforce Calendar (W1) — `ORG.CALENDAR.MANAGE` / `ORG.HOLIDAY.MANAGE`
+        # (architecture §23.2, WD-19). Granted here via the same list-comprehension idiom as
+        # `EMPLOYEE_PERMISSIONS` immediately above, rather than the older one-call-per-code
+        # style used for the pre-existing ORG codes — this is the live registration path every
+        # real company goes through; the demo seed (`seed/bootstrap.py::seed_b1_foundation`)
+        # picks these up automatically via `ORGANISATION_PERMISSIONS`.
+        calendar_permission_rows = [
+            await self._repo.get_or_create_permission(
+                self._session, code=code, domain=domain, description=description
+            )
+            for code, domain, description in (
+                (
+                    ORG_CALENDAR_MANAGE,
+                    "ORG",
+                    "Manage workforce calendars, weekly-off patterns, and calendar assignments",
+                ),
+                (ORG_HOLIDAY_MANAGE, "ORG", "Manage holiday calendars and holidays"),
+            )
+        ]
+        # W3 — `ATTENDANCE.POLICY_MANAGE` (architecture §23.2, WD-19). Same live-registration-path
+        # rationale as `calendar_permission_rows` above; a local import avoids a module-top-level
+        # organisation -> attendance dependency (mirrors `_validate_policy_reference`).
+        from hrms.modules.attendance.permissions import ATTENDANCE_PERMISSIONS
+
+        attendance_permission_rows = [
+            await self._repo.get_or_create_permission(
+                self._session, code=code, domain=domain, description=description
+            )
+            for code, domain, description in ATTENDANCE_PERMISSIONS
+        ]
 
         role = await self._repo.insert_role(
             self._session,
@@ -324,6 +445,14 @@ class OrganisationService:
             self._session, role_id=role.id, permission_id=employee_view_perm.id
         )
         for perm in employee_permission_rows:
+            await self._repo.insert_role_permission(
+                self._session, role_id=role.id, permission_id=perm.id
+            )
+        for perm in calendar_permission_rows:
+            await self._repo.insert_role_permission(
+                self._session, role_id=role.id, permission_id=perm.id
+            )
+        for perm in attendance_permission_rows:
             await self._repo.insert_role_permission(
                 self._session, role_id=role.id, permission_id=perm.id
             )
@@ -1495,26 +1624,6 @@ class OrganisationService:
             user_agent=user_agent,
         )
 
-    def _validate_shift_time_range(self, *, is_cross_midnight: bool, start: str, end: str) -> None:
-        """Task 4.2.1's own documented rule (docs/modules/shift-rules/
-        00_SHIFT_RULES_AUDIT.md §6.2): `end_time` before `start_time` is only valid when
-        `is_cross_midnight=true`."""
-        if end <= start and not is_cross_midnight:
-            raise InvalidShiftTimeRangeError()
-
-    def _validate_shift_hours_range(
-        self, half_day_threshold_hours: Decimal | None, min_hours_full_day: Decimal | None
-    ) -> None:
-        """Task 4.2.1's own documented rule (docs/modules/shift-rules/
-        00_SHIFT_RULES_AUDIT.md §6.3): `half_day_threshold_hours` must be less than
-        `min_hours_full_day` when both are present."""
-        if (
-            half_day_threshold_hours is not None
-            and min_hours_full_day is not None
-            and half_day_threshold_hours >= min_hours_full_day
-        ):
-            raise InvalidShiftHoursRangeError()
-
     async def create_shift(
         self,
         company_id: UUID,
@@ -1524,13 +1633,11 @@ class OrganisationService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> ShiftRead:
-        self._validate_shift_time_range(
-            is_cross_midnight=body.is_cross_midnight,
-            start=body.start_time,
-            end=body.end_time,
-        )
-        self._validate_shift_hours_range(body.half_day_threshold_hours, body.min_hours_full_day)
-
+        """W2 — `Shift` is identity-only now (name/code/active); the nine legacy schedule/
+        evaluation columns are frozen-zero placeholders for new rows (never read again by W2+
+        code — see `ShiftRead`'s field docstrings). A new shift is meaningless without a
+        schedule, so an initial empty DRAFT `ShiftVersion` is created in the same transaction
+        rather than requiring a mandatory second round-trip."""
         now = datetime.now(UTC)
         shift_id = uuid4()
         shift = await self._repo.insert_shift(
@@ -1540,23 +1647,29 @@ class OrganisationService:
                 "company_id": company_id,
                 "name": body.name,
                 "code": body.code,
-                "start_time": _parse_time(body.start_time),
-                "end_time": _parse_time(body.end_time),
-                "break_minutes_paid": body.break_minutes_paid,
-                "break_minutes_unpaid": body.break_minutes_unpaid,
-                "grace_in_minutes": body.grace_in_minutes,
-                "grace_out_minutes": body.grace_out_minutes,
-                "half_day_threshold_hours": body.half_day_threshold_hours,
-                "min_hours_full_day": body.min_hours_full_day,
-                "is_night_shift": body.is_night_shift,
-                "is_cross_midnight": body.is_cross_midnight,
-                "is_ot_eligible": body.is_ot_eligible,
+                "start_time": time(0, 0),
+                "end_time": time(0, 0),
+                "break_minutes_paid": 0,
+                "break_minutes_unpaid": 0,
+                "grace_in_minutes": 0,
+                "grace_out_minutes": 0,
+                "half_day_threshold_hours": None,
+                "min_hours_full_day": None,
+                "is_night_shift": False,
+                "is_cross_midnight": False,
+                "is_ot_eligible": False,
                 "is_active": True,
                 "created_at": now,
                 "updated_at": now,
             },
         )
-        read = shift_to_read(shift)
+        draft = await self._shift_version_repo.insert(
+            self._session,
+            data=self._empty_draft_shift_version_data(
+                company_id=company_id, shift_id=shift_id, now=now
+            ),
+        )
+        read = shift_to_read(shift, draft_version_id=draft.id)
         await self._audit.record(
             self._session,
             company_id=company_id,
@@ -1568,17 +1681,93 @@ class OrganisationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        draft_read = shift_version_to_read(draft, [], [])
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_VERSION_CREATED",
+            entity_type="shift_version",
+            entity_id=draft.id,
+            after=shift_version_to_audit_dict(draft_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
         return read
+
+    def _empty_draft_shift_version_data(
+        self, *, company_id: UUID, shift_id: UUID, now: datetime
+    ) -> dict[str, Any]:
+        return {
+            "id": uuid4(),
+            "company_id": company_id,
+            "shift_id": shift_id,
+            "status": "DRAFT",
+            "version": 1,
+            "effective_from": None,
+            "effective_to": None,
+            "shift_type": None,
+            "timezone": None,
+            "start_time": None,
+            "end_time": None,
+            "window_start": None,
+            "window_end": None,
+            "core_start": None,
+            "core_end": None,
+            "required_minutes": None,
+            "scheduled_minutes": None,
+            "min_scheduled_minutes": None,
+            "max_scheduled_minutes": None,
+            "is_night_shift": False,
+            "is_cross_midnight": False,
+            "is_ot_eligible": False,
+            "operates_on_holiday": False,
+            "operates_on_weekly_off": False,
+            "weekly_off_pattern_id": None,
+            "publish_reason": None,
+            "published_at": None,
+            "published_by": None,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        }
 
     async def list_shifts(self, company_id: UUID) -> list[ShiftRead]:
         shifts = await self._repo.list_shifts(self._session, company_id=company_id)
-        return [shift_to_read(shift) for shift in shifts]
+        versions = await self._shift_version_repo.list_open_and_draft_for_shifts(
+            self._session, company_id=company_id, shift_ids=[shift.id for shift in shifts]
+        )
+        current_by_shift: dict[UUID, UUID] = {}
+        draft_by_shift: dict[UUID, UUID] = {}
+        for version in versions:
+            if version.status == "PUBLISHED":
+                current_by_shift[version.shift_id] = version.id
+            else:
+                draft_by_shift[version.shift_id] = version.id
+        return [
+            shift_to_read(
+                shift,
+                current_version_id=current_by_shift.get(shift.id),
+                draft_version_id=draft_by_shift.get(shift.id),
+            )
+            for shift in shifts
+        ]
 
     async def get_shift(self, company_id: UUID, shift_id: UUID) -> ShiftRead:
         shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
         if shift is None:
             raise NotFoundError("Resource not found")
-        return shift_to_read(shift)
+        current = await self._shift_version_repo.get_current_published(
+            self._session, company_id=company_id, shift_id=shift_id
+        )
+        draft = await self._shift_version_repo.get_open_draft(
+            self._session, company_id=company_id, shift_id=shift_id
+        )
+        return shift_to_read(
+            shift,
+            current_version_id=current.id if current is not None else None,
+            draft_version_id=draft.id if draft is not None else None,
+        )
 
     async def update_shift(
         self,
@@ -1594,39 +1783,6 @@ class OrganisationService:
         shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
         if shift is None:
             raise NotFoundError("Resource not found")
-
-        effective_cross_midnight = (
-            patch.is_cross_midnight
-            if "is_cross_midnight" in patch.model_fields_set and patch.is_cross_midnight is not None
-            else shift.is_cross_midnight
-        )
-        effective_start = (
-            patch.start_time
-            if "start_time" in patch.model_fields_set
-            else _format_time(shift.start_time)
-        )
-        effective_end = (
-            patch.end_time if "end_time" in patch.model_fields_set else _format_time(shift.end_time)
-        )
-        assert effective_start is not None
-        assert effective_end is not None
-        self._validate_shift_time_range(
-            is_cross_midnight=effective_cross_midnight,
-            start=effective_start,
-            end=effective_end,
-        )
-
-        effective_half_day = (
-            patch.half_day_threshold_hours
-            if "half_day_threshold_hours" in patch.model_fields_set
-            else shift.half_day_threshold_hours
-        )
-        effective_min_hours = (
-            patch.min_hours_full_day
-            if "min_hours_full_day" in patch.model_fields_set
-            else shift.min_hours_full_day
-        )
-        self._validate_shift_hours_range(effective_half_day, effective_min_hours)
 
         before_read = shift_to_read(shift)
         # Captured before `update_shift` runs below: that `UPDATE ... RETURNING`
@@ -1708,6 +1864,1939 @@ class OrganisationService:
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+        )
+
+    # -----------------------------------------------------------------
+    # Shift + Break System (W2) — ShiftVersion, ShiftBreak, ShiftDutyBlock.
+    # docs/architecture/WORKFORCE_ATTENDANCE_ARCHITECTURE.md §9-§10.
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _time_to_minutes(value: str) -> int:
+        hours, minutes = value.split(":")
+        return int(hours) * 60 + int(minutes)
+
+    def _interval_overlaps(
+        self,
+        a_start: str,
+        a_end: str,
+        a_wraps: bool,
+        b_start: str,
+        b_end: str,
+        b_wraps: bool,
+    ) -> bool:
+        """Wrap-aware half-open interval overlap on a 24h clock. A midnight-crossing interval
+        is represented as two segments: [start, 1440) and [0, end)."""
+
+        def segments(start: str, end: str, wraps: bool) -> list[tuple[int, int]]:
+            s, e = self._time_to_minutes(start), self._time_to_minutes(end)
+            return [(s, 1440), (0, e)] if wraps else [(s, e)]
+
+        for a_s, a_e in segments(a_start, a_end, a_wraps):
+            for b_s, b_e in segments(b_start, b_end, b_wraps):
+                if a_s < b_e and b_s < a_e:
+                    return True
+        return False
+
+    def _interval_contains(
+        self, outer_start: str, outer_end: str, inner_start: str, inner_end: str
+    ) -> bool:
+        """Wrap-aware containment, via a projection onto a 1440-minute clock with
+        `outer_start` as the origin — handles midnight-crossing outer/inner intervals
+        uniformly without needing explicit wrap flags."""
+        base = self._time_to_minutes(outer_start)
+        outer_duration = (self._time_to_minutes(outer_end) - base) % 1440 or 1440
+        inner_start_offset = (self._time_to_minutes(inner_start) - base) % 1440
+        inner_duration = (
+            self._time_to_minutes(inner_end) - self._time_to_minutes(inner_start)
+        ) % 1440 or 1440
+        return inner_start_offset + inner_duration <= outer_duration
+
+    def _derive_cross_midnight(
+        self,
+        shift_type: str | None,
+        start_time: str | None,
+        end_time: str | None,
+        duty_blocks: list[ShiftDutyBlockCreate] | None,
+    ) -> bool:
+        """`is_cross_midnight` is always server-derived (architecture §9.5: "must be
+        consistent with start/end (already validated)"), never client-settable. FLEXIBLE is
+        forced non-cross-midnight — a known limitation, since the architecture doesn't specify
+        the flex+cross-midnight interaction."""
+        if shift_type == "FIXED":
+            if start_time is None or end_time is None or start_time == end_time:
+                return False
+            return end_time < start_time
+        if shift_type == "SPLIT":
+            if not duty_blocks:
+                return False
+            return any(block.end_time <= block.start_time for block in duty_blocks)
+        return False
+
+    def _validate_shift_breaks(self, breaks: list[ShiftBreakCreate]) -> None:
+        fixed_windows: list[tuple[int, str, str]] = []
+        for index, brk in enumerate(breaks):
+            if brk.break_kind == "FIXED_WINDOW":
+                if brk.start_time is None or brk.end_time is None:
+                    raise InvalidShiftBreakError(
+                        "start_time and end_time are required for a FIXED_WINDOW break",
+                        index=index,
+                    )
+                if brk.start_time == brk.end_time:
+                    raise InvalidShiftBreakError(
+                        "start_time and end_time must differ for a FIXED_WINDOW break",
+                        index=index,
+                    )
+                fixed_windows.append((index, brk.start_time, brk.end_time))
+            else:
+                if (
+                    brk.window_start is None
+                    or brk.window_end is None
+                    or brk.min_minutes is None
+                    or brk.max_minutes is None
+                ):
+                    raise InvalidShiftBreakError(
+                        "window_start, window_end, min_minutes and max_minutes are required "
+                        "for a FLEXIBLE_DURATION break",
+                        index=index,
+                    )
+                if brk.window_end <= brk.window_start:
+                    raise InvalidShiftBreakError(
+                        "window_end must be after window_start for a FLEXIBLE_DURATION break",
+                        index=index,
+                    )
+                if brk.min_minutes > brk.max_minutes:
+                    raise InvalidShiftBreakError(
+                        "min_minutes must not exceed max_minutes", index=index
+                    )
+                if brk.scheduled_minutes is not None and not (
+                    brk.min_minutes <= brk.scheduled_minutes <= brk.max_minutes
+                ):
+                    raise InvalidShiftBreakError(
+                        "scheduled_minutes must fall between min_minutes and max_minutes",
+                        index=index,
+                    )
+
+        for i in range(len(fixed_windows)):
+            for j in range(i + 1, len(fixed_windows)):
+                idx_a, start_a, end_a = fixed_windows[i]
+                idx_b, start_b, end_b = fixed_windows[j]
+                wraps_a = end_a < start_a
+                wraps_b = end_b < start_b
+                if self._interval_overlaps(start_a, end_a, wraps_a, start_b, end_b, wraps_b):
+                    raise InvalidShiftBreakOverlapError(index=idx_b)
+
+    def _build_break_rows(
+        self, *, company_id: UUID, shift_version_id: UUID, breaks: list[ShiftBreakCreate]
+    ) -> list[dict[str, Any]]:
+        self._validate_shift_breaks(breaks)
+        rows = []
+        for brk in breaks:
+            crosses_midnight = (
+                brk.break_kind == "FIXED_WINDOW"
+                and brk.start_time is not None
+                and brk.end_time is not None
+                and brk.end_time < brk.start_time
+            )
+            rows.append(
+                {
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "shift_version_id": shift_version_id,
+                    "name": brk.name,
+                    "break_kind": brk.break_kind,
+                    "start_time": _parse_time(brk.start_time) if brk.start_time else None,
+                    "end_time": _parse_time(brk.end_time) if brk.end_time else None,
+                    "window_start": _parse_time(brk.window_start) if brk.window_start else None,
+                    "window_end": _parse_time(brk.window_end) if brk.window_end else None,
+                    "min_minutes": brk.min_minutes,
+                    "max_minutes": brk.max_minutes,
+                    "scheduled_minutes": brk.scheduled_minutes,
+                    "is_paid": brk.is_paid,
+                    "is_mandatory": brk.is_mandatory,
+                    "allows_split": brk.allows_split,
+                    "crosses_midnight": crosses_midnight,
+                    "sort_order": brk.sort_order,
+                }
+            )
+        return rows
+
+    def _build_duty_block_rows(
+        self, *, company_id: UUID, shift_version_id: UUID, blocks: list[ShiftDutyBlockCreate]
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": uuid4(),
+                "company_id": company_id,
+                "shift_version_id": shift_version_id,
+                "sequence": block.sequence,
+                "start_time": _parse_time(block.start_time),
+                "end_time": _parse_time(block.end_time),
+                "crosses_midnight": block.end_time <= block.start_time,
+            }
+            for block in blocks
+        ]
+
+    def _validate_duty_blocks_for_publish(self, blocks: list[Any]) -> None:
+        """SPLIT shift type only — count/sequence/overlap can't be DB CHECKs (they count/
+        compare across child rows), so they're enforced here at publish time only (a draft may
+        be incomplete mid-edit)."""
+        if len(blocks) < 2:
+            raise InvalidShiftVersionDutyBlockCountError()
+        ordered = sorted(blocks, key=lambda b: b.sequence)
+        if [b.sequence for b in ordered] != list(range(1, len(ordered) + 1)):
+            raise InvalidShiftVersionDutyBlockSequenceError()
+        for block in ordered:
+            start, end = _format_time(block.start_time), _format_time(block.end_time)
+            if start == end:
+                raise ValidationError(
+                    "Each duty block's start_time and end_time must differ",
+                    code="INVALID_SHIFT_VERSION_DUTY_BLOCK_TIME_RANGE",
+                    details=[
+                        {
+                            "field": f"duty_blocks.{block.sequence}",
+                            "code": "INVALID_SHIFT_VERSION_DUTY_BLOCK_TIME_RANGE",
+                            "message": "start_time and end_time must differ",
+                        }
+                    ],
+                )
+        for i in range(len(ordered)):
+            for j in range(i + 1, len(ordered)):
+                a, b = ordered[i], ordered[j]
+                a_start, a_end = _format_time(a.start_time), _format_time(a.end_time)
+                b_start, b_end = _format_time(b.start_time), _format_time(b.end_time)
+                assert a_start and a_end and b_start and b_end
+                if self._interval_overlaps(
+                    a_start, a_end, a.crosses_midnight, b_start, b_end, b.crosses_midnight
+                ):
+                    raise InvalidShiftVersionDutyBlockOverlapError(index=b.sequence)
+
+    def _validate_breaks_boundaries_for_publish(
+        self,
+        *,
+        shift_type: str,
+        start_time: str | None,
+        end_time: str | None,
+        window_start: str | None,
+        window_end: str | None,
+        breaks: list[Any],
+    ) -> None:
+        """FIXED/FLEXIBLE only — containment of `FIXED_WINDOW` breaks inside the shift's
+        overall span. SPLIT is skipped: `ShiftBreak` has no `duty_block_id` (known
+        limitation — the architecture's own field list omits this link), so
+        containment-within-duty-block can't be validated."""
+        if shift_type == "SPLIT":
+            return
+        bound_start, bound_end = (
+            (start_time, end_time) if shift_type == "FIXED" else (window_start, window_end)
+        )
+        if bound_start is None or bound_end is None:
+            return
+        for brk in breaks:
+            if brk.break_kind != "FIXED_WINDOW":
+                continue
+            b_start, b_end = _format_time(brk.start_time), _format_time(brk.end_time)
+            if b_start is None or b_end is None:
+                continue
+            if not self._interval_contains(bound_start, bound_end, b_start, b_end):
+                raise InvalidShiftBreakError("break falls outside the shift's scheduled window")
+
+    def _validate_shift_version_type_fields(self, shift_type: str, version: Any) -> None:
+        """A friendly service-layer surface for what would otherwise be an opaque DB CHECK
+        violation — rejects fields that only make sense for a *different* `shift_type` being
+        populated (e.g. `window_start` on a FIXED version)."""
+        fixed_fields = {"start_time": version.start_time, "end_time": version.end_time}
+        flex_fields = {
+            "window_start": version.window_start,
+            "window_end": version.window_end,
+            "core_start": version.core_start,
+            "core_end": version.core_end,
+            "required_minutes": version.required_minutes,
+        }
+        if shift_type == "FIXED":
+            offending = flex_fields
+        elif shift_type == "FLEXIBLE":
+            offending = fixed_fields
+        else:
+            offending = {**fixed_fields, **flex_fields}
+        for name, value in offending.items():
+            if value is not None:
+                raise InvalidShiftVersionTypeCombinationError(
+                    f"{name} must not be set for a {shift_type} shift"
+                )
+
+    def _validate_and_derive_for_publish(
+        self, version: Any, breaks: list[Any], duty_blocks: list[Any]
+    ) -> bool:
+        """Runs the full type-specific publish-time validation (plan §4) and returns the
+        authoritative `is_cross_midnight` to store. `shift_type`/`effective_from` presence is
+        also required by the DB CHECK `shift_version_published_required_check` — checked here
+        first for a friendlier 422 instead of an opaque CHECK-violation error."""
+        if version.shift_type is None:
+            raise ValidationError(
+                "shift_type is required to publish a shift version",
+                code="SHIFT_VERSION_TYPE_REQUIRED",
+                details=[
+                    {
+                        "field": "shift_type",
+                        "code": "SHIFT_VERSION_TYPE_REQUIRED",
+                        "message": "shift_type is required to publish a shift version",
+                    }
+                ],
+            )
+        if version.effective_from is None:
+            raise InvalidShiftVersionEffectiveFromError(
+                "effective_from is required to publish a shift version"
+            )
+        self._validate_shift_version_type_fields(version.shift_type, version)
+
+        start_time = _format_time(version.start_time)
+        end_time = _format_time(version.end_time)
+        window_start = _format_time(version.window_start)
+        window_end = _format_time(version.window_end)
+        core_start = _format_time(version.core_start)
+        core_end = _format_time(version.core_end)
+
+        is_cross_midnight = False
+        if version.shift_type == "FIXED":
+            if start_time is None or end_time is None:
+                raise InvalidShiftVersionTimeRangeError(
+                    "start_time and end_time are required for a FIXED shift"
+                )
+            if start_time == end_time:
+                raise InvalidShiftVersionTimeRangeError()
+            is_cross_midnight = end_time < start_time
+        elif version.shift_type == "FLEXIBLE":
+            if window_start is None or window_end is None or version.required_minutes is None:
+                raise InvalidShiftVersionFlexWindowError()
+            if window_end <= window_start:
+                raise InvalidShiftVersionFlexWindowError()
+            if (core_start is None) != (core_end is None):
+                raise InvalidShiftVersionCoreHoursError(
+                    "core_start and core_end must be given together"
+                )
+            # `window_start`-`window_end` is the *start-time* flexibility range (architecture
+            # §9.4's own example: "07:00-10:00 start"), not the whole working span — core
+            # hours are a separate, independently-positioned block and are not required to
+            # nest inside it. Only a sane (non-empty) core range is enforced.
+            if core_start is not None and core_end is not None and core_end <= core_start:
+                raise InvalidShiftVersionCoreHoursError("core_end must be after core_start")
+            is_cross_midnight = False
+        elif version.shift_type == "SPLIT":
+            self._validate_duty_blocks_for_publish(duty_blocks)
+            is_cross_midnight = any(block.crosses_midnight for block in duty_blocks)
+
+        self._validate_breaks_boundaries_for_publish(
+            shift_type=version.shift_type,
+            start_time=start_time,
+            end_time=end_time,
+            window_start=window_start,
+            window_end=window_end,
+            breaks=breaks,
+        )
+        return is_cross_midnight
+
+    async def _validate_weekly_off_pattern_reference(
+        self, company_id: UUID, weekly_off_pattern_id: UUID
+    ) -> None:
+        pattern = await self._weekly_off_repo.get(
+            self._session, company_id=company_id, pattern_id=weekly_off_pattern_id
+        )
+        if pattern is None:
+            raise ValidationError(
+                "weekly_off_pattern_id does not reference a valid weekly-off pattern",
+                code="INVALID_WEEKLY_OFF_PATTERN_REFERENCE",
+                details=[
+                    {
+                        "field": "weekly_off_pattern_id",
+                        "code": "INVALID_WEEKLY_OFF_PATTERN_REFERENCE",
+                        "message": (
+                            "weekly_off_pattern_id does not reference a valid weekly-off pattern"
+                        ),
+                    }
+                ],
+            )
+
+    async def create_shift_version(
+        self,
+        company_id: UUID,
+        shift_id: UUID,
+        body: ShiftVersionCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftVersionRead:
+        shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
+        if shift is None:
+            raise NotFoundError("Resource not found")
+        existing_draft = await self._shift_version_repo.get_open_draft(
+            self._session, company_id=company_id, shift_id=shift_id
+        )
+        if existing_draft is not None:
+            raise ShiftVersionDraftAlreadyExistsError()
+        if body.weekly_off_pattern_id is not None:
+            await self._validate_weekly_off_pattern_reference(
+                company_id, body.weekly_off_pattern_id
+            )
+
+        now = datetime.now(UTC)
+        version_id = uuid4()
+        is_cross_midnight = self._derive_cross_midnight(
+            body.shift_type, body.start_time, body.end_time, body.duty_blocks
+        )
+        row = await self._shift_version_repo.insert(
+            self._session,
+            data={
+                "id": version_id,
+                "company_id": company_id,
+                "shift_id": shift_id,
+                "status": "DRAFT",
+                "version": 1,
+                "effective_from": body.effective_from,
+                "effective_to": None,
+                "shift_type": body.shift_type,
+                "timezone": body.timezone,
+                "start_time": _parse_time(body.start_time) if body.start_time else None,
+                "end_time": _parse_time(body.end_time) if body.end_time else None,
+                "window_start": _parse_time(body.window_start) if body.window_start else None,
+                "window_end": _parse_time(body.window_end) if body.window_end else None,
+                "core_start": _parse_time(body.core_start) if body.core_start else None,
+                "core_end": _parse_time(body.core_end) if body.core_end else None,
+                "required_minutes": body.required_minutes,
+                "scheduled_minutes": body.scheduled_minutes,
+                "min_scheduled_minutes": body.min_scheduled_minutes,
+                "max_scheduled_minutes": body.max_scheduled_minutes,
+                "is_night_shift": body.is_night_shift,
+                "is_cross_midnight": is_cross_midnight,
+                "is_ot_eligible": body.is_ot_eligible,
+                "operates_on_holiday": body.operates_on_holiday,
+                "operates_on_weekly_off": body.operates_on_weekly_off,
+                "weekly_off_pattern_id": body.weekly_off_pattern_id,
+                "publish_reason": None,
+                "published_at": None,
+                "published_by": None,
+                "created_at": now,
+                "updated_at": now,
+                "deleted_at": None,
+            },
+        )
+        breaks: list[Any] = []
+        duty_blocks: list[Any] = []
+        if body.breaks:
+            try:
+                breaks = await self._shift_version_repo.replace_breaks(
+                    self._session,
+                    company_id=company_id,
+                    shift_version_id=version_id,
+                    rows=self._build_break_rows(
+                        company_id=company_id, shift_version_id=version_id, breaks=body.breaks
+                    ),
+                )
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise InvalidShiftBreakError("breaks could not be saved") from exc
+        if body.duty_blocks:
+            try:
+                duty_blocks = await self._shift_version_repo.replace_duty_blocks(
+                    self._session,
+                    company_id=company_id,
+                    shift_version_id=version_id,
+                    rows=self._build_duty_block_rows(
+                        company_id=company_id, shift_version_id=version_id, blocks=body.duty_blocks
+                    ),
+                )
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise InvalidShiftVersionDutyBlockSequenceError(
+                    "duty_blocks sequence values must be unique"
+                ) from exc
+
+        read = shift_version_to_read(row, breaks, duty_blocks)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_VERSION_CREATED",
+            entity_type="shift_version",
+            entity_id=version_id,
+            after=shift_version_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_shift_versions(self, company_id: UUID, shift_id: UUID) -> list[ShiftVersionRead]:
+        shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
+        if shift is None:
+            raise NotFoundError("Resource not found")
+        versions = await self._shift_version_repo.list_versions(
+            self._session, company_id=company_id, shift_id=shift_id
+        )
+        version_ids = [v.id for v in versions]
+        all_breaks = await self._shift_version_repo.list_breaks_for_versions(
+            self._session, company_id=company_id, version_ids=version_ids
+        )
+        all_duty_blocks = await self._shift_version_repo.list_duty_blocks_for_versions(
+            self._session, company_id=company_id, version_ids=version_ids
+        )
+        breaks_by_version: dict[UUID, list[Any]] = {vid: [] for vid in version_ids}
+        for b in all_breaks:
+            breaks_by_version[b.shift_version_id].append(b)
+        blocks_by_version: dict[UUID, list[Any]] = {vid: [] for vid in version_ids}
+        for d in all_duty_blocks:
+            blocks_by_version[d.shift_version_id].append(d)
+        return [
+            shift_version_to_read(v, breaks_by_version[v.id], blocks_by_version[v.id])
+            for v in versions
+        ]
+
+    async def get_shift_version(
+        self, company_id: UUID, shift_id: UUID, version_id: UUID
+    ) -> ShiftVersionRead:
+        version = await self._shift_version_repo.get(
+            self._session, company_id=company_id, shift_id=shift_id, version_id=version_id
+        )
+        if version is None:
+            raise NotFoundError("Resource not found")
+        breaks = await self._shift_version_repo.list_breaks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        duty_blocks = await self._shift_version_repo.list_duty_blocks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        return shift_version_to_read(version, breaks, duty_blocks)
+
+    async def update_shift_version(
+        self,
+        company_id: UUID,
+        shift_id: UUID,
+        version_id: UUID,
+        patch: ShiftVersionUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftVersionRead:
+        version = await self._shift_version_repo.get(
+            self._session, company_id=company_id, shift_id=shift_id, version_id=version_id
+        )
+        if version is None:
+            raise NotFoundError("Resource not found")
+        if version.status != "DRAFT":
+            raise ShiftVersionNotDraftError()
+
+        current_breaks = await self._shift_version_repo.list_breaks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        current_duty_blocks = await self._shift_version_repo.list_duty_blocks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        before_read = shift_version_to_read(version, current_breaks, current_duty_blocks)
+
+        if (
+            "weekly_off_pattern_id" in patch.model_fields_set
+            and patch.weekly_off_pattern_id is not None
+        ):
+            await self._validate_weekly_off_pattern_reference(
+                company_id, patch.weekly_off_pattern_id
+            )
+
+        values = build_shift_version_update_values(patch)
+        _time_fields = (
+            "start_time",
+            "end_time",
+            "window_start",
+            "window_end",
+            "core_start",
+            "core_end",
+        )
+        for field in _time_fields:
+            if field in values:
+                raw = getattr(patch, field)
+                values[field] = _parse_time(raw) if raw else None
+
+        # Opportunistic recompute — only for the simple, unambiguous FIXED case where both
+        # times are given in this same PATCH; SPLIT is only finalized at publish time (it
+        # depends on duty blocks, which have no independent lifecycle validation until then).
+        if (
+            "shift_type" in patch.model_fields_set
+            or "start_time" in patch.model_fields_set
+            or "end_time" in patch.model_fields_set
+        ):
+            effective_type = (
+                patch.shift_type if "shift_type" in patch.model_fields_set else version.shift_type
+            )
+            effective_start = (
+                patch.start_time
+                if "start_time" in patch.model_fields_set
+                else _format_time(version.start_time)
+            )
+            effective_end = (
+                patch.end_time
+                if "end_time" in patch.model_fields_set
+                else _format_time(version.end_time)
+            )
+            if effective_type == "FIXED" and effective_start and effective_end:
+                values["is_cross_midnight"] = self._derive_cross_midnight(
+                    "FIXED", effective_start, effective_end, None
+                )
+            elif effective_type == "FLEXIBLE":
+                values["is_cross_midnight"] = False
+
+        now = datetime.now(UTC)
+        updated = version
+        if values:
+            result = await self._shift_version_repo.update(
+                self._session,
+                company_id=company_id,
+                shift_id=shift_id,
+                version_id=version_id,
+                values=values,
+                expected_version=expected_version,
+                now=now,
+            )
+            if result is None:
+                latest = await self._shift_version_repo.get(
+                    self._session, company_id=company_id, shift_id=shift_id, version_id=version_id
+                )
+                if latest is None:
+                    raise NotFoundError("Resource not found")
+                latest_breaks = await self._shift_version_repo.list_breaks(
+                    self._session, company_id=company_id, shift_version_id=version_id
+                )
+                latest_blocks = await self._shift_version_repo.list_duty_blocks(
+                    self._session, company_id=company_id, shift_version_id=version_id
+                )
+                raise StaleResourceError(
+                    "This shift version has been modified by another request",
+                    current=shift_version_to_audit_dict(
+                        shift_version_to_read(latest, latest_breaks, latest_blocks)
+                    ),
+                )
+            updated = result
+
+        breaks = current_breaks
+        if patch.breaks is not None:
+            try:
+                breaks = await self._shift_version_repo.replace_breaks(
+                    self._session,
+                    company_id=company_id,
+                    shift_version_id=version_id,
+                    rows=self._build_break_rows(
+                        company_id=company_id, shift_version_id=version_id, breaks=patch.breaks
+                    ),
+                )
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise InvalidShiftBreakError("breaks could not be saved") from exc
+
+        duty_blocks = current_duty_blocks
+        if patch.duty_blocks is not None:
+            try:
+                duty_blocks = await self._shift_version_repo.replace_duty_blocks(
+                    self._session,
+                    company_id=company_id,
+                    shift_version_id=version_id,
+                    rows=self._build_duty_block_rows(
+                        company_id=company_id,
+                        shift_version_id=version_id,
+                        blocks=patch.duty_blocks,
+                    ),
+                )
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise InvalidShiftVersionDutyBlockSequenceError(
+                    "duty_blocks sequence values must be unique"
+                ) from exc
+
+        after_read = shift_version_to_read(updated, breaks, duty_blocks)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_VERSION_UPDATED",
+            entity_type="shift_version",
+            entity_id=version_id,
+            before=shift_version_to_audit_dict(before_read),
+            after=shift_version_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def discard_shift_version(
+        self,
+        company_id: UUID,
+        shift_id: UUID,
+        version_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftVersionRead:
+        version = await self._shift_version_repo.get(
+            self._session, company_id=company_id, shift_id=shift_id, version_id=version_id
+        )
+        if version is None:
+            raise NotFoundError("Resource not found")
+        if version.status != "DRAFT":
+            raise ShiftVersionNotDraftError()
+
+        breaks = await self._shift_version_repo.list_breaks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        duty_blocks = await self._shift_version_repo.list_duty_blocks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        before_read = shift_version_to_read(version, breaks, duty_blocks)
+
+        now = datetime.now(UTC)
+        result = await self._shift_version_repo.discard(
+            self._session,
+            company_id=company_id,
+            shift_id=shift_id,
+            version_id=version_id,
+            expected_version=expected_version,
+            now=now,
+        )
+        if result is None:
+            latest = await self._shift_version_repo.get(
+                self._session, company_id=company_id, shift_id=shift_id, version_id=version_id
+            )
+            if latest is None:
+                raise NotFoundError("Resource not found")
+            latest_breaks = await self._shift_version_repo.list_breaks(
+                self._session, company_id=company_id, shift_version_id=version_id
+            )
+            latest_blocks = await self._shift_version_repo.list_duty_blocks(
+                self._session, company_id=company_id, shift_version_id=version_id
+            )
+            raise StaleResourceError(
+                "This shift version has been modified by another request",
+                current=shift_version_to_audit_dict(
+                    shift_version_to_read(latest, latest_breaks, latest_blocks)
+                ),
+            )
+
+        after_read = shift_version_to_read(result, breaks, duty_blocks)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_VERSION_DISCARDED",
+            entity_type="shift_version",
+            entity_id=version_id,
+            before=shift_version_to_audit_dict(before_read),
+            after=shift_version_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def publish_shift_version(
+        self,
+        company_id: UUID,
+        shift_id: UUID,
+        version_id: UUID,
+        body: ShiftVersionPublishRequest,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftVersionRead:
+        """Insert-new/close-previous — mirrors `create_policy_assignment`, just with two
+        concurrency tokens instead of one since two different rows are mutated: `expected_version`
+        (If-Match) is the draft's own token, `body.expected_previous_version` is the currently
+        open PUBLISHED version's token, required only when one exists."""
+        draft = await self._shift_version_repo.get(
+            self._session, company_id=company_id, shift_id=shift_id, version_id=version_id
+        )
+        if draft is None:
+            raise NotFoundError("Resource not found")
+        if draft.status != "DRAFT":
+            raise ShiftVersionNotDraftError()
+
+        breaks = await self._shift_version_repo.list_breaks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        duty_blocks = await self._shift_version_repo.list_duty_blocks(
+            self._session, company_id=company_id, shift_version_id=version_id
+        )
+        before_read = shift_version_to_read(draft, breaks, duty_blocks)
+
+        is_cross_midnight = self._validate_and_derive_for_publish(draft, breaks, duty_blocks)
+
+        current = await self._shift_version_repo.get_current_published(
+            self._session, company_id=company_id, shift_id=shift_id
+        )
+        now = datetime.now(UTC)
+        if current is not None:
+            assert draft.effective_from is not None
+            assert current.effective_from is not None
+            if draft.effective_from <= current.effective_from:
+                raise InvalidShiftVersionEffectiveFromError()
+            if body.expected_previous_version is None:
+                raise ShiftVersionPreviousVersionRequiredError()
+            closed = await self._shift_version_repo.close(
+                self._session,
+                company_id=company_id,
+                version_id=current.id,
+                effective_to=draft.effective_from - timedelta(days=1),
+                expected_version=body.expected_previous_version,
+                now=now,
+            )
+            if closed is None:
+                latest_current = await self._shift_version_repo.get(
+                    self._session, company_id=company_id, shift_id=shift_id, version_id=current.id
+                )
+                if latest_current is None:
+                    raise NotFoundError("Resource not found")
+                latest_current_breaks = await self._shift_version_repo.list_breaks(
+                    self._session, company_id=company_id, shift_version_id=current.id
+                )
+                latest_current_blocks = await self._shift_version_repo.list_duty_blocks(
+                    self._session, company_id=company_id, shift_version_id=current.id
+                )
+                raise StaleResourceError(
+                    "The currently published shift version has been modified by another request",
+                    current=shift_version_to_audit_dict(
+                        shift_version_to_read(
+                            latest_current, latest_current_breaks, latest_current_blocks
+                        )
+                    ),
+                )
+
+        try:
+            updated = await self._shift_version_repo.update(
+                self._session,
+                company_id=company_id,
+                shift_id=shift_id,
+                version_id=version_id,
+                values={
+                    "status": "PUBLISHED",
+                    "is_cross_midnight": is_cross_midnight,
+                    "publish_reason": body.publish_reason,
+                    "published_at": now,
+                    "published_by": actor_user_id,
+                },
+                expected_version=expected_version,
+                now=now,
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise ShiftVersionOverlapError() from exc
+
+        if updated is None:
+            latest = await self._shift_version_repo.get(
+                self._session, company_id=company_id, shift_id=shift_id, version_id=version_id
+            )
+            if latest is None:
+                raise NotFoundError("Resource not found")
+            latest_breaks = await self._shift_version_repo.list_breaks(
+                self._session, company_id=company_id, shift_version_id=version_id
+            )
+            latest_blocks = await self._shift_version_repo.list_duty_blocks(
+                self._session, company_id=company_id, shift_version_id=version_id
+            )
+            raise StaleResourceError(
+                "This shift version has been modified by another request",
+                current=shift_version_to_audit_dict(
+                    shift_version_to_read(latest, latest_breaks, latest_blocks)
+                ),
+            )
+
+        after_read = shift_version_to_read(updated, breaks, duty_blocks)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_VERSION_PUBLISHED",
+            entity_type="shift_version",
+            entity_id=version_id,
+            before=shift_version_to_audit_dict(before_read),
+            after=shift_version_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def resolve_shift_version_as_of(
+        self, company_id: UUID, shift_id: UUID, as_of: date
+    ) -> ShiftVersionRead:
+        shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
+        if shift is None:
+            raise NotFoundError("Resource not found")
+        version = await self._shift_version_repo.find_effective_as_of(
+            self._session, company_id=company_id, shift_id=shift_id, as_of=as_of
+        )
+        if version is None:
+            raise ShiftVersionNotFoundForDateError()
+        breaks = await self._shift_version_repo.list_breaks(
+            self._session, company_id=company_id, shift_version_id=version.id
+        )
+        duty_blocks = await self._shift_version_repo.list_duty_blocks(
+            self._session, company_id=company_id, shift_version_id=version.id
+        )
+        return shift_version_to_read(version, breaks, duty_blocks)
+
+    # -----------------------------------------------------------------
+    # Workforce Calendar (W1) — HolidayCalendar
+    # -----------------------------------------------------------------
+
+    async def create_holiday_calendar(
+        self,
+        company_id: UUID,
+        body: HolidayCalendarCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> HolidayCalendarRead:
+        now = datetime.now(UTC)
+        calendar_id = uuid4()
+        try:
+            row = await self._holiday_calendar_repo.insert(
+                self._session,
+                data={
+                    "id": calendar_id,
+                    "company_id": company_id,
+                    "name": body.name,
+                    "code": body.code,
+                    "kind": body.kind,
+                    "state_code": body.state_code,
+                    "valid_from": body.valid_from,
+                    "valid_to": body.valid_to,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise HolidayCalendarCodeAlreadyExistsError() from exc
+        read = holiday_calendar_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="HOLIDAY_CALENDAR_CREATED",
+            entity_type="holiday_calendar",
+            entity_id=calendar_id,
+            after=holiday_calendar_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_holiday_calendars(self, company_id: UUID) -> list[HolidayCalendarRead]:
+        rows = await self._holiday_calendar_repo.list_calendars(
+            self._session, company_id=company_id
+        )
+        return [holiday_calendar_to_read(row) for row in rows]
+
+    async def get_holiday_calendar(
+        self, company_id: UUID, calendar_id: UUID
+    ) -> HolidayCalendarRead:
+        row = await self._holiday_calendar_repo.get(
+            self._session, company_id=company_id, calendar_id=calendar_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        return holiday_calendar_to_read(row)
+
+    async def update_holiday_calendar(
+        self,
+        company_id: UUID,
+        calendar_id: UUID,
+        patch: HolidayCalendarUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> HolidayCalendarRead:
+        row = await self._holiday_calendar_repo.get(
+            self._session, company_id=company_id, calendar_id=calendar_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        before_read = holiday_calendar_to_read(row)
+        was_active_before = row.is_active
+
+        values = build_holiday_calendar_update_values(patch)
+        if not values:
+            return before_read
+
+        now = datetime.now(UTC)
+        try:
+            updated = await self._holiday_calendar_repo.update(
+                self._session,
+                company_id=company_id,
+                calendar_id=calendar_id,
+                values=values,
+                expected_version=expected_version,
+                now=now,
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise HolidayCalendarCodeAlreadyExistsError() from exc
+        if updated is None:
+            current = await self._holiday_calendar_repo.get(
+                self._session, company_id=company_id, calendar_id=calendar_id
+            )
+            if current is None:
+                raise NotFoundError("Resource not found")
+            raise StaleResourceError(
+                "This holiday calendar has been modified by another request",
+                current=holiday_calendar_to_audit_dict(holiday_calendar_to_read(current)),
+            )
+
+        after_read = holiday_calendar_to_read(updated)
+        action = (
+            "HOLIDAY_CALENDAR_DEACTIVATED"
+            if patch.is_active is False and was_active_before is True
+            else "HOLIDAY_CALENDAR_REACTIVATED"
+            if patch.is_active is True and was_active_before is False
+            else "HOLIDAY_CALENDAR_UPDATED"
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="holiday_calendar",
+            entity_id=calendar_id,
+            before=holiday_calendar_to_audit_dict(before_read),
+            after=holiday_calendar_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def deactivate_holiday_calendar(
+        self,
+        company_id: UUID,
+        calendar_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> HolidayCalendarRead:
+        return await self.update_holiday_calendar(
+            company_id,
+            calendar_id,
+            HolidayCalendarUpdate(is_active=False),
+            expected_version=expected_version,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    # -----------------------------------------------------------------
+    # Workforce Calendar (W1) — Holiday
+    # -----------------------------------------------------------------
+
+    async def create_holiday(
+        self,
+        company_id: UUID,
+        calendar_id: UUID,
+        body: HolidayCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> HolidayRead:
+        calendar = await self._holiday_calendar_repo.get(
+            self._session, company_id=company_id, calendar_id=calendar_id
+        )
+        if calendar is None:
+            raise InvalidHolidayCalendarError()
+
+        now = datetime.now(UTC)
+        holiday_id = uuid4()
+        try:
+            row = await self._holiday_repo.insert(
+                self._session,
+                data={
+                    "id": holiday_id,
+                    "company_id": company_id,
+                    "calendar_id": calendar_id,
+                    "date": body.date,
+                    "name": body.name,
+                    "is_optional": body.holiday_type == "OPTIONAL",
+                    "holiday_type": body.holiday_type,
+                    "is_paid": body.is_paid,
+                    "is_working": body.is_working,
+                    "region_note": body.region_note,
+                    "replaced_holiday_id": body.replaced_holiday_id,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise HolidayDateAlreadyExistsError() from exc
+        read = holiday_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="HOLIDAY_CREATED",
+            entity_type="holiday",
+            entity_id=holiday_id,
+            after=holiday_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_holidays(
+        self, company_id: UUID, calendar_id: UUID, *, year: int | None = None
+    ) -> list[HolidayRead]:
+        rows = await self._holiday_repo.list_holidays(
+            self._session, company_id=company_id, calendar_id=calendar_id, year=year
+        )
+        return [holiday_to_read(row) for row in rows]
+
+    async def get_holiday(self, company_id: UUID, holiday_id: UUID) -> HolidayRead:
+        row = await self._holiday_repo.get(
+            self._session, company_id=company_id, holiday_id=holiday_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        return holiday_to_read(row)
+
+    async def update_holiday(
+        self,
+        company_id: UUID,
+        holiday_id: UUID,
+        patch: HolidayUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> HolidayRead:
+        row = await self._holiday_repo.get(
+            self._session, company_id=company_id, holiday_id=holiday_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        before_read = holiday_to_read(row)
+        was_active_before = row.is_active
+
+        values = build_holiday_update_values(patch)
+        if not values:
+            return before_read
+
+        now = datetime.now(UTC)
+        updated = await self._holiday_repo.update(
+            self._session,
+            company_id=company_id,
+            holiday_id=holiday_id,
+            values=values,
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            current = await self._holiday_repo.get(
+                self._session, company_id=company_id, holiday_id=holiday_id
+            )
+            if current is None:
+                raise NotFoundError("Resource not found")
+            raise StaleResourceError(
+                "This holiday has been modified by another request",
+                current=holiday_to_audit_dict(holiday_to_read(current)),
+            )
+
+        after_read = holiday_to_read(updated)
+        action = (
+            "HOLIDAY_DEACTIVATED"
+            if patch.is_active is False and was_active_before is True
+            else "HOLIDAY_REACTIVATED"
+            if patch.is_active is True and was_active_before is False
+            else "HOLIDAY_UPDATED"
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="holiday",
+            entity_id=holiday_id,
+            before=holiday_to_audit_dict(before_read),
+            after=holiday_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    # -----------------------------------------------------------------
+    # Workforce Calendar (W1) — WeeklyOffPattern
+    # -----------------------------------------------------------------
+
+    def _validate_weekly_off_rules(
+        self, pattern_kind: str, rules: list[WeeklyOffRuleInput]
+    ) -> None:
+        """architecture §8.1 — the rule shape must match the declared `pattern_kind`. `CUSTOM`
+        accepts any combination (that is the point of `CUSTOM`)."""
+        if pattern_kind == "CUSTOM":
+            return
+        for rule in rules:
+            if pattern_kind == "NTH_WEEKDAY" and rule.nth_in_month is None:
+                raise WeeklyOffRuleInvalidError(
+                    "nth_in_month is required for every rule when pattern_kind is NTH_WEEKDAY"
+                )
+            if pattern_kind == "ALTERNATE" and rule.cycle_start_date is None:
+                raise WeeklyOffRuleInvalidError(
+                    "cycle_start_date is required for every rule when pattern_kind is ALTERNATE"
+                )
+            if pattern_kind == "FIXED_WEEKDAYS" and (
+                rule.nth_in_month is not None or rule.cycle_start_date is not None
+            ):
+                raise WeeklyOffRuleInvalidError(
+                    "nth_in_month/cycle_start_date must be omitted when "
+                    "pattern_kind is FIXED_WEEKDAYS"
+                )
+
+    async def create_weekly_off_pattern(
+        self,
+        company_id: UUID,
+        body: WeeklyOffPatternCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> WeeklyOffPatternRead:
+        self._validate_weekly_off_rules(body.pattern_kind, body.rules)
+
+        now = datetime.now(UTC)
+        pattern_id = uuid4()
+        row = await self._weekly_off_repo.insert(
+            self._session,
+            data={
+                "id": pattern_id,
+                "company_id": company_id,
+                "name": body.name,
+                "code": body.code,
+                "pattern_kind": body.pattern_kind,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        rules = await self._weekly_off_repo.replace_rules(
+            self._session,
+            company_id=company_id,
+            pattern_id=pattern_id,
+            rows=[
+                {
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "pattern_id": pattern_id,
+                    "weekday": rule.weekday,
+                    "nth_in_month": rule.nth_in_month,
+                    "cycle_start_date": rule.cycle_start_date,
+                    "off_fraction": rule.off_fraction,
+                    "week_parity": rule.week_parity,
+                }
+                for rule in body.rules
+            ],
+        )
+        read = weekly_off_pattern_to_read(row, rules)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="WEEKLY_OFF_PATTERN_CREATED",
+            entity_type="weekly_off_pattern",
+            entity_id=pattern_id,
+            after=weekly_off_pattern_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_weekly_off_patterns(self, company_id: UUID) -> list[WeeklyOffPatternRead]:
+        rows = await self._weekly_off_repo.list_patterns(self._session, company_id=company_id)
+        all_rules = await self._weekly_off_repo.list_rules_for_patterns(
+            self._session, company_id=company_id, pattern_ids=[row.id for row in rows]
+        )
+        rules_by_pattern: dict[UUID, list[Any]] = {row.id: [] for row in rows}
+        for rule in all_rules:
+            rules_by_pattern[rule.pattern_id].append(rule)
+        return [weekly_off_pattern_to_read(row, rules_by_pattern[row.id]) for row in rows]
+
+    async def get_weekly_off_pattern(
+        self, company_id: UUID, pattern_id: UUID
+    ) -> WeeklyOffPatternRead:
+        row = await self._weekly_off_repo.get(
+            self._session, company_id=company_id, pattern_id=pattern_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        rules = await self._weekly_off_repo.list_rules(
+            self._session, company_id=company_id, pattern_id=pattern_id
+        )
+        return weekly_off_pattern_to_read(row, rules)
+
+    async def update_weekly_off_pattern(
+        self,
+        company_id: UUID,
+        pattern_id: UUID,
+        patch: WeeklyOffPatternUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> WeeklyOffPatternRead:
+        row = await self._weekly_off_repo.get(
+            self._session, company_id=company_id, pattern_id=pattern_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        current_rules = await self._weekly_off_repo.list_rules(
+            self._session, company_id=company_id, pattern_id=pattern_id
+        )
+        before_read = weekly_off_pattern_to_read(row, current_rules)
+        was_active_before = row.is_active
+
+        effective_kind = patch.pattern_kind if patch.pattern_kind is not None else row.pattern_kind
+        if patch.rules is not None:
+            self._validate_weekly_off_rules(effective_kind, patch.rules)
+
+        values = build_weekly_off_pattern_update_values(patch)
+        now = datetime.now(UTC)
+        updated = row
+        if values:
+            result = await self._weekly_off_repo.update(
+                self._session,
+                company_id=company_id,
+                pattern_id=pattern_id,
+                values=values,
+                expected_version=expected_version,
+                now=now,
+            )
+            if result is None:
+                current = await self._weekly_off_repo.get(
+                    self._session, company_id=company_id, pattern_id=pattern_id
+                )
+                if current is None:
+                    raise NotFoundError("Resource not found")
+                current_rules_for_error = await self._weekly_off_repo.list_rules(
+                    self._session, company_id=company_id, pattern_id=pattern_id
+                )
+                raise StaleResourceError(
+                    "This weekly-off pattern has been modified by another request",
+                    current=weekly_off_pattern_to_audit_dict(
+                        weekly_off_pattern_to_read(current, current_rules_for_error)
+                    ),
+                )
+            updated = result
+
+        rules = current_rules
+        if patch.rules is not None:
+            rules = await self._weekly_off_repo.replace_rules(
+                self._session,
+                company_id=company_id,
+                pattern_id=pattern_id,
+                rows=[
+                    {
+                        "id": uuid4(),
+                        "company_id": company_id,
+                        "pattern_id": pattern_id,
+                        "weekday": rule.weekday,
+                        "nth_in_month": rule.nth_in_month,
+                        "cycle_start_date": rule.cycle_start_date,
+                        "off_fraction": rule.off_fraction,
+                        "week_parity": rule.week_parity,
+                    }
+                    for rule in patch.rules
+                ],
+            )
+
+        after_read = weekly_off_pattern_to_read(updated, rules)
+        action = (
+            "WEEKLY_OFF_PATTERN_DEACTIVATED"
+            if patch.is_active is False and was_active_before is True
+            else "WEEKLY_OFF_PATTERN_REACTIVATED"
+            if patch.is_active is True and was_active_before is False
+            else "WEEKLY_OFF_PATTERN_UPDATED"
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="weekly_off_pattern",
+            entity_id=pattern_id,
+            before=weekly_off_pattern_to_audit_dict(before_read),
+            after=weekly_off_pattern_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def deactivate_weekly_off_pattern(
+        self,
+        company_id: UUID,
+        pattern_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> WeeklyOffPatternRead:
+        return await self.update_weekly_off_pattern(
+            company_id,
+            pattern_id,
+            WeeklyOffPatternUpdate(is_active=False),
+            expected_version=expected_version,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    # -----------------------------------------------------------------
+    # Workforce Calendar (W1) — WorkCalendar
+    # -----------------------------------------------------------------
+
+    async def _validate_work_calendar_composition(
+        self, company_id: UUID, weekly_off_pattern_id: UUID | None, holiday_calendar_ids: list[UUID]
+    ) -> None:
+        if weekly_off_pattern_id is not None:
+            pattern = await self._weekly_off_repo.get(
+                self._session, company_id=company_id, pattern_id=weekly_off_pattern_id
+            )
+            if pattern is None:
+                raise WorkCalendarCompositionInvalidError(
+                    "weekly_off_pattern_id does not reference a valid weekly-off pattern"
+                )
+        for calendar_id in holiday_calendar_ids:
+            calendar = await self._holiday_calendar_repo.get(
+                self._session, company_id=company_id, calendar_id=calendar_id
+            )
+            if calendar is None:
+                raise WorkCalendarCompositionInvalidError(
+                    f"holiday_calendar_ids contains an invalid calendar id: {calendar_id}"
+                )
+
+    async def create_work_calendar(
+        self,
+        company_id: UUID,
+        body: WorkCalendarCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> WorkCalendarRead:
+        await self._validate_work_calendar_composition(
+            company_id, body.weekly_off_pattern_id, body.holiday_calendar_ids
+        )
+
+        now = datetime.now(UTC)
+        work_calendar_id = uuid4()
+        try:
+            row = await self._work_calendar_repo.insert(
+                self._session,
+                data={
+                    "id": work_calendar_id,
+                    "company_id": company_id,
+                    "name": body.name,
+                    "code": body.code,
+                    "description": body.description,
+                    "weekly_off_pattern_id": body.weekly_off_pattern_id,
+                    "restricted_holidays_are_off_by_default": (
+                        body.restricted_holidays_are_off_by_default
+                    ),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise WorkCalendarCompositionInvalidError(
+                "A work calendar with this code already exists"
+            ) from exc
+        await self._work_calendar_repo.replace_holiday_calendar_links(
+            self._session,
+            company_id=company_id,
+            work_calendar_id=work_calendar_id,
+            holiday_calendar_ids=body.holiday_calendar_ids,
+            now=now,
+        )
+        read = work_calendar_to_read(row, body.holiday_calendar_ids)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="WORK_CALENDAR_CREATED",
+            entity_type="work_calendar",
+            entity_id=work_calendar_id,
+            after=work_calendar_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def _work_calendar_holiday_ids(
+        self, company_id: UUID, work_calendar_id: UUID
+    ) -> list[UUID]:
+        links = await self._work_calendar_repo.list_holiday_calendar_links(
+            self._session, company_id=company_id, work_calendar_id=work_calendar_id
+        )
+        return [link.holiday_calendar_id for link in links]
+
+    async def list_work_calendars(self, company_id: UUID) -> list[WorkCalendarRead]:
+        rows = await self._work_calendar_repo.list_work_calendars(
+            self._session, company_id=company_id
+        )
+        return [
+            work_calendar_to_read(row, await self._work_calendar_holiday_ids(company_id, row.id))
+            for row in rows
+        ]
+
+    async def get_work_calendar(self, company_id: UUID, work_calendar_id: UUID) -> WorkCalendarRead:
+        row = await self._work_calendar_repo.get(
+            self._session, company_id=company_id, work_calendar_id=work_calendar_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        return work_calendar_to_read(
+            row, await self._work_calendar_holiday_ids(company_id, work_calendar_id)
+        )
+
+    async def update_work_calendar(
+        self,
+        company_id: UUID,
+        work_calendar_id: UUID,
+        patch: WorkCalendarUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> WorkCalendarRead:
+        row = await self._work_calendar_repo.get(
+            self._session, company_id=company_id, work_calendar_id=work_calendar_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        current_holiday_ids = await self._work_calendar_holiday_ids(company_id, work_calendar_id)
+        before_read = work_calendar_to_read(row, current_holiday_ids)
+        was_active_before = row.is_active
+
+        effective_pattern_id = (
+            patch.weekly_off_pattern_id
+            if "weekly_off_pattern_id" in patch.model_fields_set
+            else row.weekly_off_pattern_id
+        )
+        effective_holiday_ids = (
+            patch.holiday_calendar_ids
+            if patch.holiday_calendar_ids is not None
+            else current_holiday_ids
+        )
+        await self._validate_work_calendar_composition(
+            company_id, effective_pattern_id, effective_holiday_ids
+        )
+
+        values = build_work_calendar_update_values(patch)
+        now = datetime.now(UTC)
+        updated = row
+        if values:
+            try:
+                result = await self._work_calendar_repo.update(
+                    self._session,
+                    company_id=company_id,
+                    work_calendar_id=work_calendar_id,
+                    values=values,
+                    expected_version=expected_version,
+                    now=now,
+                )
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise WorkCalendarCompositionInvalidError(
+                    "A work calendar with this code already exists"
+                ) from exc
+            if result is None:
+                current = await self._work_calendar_repo.get(
+                    self._session, company_id=company_id, work_calendar_id=work_calendar_id
+                )
+                if current is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This work calendar has been modified by another request",
+                    current=work_calendar_to_audit_dict(
+                        work_calendar_to_read(
+                            current,
+                            await self._work_calendar_holiday_ids(company_id, work_calendar_id),
+                        )
+                    ),
+                )
+            updated = result
+
+        holiday_ids = current_holiday_ids
+        if patch.holiday_calendar_ids is not None:
+            await self._work_calendar_repo.replace_holiday_calendar_links(
+                self._session,
+                company_id=company_id,
+                work_calendar_id=work_calendar_id,
+                holiday_calendar_ids=patch.holiday_calendar_ids,
+                now=now,
+            )
+            holiday_ids = patch.holiday_calendar_ids
+
+        after_read = work_calendar_to_read(updated, holiday_ids)
+        action = (
+            "WORK_CALENDAR_DEACTIVATED"
+            if patch.is_active is False and was_active_before is True
+            else "WORK_CALENDAR_REACTIVATED"
+            if patch.is_active is True and was_active_before is False
+            else "WORK_CALENDAR_UPDATED"
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="work_calendar",
+            entity_id=work_calendar_id,
+            before=work_calendar_to_audit_dict(before_read),
+            after=work_calendar_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def deactivate_work_calendar(
+        self,
+        company_id: UUID,
+        work_calendar_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> WorkCalendarRead:
+        """Architecture §4.2: "Blocked if referenced by an open assignment or current branch
+        default." W1 checks for an open `PolicyAssignment` pointing at this WorkCalendar;
+        there is no `branch.work_calendar_id` column (§15.3 — deliberately not built)."""
+        open_assignments = await self._policy_assignment_repo.list_assignments(
+            self._session, company_id=company_id, policy_kind="WORK_CALENDAR"
+        )
+        active_count = sum(
+            1
+            for a in open_assignments
+            if a.policy_id == work_calendar_id and a.is_active and a.effective_to is None
+        )
+        if active_count > 0:
+            raise WorkCalendarDeactivationBlockedError(active_assignment_count=active_count)
+        return await self.update_work_calendar(
+            company_id,
+            work_calendar_id,
+            WorkCalendarUpdate(is_active=False),
+            expected_version=expected_version,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def get_work_calendar_day_type(
+        self, company_id: UUID, work_calendar_id: UUID, target_date: date
+    ) -> DayTypeRead:
+        return await self._calendar_resolution.classify_date_for_work_calendar(
+            company_id, work_calendar_id, target_date
+        )
+
+    # -----------------------------------------------------------------
+    # Workforce Calendar (W1) — CalendarException
+    # -----------------------------------------------------------------
+
+    async def create_calendar_exception(
+        self,
+        company_id: UUID,
+        work_calendar_id: UUID,
+        body: CalendarExceptionCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> CalendarExceptionRead:
+        calendar = await self._work_calendar_repo.get(
+            self._session, company_id=company_id, work_calendar_id=work_calendar_id
+        )
+        if calendar is None:
+            raise InvalidWorkCalendarError()
+
+        now = datetime.now(UTC)
+        exception_id = uuid4()
+        try:
+            row = await self._calendar_exception_repo.insert(
+                self._session,
+                data={
+                    "id": exception_id,
+                    "company_id": company_id,
+                    "work_calendar_id": work_calendar_id,
+                    "exception_date": body.exception_date,
+                    "exception_type": body.exception_type,
+                    "name": body.name,
+                    "reason": body.reason,
+                    "is_paid": body.is_paid,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise CalendarExceptionDateConflictError() from exc
+        read = calendar_exception_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="CALENDAR_EXCEPTION_CREATED",
+            entity_type="calendar_exception",
+            entity_id=exception_id,
+            after=calendar_exception_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_calendar_exceptions(
+        self, company_id: UUID, work_calendar_id: UUID
+    ) -> list[CalendarExceptionRead]:
+        rows = await self._calendar_exception_repo.list_exceptions(
+            self._session, company_id=company_id, work_calendar_id=work_calendar_id
+        )
+        return [calendar_exception_to_read(row) for row in rows]
+
+    async def update_calendar_exception(
+        self,
+        company_id: UUID,
+        exception_id: UUID,
+        patch: CalendarExceptionUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> CalendarExceptionRead:
+        row = await self._calendar_exception_repo.get(
+            self._session, company_id=company_id, exception_id=exception_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        before_read = calendar_exception_to_read(row)
+        was_active_before = row.is_active
+
+        values = build_calendar_exception_update_values(patch)
+        if not values:
+            return before_read
+
+        now = datetime.now(UTC)
+        updated = await self._calendar_exception_repo.update(
+            self._session,
+            company_id=company_id,
+            exception_id=exception_id,
+            values=values,
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            current = await self._calendar_exception_repo.get(
+                self._session, company_id=company_id, exception_id=exception_id
+            )
+            if current is None:
+                raise NotFoundError("Resource not found")
+            raise StaleResourceError(
+                "This calendar exception has been modified by another request",
+                current=calendar_exception_to_audit_dict(calendar_exception_to_read(current)),
+            )
+
+        after_read = calendar_exception_to_read(updated)
+        action = (
+            "CALENDAR_EXCEPTION_DEACTIVATED"
+            if patch.is_active is False and was_active_before is True
+            else "CALENDAR_EXCEPTION_REACTIVATED"
+            if patch.is_active is True and was_active_before is False
+            else "CALENDAR_EXCEPTION_UPDATED"
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="calendar_exception",
+            entity_id=exception_id,
+            before=calendar_exception_to_audit_dict(before_read),
+            after=calendar_exception_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    # -----------------------------------------------------------------
+    # Workforce Calendar (W1) + W3 — PolicyAssignment (WD-09 precedence machinery, widened by
+    # W3's migration to also carry ATTENDANCE_POLICY/OVERTIME_POLICY/REGULARIZATION_POLICY —
+    # see WD-24 in the decision log)
+    # -----------------------------------------------------------------
+
+    async def _validate_policy_reference(
+        self, company_id: UUID, policy_kind: str, policy_id: UUID
+    ) -> None:
+        found: Any
+        if policy_kind == "WORK_CALENDAR":
+            found = await self._work_calendar_repo.get(
+                self._session, company_id=company_id, work_calendar_id=policy_id
+            )
+        elif policy_kind == "WEEKLY_OFF":
+            found = await self._weekly_off_repo.get(
+                self._session, company_id=company_id, pattern_id=policy_id
+            )
+        elif policy_kind in ("ATTENDANCE_POLICY", "OVERTIME_POLICY", "REGULARIZATION_POLICY"):
+            # Local, function-scoped import — mirrors the established reverse-direction
+            # precedent (`employee/service.py` imports `organisation.service.OrganisationService`
+            # locally; `calendar_resolution.py` imports `employee.service` locally). W3's
+            # AttendancePolicy/OvertimePolicy/RegularizationPolicy identities live in the
+            # `attendance` module (DEC-023), not `organisation` — this is the one place
+            # `organisation` needs to know they exist, to validate a polymorphic `policy_id`
+            # the same way it already does for its own WORK_CALENDAR/WEEKLY_OFF kinds.
+            from hrms.modules.attendance.service import AttendanceService
+
+            exists = await AttendanceService(self._session).policy_exists(
+                company_id, policy_kind, policy_id
+            )
+            found = object() if exists else None
+        else:
+            raise PolicyKindNotSupportedError(policy_kind)
+        if found is None:
+            raise InvalidPolicyReferenceError()
+
+    async def create_policy_assignment(
+        self,
+        company_id: UUID,
+        body: PolicyAssignmentCreate,
+        *,
+        expected_version: int | None = None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PolicyAssignmentRead:
+        """Insert-new/close-previous — mirrors `EmployeeAssignmentService.create_assignment`
+        (§15.1: "no overlap at same scope... close the old assignment and insert a new one"),
+        keyed on `(policy_kind, scope_type, scope_id)` instead of `employee_id`."""
+        await self._validate_policy_reference(company_id, body.policy_kind, body.policy_id)
+
+        current = await self._policy_assignment_repo.get_current(
+            self._session,
+            company_id=company_id,
+            policy_kind=body.policy_kind,
+            scope_type=body.scope_type,
+            scope_id=body.scope_id,
+        )
+        now = datetime.now(UTC)
+        before_read: PolicyAssignmentRead | None = None
+        if current is not None:
+            if body.effective_from <= current.effective_from:
+                raise ValidationError(
+                    "effective_from must be after the current assignment's effective_from",
+                    code="INVALID_EFFECTIVE_FROM",
+                )
+            if expected_version is None:
+                raise PolicyAssignmentVersionRequiredError()
+            before_read = policy_assignment_to_read(current)
+            closed = await self._policy_assignment_repo.close(
+                self._session,
+                company_id=company_id,
+                assignment_id=current.id,
+                effective_to=body.effective_from - timedelta(days=1),
+                expected_version=expected_version,
+                now=now,
+            )
+            if closed is None:
+                latest = await self._policy_assignment_repo.get(
+                    self._session, company_id=company_id, assignment_id=current.id
+                )
+                if latest is None:
+                    raise NotFoundError("Resource not found")
+                raise StaleResourceError(
+                    "This assignment has been modified by another request",
+                    current=policy_assignment_to_audit_dict(policy_assignment_to_read(latest)),
+                )
+
+        assignment_id = uuid4()
+        try:
+            row = await self._policy_assignment_repo.insert(
+                self._session,
+                data={
+                    "id": assignment_id,
+                    "company_id": company_id,
+                    "policy_kind": body.policy_kind,
+                    "policy_id": body.policy_id,
+                    "scope_type": body.scope_type,
+                    "scope_id": body.scope_id,
+                    "effective_from": body.effective_from,
+                    "effective_to": body.effective_to,
+                    "priority": body.priority,
+                    "reason": body.reason,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise PolicyAssignmentOverlapError() from exc
+
+        read = policy_assignment_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="POLICY_ASSIGNMENT_CHANGED",
+            entity_type="policy_assignment",
+            entity_id=assignment_id,
+            before=policy_assignment_to_audit_dict(before_read)
+            if before_read is not None
+            else None,
+            after=policy_assignment_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_policy_assignments(
+        self,
+        company_id: UUID,
+        *,
+        policy_kind: str | None = None,
+        scope_type: str | None = None,
+        scope_id: UUID | None = None,
+    ) -> list[PolicyAssignmentRead]:
+        rows = await self._policy_assignment_repo.list_assignments(
+            self._session,
+            company_id=company_id,
+            policy_kind=policy_kind,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        return [policy_assignment_to_read(row) for row in rows]
+
+    async def resolve_calendar_for_employee(
+        self, company_id: UUID, employee_id: UUID, target_date: date
+    ) -> CalendarResolutionRead:
+        return await self._calendar_resolution.resolve_for_employee(
+            company_id, employee_id, target_date
         )
 
 

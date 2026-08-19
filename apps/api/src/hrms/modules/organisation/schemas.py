@@ -3,7 +3,7 @@
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import time
+from datetime import date, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID
@@ -18,12 +18,22 @@ if TYPE_CHECKING:
 
     from hrms.modules.organisation.models import (
         Branch,
+        CalendarException,
         CompanySetupProgress,
         Department,
         Designation,
         Grade,
+        Holiday,
+        HolidayCalendar,
         LegalEntity,
+        PolicyAssignment,
         Shift,
+        ShiftBreak,
+        ShiftDutyBlock,
+        ShiftVersion,
+        WeeklyOffPattern,
+        WeeklyOffRule,
+        WorkCalendar,
     )
     from hrms.modules.organisation.repository import OrganisationRepository
 
@@ -978,65 +988,95 @@ _TIME_PATTERN = r"^\d{2}:\d{2}$"
 
 
 class ShiftCreate(BaseModel):
+    """W2 — trimmed to identity-only (name/code). The nine schedule/evaluation fields the
+    legacy `Shift` used to accept here now live on `ShiftVersion`
+    (docs/architecture/WORKFORCE_ATTENDANCE_ARCHITECTURE.md §9-§10)."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=100)
     code: str | None = Field(default=None, max_length=30)
-    start_time: str = Field(pattern=_TIME_PATTERN)
-    end_time: str = Field(pattern=_TIME_PATTERN)
-    break_minutes_paid: int = Field(default=0, ge=0)
-    break_minutes_unpaid: int = Field(default=0, ge=0)
-    grace_in_minutes: int = Field(default=0, ge=0)
-    grace_out_minutes: int = Field(default=0, ge=0)
-    half_day_threshold_hours: Decimal | None = Field(default=None, ge=0)
-    min_hours_full_day: Decimal | None = Field(default=None, ge=0)
-    is_night_shift: bool = False
-    is_cross_midnight: bool = False
-    is_ot_eligible: bool = False
 
 
 class ShiftUpdate(BaseModel):
+    """W2 — trimmed to identity-only (name/code/is_active). See `ShiftCreate`."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=100)
     code: str | None = Field(default=None, max_length=30)
-    start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
-    end_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
-    break_minutes_paid: int | None = Field(default=None, ge=0)
-    break_minutes_unpaid: int | None = Field(default=None, ge=0)
-    grace_in_minutes: int | None = Field(default=None, ge=0)
-    grace_out_minutes: int | None = Field(default=None, ge=0)
-    half_day_threshold_hours: Decimal | None = Field(default=None, ge=0)
-    min_hours_full_day: Decimal | None = Field(default=None, ge=0)
-    is_night_shift: bool | None = None
-    is_cross_midnight: bool | None = None
-    is_ot_eligible: bool | None = None
     is_active: bool | None = None
 
 
 class ShiftRead(BaseModel):
+    """The nine legacy schedule/evaluation fields below are **deprecated, read-only, and
+    frozen at W2-migration time** — kept for audit/back-compat continuity only, never written
+    again by W2+ code (superseded by `ShiftVersion`/`ShiftBreak`, see field-level
+    descriptions). `current_version_id`/`draft_version_id` are cheap lookups so a caller knows
+    schedule state without a second round trip."""
+
     id: UUID
     company_id: UUID
     name: str
     code: str | None
-    start_time: str
-    end_time: str
-    break_minutes_paid: int
-    break_minutes_unpaid: int
-    grace_in_minutes: int
-    grace_out_minutes: int
-    half_day_threshold_hours: Decimal | None
-    min_hours_full_day: Decimal | None
-    is_night_shift: bool
-    is_cross_midnight: bool
-    is_ot_eligible: bool
+    start_time: str = Field(
+        description="Deprecated — frozen at W2 migration time, superseded by "
+        "ShiftVersion.start_time. Never written again."
+    )
+    end_time: str = Field(
+        description="Deprecated — frozen at W2 migration time, superseded by "
+        "ShiftVersion.end_time. Never written again."
+    )
+    break_minutes_paid: int = Field(
+        description="Deprecated — frozen at W2 migration time, superseded by ShiftBreak rows "
+        "(is_paid=true). Never written again."
+    )
+    break_minutes_unpaid: int = Field(
+        description="Deprecated — frozen at W2 migration time, superseded by ShiftBreak rows "
+        "(is_paid=false). Never written again."
+    )
+    grace_in_minutes: int = Field(
+        description="Deprecated — frozen at W2 migration time; grace-period fields migrate "
+        "off Shift in W3 (AttendancePolicy). Never written again."
+    )
+    grace_out_minutes: int = Field(
+        description="Deprecated — frozen at W2 migration time; grace-period fields migrate "
+        "off Shift in W3 (AttendancePolicy). Never written again."
+    )
+    half_day_threshold_hours: Decimal | None = Field(
+        description="Deprecated — frozen at W2 migration time; half-day/min-hours fields "
+        "migrate off Shift in W3 (AttendancePolicy). Never written again."
+    )
+    min_hours_full_day: Decimal | None = Field(
+        description="Deprecated — frozen at W2 migration time; half-day/min-hours fields "
+        "migrate off Shift in W3 (AttendancePolicy). Never written again."
+    )
+    is_night_shift: bool = Field(
+        description="Deprecated — frozen at W2 migration time, superseded by "
+        "ShiftVersion.is_night_shift. Never written again."
+    )
+    is_cross_midnight: bool = Field(
+        description="Deprecated — frozen at W2 migration time, superseded by "
+        "ShiftVersion.is_cross_midnight. Never written again."
+    )
+    is_ot_eligible: bool = Field(
+        description="Deprecated — frozen at W2 migration time, superseded by "
+        "ShiftVersion.is_ot_eligible. Never written again."
+    )
     is_active: bool
     version: int
     created_at: str
     updated_at: str
+    current_version_id: UUID | None = None
+    draft_version_id: UUID | None = None
 
 
-def shift_to_read(shift: "Shift") -> ShiftRead:
+def shift_to_read(
+    shift: "Shift",
+    *,
+    current_version_id: UUID | None = None,
+    draft_version_id: UUID | None = None,
+) -> ShiftRead:
     return ShiftRead(
         id=shift.id,
         company_id=shift.company_id,
@@ -1057,6 +1097,8 @@ def shift_to_read(shift: "Shift") -> ShiftRead:
         version=shift.version,
         created_at=_format_timestamp(shift.created_at) or "",
         updated_at=_format_timestamp(shift.updated_at) or "",
+        current_version_id=current_version_id,
+        draft_version_id=draft_version_id,
     )
 
 
@@ -1066,13 +1108,871 @@ def shift_to_audit_dict(shift: ShiftRead) -> dict[str, Any]:
 
 def build_shift_update_values(patch: ShiftUpdate) -> dict[str, Any]:
     """Only fields explicitly present in the request are applied — unset fields must not
-    clobber existing values (mirrors `build_grade_update_values`). `start_time`/`end_time`
-    are parsed from `"HH:MM"` to `datetime.time` here, mirroring `CompanyProfileUpdate`'s own
-    `business_hours` handling."""
+    clobber existing values (mirrors `build_grade_update_values`)."""
+    return {field: getattr(patch, field) for field in patch.model_fields_set}
+
+
+# ---------------------------------------------------------------------------
+# Shift + Break System (W2) — ShiftVersion, ShiftBreak, ShiftDutyBlock.
+# docs/architecture/WORKFORCE_ATTENDANCE_ARCHITECTURE.md §9-§10.
+# ---------------------------------------------------------------------------
+
+_SHIFT_VERSION_TYPES = ("FIXED", "FLEXIBLE", "SPLIT")
+_SHIFT_BREAK_KINDS = ("FIXED_WINDOW", "FLEXIBLE_DURATION")
+
+
+class ShiftBreakCreate(BaseModel):
+    """Nested input for `ShiftVersionCreate.breaks`/`ShiftVersionUpdate.breaks` — no
+    independent lifecycle, no standalone endpoint (full-replace only). `crosses_midnight` is
+    not client-settable — server-derived from the time comparison, same posture as
+    `ShiftVersion.is_cross_midnight`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    break_kind: str
+    start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    end_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    window_start: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    window_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    min_minutes: int | None = Field(default=None, ge=0)
+    max_minutes: int | None = Field(default=None, ge=0)
+    scheduled_minutes: int | None = Field(default=None, ge=0)
+    is_paid: bool = False
+    is_mandatory: bool = True
+    allows_split: bool = False
+    sort_order: int = 0
+
+    @field_validator("break_kind")
+    @classmethod
+    def validate_break_kind(cls, value: str) -> str:
+        if value not in _SHIFT_BREAK_KINDS:
+            raise ValueError(f"break_kind must be one of {_SHIFT_BREAK_KINDS}")
+        return value
+
+
+class ShiftBreakRead(BaseModel):
+    id: UUID
+    shift_version_id: UUID
+    name: str
+    break_kind: str
+    start_time: str | None
+    end_time: str | None
+    window_start: str | None
+    window_end: str | None
+    min_minutes: int | None
+    max_minutes: int | None
+    scheduled_minutes: int | None
+    is_paid: bool
+    is_mandatory: bool
+    allows_split: bool
+    crosses_midnight: bool
+    sort_order: int
+
+
+def shift_break_to_read(row: "ShiftBreak") -> ShiftBreakRead:
+    return ShiftBreakRead(
+        id=row.id,
+        shift_version_id=row.shift_version_id,
+        name=row.name,
+        break_kind=row.break_kind,
+        start_time=_format_time(row.start_time),
+        end_time=_format_time(row.end_time),
+        window_start=_format_time(row.window_start),
+        window_end=_format_time(row.window_end),
+        min_minutes=row.min_minutes,
+        max_minutes=row.max_minutes,
+        scheduled_minutes=row.scheduled_minutes,
+        is_paid=row.is_paid,
+        is_mandatory=row.is_mandatory,
+        allows_split=row.allows_split,
+        crosses_midnight=row.crosses_midnight,
+        sort_order=row.sort_order,
+    )
+
+
+class ShiftDutyBlockCreate(BaseModel):
+    """Nested input for `ShiftVersionCreate.duty_blocks`/`ShiftVersionUpdate.duty_blocks` —
+    SPLIT shift types only, no independent lifecycle. `crosses_midnight` is not
+    client-settable — server-derived from the time comparison."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int = Field(ge=1)
+    start_time: str = Field(pattern=_TIME_PATTERN)
+    end_time: str = Field(pattern=_TIME_PATTERN)
+
+
+class ShiftDutyBlockRead(BaseModel):
+    id: UUID
+    shift_version_id: UUID
+    sequence: int
+    start_time: str
+    end_time: str
+    crosses_midnight: bool
+
+
+def shift_duty_block_to_read(row: "ShiftDutyBlock") -> ShiftDutyBlockRead:
+    return ShiftDutyBlockRead(
+        id=row.id,
+        shift_version_id=row.shift_version_id,
+        sequence=row.sequence,
+        start_time=_format_time(row.start_time) or "",
+        end_time=_format_time(row.end_time) or "",
+        crosses_midnight=row.crosses_midnight,
+    )
+
+
+class ShiftVersionCreate(BaseModel):
+    """Creates a new open DRAFT `ShiftVersion` for a shift (409
+    `SHIFT_VERSION_DRAFT_ALREADY_EXISTS` if one is already open). All fields are optional —
+    a draft may be incomplete mid-edit; only `POST .../publish` enforces the full,
+    type-specific field set. `is_cross_midnight` is never client-settable — always
+    server-derived from the time fields. `is_night_shift` IS client-settable: architecture
+    §9.5 is explicit that it "is an explicit flag (night OT classification), not inferred
+    solely from times" — unlike `is_cross_midnight`, which the same section says "must be
+    consistent with start/end (already validated)"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    shift_type: str | None = None
+    timezone: str | None = Field(default=None, max_length=64)
+    effective_from: date | None = None
+    start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    end_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    window_start: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    window_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    core_start: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    core_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    required_minutes: int | None = Field(default=None, ge=0)
+    scheduled_minutes: int | None = Field(default=None, ge=0)
+    min_scheduled_minutes: int | None = Field(default=None, ge=0)
+    max_scheduled_minutes: int | None = Field(default=None, ge=0)
+    is_night_shift: bool = False
+    is_ot_eligible: bool = False
+    operates_on_holiday: bool = False
+    operates_on_weekly_off: bool = False
+    weekly_off_pattern_id: UUID | None = None
+    breaks: list[ShiftBreakCreate] | None = None
+    duty_blocks: list[ShiftDutyBlockCreate] | None = None
+
+    @field_validator("shift_type")
+    @classmethod
+    def validate_shift_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in _SHIFT_VERSION_TYPES:
+            raise ValueError(f"shift_type must be one of {_SHIFT_VERSION_TYPES}")
+        return value
+
+
+class ShiftVersionUpdate(BaseModel):
+    """Draft-only PATCH (409 `SHIFT_VERSION_NOT_DRAFT` once published). `breaks`/
+    `duty_blocks`, when present, **replace** the entire nested collection atomically — no
+    separate sub-resource CRUD, since they have no independent lifecycle (mirrors
+    `WeeklyOffPatternUpdate.rules`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    shift_type: str | None = None
+    timezone: str | None = Field(default=None, max_length=64)
+    effective_from: date | None = None
+    start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    end_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    window_start: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    window_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    core_start: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    core_end: str | None = Field(default=None, pattern=_TIME_PATTERN)
+    required_minutes: int | None = Field(default=None, ge=0)
+    scheduled_minutes: int | None = Field(default=None, ge=0)
+    min_scheduled_minutes: int | None = Field(default=None, ge=0)
+    max_scheduled_minutes: int | None = Field(default=None, ge=0)
+    is_night_shift: bool | None = None
+    is_ot_eligible: bool | None = None
+    operates_on_holiday: bool | None = None
+    operates_on_weekly_off: bool | None = None
+    weekly_off_pattern_id: UUID | None = None
+    breaks: list[ShiftBreakCreate] | None = None
+    duty_blocks: list[ShiftDutyBlockCreate] | None = None
+
+    @field_validator("shift_type")
+    @classmethod
+    def validate_shift_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in _SHIFT_VERSION_TYPES:
+            raise ValueError(f"shift_type must be one of {_SHIFT_VERSION_TYPES}")
+        return value
+
+
+class ShiftVersionPublishRequest(BaseModel):
+    """Body for `POST /shifts/{shift_id}/versions/{version_id}/publish`. `If-Match` (header,
+    handled at the router layer) carries the draft's own `expected_version`;
+    `expected_previous_version` is the **second** concurrency token in this two-token flow —
+    required only when an open PUBLISHED version already exists for this shift, so it can be
+    closed as part of the same publish (mirrors `create_policy_assignment`'s insert-new/
+    close-previous idiom exactly, just with two tokens instead of one since two different rows
+    are being mutated)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    publish_reason: str | None = None
+    expected_previous_version: int | None = None
+
+
+class ShiftVersionRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    shift_id: UUID
+    status: str
+    version: int
+    effective_from: date | None
+    effective_to: date | None
+    shift_type: str | None
+    timezone: str | None
+    start_time: str | None
+    end_time: str | None
+    window_start: str | None
+    window_end: str | None
+    core_start: str | None
+    core_end: str | None
+    required_minutes: int | None
+    scheduled_minutes: int | None
+    min_scheduled_minutes: int | None
+    max_scheduled_minutes: int | None
+    is_night_shift: bool
+    is_cross_midnight: bool
+    is_ot_eligible: bool
+    operates_on_holiday: bool
+    operates_on_weekly_off: bool
+    weekly_off_pattern_id: UUID | None
+    publish_reason: str | None
+    published_at: str | None
+    published_by: UUID | None
+    created_at: str
+    updated_at: str
+    breaks: list[ShiftBreakRead]
+    duty_blocks: list[ShiftDutyBlockRead]
+
+
+def shift_version_to_read(
+    row: "ShiftVersion",
+    breaks: list["ShiftBreak"],
+    duty_blocks: list["ShiftDutyBlock"],
+) -> ShiftVersionRead:
+    return ShiftVersionRead(
+        id=row.id,
+        company_id=row.company_id,
+        shift_id=row.shift_id,
+        status=row.status,
+        version=row.version,
+        effective_from=row.effective_from,
+        effective_to=row.effective_to,
+        shift_type=row.shift_type,
+        timezone=row.timezone,
+        start_time=_format_time(row.start_time),
+        end_time=_format_time(row.end_time),
+        window_start=_format_time(row.window_start),
+        window_end=_format_time(row.window_end),
+        core_start=_format_time(row.core_start),
+        core_end=_format_time(row.core_end),
+        required_minutes=row.required_minutes,
+        scheduled_minutes=row.scheduled_minutes,
+        min_scheduled_minutes=row.min_scheduled_minutes,
+        max_scheduled_minutes=row.max_scheduled_minutes,
+        is_night_shift=row.is_night_shift,
+        is_cross_midnight=row.is_cross_midnight,
+        is_ot_eligible=row.is_ot_eligible,
+        operates_on_holiday=row.operates_on_holiday,
+        operates_on_weekly_off=row.operates_on_weekly_off,
+        weekly_off_pattern_id=row.weekly_off_pattern_id,
+        publish_reason=row.publish_reason,
+        published_at=_format_timestamp(row.published_at),
+        published_by=row.published_by,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+        breaks=[shift_break_to_read(b) for b in breaks],
+        duty_blocks=[shift_duty_block_to_read(d) for d in duty_blocks],
+    )
+
+
+def shift_version_to_audit_dict(row: ShiftVersionRead) -> dict[str, Any]:
+    return row.model_dump(mode="json")
+
+
+def build_shift_version_update_values(patch: ShiftVersionUpdate) -> dict[str, Any]:
+    """Only fields explicitly present in the request are applied; `breaks`/`duty_blocks` are
+    handled separately (full-replace), never passed through to the `shift_version` row
+    update."""
+    return {
+        field: getattr(patch, field)
+        for field in patch.model_fields_set
+        if field not in ("breaks", "duty_blocks")
+    }
+
+
+# ---------------------------------------------------------------------------
+# Workforce Calendar (W1) — HolidayCalendar, Holiday, WeeklyOffPattern,
+# WorkCalendar, CalendarException, PolicyAssignment.
+# docs/architecture/WORKFORCE_ATTENDANCE_ARCHITECTURE.md §§6-8, 15-16.
+# ---------------------------------------------------------------------------
+
+_HOLIDAY_CALENDAR_KINDS = ("NATIONAL", "REGIONAL", "COMPANY", "LOCATION")
+_HOLIDAY_TYPES = ("PUBLIC", "COMPANY", "OPTIONAL", "RESTRICTED", "WORKING_HOLIDAY")
+_WEEKLY_OFF_PATTERN_KINDS = ("FIXED_WEEKDAYS", "NTH_WEEKDAY", "ALTERNATE", "CUSTOM")
+_CALENDAR_EXCEPTION_TYPES = ("SPECIAL_WORKING", "SHUTDOWN", "SUBSTITUTE_HOLIDAY", "CANCEL_HOLIDAY")
+_POLICY_KINDS = (
+    "WORK_CALENDAR",
+    "WEEKLY_OFF",
+    "ATTENDANCE_POLICY",
+    "OVERTIME_POLICY",
+    "REGULARIZATION_POLICY",
+)
+_SCOPE_TYPES = (
+    "COMPANY",
+    "LEGAL_ENTITY",
+    "BRANCH",
+    "DEPARTMENT",
+    "GRADE",
+    "DESIGNATION",
+    "SHIFT",
+    "EMPLOYEE",
+)
+_CALENDAR_DAY_TYPES = ("WORKING", "WEEKLY_OFF", "HOLIDAY", "SPECIAL_WORKING", "SHUTDOWN")
+
+
+class HolidayCalendarCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=150)
+    code: str | None = Field(default=None, max_length=30)
+    kind: str = "COMPANY"
+    state_code: str | None = Field(default=None, max_length=10)
+    valid_from: date | None = None
+    valid_to: date | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def validate_kind(cls, value: str) -> str:
+        if value not in _HOLIDAY_CALENDAR_KINDS:
+            raise ValueError(f"kind must be one of {_HOLIDAY_CALENDAR_KINDS}")
+        return value
+
+
+class HolidayCalendarUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    code: str | None = Field(default=None, max_length=30)
+    kind: str | None = None
+    state_code: str | None = Field(default=None, max_length=10)
+    valid_from: date | None = None
+    valid_to: date | None = None
+    is_active: bool | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def validate_kind(cls, value: str | None) -> str | None:
+        if value is not None and value not in _HOLIDAY_CALENDAR_KINDS:
+            raise ValueError(f"kind must be one of {_HOLIDAY_CALENDAR_KINDS}")
+        return value
+
+
+class HolidayCalendarRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    name: str
+    code: str | None
+    kind: str
+    state_code: str | None
+    valid_from: date | None
+    valid_to: date | None
+    is_active: bool
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def holiday_calendar_to_read(row: "HolidayCalendar") -> HolidayCalendarRead:
+    return HolidayCalendarRead(
+        id=row.id,
+        company_id=row.company_id,
+        name=row.name,
+        code=row.code,
+        kind=row.kind,
+        state_code=row.state_code,
+        valid_from=row.valid_from,
+        valid_to=row.valid_to,
+        is_active=row.is_active,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def holiday_calendar_to_audit_dict(row: HolidayCalendarRead) -> dict[str, Any]:
+    return row.model_dump(mode="json")
+
+
+def build_holiday_calendar_update_values(patch: HolidayCalendarUpdate) -> dict[str, Any]:
+    return {field: getattr(patch, field) for field in patch.model_fields_set}
+
+
+class HolidayCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date: date
+    name: str = Field(min_length=1, max_length=150)
+    holiday_type: str = "PUBLIC"
+    is_paid: bool = True
+    is_working: bool = False
+    region_note: str | None = Field(default=None, max_length=200)
+    replaced_holiday_id: UUID | None = None
+
+    @field_validator("holiday_type")
+    @classmethod
+    def validate_holiday_type(cls, value: str) -> str:
+        if value not in _HOLIDAY_TYPES:
+            raise ValueError(f"holiday_type must be one of {_HOLIDAY_TYPES}")
+        return value
+
+
+class HolidayUpdate(BaseModel):
+    """Never accepts `date`/`calendar_id` — a holiday's date is immutable after creation
+    (architecture §25: "no PATCH of used dates"). Correcting a wrong date is deactivate this
+    row + create a new one, preserving history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    holiday_type: str | None = None
+    is_paid: bool | None = None
+    is_working: bool | None = None
+    region_note: str | None = Field(default=None, max_length=200)
+    replaced_holiday_id: UUID | None = None
+    is_active: bool | None = None
+
+    @field_validator("holiday_type")
+    @classmethod
+    def validate_holiday_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in _HOLIDAY_TYPES:
+            raise ValueError(f"holiday_type must be one of {_HOLIDAY_TYPES}")
+        return value
+
+
+class HolidayRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    calendar_id: UUID
+    date: date
+    name: str
+    is_optional: bool
+    holiday_type: str
+    is_paid: bool
+    is_working: bool
+    region_note: str | None
+    replaced_holiday_id: UUID | None
+    is_active: bool
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def holiday_to_read(row: "Holiday") -> HolidayRead:
+    return HolidayRead(
+        id=row.id,
+        company_id=row.company_id,
+        calendar_id=row.calendar_id,
+        date=row.date,
+        name=row.name,
+        is_optional=row.is_optional,
+        holiday_type=row.holiday_type,
+        is_paid=row.is_paid,
+        is_working=row.is_working,
+        region_note=row.region_note,
+        replaced_holiday_id=row.replaced_holiday_id,
+        is_active=row.is_active,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def holiday_to_audit_dict(row: HolidayRead) -> dict[str, Any]:
+    return row.model_dump(mode="json")
+
+
+def build_holiday_update_values(patch: HolidayUpdate) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for field in patch.model_fields_set:
-        value = getattr(patch, field)
-        if field in ("start_time", "end_time") and value is not None:
-            value = _parse_time(value)
-        values[field] = value
+        values[field] = getattr(patch, field)
+    # `is_optional` is a deprecated shadow of `holiday_type == 'OPTIONAL'` (§7.2) — kept in
+    # lockstep whenever `holiday_type` changes so old readers of the legacy column don't see
+    # stale data.
+    if "holiday_type" in values:
+        values["is_optional"] = values["holiday_type"] == "OPTIONAL"
     return values
+
+
+class WeeklyOffRuleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    weekday: int = Field(ge=0, le=6)
+    nth_in_month: int | None = None
+    cycle_start_date: date | None = None
+    off_fraction: Decimal = Decimal("1.00")
+    week_parity: str | None = None
+
+    @field_validator("nth_in_month")
+    @classmethod
+    def validate_nth_in_month(cls, value: int | None) -> int | None:
+        if value is not None and value not in (-1, 1, 2, 3, 4, 5):
+            raise ValueError("nth_in_month must be one of -1, 1, 2, 3, 4, 5")
+        return value
+
+    @field_validator("off_fraction")
+    @classmethod
+    def validate_off_fraction(cls, value: Decimal) -> Decimal:
+        if value not in (Decimal("0.50"), Decimal("1.00")):
+            raise ValueError("off_fraction must be 0.50 or 1.00")
+        return value
+
+    @field_validator("week_parity")
+    @classmethod
+    def validate_week_parity(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("EVEN", "ODD"):
+            raise ValueError("week_parity must be EVEN or ODD")
+        return value
+
+
+class WeeklyOffRuleRead(BaseModel):
+    id: UUID
+    weekday: int
+    nth_in_month: int | None
+    cycle_start_date: date | None
+    off_fraction: Decimal
+    week_parity: str | None
+
+
+def weekly_off_rule_to_read(row: "WeeklyOffRule") -> WeeklyOffRuleRead:
+    return WeeklyOffRuleRead(
+        id=row.id,
+        weekday=row.weekday,
+        nth_in_month=row.nth_in_month,
+        cycle_start_date=row.cycle_start_date,
+        off_fraction=row.off_fraction,
+        week_parity=row.week_parity,
+    )
+
+
+class WeeklyOffPatternCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=150)
+    code: str | None = Field(default=None, max_length=30)
+    pattern_kind: str
+    rules: list[WeeklyOffRuleInput] = Field(default_factory=list, min_length=1)
+
+    @field_validator("pattern_kind")
+    @classmethod
+    def validate_pattern_kind(cls, value: str) -> str:
+        if value not in _WEEKLY_OFF_PATTERN_KINDS:
+            raise ValueError(f"pattern_kind must be one of {_WEEKLY_OFF_PATTERN_KINDS}")
+        return value
+
+
+class WeeklyOffPatternUpdate(BaseModel):
+    """`rules`, when present, **replaces** the entire rule set atomically (simpler and safer
+    than diffing individual rule rows for a typed-but-small child collection)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    code: str | None = Field(default=None, max_length=30)
+    pattern_kind: str | None = None
+    rules: list[WeeklyOffRuleInput] | None = None
+    is_active: bool | None = None
+
+    @field_validator("pattern_kind")
+    @classmethod
+    def validate_pattern_kind(cls, value: str | None) -> str | None:
+        if value is not None and value not in _WEEKLY_OFF_PATTERN_KINDS:
+            raise ValueError(f"pattern_kind must be one of {_WEEKLY_OFF_PATTERN_KINDS}")
+        return value
+
+
+class WeeklyOffPatternRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    name: str
+    code: str | None
+    pattern_kind: str
+    is_active: bool
+    version: int
+    created_at: str
+    updated_at: str
+    rules: list[WeeklyOffRuleRead]
+
+
+def weekly_off_pattern_to_read(
+    row: "WeeklyOffPattern", rules: list["WeeklyOffRule"]
+) -> WeeklyOffPatternRead:
+    return WeeklyOffPatternRead(
+        id=row.id,
+        company_id=row.company_id,
+        name=row.name,
+        code=row.code,
+        pattern_kind=row.pattern_kind,
+        is_active=row.is_active,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+        rules=[weekly_off_rule_to_read(r) for r in rules],
+    )
+
+
+def weekly_off_pattern_to_audit_dict(row: WeeklyOffPatternRead) -> dict[str, Any]:
+    return row.model_dump(mode="json")
+
+
+def build_weekly_off_pattern_update_values(patch: WeeklyOffPatternUpdate) -> dict[str, Any]:
+    return {field: getattr(patch, field) for field in patch.model_fields_set if field != "rules"}
+
+
+class WorkCalendarCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=150)
+    code: str | None = Field(default=None, max_length=30)
+    description: str | None = None
+    weekly_off_pattern_id: UUID | None = None
+    restricted_holidays_are_off_by_default: bool = False
+    holiday_calendar_ids: list[UUID] = Field(default_factory=list)
+
+
+class WorkCalendarUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=150)
+    code: str | None = Field(default=None, max_length=30)
+    description: str | None = None
+    weekly_off_pattern_id: UUID | None = None
+    restricted_holidays_are_off_by_default: bool | None = None
+    holiday_calendar_ids: list[UUID] | None = None
+    is_active: bool | None = None
+
+
+class WorkCalendarRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    name: str
+    code: str | None
+    description: str | None
+    weekly_off_pattern_id: UUID | None
+    restricted_holidays_are_off_by_default: bool
+    is_active: bool
+    version: int
+    created_at: str
+    updated_at: str
+    holiday_calendar_ids: list[UUID]
+
+
+def work_calendar_to_read(
+    row: "WorkCalendar", holiday_calendar_ids: list[UUID]
+) -> WorkCalendarRead:
+    return WorkCalendarRead(
+        id=row.id,
+        company_id=row.company_id,
+        name=row.name,
+        code=row.code,
+        description=row.description,
+        weekly_off_pattern_id=row.weekly_off_pattern_id,
+        restricted_holidays_are_off_by_default=row.restricted_holidays_are_off_by_default,
+        is_active=row.is_active,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+        holiday_calendar_ids=holiday_calendar_ids,
+    )
+
+
+def work_calendar_to_audit_dict(row: WorkCalendarRead) -> dict[str, Any]:
+    return row.model_dump(mode="json")
+
+
+def build_work_calendar_update_values(patch: WorkCalendarUpdate) -> dict[str, Any]:
+    return {
+        field: getattr(patch, field)
+        for field in patch.model_fields_set
+        if field != "holiday_calendar_ids"
+    }
+
+
+class CalendarExceptionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    exception_date: date
+    exception_type: str
+    name: str | None = Field(default=None, max_length=150)
+    reason: str | None = None
+    is_paid: bool | None = None
+
+    @field_validator("exception_type")
+    @classmethod
+    def validate_exception_type(cls, value: str) -> str:
+        if value not in _CALENDAR_EXCEPTION_TYPES:
+            raise ValueError(f"exception_type must be one of {_CALENDAR_EXCEPTION_TYPES}")
+        return value
+
+
+class CalendarExceptionUpdate(BaseModel):
+    """Never accepts `exception_date`/`exception_type` — corrections are deactivate-then-
+    insert (architecture §7.3), matching `HolidayUpdate`'s immutable-date posture."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=150)
+    reason: str | None = None
+    is_paid: bool | None = None
+    is_active: bool | None = None
+
+
+class CalendarExceptionRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    work_calendar_id: UUID
+    exception_date: date
+    exception_type: str
+    name: str | None
+    reason: str | None
+    is_paid: bool | None
+    is_active: bool
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def calendar_exception_to_read(row: "CalendarException") -> CalendarExceptionRead:
+    return CalendarExceptionRead(
+        id=row.id,
+        company_id=row.company_id,
+        work_calendar_id=row.work_calendar_id,
+        exception_date=row.exception_date,
+        exception_type=row.exception_type,
+        name=row.name,
+        reason=row.reason,
+        is_paid=row.is_paid,
+        is_active=row.is_active,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def calendar_exception_to_audit_dict(row: CalendarExceptionRead) -> dict[str, Any]:
+    return row.model_dump(mode="json")
+
+
+def build_calendar_exception_update_values(patch: CalendarExceptionUpdate) -> dict[str, Any]:
+    return {field: getattr(patch, field) for field in patch.model_fields_set}
+
+
+class PolicyAssignmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy_kind: str
+    policy_id: UUID
+    scope_type: str
+    scope_id: UUID | None = None
+    effective_from: date
+    effective_to: date | None = None
+    priority: int = 0
+    reason: str | None = None
+
+    @field_validator("policy_kind")
+    @classmethod
+    def validate_policy_kind(cls, value: str) -> str:
+        if value not in _POLICY_KINDS:
+            raise ValueError(f"policy_kind must be one of {_POLICY_KINDS} in this slice")
+        return value
+
+    @field_validator("scope_type")
+    @classmethod
+    def validate_scope_type(cls, value: str) -> str:
+        if value not in _SCOPE_TYPES:
+            raise ValueError(f"scope_type must be one of {_SCOPE_TYPES}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_scope_id_matches_scope_type(self) -> Self:
+        if self.scope_type == "COMPANY" and self.scope_id is not None:
+            raise ValueError("scope_id must be omitted when scope_type is COMPANY")
+        if self.scope_type != "COMPANY" and self.scope_id is None:
+            raise ValueError("scope_id is required unless scope_type is COMPANY")
+        return self
+
+
+class PolicyAssignmentRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    policy_kind: str
+    policy_id: UUID
+    scope_type: str
+    scope_id: UUID | None
+    effective_from: date
+    effective_to: date | None
+    priority: int
+    reason: str | None
+    is_active: bool
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def policy_assignment_to_read(row: "PolicyAssignment") -> PolicyAssignmentRead:
+    return PolicyAssignmentRead(
+        id=row.id,
+        company_id=row.company_id,
+        policy_kind=row.policy_kind,
+        policy_id=row.policy_id,
+        scope_type=row.scope_type,
+        scope_id=row.scope_id,
+        effective_from=row.effective_from,
+        effective_to=row.effective_to,
+        priority=row.priority,
+        reason=row.reason,
+        is_active=row.is_active,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def policy_assignment_to_audit_dict(row: PolicyAssignmentRead) -> dict[str, Any]:
+    return row.model_dump(mode="json")
+
+
+class DayTypeRead(BaseModel):
+    """Computed classification of a single date against a WorkCalendar — never persisted (no
+    `AttendanceDay` exists yet). See `calendar_resolution.classify_work_calendar_date`."""
+
+    date: date
+    day_type: str
+    holiday_name: str | None = None
+    exception_type: str | None = None
+    holiday_on_weekly_off: bool = False
+    is_holiday_named: bool = False
+    optional_holiday_name: str | None = None
+    restricted_holiday_name: str | None = None
+
+
+class CalendarResolutionRead(BaseModel):
+    """Response for `GET /calendar-resolution?employee_id=&date=` — the full WD-09 precedence
+    walk plus the resulting day-type classification, or `config_incomplete=true` (fail-closed,
+    WD-21) when no WorkCalendar resolves for this employee+date."""
+
+    employee_id: UUID
+    date: date
+    config_incomplete: bool
+    work_calendar_id: UUID | None = None
+    work_calendar_name: str | None = None
+    resolved_scope_type: str | None = None
+    weekly_off_pattern_id: UUID | None = None
+    weekly_off_resolved_scope_type: str | None = None
+    day_type: DayTypeRead | None = None

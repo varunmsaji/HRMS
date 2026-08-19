@@ -1,10 +1,10 @@
 """SQLAlchemy queries for the organisation module — no business rules."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text, update
+from sqlalchemy import and_, delete, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import (
@@ -18,16 +18,27 @@ from hrms.core.db.models.identity import (
 )
 from hrms.modules.organisation.models import (
     Branch,
+    CalendarException,
     CompanyFeatureFlag,
     CompanySetupProgress,
     Department,
     Designation,
     Grade,
+    Holiday,
+    HolidayCalendar,
     LegalEntity,
     Plan,
     PlanFeature,
+    PolicyAssignment,
     Shift,
+    ShiftBreak,
+    ShiftDutyBlock,
+    ShiftVersion,
     Subscription,
+    WeeklyOffPattern,
+    WeeklyOffRule,
+    WorkCalendar,
+    WorkCalendarHolidayCalendar,
 )
 
 _TERMINAL_SUBSCRIPTION_STATUSES = ("CANCELED", "EXPIRED")
@@ -688,5 +699,797 @@ class OrganisationRepository:
             )
             .values(**values, version=expected_version + 1, updated_at=now)
             .returning(Shift)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class ShiftVersionRepository:
+    """Mirrors `WeeklyOffPatternRepository`'s shape — a single repo class owns the parent
+    (`ShiftVersion`) plus its typed, no-independent-lifecycle children (`ShiftBreak`,
+    `ShiftDutyBlock`), full-replace on every draft PATCH (`replace_breaks`/
+    `replace_duty_blocks`, mirroring `replace_rules`)."""
+
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> ShiftVersion:
+        row = ShiftVersion(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_versions(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+    ) -> list[ShiftVersion]:
+        stmt = (
+            select(ShiftVersion)
+            .where(
+                ShiftVersion.company_id == company_id,
+                ShiftVersion.shift_id == shift_id,
+                ShiftVersion.deleted_at.is_(None),
+            )
+            # `version` is per-row optimistic-concurrency (resets to 1 on every new row, same
+            # as every other table in this module) — NOT a chronological sequence number, so
+            # ordering by it would not put newer rows first. `created_at` is the actual
+            # creation order.
+            .order_by(ShiftVersion.created_at.desc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID, version_id: UUID
+    ) -> ShiftVersion | None:
+        stmt = select(ShiftVersion).where(
+            ShiftVersion.id == version_id,
+            ShiftVersion.shift_id == shift_id,
+            ShiftVersion.company_id == company_id,
+            ShiftVersion.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_open_draft(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+    ) -> ShiftVersion | None:
+        stmt = select(ShiftVersion).where(
+            ShiftVersion.company_id == company_id,
+            ShiftVersion.shift_id == shift_id,
+            ShiftVersion.status == "DRAFT",
+            ShiftVersion.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_current_published(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+    ) -> ShiftVersion | None:
+        """The open (`effective_to IS NULL`) PUBLISHED version — at most one, by
+        `shift_version_no_overlap`."""
+        stmt = select(ShiftVersion).where(
+            ShiftVersion.company_id == company_id,
+            ShiftVersion.shift_id == shift_id,
+            ShiftVersion.status == "PUBLISHED",
+            ShiftVersion.effective_to.is_(None),
+            ShiftVersion.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def find_effective_as_of(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID, as_of: date
+    ) -> ShiftVersion | None:
+        stmt = select(ShiftVersion).where(
+            ShiftVersion.company_id == company_id,
+            ShiftVersion.shift_id == shift_id,
+            ShiftVersion.status == "PUBLISHED",
+            ShiftVersion.deleted_at.is_(None),
+            ShiftVersion.effective_from <= as_of,
+            or_(ShiftVersion.effective_to.is_(None), ShiftVersion.effective_to >= as_of),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        shift_id: UUID,
+        version_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> ShiftVersion | None:
+        stmt = (
+            update(ShiftVersion)
+            .where(
+                ShiftVersion.id == version_id,
+                ShiftVersion.shift_id == shift_id,
+                ShiftVersion.company_id == company_id,
+                ShiftVersion.version == expected_version,
+                ShiftVersion.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(ShiftVersion)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def close(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        version_id: UUID,
+        effective_to: date,
+        expected_version: int,
+        now: datetime,
+    ) -> ShiftVersion | None:
+        """Sets `effective_to` on a previously-open PUBLISHED version — the one permitted
+        mutation to a published row, mirrors `PolicyAssignmentRepository.close`."""
+        stmt = (
+            update(ShiftVersion)
+            .where(
+                ShiftVersion.id == version_id,
+                ShiftVersion.company_id == company_id,
+                ShiftVersion.version == expected_version,
+                ShiftVersion.deleted_at.is_(None),
+            )
+            .values(effective_to=effective_to, version=expected_version + 1, updated_at=now)
+            .returning(ShiftVersion)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def discard(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        shift_id: UUID,
+        version_id: UUID,
+        expected_version: int,
+        now: datetime,
+    ) -> ShiftVersion | None:
+        stmt = (
+            update(ShiftVersion)
+            .where(
+                ShiftVersion.id == version_id,
+                ShiftVersion.shift_id == shift_id,
+                ShiftVersion.company_id == company_id,
+                ShiftVersion.version == expected_version,
+                ShiftVersion.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, version=expected_version + 1, updated_at=now)
+            .returning(ShiftVersion)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_breaks(
+        self, session: AsyncSession, *, company_id: UUID, shift_version_id: UUID
+    ) -> list[ShiftBreak]:
+        stmt = (
+            select(ShiftBreak)
+            .where(
+                ShiftBreak.company_id == company_id,
+                ShiftBreak.shift_version_id == shift_version_id,
+            )
+            .order_by(ShiftBreak.sort_order)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_breaks_for_versions(
+        self, session: AsyncSession, *, company_id: UUID, version_ids: list[UUID]
+    ) -> list[ShiftBreak]:
+        if not version_ids:
+            return []
+        stmt = (
+            select(ShiftBreak)
+            .where(
+                ShiftBreak.company_id == company_id,
+                ShiftBreak.shift_version_id.in_(version_ids),
+            )
+            .order_by(ShiftBreak.sort_order)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def replace_breaks(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        shift_version_id: UUID,
+        rows: list[dict[str, Any]],
+    ) -> list[ShiftBreak]:
+        """Atomic replace-all — mirrors `WeeklyOffPatternRepository.replace_rules`."""
+        await session.execute(
+            delete(ShiftBreak).where(
+                ShiftBreak.company_id == company_id,
+                ShiftBreak.shift_version_id == shift_version_id,
+            )
+        )
+        created = [ShiftBreak(**row) for row in rows]
+        session.add_all(created)
+        await session.flush()
+        return created
+
+    async def list_duty_blocks(
+        self, session: AsyncSession, *, company_id: UUID, shift_version_id: UUID
+    ) -> list[ShiftDutyBlock]:
+        stmt = (
+            select(ShiftDutyBlock)
+            .where(
+                ShiftDutyBlock.company_id == company_id,
+                ShiftDutyBlock.shift_version_id == shift_version_id,
+            )
+            .order_by(ShiftDutyBlock.sequence)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_duty_blocks_for_versions(
+        self, session: AsyncSession, *, company_id: UUID, version_ids: list[UUID]
+    ) -> list[ShiftDutyBlock]:
+        if not version_ids:
+            return []
+        stmt = (
+            select(ShiftDutyBlock)
+            .where(
+                ShiftDutyBlock.company_id == company_id,
+                ShiftDutyBlock.shift_version_id.in_(version_ids),
+            )
+            .order_by(ShiftDutyBlock.sequence)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def replace_duty_blocks(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        shift_version_id: UUID,
+        rows: list[dict[str, Any]],
+    ) -> list[ShiftDutyBlock]:
+        await session.execute(
+            delete(ShiftDutyBlock).where(
+                ShiftDutyBlock.company_id == company_id,
+                ShiftDutyBlock.shift_version_id == shift_version_id,
+            )
+        )
+        created = [ShiftDutyBlock(**row) for row in rows]
+        session.add_all(created)
+        await session.flush()
+        return created
+
+    async def list_open_and_draft_for_shifts(
+        self, session: AsyncSession, *, company_id: UUID, shift_ids: list[UUID]
+    ) -> list[ShiftVersion]:
+        """Batch lookup for `list_shifts` — the open (`effective_to IS NULL`) PUBLISHED
+        version and/or the open DRAFT, per shift, in one query (avoids N+1)."""
+        if not shift_ids:
+            return []
+        stmt = select(ShiftVersion).where(
+            ShiftVersion.company_id == company_id,
+            ShiftVersion.shift_id.in_(shift_ids),
+            ShiftVersion.deleted_at.is_(None),
+            or_(
+                and_(ShiftVersion.status == "PUBLISHED", ShiftVersion.effective_to.is_(None)),
+                ShiftVersion.status == "DRAFT",
+            ),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+
+class HolidayCalendarRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> HolidayCalendar:
+        row = HolidayCalendar(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_calendars(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[HolidayCalendar]:
+        stmt = (
+            select(HolidayCalendar)
+            .where(HolidayCalendar.company_id == company_id, HolidayCalendar.deleted_at.is_(None))
+            .order_by(HolidayCalendar.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, calendar_id: UUID
+    ) -> HolidayCalendar | None:
+        stmt = select(HolidayCalendar).where(
+            HolidayCalendar.id == calendar_id,
+            HolidayCalendar.company_id == company_id,
+            HolidayCalendar.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        calendar_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> HolidayCalendar | None:
+        stmt = (
+            update(HolidayCalendar)
+            .where(
+                HolidayCalendar.id == calendar_id,
+                HolidayCalendar.company_id == company_id,
+                HolidayCalendar.version == expected_version,
+                HolidayCalendar.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(HolidayCalendar)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class HolidayRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> Holiday:
+        row = Holiday(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_holidays(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        calendar_id: UUID,
+        year: int | None = None,
+    ) -> list[Holiday]:
+        conditions: list[Any] = [
+            Holiday.company_id == company_id,
+            Holiday.calendar_id == calendar_id,
+            Holiday.deleted_at.is_(None),
+        ]
+        if year is not None:
+            conditions.append(text("EXTRACT(YEAR FROM date) = :year").bindparams(year=year))
+        stmt = select(Holiday).where(*conditions).order_by(Holiday.date)
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_for_calendars(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        calendar_ids: list[UUID],
+    ) -> list[Holiday]:
+        """Every active holiday across an ordered set of calendars — the composition read
+        used by calendar resolution (architecture §6.3)."""
+        if not calendar_ids:
+            return []
+        stmt = select(Holiday).where(
+            Holiday.company_id == company_id,
+            Holiday.calendar_id.in_(calendar_ids),
+            Holiday.deleted_at.is_(None),
+            Holiday.is_active.is_(True),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, holiday_id: UUID
+    ) -> Holiday | None:
+        stmt = select(Holiday).where(
+            Holiday.id == holiday_id,
+            Holiday.company_id == company_id,
+            Holiday.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        holiday_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> Holiday | None:
+        stmt = (
+            update(Holiday)
+            .where(
+                Holiday.id == holiday_id,
+                Holiday.company_id == company_id,
+                Holiday.version == expected_version,
+                Holiday.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(Holiday)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class WeeklyOffPatternRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> WeeklyOffPattern:
+        row = WeeklyOffPattern(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_patterns(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[WeeklyOffPattern]:
+        stmt = (
+            select(WeeklyOffPattern)
+            .where(WeeklyOffPattern.company_id == company_id, WeeklyOffPattern.deleted_at.is_(None))
+            .order_by(WeeklyOffPattern.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, pattern_id: UUID
+    ) -> WeeklyOffPattern | None:
+        stmt = select(WeeklyOffPattern).where(
+            WeeklyOffPattern.id == pattern_id,
+            WeeklyOffPattern.company_id == company_id,
+            WeeklyOffPattern.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        pattern_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> WeeklyOffPattern | None:
+        stmt = (
+            update(WeeklyOffPattern)
+            .where(
+                WeeklyOffPattern.id == pattern_id,
+                WeeklyOffPattern.company_id == company_id,
+                WeeklyOffPattern.version == expected_version,
+                WeeklyOffPattern.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(WeeklyOffPattern)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_rules(
+        self, session: AsyncSession, *, company_id: UUID, pattern_id: UUID
+    ) -> list[WeeklyOffRule]:
+        stmt = (
+            select(WeeklyOffRule)
+            .where(WeeklyOffRule.company_id == company_id, WeeklyOffRule.pattern_id == pattern_id)
+            .order_by(WeeklyOffRule.weekday)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_rules_for_patterns(
+        self, session: AsyncSession, *, company_id: UUID, pattern_ids: list[UUID]
+    ) -> list[WeeklyOffRule]:
+        if not pattern_ids:
+            return []
+        stmt = select(WeeklyOffRule).where(
+            WeeklyOffRule.company_id == company_id,
+            WeeklyOffRule.pattern_id.in_(pattern_ids),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def replace_rules(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        pattern_id: UUID,
+        rows: list[dict[str, Any]],
+    ) -> list[WeeklyOffRule]:
+        """Atomic replace-all — the whole rule set is small and typed, so diffing individual
+        rows adds complexity with no real benefit (mirrors `WorkCalendarRepository
+        .replace_holiday_calendar_links`)."""
+        await session.execute(
+            delete(WeeklyOffRule).where(
+                WeeklyOffRule.company_id == company_id, WeeklyOffRule.pattern_id == pattern_id
+            )
+        )
+        created = [WeeklyOffRule(**row) for row in rows]
+        session.add_all(created)
+        await session.flush()
+        return created
+
+
+class WorkCalendarRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> WorkCalendar:
+        row = WorkCalendar(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_work_calendars(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[WorkCalendar]:
+        stmt = (
+            select(WorkCalendar)
+            .where(WorkCalendar.company_id == company_id, WorkCalendar.deleted_at.is_(None))
+            .order_by(WorkCalendar.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, work_calendar_id: UUID
+    ) -> WorkCalendar | None:
+        stmt = select(WorkCalendar).where(
+            WorkCalendar.id == work_calendar_id,
+            WorkCalendar.company_id == company_id,
+            WorkCalendar.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        work_calendar_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> WorkCalendar | None:
+        stmt = (
+            update(WorkCalendar)
+            .where(
+                WorkCalendar.id == work_calendar_id,
+                WorkCalendar.company_id == company_id,
+                WorkCalendar.version == expected_version,
+                WorkCalendar.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(WorkCalendar)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_holiday_calendar_links(
+        self, session: AsyncSession, *, company_id: UUID, work_calendar_id: UUID
+    ) -> list[WorkCalendarHolidayCalendar]:
+        stmt = (
+            select(WorkCalendarHolidayCalendar)
+            .where(
+                WorkCalendarHolidayCalendar.company_id == company_id,
+                WorkCalendarHolidayCalendar.work_calendar_id == work_calendar_id,
+            )
+            .order_by(WorkCalendarHolidayCalendar.sort_order)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def replace_holiday_calendar_links(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        work_calendar_id: UUID,
+        holiday_calendar_ids: list[UUID],
+        now: datetime,
+    ) -> None:
+        await session.execute(
+            delete(WorkCalendarHolidayCalendar).where(
+                WorkCalendarHolidayCalendar.company_id == company_id,
+                WorkCalendarHolidayCalendar.work_calendar_id == work_calendar_id,
+            )
+        )
+        links = [
+            WorkCalendarHolidayCalendar(
+                id=uuid4(),
+                company_id=company_id,
+                work_calendar_id=work_calendar_id,
+                holiday_calendar_id=holiday_calendar_id,
+                sort_order=index,
+                created_at=now,
+            )
+            for index, holiday_calendar_id in enumerate(holiday_calendar_ids)
+        ]
+        session.add_all(links)
+        await session.flush()
+
+
+class CalendarExceptionRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> CalendarException:
+        row = CalendarException(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_exceptions(
+        self, session: AsyncSession, *, company_id: UUID, work_calendar_id: UUID
+    ) -> list[CalendarException]:
+        stmt = (
+            select(CalendarException)
+            .where(
+                CalendarException.company_id == company_id,
+                CalendarException.work_calendar_id == work_calendar_id,
+                CalendarException.deleted_at.is_(None),
+            )
+            .order_by(CalendarException.exception_date)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_active_for_calendars(
+        self, session: AsyncSession, *, company_id: UUID, work_calendar_ids: list[UUID]
+    ) -> list[CalendarException]:
+        if not work_calendar_ids:
+            return []
+        stmt = select(CalendarException).where(
+            CalendarException.company_id == company_id,
+            CalendarException.work_calendar_id.in_(work_calendar_ids),
+            CalendarException.deleted_at.is_(None),
+            CalendarException.is_active.is_(True),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, exception_id: UUID
+    ) -> CalendarException | None:
+        stmt = select(CalendarException).where(
+            CalendarException.id == exception_id,
+            CalendarException.company_id == company_id,
+            CalendarException.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        exception_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> CalendarException | None:
+        stmt = (
+            update(CalendarException)
+            .where(
+                CalendarException.id == exception_id,
+                CalendarException.company_id == company_id,
+                CalendarException.version == expected_version,
+                CalendarException.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(CalendarException)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class PolicyAssignmentRepository:
+    """Insert-new/close-previous only — mirrors `EmployeeAssignmentRepository`
+    (`hrms.modules.employee.repository`), but keyed on `(company_id, policy_kind, scope_type,
+    scope_id)` rather than `employee_id`: there can be many concurrently-open rows across
+    different scope tuples, not one "current" row per key."""
+
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> PolicyAssignment:
+        row = PolicyAssignment(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_current(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        policy_kind: str,
+        scope_type: str,
+        scope_id: UUID | None,
+    ) -> PolicyAssignment | None:
+        stmt = select(PolicyAssignment).where(
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.policy_kind == policy_kind,
+            PolicyAssignment.scope_type == scope_type,
+            PolicyAssignment.scope_id == scope_id
+            if scope_id is not None
+            else PolicyAssignment.scope_id.is_(None),
+            PolicyAssignment.deleted_at.is_(None),
+            PolicyAssignment.effective_to.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, assignment_id: UUID
+    ) -> PolicyAssignment | None:
+        stmt = select(PolicyAssignment).where(
+            PolicyAssignment.id == assignment_id,
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_assignments(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        policy_kind: str | None = None,
+        scope_type: str | None = None,
+        scope_id: UUID | None = None,
+    ) -> list[PolicyAssignment]:
+        conditions = [
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.deleted_at.is_(None),
+        ]
+        if policy_kind is not None:
+            conditions.append(PolicyAssignment.policy_kind == policy_kind)
+        if scope_type is not None:
+            conditions.append(PolicyAssignment.scope_type == scope_type)
+        if scope_id is not None:
+            conditions.append(PolicyAssignment.scope_id == scope_id)
+        stmt = (
+            select(PolicyAssignment)
+            .where(*conditions)
+            .order_by(PolicyAssignment.effective_from.desc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def find_effective(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        policy_kind: str,
+        scope_type: str,
+        scope_id: UUID | None,
+        as_of: date,
+    ) -> PolicyAssignment | None:
+        """The row of the given kind/scope active on `as_of` — at most one, by
+        `policy_assignment_no_overlap`. Used by `calendar_resolution.resolve_policy_assignment`
+        for a single scope level in the WD-09 precedence walk."""
+        stmt = select(PolicyAssignment).where(
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.policy_kind == policy_kind,
+            PolicyAssignment.scope_type == scope_type,
+            PolicyAssignment.scope_id == scope_id
+            if scope_id is not None
+            else PolicyAssignment.scope_id.is_(None),
+            PolicyAssignment.deleted_at.is_(None),
+            PolicyAssignment.is_active.is_(True),
+            PolicyAssignment.effective_from <= as_of,
+            or_(PolicyAssignment.effective_to.is_(None), PolicyAssignment.effective_to >= as_of),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def close(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        assignment_id: UUID,
+        effective_to: date,
+        expected_version: int,
+        now: datetime,
+    ) -> PolicyAssignment | None:
+        stmt = (
+            update(PolicyAssignment)
+            .where(
+                PolicyAssignment.id == assignment_id,
+                PolicyAssignment.company_id == company_id,
+                PolicyAssignment.version == expected_version,
+                PolicyAssignment.deleted_at.is_(None),
+            )
+            .values(effective_to=effective_to, version=expected_version + 1, updated_at=now)
+            .returning(PolicyAssignment)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def deactivate(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        assignment_id: UUID,
+        expected_version: int,
+        now: datetime,
+    ) -> PolicyAssignment | None:
+        stmt = (
+            update(PolicyAssignment)
+            .where(
+                PolicyAssignment.id == assignment_id,
+                PolicyAssignment.company_id == company_id,
+                PolicyAssignment.version == expected_version,
+                PolicyAssignment.deleted_at.is_(None),
+            )
+            .values(is_active=False, version=expected_version + 1, updated_at=now)
+            .returning(PolicyAssignment)
         )
         return (await session.execute(stmt)).scalar_one_or_none()

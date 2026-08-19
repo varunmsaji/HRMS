@@ -44,6 +44,7 @@ def create_app() -> FastAPI:
 
     register_exception_handlers(app)
 
+    from hrms.modules.attendance.router import router as attendance_router
     from hrms.modules.employee.router import router as employee_router
     from hrms.modules.identity.router import router as identity_router
     from hrms.modules.organisation.router import router as organisation_router
@@ -52,5 +53,6 @@ def create_app() -> FastAPI:
     app.include_router(identity_router, prefix="/v1")
     app.include_router(organisation_router, prefix="/v1")
     app.include_router(employee_router, prefix="/v1")
+    app.include_router(attendance_router, prefix="/v1")
 
     return app

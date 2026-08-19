@@ -19,7 +19,7 @@ from hrms.core.db.models.identity import (
     UserCompany,
     UserRole,
 )
-from hrms.core.db.session import get_session_factory
+from hrms.core.db.session import get_session_factory, set_rls_company_id
 from hrms.core.rbac.service import RbacService
 from hrms.modules.organisation.models import (
     CompanyFeatureFlag,
@@ -31,10 +31,12 @@ from hrms.modules.organisation.models import (
 from hrms.modules.organisation.permissions import (
     DASHBOARD_COMPANY_VIEW,
     ORG_BRANCH_MANAGE,
+    ORG_CALENDAR_MANAGE,
     ORG_COMPANY_MANAGE,
     ORG_DEPARTMENT_MANAGE,
     ORG_DESIGNATION_MANAGE,
     ORG_GRADE_MANAGE,
+    ORG_HOLIDAY_MANAGE,
     ORG_LEGAL_ENTITY_MANAGE,
     ORG_SHIFT_MANAGE,
 )
@@ -61,6 +63,11 @@ async def _cleanup(*, company_id: UUID | None, user_id: UUID | None) -> None:
     factory = get_session_factory()
     async with factory() as session:
         if company_id is not None:
+            # A pooled connection that has ever had `app.company_id` set reverts to `''` (not
+            # NULL) once its transaction ends — a Postgres custom-GUC-placeholder quirk, not
+            # an RLS bug. Setting it explicitly here avoids `invalid input syntax for type
+            # uuid: ""` on this unscoped raw cleanup query once the suite has run a few tests.
+            await set_rls_company_id(session, str(company_id))
             await session.execute(
                 AuditLog.__table__.delete().where(AuditLog.company_id == company_id)
             )
@@ -211,7 +218,11 @@ async def test_registration_success_full_row_graph(
             # .DEACTIVATE/.TERMINATE/.TRANSFER/.PROMOTE/.VIEW_COMPENSATION/.UPDATE_COMPENSATION/
             # .VIEW_STATUTORY/.UPDATE_SENSITIVE/.VIEW_BANKING access every other org-domain
             # permission already gets here, since without it a freshly registered company's own
-            # admin would have zero Employee access.
+            # admin would have zero Employee access. ORG.CALENDAR.MANAGE/ORG.HOLIDAY.MANAGE
+            # added by the Workforce Calendar (W1) slice, ATTENDANCE.POLICY_MANAGE added by
+            # the Attendance Policy (W3) slice, ATTENDANCE.VIEW/.VIEW_ALL/.PUNCH/
+            # .PUNCH_ON_BEHALF/.RECOMPUTE added by the Punch/AttendanceDay (W4) slice — same
+            # "must grant at live registration, not just the demo seed" rule.
             assert codes == {
                 ORG_COMPANY_MANAGE,
                 DASHBOARD_COMPANY_VIEW,
@@ -221,6 +232,14 @@ async def test_registration_success_full_row_graph(
                 ORG_DESIGNATION_MANAGE,
                 ORG_GRADE_MANAGE,
                 ORG_SHIFT_MANAGE,
+                ORG_CALENDAR_MANAGE,
+                ORG_HOLIDAY_MANAGE,
+                "ATTENDANCE.POLICY_MANAGE",
+                "ATTENDANCE.VIEW",
+                "ATTENDANCE.VIEW_ALL",
+                "ATTENDANCE.PUNCH",
+                "ATTENDANCE.PUNCH_ON_BEHALF",
+                "ATTENDANCE.RECOMPUTE",
                 "EMPLOYEE.VIEW",
                 "EMPLOYEE.VIEW_ALL",
                 "EMPLOYEE.CREATE",

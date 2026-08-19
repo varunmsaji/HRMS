@@ -46,6 +46,15 @@ ORG_GRADE_MANAGE = "ORG.GRADE.MANAGE"
 # docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md §7.
 ORG_SHIFT_MANAGE = "ORG.SHIFT.MANAGE"
 
+# docs/architecture/WORKFORCE_ATTENDANCE_ARCHITECTURE.md §23.2 and WD-19 name both of these
+# codes verbatim. `ORG_CALENDAR_MANAGE` gates WorkCalendar, WeeklyOffPattern,
+# CalendarException, and PolicyAssignment (all "the composition/assignment layer");
+# `ORG_HOLIDAY_MANAGE` gates HolidayCalendar and Holiday (the reusable dated-fact catalogue).
+# Single permission gates both viewing and managing each, matching the existing
+# Company/LegalEntity/Branch/.../Shift precedent — no view/manage split.
+ORG_CALENDAR_MANAGE = "ORG.CALENDAR.MANAGE"
+ORG_HOLIDAY_MANAGE = "ORG.HOLIDAY.MANAGE"
+
 ORGANISATION_PERMISSIONS = [
     (ORG_COMPANY_MANAGE, "ORG", "Manage company settings"),
     (DASHBOARD_COMPANY_VIEW, "DASHBOARD", "View company dashboard"),
@@ -55,4 +64,10 @@ ORGANISATION_PERMISSIONS = [
     (ORG_DESIGNATION_MANAGE, "ORG", "Manage designations"),
     (ORG_GRADE_MANAGE, "ORG", "Manage grades"),
     (ORG_SHIFT_MANAGE, "ORG", "Manage shifts"),
+    (
+        ORG_CALENDAR_MANAGE,
+        "ORG",
+        "Manage workforce calendars, weekly-off patterns, and calendar assignments",
+    ),
+    (ORG_HOLIDAY_MANAGE, "ORG", "Manage holiday calendars and holidays"),
 ]

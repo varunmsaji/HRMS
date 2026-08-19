@@ -19,7 +19,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from hrms.core.audit.models import AuditLog
-from hrms.core.db.session import get_session_factory
+from hrms.core.db.session import get_session_factory, set_rls_company_id
 
 from ..organisation.test_registration_flow import _cleanup, _register
 
@@ -119,13 +119,9 @@ async def _create_employment(
 async def _create_shift(
     client: AsyncClient, headers: dict[str, str], code: str = "GEN", **extra: Any
 ) -> dict[str, Any]:
-    payload = {
-        "code": code,
-        "name": "General Shift",
-        "start_time": "09:00",
-        "end_time": "18:00",
-        **extra,
-    }
+    # W2 — `Shift` is identity-only (name/code); schedule now lives on `ShiftVersion`, not
+    # needed here since this suite only exercises the `shift_id` FK relationship.
+    payload = {"code": code, "name": "General Shift", **extra}
     response = await client.post("/v1/shifts", headers=headers, json=payload)
     assert response.status_code == 201, response.text
     return dict(response.json()["data"])
@@ -234,6 +230,15 @@ async def _cleanup_org_structure(*, company_id: UUID) -> None:
 async def _cleanup_shifts(*, company_id: UUID) -> None:
     factory = get_session_factory()
     async with factory() as session:
+        # A pooled connection that has ever had `app.company_id` set reverts to `''` (not
+        # NULL) once its transaction ends — a Postgres custom-GUC-placeholder quirk, not an
+        # RLS bug. Setting it explicitly here avoids `invalid input syntax for type uuid: ""`
+        # on this unscoped raw cleanup query.
+        await set_rls_company_id(session, str(company_id))
+        # W2 — `shift_version.shift_id` is `ON DELETE RESTRICT`, so child rows must go first.
+        await session.execute(
+            text("DELETE FROM shift_version WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
         await session.execute(
             text("DELETE FROM shift WHERE company_id = :cid"), {"cid": str(company_id)}
         )
