@@ -1,0 +1,300 @@
+"use client";
+
+import { FileClock } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { EmptyState } from "@/components/common/empty-state";
+import { ErrorState } from "@/components/common/error-state";
+import { FormField } from "@/components/common/form-field";
+import { LoadingState } from "@/components/common/loading-state";
+import { PageHeader } from "@/components/common/page-header";
+import { RegularizationRequestDialog } from "@/components/regularization/regularization-request-dialog";
+import { RegularizationStatusBadge } from "@/components/regularization/regularization-status-badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { apiClient } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/errors";
+import { todayIso } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
+import { usePermissions } from "@/lib/auth/use-permissions";
+import {
+  REGULARIZATION_STATUSES,
+  REGULARIZATION_TYPES,
+  REGULARIZATION_TYPE_LABELS,
+  type RegularizationRequest,
+  type RegularizationStatus,
+  type RegularizationType,
+} from "@/lib/regularization/types";
+
+interface EmployeeOption {
+  id: string;
+  first_name: string;
+  last_name: string | null;
+  employee_code: string | null;
+}
+
+function employeeDisplayName(employee: EmployeeOption | undefined, employeeId: string): string {
+  if (!employee) return employeeId;
+  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
+  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
+}
+
+function addDays(iso: string, days: number): string {
+  const date = new Date(`${iso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+type ViewMode = "MINE" | "TEAM";
+
+/** `/v1/regularizations` list/filter + create (architecture §13/§25, WD-28). Every row here is
+ * already DataScope-filtered server-side — "Mine" and "Team" are just different query filters
+ * over the same permission-scoped read, mirroring the Attendance dashboard's own posture. */
+export default function RegularizationsPage() {
+  const { user } = useAuth();
+  const { can } = usePermissions();
+  const canApprove = can("ATTENDANCE.REGULARIZATION_APPROVE");
+  const canSubmitSelf = can("ATTENDANCE.REGULARIZATION_REQUEST");
+  const canSubmitOnBehalf = can("ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF");
+
+  const [view, setView] = useState<ViewMode>(canApprove ? "TEAM" : "MINE");
+  const [dateFrom, setDateFrom] = useState(addDays(todayIso(), -30));
+  const [dateTo, setDateTo] = useState(todayIso());
+  const [statusFilter, setStatusFilter] = useState<RegularizationStatus | "">("");
+  const [typeFilter, setTypeFilter] = useState<RegularizationType | "">("");
+  const [employeeFilter, setEmployeeFilter] = useState("");
+
+  const [requests, setRequests] = useState<RegularizationRequest[] | null>(null);
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const employeeById = useMemo(() => {
+    const map = new Map<string, EmployeeOption>();
+    for (const emp of employees) map.set(emp.id, emp);
+    return map;
+  }, [employees]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+      if (statusFilter) params.set("request_status", statusFilter);
+      if (typeFilter) params.set("request_type", typeFilter);
+      if (view === "MINE" && user?.employee_id) params.set("employee_id", user.employee_id);
+      if (view === "TEAM" && employeeFilter) params.set("employee_id", employeeFilter);
+      const data = await apiClient.get<RegularizationRequest[]>(
+        `/regularizations?${params.toString()}`,
+      );
+      setRequests(data);
+    } catch (err) {
+      setRequests(null);
+      setError(
+        err instanceof ApiError
+          ? err
+          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [dateFrom, dateTo, statusFilter, typeFilter, view, employeeFilter, user?.employee_id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (view !== "TEAM") return;
+    void apiClient
+      .get<EmployeeOption[]>("/employees")
+      .then(setEmployees)
+      .catch(() => setEmployees([]));
+  }, [view]);
+
+  function onCreated(_request: RegularizationRequest) {
+    void load();
+  }
+
+  const canCreate = view === "MINE" ? canSubmitSelf : canSubmitOnBehalf;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Regularizations"
+        description="Employee, manager, and HR corrections to attendance — request, review, and approve."
+        actions={
+          canCreate ? (
+            <Button type="button" onClick={() => setDialogOpen(true)}>
+              New request
+            </Button>
+          ) : undefined
+        }
+      />
+
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant={view === "MINE" ? "default" : "outline"}
+          size="sm"
+          onClick={() => setView("MINE")}
+        >
+          My requests
+        </Button>
+        {canApprove || canSubmitOnBehalf ? (
+          <Button
+            type="button"
+            variant={view === "TEAM" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setView("TEAM")}
+          >
+            Team requests
+          </Button>
+        ) : null}
+      </div>
+
+      <Card>
+        <CardContent className="grid grid-cols-1 gap-4 pt-6 sm:grid-cols-4">
+          <FormField id="regularizations-date-from" label="From">
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          </FormField>
+          <FormField id="regularizations-date-to" label="To">
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </FormField>
+          <FormField id="regularizations-status" label="Status">
+            <NativeSelect
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as RegularizationStatus | "")}
+            >
+              <option value="">All statuses</option>
+              {REGULARIZATION_STATUSES.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </NativeSelect>
+          </FormField>
+          <FormField id="regularizations-type" label="Type">
+            <NativeSelect
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value as RegularizationType | "")}
+            >
+              <option value="">All types</option>
+              {REGULARIZATION_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {REGULARIZATION_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </NativeSelect>
+          </FormField>
+          {view === "TEAM" ? (
+            <FormField id="regularizations-employee" label="Employee" className="sm:col-span-2">
+              <NativeSelect value={employeeFilter} onChange={(e) => setEmployeeFilter(e.target.value)}>
+                <option value="">All employees</option>
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {employeeDisplayName(emp, emp.id)}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="pt-6">
+          {loading ? <LoadingState label="Loading regularization requests…" /> : null}
+          {error && !loading ? (
+            <ErrorState
+              message={
+                error.status === 403
+                  ? "You do not have permission to view these requests."
+                  : error.message
+              }
+              onRetry={() => void load()}
+            />
+          ) : null}
+          {!loading && !error && requests && requests.length === 0 ? (
+            <EmptyState
+              icon={FileClock}
+              title="No regularization requests in this range."
+              description={
+                canCreate
+                  ? "Raise a request to correct a missing or incorrect punch."
+                  : "Nothing to review right now."
+              }
+              action={
+                canCreate ? (
+                  <Button type="button" onClick={() => setDialogOpen(true)}>
+                    New request
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : null}
+          {!loading && !error && requests && requests.length > 0 ? (
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full text-sm">
+                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Date</th>
+                    <th className="px-3 py-2 text-left font-medium">Employee</th>
+                    <th className="px-3 py-2 text-left font-medium">Type</th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-left font-medium">Stage</th>
+                    <th className="px-3 py-2 text-right font-medium">Detail</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {requests.map((request) => (
+                    <tr key={request.id} className="hover:bg-accent">
+                      <td className="px-3 py-2 text-foreground-secondary">{request.attendance_date}</td>
+                      <td className="px-3 py-2 font-medium text-foreground">
+                        {employeeDisplayName(employeeById.get(request.employee_id), request.employee_id)}
+                      </td>
+                      <td className="px-3 py-2 text-foreground-secondary">
+                        {REGULARIZATION_TYPE_LABELS[request.request_type]}
+                      </td>
+                      <td className="px-3 py-2">
+                        <RegularizationStatusBadge status={request.status} />
+                      </td>
+                      <td className="px-3 py-2 text-foreground-secondary">
+                        {request.approval_stage ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Link
+                          href={`/app/regularizations/${request.id}`}
+                          className="text-sm font-medium text-primary hover:underline"
+                        >
+                          View
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <RegularizationRequestDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        mode={view === "TEAM" ? "ON_BEHALF" : "SELF"}
+        employeeId={view === "TEAM" ? employeeFilter || undefined : undefined}
+        employeeLabel={
+          view === "TEAM" && employeeFilter
+            ? employeeDisplayName(employeeById.get(employeeFilter), employeeFilter)
+            : undefined
+        }
+        onCreated={onCreated}
+      />
+    </div>
+  );
+}

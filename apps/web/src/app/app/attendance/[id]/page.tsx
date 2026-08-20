@@ -8,6 +8,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
+import { RegularizationRequestDialog } from "@/components/regularization/regularization-request-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,6 +45,7 @@ export default function AttendanceDayDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [regularizeOpen, setRegularizeOpen] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
   const [showSnapshot, setShowSnapshot] = useState(false);
 
@@ -93,6 +95,11 @@ export default function AttendanceDayDetailPage() {
             <Button type="button" variant="outline" onClick={() => router.push("/app/attendance")}>
               Back to attendance
             </Button>
+            {day && can("ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF") ? (
+              <Button type="button" variant="outline" onClick={() => setRegularizeOpen(true)}>
+                Regularize
+              </Button>
+            ) : null}
             {day && can("ATTENDANCE.RECOMPUTE") ? (
               <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)} disabled={day.is_locked}>
                 Recompute
@@ -253,6 +260,19 @@ export default function AttendanceDayDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {day ? (
+        <RegularizationRequestDialog
+          open={regularizeOpen}
+          onOpenChange={setRegularizeOpen}
+          mode="ON_BEHALF"
+          employeeId={day.employee_id}
+          attendanceDate={day.attendance_date}
+          onCreated={() =>
+            toast({ title: "Regularization request submitted", variant: "success" })
+          }
+        />
+      ) : null}
     </div>
   );
 }

@@ -575,6 +575,195 @@ calendar date.
 
 ---
 
+## WD-27 — W5 `ShiftRoster`: no rotation-pattern generator; DRAFT/PUBLISHED status; roster
+overrides never touch `calendar_day_type`
+
+**Status:** LOCKED (recorded post-implementation, per this document's own rule)
+
+**Decision:**
+
+1. **`ShiftRotationPattern` (an automatic rotating/weekly/monthly generator that would write
+   `ShiftRoster` rows) is not built in W5.** Architecture §4.2 already calls it "Deferred past
+   V1 core... not required to ship punches + status resolution" and §30 lists it as **W11,
+   Optional** — this is not a new scope cut, it is holding the line the architecture document
+   already drew. The generic W5 task brief that triggered this slice asked for "Fixed/
+   Rotating/Weekly/Monthly roster types," which is broader than what §30 actually scopes into
+   W5; per WD-24/WD-25's own precedent (follow the architecture doc, record the conflict, don't
+   silently expand scope), this entry is that record. Operationally, `POST /rosters/bulk`
+   (architecture §25's named endpoint) accepts an explicit per-date `(date, shift_id,
+   overrides)` list — a fixed roster is that list with one repeated shift, a monthly roster is
+   that list with one row per date, a rotating pattern is that list pre-expanded by the caller
+   (typically the frontend) before submission. The backend never persists or interprets a
+   *pattern*, only dated facts (WD-12).
+
+2. **`ShiftRoster.status` (`DRAFT`|`PUBLISHED`) is new — not literally named in architecture
+   §4.2's `ShiftRoster` field list, but not prohibited by it either.** Only a `PUBLISHED` row
+   is visible to the calculation engine (`ShiftRosterRepository.get_published_for_date`); a
+   `DRAFT` row can never change a live attendance calculation. This satisfies the task brief's
+   audit/staging requirement ("Published rosters cannot silently change history") cheaply,
+   without inventing a second table: every mutation (create/update/publish/delete) is recorded
+   via `AuditService.record` — the same mechanism architecture §24 already names ("Roster
+   write" is explicitly listed as an audited action) — rather than a separate revision/history
+   table. `ShiftRoster` itself stays a mutable master keyed on `(company_id, employee_id,
+   roster_date)` (§17: "the roster_date is the effective date"), mirroring `Shift`'s own
+   audited-mutable-row shape, not `ShiftVersion`'s insert-new-immutable one — a roster row has
+   no multi-date range to preserve history *within*, so there is nothing for an insert-new
+   pattern to buy here.
+
+3. **Roster overrides (`is_week_off_override`/`is_holiday_working_override`, §9.7) extend
+   `AttendanceCalculationInput`/`evaluate_day`'s existing `not_expected`/`shift_operates`
+   variables (`calculation.py`) rather than writing a parallel code path.**
+   `is_holiday_working_override` is OR'd into `shift_operates` — functionally identical to what
+   a per-shift `operates_on_holiday`/`operates_on_weekly_off` flag already does, just scoped to
+   one employee-date instead of the whole shift, including that mechanism's existing (pre-W5)
+   quirk that a zero-punch "operates" day still resolves to `NOT_EXPECTED` via
+   `_resolve_primary_status`'s `not_expected`-only check — W5 does not fix or change that
+   quirk, only reuses the same variable consistently. `is_week_off_override` is checked ahead
+   of the "missing shift" branch so a pure day-off roster row (`shift_id=NULL`) is read as a
+   deliberate schedule fact, not a config error. Neither override ever writes
+   `calendar_day_type` (WD-04/WD-07 — calendar type stays Calendar's concern).
+
+4. **`ATTENDANCE.ROSTER_MANAGE`** (already named at COMPANY scope in architecture §23.2) gates
+   all roster mutation routes; roster *viewing* reuses `ATTENDANCE.VIEW` + the existing four
+   `DataScope` levels — no new scope levels (WD-19). Every mutation route re-checks the target
+   `employee_id`'s visibility via `EmployeeService.get_employee(scope=...)`
+   (`_ensure_employee_visible`), the same fix commit `fecb740` applied to
+   `ATTENDANCE.PUNCH_ON_BEHALF` — a COMPANY-scoped grant is the expected common case, but
+   nothing in the roster service assumes it.
+
+**Rejected:** building `ShiftRotationPattern` now (contradicts §30's own W11 placement);
+a `RosterRevision`/history table for the audit-trail requirement (redundant with `audit_log`,
+which architecture §24 already designates for this); a `roster.day_type` enum duplicating
+`calendar_day_type` (the brief's generic template used one; architecture's own boolean-flag
+design in §9.7 is more precise about what roster can and cannot override).
+
+---
+
+## WD-28 — W6 `RegularizationRequest`: correction applied only through existing punch/roster
+mechanisms; uniform punch-or-shift payload; append-only `RegularizationAction` timeline
+
+**Status:** LOCKED (recorded before implementation, per this document's own rule that every
+implementation choice not already covered by an existing WD gets written down rather than
+silently decided in code)
+
+**Decision:**
+
+1. **A regularization is never applied by teaching the calculation engine a new overlay.**
+   Architecture §13.2 already names the mechanism: "On approve: write any synthetic punches
+   with `source=REGULARIZATION` (still immutable punches)... recompute." W6 does exactly this
+   and nothing else — an approved request either (a) inserts one or more new `Punch` rows
+   (`source='REGULARIZATION'`) via the existing `PunchRepository.insert`, or (b) for
+   `WRONG_SHIFT`, upserts a `PUBLISHED` `ShiftRoster` row for that employee-date via the
+   existing `ShiftRosterRepository` (§9.7's roster-outranks-assignment resolution already
+   exists; W6 adds no new resolution step) — then calls the existing
+   `AttendanceDayService.calculate()` (WD-10's full-recompute path, unchanged). No new status
+   branch, overlay, or "excused break"/"forced status" input is added to `calculation.py`.
+
+2. **Every `RegularizationRequest`, regardless of `request_type`, must carry at least one
+   requested punch (`AttendanceRegularizationRequestedPunch`) or a `requested_shift_id`.**
+   `request_type` (reusing `_REGULARIZATION_TYPES` from W3's schema module verbatim — WD-12,
+   don't hardcode a second list) is a classification/reason the policy's `allowed_types` gates,
+   not a distinct application mechanism. This works cleanly for `MISSING_PUNCH`, `WRONG_PUNCH`,
+   `FULL_DAY`, `WRONG_SHIFT`, and `WFH`/`ON_DUTY` requests that supply punch times (WD-17: "Day
+   -level WFH... comes from roster flag, approved regularization, or policy-defined punch
+   sources" — the approved-regularization case *is* a punch source, not a new WFH status
+   branch). It does **not** cover `WRONG_STATUS`, or an `EXCESS_BREAK`/`WFH`/`ON_DUTY` request
+   that changes no punch and asks only to reclassify an already-punched day (e.g. "excuse this
+   excess break without changing any punch time") — W4's `evaluate_day` has no excused-break or
+   forced-status input to apply such a request to (confirmed: its module docstring calls
+   leave/regularization overlays "no-op seams in W4"). Requiring a punch-or-shift payload
+   uniformly means "apply" always has a well-defined, already-supported effect; a pure
+   non-punch status/break override is left **OPEN** (see below) rather than invented.
+
+3. **`is_regularized`/`is_pending_approval` (`AttendanceDay`, shipped empty in W4) are set by
+   the regularization service via a narrow, additional `AttendanceDayRepository` update
+   immediately after `calculate()` returns, not threaded through `evaluate_day`'s pure
+   calculation.** `evaluate_day` has no knowledge of `attendance_regularization_request` (and
+   per decision 1, must not gain any) — mirrors how `is_locked`/`locked_at` already exist on
+   `AttendanceDay` with no W4 writer, waiting for W8. `is_pending_approval` is set `true` while
+   a request is `SUBMITTED` for that employee-date and cleared on any terminal transition
+   (`APPROVED`/`REJECTED`/`CANCELLED`).
+
+4. **Approval chain (`AUTO`/`MANAGER`/`MANAGER_THEN_HR`/`HR`, WD-08) is implemented as a
+   `RegularizationRequest.approval_stage` field (`MANAGER`|`HR`|`NULL`) rather than a second
+   status enum.** `MANAGER_THEN_HR` transitions `approval_stage` from `MANAGER` to `HR` on the
+   manager's approval without changing `status` off `SUBMITTED`; only the final stage's approval
+   sets `status=APPROVED` and triggers decision 1's apply step. A rejection at *either* stage is
+   terminal (`status=REJECTED`) — architecture never describes a rejected manager stage
+   forwarding to HR for a second opinion, and Phase 5's "a rejected request cannot be treated as
+   approved" reads most naturally as: rejection ends the workflow, it does not advance it.
+   Approver identity for the `MANAGER` stage is snapshotted at submit time
+   (`resolved_approver_manager_id`, via `EmployeeService.get_assignment_as_of(employee_id,
+   attendance_date).reporting_manager_id`) per PD-APR-1's stated default ("as-of the attendance
+   date") — this is an already-open product decision in §32 that the architecture explicitly
+   says ships with a default if forced; W6 ships with that named default, not a new guess.
+   Resolution failure (no manager as-of that date) routes directly to `HR` stage and records a
+   `RegularizationAction(action='APPROVER_UNRESOLVED')`, exactly as §14 specifies — never
+   auto-approves on failure.
+
+5. **Self-approval is always blocked** (`request.employee_id == acting caller's employee_id` ⇒
+   rejected with a dedicated 403), **including for a caller who happens to hold
+   `ATTENDANCE.REGULARIZATION_APPROVE`.** Neither `RegularizationPolicyVersion` (W3) nor the
+   architecture defines a flag that would "explicitly permit" self-approval (Phase 6's own
+   conditional — "unless the existing policy explicitly permits it" — has no field to point at),
+   so the only policy-consistent reading is: no such permission exists yet, therefore it is
+   denied. `AUTO`-chain requests never reach a manual approve call at all (decision 4), so this
+   is not in tension with "approved on submit."
+
+6. **Permission codes are `ATTENDANCE.REGULARIZATION_REQUEST` (SELF),
+   `ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF` (COMPANY, mirrors `ATTENDANCE.PUNCH_ON_BEHALF`
+   exactly — same router-level "gate depends on request body" shape as `create_punch`), and
+   `ATTENDANCE.REGULARIZATION_APPROVE`** (WD-19 spelling: this codebase's `RegularizationPolicy`/
+   `regularization_policy` table already spells the word with a `z` throughout; architecture
+   §23.2's `ATTENDANCE.REGULARISE_APPROVE`/`REGULARISE_REQUEST` is the one inconsistent
+   British-spelled instance in that document and is treated as a typo against the codebase's own
+   established spelling, not a divergence requiring sign-off). **Reads reuse the existing
+   `ATTENDANCE.VIEW`** rather than a fourth new code — mirrors WD-27 decision 4's "roster
+   *viewing* reuses `ATTENDANCE.VIEW`... no new scope levels."
+
+7. **`AttendanceRegularizationAction` (named in architecture §13.2/§33.4) is a real child
+   table, not derived from `audit_log`.** Unlike `ShiftRoster` (WD-27 decision 2, which found
+   `audit_log` sufficient because every mutation is a single-actor event), a
+   `MANAGER_THEN_HR` request has two distinct reviewer/timestamp pairs in sequence that
+   `RegularizationRequest`'s own columns (one `reviewed_by_user_id`/`reviewed_at`) cannot hold
+   without overwriting the manager stage's record when HR acts — the action table is the
+   per-stage history the architecture doc already names, not a duplicate/generic audit system.
+   `AuditService.record` is called in addition, once per state transition
+   (`REGULARIZATION_SUBMITTED`/`_APPROVED`/`_REJECTED`/`_CANCELLED`/`_APPLIED`), exactly as
+   Phase 10 requires and identically to how every other attendance mutation is audited — the two
+   mechanisms are not redundant: `audit_log` is the company-wide platform sink, the action table
+   is a request-scoped read model the frontend timeline queries directly without needing
+   audit-log-read permission.
+
+8. **`AttendanceLock` (W8) does not exist, so "locked" is only ever the pre-existing,
+   currently-dead `AttendanceDay.is_locked` flag** (WD-11, no W4/W5 code path sets it). W6 still
+   checks it at both submit time and apply time (`AttendanceDayService.calculate()` already
+   raises `AttendanceDayLockedError` at apply time unmodified) and refuses to bypass it — but
+   §13.4's `APPROVED_PENDING_ARREARS` HR-override-while-locked path requires
+   `ATTENDANCE.OVERRIDE`, which is `AttendanceAdjustment`'s mechanism (WD-18), a distinct entity
+   this task brief explicitly does not ask W6 to build. A regularization request against a
+   locked day is therefore simply rejected with a clear error in W6; the arrears path is
+   deferred to whenever `AttendanceAdjustment`/W8 lands.
+
+**Rejected:** a new calculation-engine overlay/status branch for `WRONG_STATUS`/excused-break
+requests (decision 2 — would duplicate/extend the calculation engine, against the task's own
+instruction); a second generic audit/workflow system (decision 7); auto-approving on approver
+-resolution failure (decision 4, §14 forbids it explicitly); allowing self-approval by default
+(decision 5); building `AttendanceAdjustment`/`ATTENDANCE.OVERRIDE` or `AttendanceLock` in this
+slice (decision 8 — out of the stated W6 scope); enforcing
+`RegularizationPolicyVersion.auto_approve_within_minutes`'s clock-error tolerance window (a
+finer nuance orthogonal to `approval_chain=AUTO` that neither the architecture nor the task
+brief specifies the interaction for — left unenforced and documented as a known gap rather than
+guessed).
+
+**OPEN (new, PD-REG-1):** whether `WRONG_STATUS`/excess-break-without-a-punch-change requests
+should be representable at all without a calculation-engine extension (decision 2). Default if
+forced: not supported until such an extension is scoped — request creation still succeeds for
+these `request_type`s (policy remains the source of truth for `allowed_types`), but approval
+requires a punch or shift payload before it can transition past `SUBMITTED`.
+
+---
+
 ## Divergences index (quick reference)
 
 | Prior source | This log |
@@ -588,6 +777,8 @@ calendar date.
 | Baseline D-3 holiday ownership unresolved | WD-13 |
 | ADR-0010 company timezone only | WD-06 |
 | §27 `punch`/`attendance_day` partitioned from first migration | WD-26 (deferred, not repealed) |
+| Generic W5 brief: rotation-pattern generator, `day_type` enum | WD-27 (deferred to W11, not repealed) |
+| Architecture §23.2 `ATTENDANCE.REGULARISE_*` spelling | WD-28 decision 6 (codebase spelling kept) |
 
 ---
 

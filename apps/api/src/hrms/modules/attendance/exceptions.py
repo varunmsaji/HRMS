@@ -7,7 +7,12 @@ children they carry, not in the versioning state machine)."""
 
 from typing import Any
 
-from hrms.core.errors.base import ConflictError, NotFoundError, ValidationError
+from hrms.core.errors.base import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 
 
 class PolicyCodeAlreadyExistsError(ConflictError):
@@ -210,6 +215,208 @@ class AttendanceDayLockedError(ConflictError):
         super().__init__(
             message,
             details=[{"field": "is_locked", "code": "ATTENDANCE_DAY_LOCKED", "message": message}],
+        )
+
+
+class ShiftRosterNotFoundError(NotFoundError):
+    code = "SHIFT_ROSTER_NOT_FOUND"
+
+    def __init__(self, message: str = "Roster entry not found") -> None:
+        super().__init__(message)
+
+
+class ShiftRosterDateConflictError(ConflictError):
+    """The partial unique index on `(company_id, employee_id, roster_date)` backs this —
+    mirrors `DuplicatePunchIdempotencyKeyError`'s pattern of converting a DB-level
+    `IntegrityError` into the documented envelope. A date already has a roster row; the caller
+    must PATCH the existing entry instead of creating a second one."""
+
+    code = "SHIFT_ROSTER_DATE_CONFLICT"
+
+    def __init__(
+        self, message: str = "A roster entry already exists for this employee and date"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "roster_date", "code": "SHIFT_ROSTER_DATE_CONFLICT", "message": message}
+            ],
+        )
+
+
+class StaleShiftRosterResourceError(ConflictError):
+    code = "STALE_RESOURCE"
+
+    def __init__(self, message: str, *, current: dict[str, Any]) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "version",
+                    "code": "STALE_RESOURCE",
+                    "message": message,
+                    "context": {"current": current},
+                }
+            ],
+        )
+
+
+class RegularizationPolicyNotResolvedError(ValidationError):
+    """WD-21 fail-closed: no `RegularizationPolicyVersion` resolves for this employee-date, so
+    a request cannot be evaluated against caps/windows/allowed-types that don't exist."""
+
+    code = "REGULARIZATION_POLICY_NOT_RESOLVED"
+
+    def __init__(
+        self, message: str = "No regularization policy is configured for this employee and date"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "attendance_date", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationTypeNotAllowedError(ValidationError):
+    code = "REGULARIZATION_TYPE_NOT_ALLOWED"
+
+    def __init__(
+        self, message: str = "This request type is not allowed by the applicable policy"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "request_type", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationNotPermittedError(PermissionDeniedError):
+    """The applicable `RegularizationPolicyVersion` does not allow this submitter kind
+    (`allow_employee_request`/`allow_manager_request`/`allow_hr_request`)."""
+
+    code = "REGULARIZATION_NOT_PERMITTED"
+
+    def __init__(
+        self, message: str = "The applicable policy does not allow this kind of request"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "employee_id", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationWindowExceededError(ValidationError):
+    code = "REGULARIZATION_WINDOW_EXCEEDED"
+
+    def __init__(self, message: str = "This date is outside the allowed backdating window") -> None:
+        super().__init__(
+            message, details=[{"field": "attendance_date", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationRequestLimitExceededError(ValidationError):
+    code = "REGULARIZATION_REQUEST_LIMIT_EXCEEDED"
+
+    def __init__(
+        self,
+        message: str = "The maximum number of requests for this period has been reached",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "employee_id", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationReasonRequiredError(ValidationError):
+    code = "REGULARIZATION_REASON_REQUIRED"
+
+    def __init__(self, message: str = "A reason is required by the applicable policy") -> None:
+        super().__init__(
+            message, details=[{"field": "reason", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationAttachmentRequiredError(ValidationError):
+    code = "REGULARIZATION_ATTACHMENT_REQUIRED"
+
+    def __init__(self, message: str = "An attachment is required by the applicable policy") -> None:
+        super().__init__(
+            message,
+            details=[{"field": "attachment_reference", "code": self.code, "message": message}],
+        )
+
+
+class RegularizationDuplicateActiveRequestError(ConflictError):
+    code = "REGULARIZATION_DUPLICATE_ACTIVE_REQUEST"
+
+    def __init__(
+        self,
+        message: str = "An active regularization request already exists for this employee and date",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "attendance_date", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationRequestNotFoundError(NotFoundError):
+    code = "REGULARIZATION_REQUEST_NOT_FOUND"
+
+    def __init__(self, message: str = "Regularization request not found") -> None:
+        super().__init__(message)
+
+
+class RegularizationInvalidTransitionError(ConflictError):
+    code = "REGULARIZATION_INVALID_TRANSITION"
+
+    def __init__(
+        self, message: str = "This request is not in a state that allows this action"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "status", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationSelfApprovalNotAllowedError(PermissionDeniedError):
+    """WD-28 decision 5 — self-approval is always blocked; no policy field exists to permit it."""
+
+    code = "REGULARIZATION_SELF_APPROVAL_NOT_ALLOWED"
+
+    def __init__(self, message: str = "You cannot approve or reject your own request") -> None:
+        super().__init__(
+            message, details=[{"field": "employee_id", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationApproverMismatchError(PermissionDeniedError):
+    code = "REGULARIZATION_APPROVER_MISMATCH"
+
+    def __init__(
+        self, message: str = "You are not the resolved approver for this request's current stage"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "approval_stage", "code": self.code, "message": message}]
+        )
+
+
+class RegularizationBlockedByLockError(ConflictError):
+    code = "REGULARIZATION_BLOCKED_BY_LOCK"
+
+    def __init__(
+        self, message: str = "This attendance day is locked and cannot be regularized"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "attendance_date", "code": self.code, "message": message}]
+        )
+
+
+class StaleRegularizationRequestResourceError(ConflictError):
+    code = "STALE_RESOURCE"
+
+    def __init__(self, message: str, *, current: dict[str, Any]) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "version",
+                    "code": "STALE_RESOURCE",
+                    "message": message,
+                    "context": {"current": current},
+                }
+            ],
         )
 
 

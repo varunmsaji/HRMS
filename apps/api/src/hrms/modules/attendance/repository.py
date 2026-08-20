@@ -17,6 +17,9 @@ from hrms.modules.attendance.models import (
     AttendancePolicyHourBand,
     AttendancePolicyLateBand,
     AttendancePolicyVersion,
+    AttendanceRegularizationAction,
+    AttendanceRegularizationRequest,
+    AttendanceRegularizationRequestedPunch,
     OvertimePolicy,
     OvertimePolicyRateRow,
     OvertimePolicyVersion,
@@ -24,6 +27,7 @@ from hrms.modules.attendance.models import (
     RegularizationPolicy,
     RegularizationPolicyAllowedType,
     RegularizationPolicyVersion,
+    ShiftRoster,
 )
 
 
@@ -790,6 +794,138 @@ class RegularizationPolicyRepository:
 
 
 # ---------------------------------------------------------------------------
+# W5 — ShiftRoster (mutable per-date override, WD-27)
+# ---------------------------------------------------------------------------
+
+
+class ShiftRosterRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> ShiftRoster:
+        row = ShiftRoster(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, roster_id: UUID
+    ) -> ShiftRoster | None:
+        stmt = select(ShiftRoster).where(
+            ShiftRoster.id == roster_id,
+            ShiftRoster.company_id == company_id,
+            ShiftRoster.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_for_date(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        roster_date: date,
+    ) -> ShiftRoster | None:
+        stmt = select(ShiftRoster).where(
+            ShiftRoster.company_id == company_id,
+            ShiftRoster.employee_id == employee_id,
+            ShiftRoster.roster_date == roster_date,
+            ShiftRoster.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_published_for_date(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        roster_date: date,
+    ) -> ShiftRoster | None:
+        """Resolution read used by the calculation engine (§9.7) — only `PUBLISHED` rows may
+        ever influence a live attendance calculation; a staged `DRAFT` must not (WD-27)."""
+        stmt = select(ShiftRoster).where(
+            ShiftRoster.company_id == company_id,
+            ShiftRoster.employee_id == employee_id,
+            ShiftRoster.roster_date == roster_date,
+            ShiftRoster.status == "PUBLISHED",
+            ShiftRoster.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[ShiftRoster]:
+        """`visible_employee_ids=None` means COMPANY scope (no filter), mirroring
+        `PunchRepository.list_filtered`'s convention exactly."""
+        conditions = [ShiftRoster.company_id == company_id, ShiftRoster.deleted_at.is_(None)]
+        if visible_employee_ids is not None:
+            if not visible_employee_ids:
+                return []
+            conditions.append(ShiftRoster.employee_id.in_(visible_employee_ids))
+        if employee_id is not None:
+            conditions.append(ShiftRoster.employee_id == employee_id)
+        if date_from is not None:
+            conditions.append(ShiftRoster.roster_date >= date_from)
+        if date_to is not None:
+            conditions.append(ShiftRoster.roster_date <= date_to)
+        if status is not None:
+            conditions.append(ShiftRoster.status == status)
+        stmt = select(ShiftRoster).where(*conditions).order_by(ShiftRoster.roster_date)
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        roster_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> ShiftRoster | None:
+        stmt = (
+            update(ShiftRoster)
+            .where(
+                ShiftRoster.id == roster_id,
+                ShiftRoster.company_id == company_id,
+                ShiftRoster.version == expected_version,
+                ShiftRoster.deleted_at.is_(None),
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(ShiftRoster)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def soft_delete(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        roster_id: UUID,
+        expected_version: int,
+        now: datetime,
+    ) -> ShiftRoster | None:
+        stmt = (
+            update(ShiftRoster)
+            .where(
+                ShiftRoster.id == roster_id,
+                ShiftRoster.company_id == company_id,
+                ShiftRoster.version == expected_version,
+                ShiftRoster.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, version=expected_version + 1, updated_at=now)
+            .returning(ShiftRoster)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
 # W4 — Punch (immutable, append-only, WD-11)
 # ---------------------------------------------------------------------------
 
@@ -949,6 +1085,37 @@ class AttendanceDayRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def set_pending_approval(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        attendance_day_id: UUID,
+        is_pending_approval: bool,
+        now: datetime,
+    ) -> None:
+        """W6 (WD-28 decision 3) — set outside `evaluate_day`'s pure calculation, the same way
+        `is_locked`/`locked_at` already exist on this row with no W4 writer. Touches only
+        `is_pending_approval`, leaving `is_regularized` untouched, so a reject/cancel never
+        overwrites a flag an *earlier* approved request may have already set true."""
+        await session.execute(
+            update(AttendanceDay)
+            .where(AttendanceDay.id == attendance_day_id, AttendanceDay.company_id == company_id)
+            .values(is_pending_approval=is_pending_approval, updated_at=now)
+        )
+
+    async def mark_regularized(
+        self, session: AsyncSession, *, company_id: UUID, attendance_day_id: UUID, now: datetime
+    ) -> None:
+        """Called immediately after `AttendanceDayService.calculate()` applies an approved
+        correction. Does not re-check `is_locked` because `calculate()` already refused to touch
+        a locked day."""
+        await session.execute(
+            update(AttendanceDay)
+            .where(AttendanceDay.id == attendance_day_id, AttendanceDay.company_id == company_id)
+            .values(is_regularized=True, is_pending_approval=False, updated_at=now)
+        )
+
 
 class AttendanceBreakRepository:
     async def replace_breaks(
@@ -976,5 +1143,200 @@ class AttendanceBreakRepository:
         stmt = select(AttendanceBreak).where(
             AttendanceBreak.company_id == company_id,
             AttendanceBreak.attendance_day_id == attendance_day_id,
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# W6 — AttendanceRegularizationRequest / RequestedPunch / Action (WD-28)
+# ---------------------------------------------------------------------------
+
+
+class AttendanceRegularizationRequestRepository:
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> AttendanceRegularizationRequest:
+        row = AttendanceRegularizationRequest(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, request_id: UUID
+    ) -> AttendanceRegularizationRequest | None:
+        stmt = select(AttendanceRegularizationRequest).where(
+            AttendanceRegularizationRequest.id == request_id,
+            AttendanceRegularizationRequest.company_id == company_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_active_for_date(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        attendance_date: date,
+    ) -> AttendanceRegularizationRequest | None:
+        """"Active" = `SUBMITTED` — the DB-level backstop for
+        `RegularizationDuplicateActiveRequestError` mirrors the partial unique index."""
+        stmt = select(AttendanceRegularizationRequest).where(
+            AttendanceRegularizationRequest.company_id == company_id,
+            AttendanceRegularizationRequest.employee_id == employee_id,
+            AttendanceRegularizationRequest.attendance_date == attendance_date,
+            AttendanceRegularizationRequest.status == "SUBMITTED",
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def count_since(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        since: datetime,
+        exclude_statuses: tuple[str, ...] = ("CANCELLED",),
+    ) -> int:
+        """Monthly-cap count (`RegularizationPolicyVersion.max_requests_per_month`) — counts
+        every request submitted since `since` except `CANCELLED` ones (a self-withdrawn request
+        should not cost the employee a slot)."""
+        stmt = select(AttendanceRegularizationRequest).where(
+            AttendanceRegularizationRequest.company_id == company_id,
+            AttendanceRegularizationRequest.employee_id == employee_id,
+            AttendanceRegularizationRequest.submitted_at >= since,
+            AttendanceRegularizationRequest.status.notin_(exclude_statuses),
+        )
+        return len((await session.execute(stmt)).scalars().all())
+
+    async def list_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+        request_type: str | None,
+    ) -> list[AttendanceRegularizationRequest]:
+        conditions = [AttendanceRegularizationRequest.company_id == company_id]
+        if visible_employee_ids is not None:
+            if not visible_employee_ids:
+                return []
+            conditions.append(
+                AttendanceRegularizationRequest.employee_id.in_(visible_employee_ids)
+            )
+        if employee_id is not None:
+            conditions.append(AttendanceRegularizationRequest.employee_id == employee_id)
+        if date_from is not None:
+            conditions.append(AttendanceRegularizationRequest.attendance_date >= date_from)
+        if date_to is not None:
+            conditions.append(AttendanceRegularizationRequest.attendance_date <= date_to)
+        if status is not None:
+            conditions.append(AttendanceRegularizationRequest.status == status)
+        if request_type is not None:
+            conditions.append(AttendanceRegularizationRequest.request_type == request_type)
+        stmt = (
+            select(AttendanceRegularizationRequest)
+            .where(*conditions)
+            .order_by(AttendanceRegularizationRequest.submitted_at.desc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        request_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> AttendanceRegularizationRequest | None:
+        stmt = (
+            update(AttendanceRegularizationRequest)
+            .where(
+                AttendanceRegularizationRequest.id == request_id,
+                AttendanceRegularizationRequest.company_id == company_id,
+                AttendanceRegularizationRequest.version == expected_version,
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(AttendanceRegularizationRequest)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def mark_applied(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        request_id: UUID,
+        attendance_day_id: UUID | None,
+        now: datetime,
+    ) -> None:
+        """A plain follow-up write, not version-guarded — by the time this runs, the version
+        -guarded `update()` that set `status='APPROVED'` has already uniquely succeeded, so no
+        other transition can race this column. `attendance_day_id` backfills the request's
+        reference the first time `calculate()` produces a row for this employee-date (WD-28
+        model docstring); `None` leaves the existing value untouched. Returns nothing — callers
+        re-fetch via `get()` rather than reuse a `.returning()` row, since a later bulk statement
+        on the same PK would otherwise expire that in-memory object's attributes outside of an
+        awaited context (`MissingGreenlet` on the next plain attribute access)."""
+        values: dict[str, Any] = {"applied_at": now, "updated_at": now}
+        if attendance_day_id is not None:
+            values["attendance_day_id"] = attendance_day_id
+        await session.execute(
+            update(AttendanceRegularizationRequest)
+            .where(
+                AttendanceRegularizationRequest.id == request_id,
+                AttendanceRegularizationRequest.company_id == company_id,
+            )
+            .values(**values)
+        )
+
+
+class AttendanceRegularizationRequestedPunchRepository:
+    async def insert_many(
+        self, session: AsyncSession, *, rows: list[dict[str, Any]]
+    ) -> list[AttendanceRegularizationRequestedPunch]:
+        created = [AttendanceRegularizationRequestedPunch(**row) for row in rows]
+        session.add_all(created)
+        await session.flush()
+        return created
+
+    async def list_for_request(
+        self, session: AsyncSession, *, company_id: UUID, request_id: UUID
+    ) -> list[AttendanceRegularizationRequestedPunch]:
+        stmt = (
+            select(AttendanceRegularizationRequestedPunch)
+            .where(
+                AttendanceRegularizationRequestedPunch.company_id == company_id,
+                AttendanceRegularizationRequestedPunch.request_id == request_id,
+            )
+            .order_by(AttendanceRegularizationRequestedPunch.sort_order)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+
+class AttendanceRegularizationActionRepository:
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> AttendanceRegularizationAction:
+        row = AttendanceRegularizationAction(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_for_request(
+        self, session: AsyncSession, *, company_id: UUID, request_id: UUID
+    ) -> list[AttendanceRegularizationAction]:
+        stmt = (
+            select(AttendanceRegularizationAction)
+            .where(
+                AttendanceRegularizationAction.company_id == company_id,
+                AttendanceRegularizationAction.request_id == request_id,
+            )
+            .order_by(AttendanceRegularizationAction.created_at)
         )
         return list((await session.execute(stmt)).scalars().all())

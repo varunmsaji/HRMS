@@ -33,7 +33,7 @@ from hrms.core.db.models.identity import (
     UserCompany,
     UserRole,
 )
-from hrms.core.db.session import get_session_factory
+from hrms.core.db.session import get_session_factory, set_rls_company_id
 
 pytestmark = pytest.mark.asyncio
 
@@ -47,9 +47,24 @@ async def _create_permission_scoped_user(
 ) -> tuple[dict[str, str], UUID]:
     """Mirrors `employee/test_employee_assignment.py::_create_permission_scoped_user` — a fresh
     role holding exactly the given permission codes at the given `data_scope`, attached to a
-    fresh user in the same company."""
+    fresh user in the same company.
+
+    Explicitly sets RLS `app.company_id` before touching any RLS'd table (`role`,
+    `user_company`, ...), same workaround already used by `test_shift_version.py`/`test_shift.py`/
+    `test_employee_assignment.py`'s raw cleanup queries: a custom (undeclared) Postgres GUC that
+    has ever been `SET LOCAL`'d on a pooled connection reverts to `''` (empty string), not `NULL`,
+    once that transaction ends — never true NULL again for that connection's lifetime. A pooled
+    connection this raw session picks up has near-certainly already had `app.company_id` set by
+    an earlier authenticated request in the same test (`_register_tenant` et al. all go through
+    `get_session`), so relying on an implicit NULL here reliably crashes with
+    `InvalidTextRepresentationError: invalid input syntax for type uuid: ""` — the exact defect
+    flagged for `POST /v1/auth/login` (docs task brief), reproduced here independently via a raw
+    `psql` session and confirmed with a fresh `docker restart` of the dev Postgres container (not
+    connection-pool leakage from an unrelated process). See the W6 implementation report for the
+    full production-scope writeup; this fix is test-infrastructure only."""
     factory = get_session_factory()
     async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
         permissions = (
             (await session.execute(select(Permission).where(Permission.code.in_(permission_codes))))
             .scalars()

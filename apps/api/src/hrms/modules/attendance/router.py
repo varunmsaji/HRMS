@@ -31,12 +31,18 @@ from hrms.modules.attendance.dependencies import (
     get_attendance_day_service,
     get_attendance_service,
     get_punch_service,
+    get_regularization_request_service,
+    get_shift_roster_service,
 )
 from hrms.modules.attendance.permissions import (
     ATTENDANCE_POLICY_MANAGE,
     ATTENDANCE_PUNCH,
     ATTENDANCE_PUNCH_ON_BEHALF,
     ATTENDANCE_RECOMPUTE,
+    ATTENDANCE_REGULARIZATION_APPROVE,
+    ATTENDANCE_REGULARIZATION_REQUEST,
+    ATTENDANCE_REGULARIZATION_REQUEST_ON_BEHALF,
+    ATTENDANCE_ROSTER_MANAGE,
     ATTENDANCE_VIEW,
     ATTENDANCE_VIEW_ALL,
 )
@@ -66,8 +72,21 @@ from hrms.modules.attendance.schemas import (
     RegularizationPolicyVersionPublishRequest,
     RegularizationPolicyVersionRead,
     RegularizationPolicyVersionUpdate,
+    RegularizationRequestCreate,
+    RegularizationRequestRead,
+    RegularizationReviewInput,
+    ShiftRosterBulkCreate,
+    ShiftRosterCreate,
+    ShiftRosterRead,
+    ShiftRosterUpdate,
 )
-from hrms.modules.attendance.service import AttendanceDayService, AttendanceService, PunchService
+from hrms.modules.attendance.service import (
+    AttendanceDayService,
+    AttendanceService,
+    PunchService,
+    RegularizationRequestService,
+    ShiftRosterService,
+)
 from hrms.modules.identity.schemas import build_meta
 from hrms.shared.pagination import DataEnvelope, ListEnvelope
 
@@ -858,6 +877,343 @@ async def recompute_attendance_day(
         tenant.company_id,
         attendance_day_id,
         actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# W5 — ShiftRoster (architecture §4.2/§9.7/§25, WD-27)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/rosters", status_code=status.HTTP_201_CREATED)
+async def create_roster_entry(
+    body: ShiftRosterCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_ROSTER_MANAGE))],
+    service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+) -> DataEnvelope[ShiftRosterRead]:
+    data = await service.create_roster_entry(
+        tenant.company_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/rosters/bulk", status_code=status.HTTP_201_CREATED)
+async def bulk_create_roster_entries(
+    body: ShiftRosterBulkCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_ROSTER_MANAGE))],
+    service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+) -> ListEnvelope[ShiftRosterRead]:
+    """architecture §25 `/rosters bulk + per employee/date` — an explicit per-date entry list
+    (fixed/monthly rosters), not a rotation-pattern generator (WD-27)."""
+    data = await service.bulk_create(
+        tenant.company_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/rosters", status_code=status.HTTP_200_OK)
+async def list_roster_entries(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    date_from: Annotated[date | None, Query()] = None,
+    date_to: Annotated[date | None, Query()] = None,
+    roster_status: Annotated[str | None, Query(alias="status")] = None,
+) -> ListEnvelope[ShiftRosterRead]:
+    data = await service.list_roster_entries(
+        tenant.company_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        employee_id=employee_id,
+        date_from=date_from,
+        date_to=date_to,
+        status=roster_status,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/rosters/{roster_id}", status_code=status.HTTP_200_OK)
+async def get_roster_entry(
+    roster_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+) -> DataEnvelope[ShiftRosterRead]:
+    data = await service.get_roster_entry(
+        tenant.company_id, roster_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.patch("/rosters/{roster_id}", status_code=status.HTTP_200_OK)
+async def update_roster_entry(
+    roster_id: UUID,
+    body: ShiftRosterUpdate,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_ROSTER_MANAGE))],
+    service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+) -> DataEnvelope[ShiftRosterRead]:
+    data = await service.update_roster_entry(
+        tenant.company_id,
+        roster_id,
+        body,
+        expected_version=int(if_match),
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/rosters/{roster_id}/publish", status_code=status.HTTP_200_OK)
+async def publish_roster_entry(
+    roster_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_ROSTER_MANAGE))],
+    service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+) -> DataEnvelope[ShiftRosterRead]:
+    data = await service.publish_roster_entry(
+        tenant.company_id,
+        roster_id,
+        expected_version=int(if_match),
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete("/rosters/{roster_id}", status_code=status.HTTP_200_OK)
+async def delete_roster_entry(
+    roster_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_ROSTER_MANAGE))],
+    service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+) -> DataEnvelope[ShiftRosterRead]:
+    data = await service.delete_roster_entry(
+        tenant.company_id,
+        roster_id,
+        expected_version=int(if_match),
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# W6 — Regularization requests (architecture §13/§14/§25, decision log WD-28)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/regularizations", status_code=status.HTTP_201_CREATED)
+async def create_regularization_request(
+    body: RegularizationRequestCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[RegularizationRequestService, Depends(get_regularization_request_service)],
+) -> DataEnvelope[RegularizationRequestRead]:
+    """Self-submit (`ATTENDANCE.REGULARIZATION_REQUEST`, SELF) when `employee_id` is omitted or
+    matches the caller's own; on-behalf (`ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF`, COMPANY)
+    when it names someone else — mirrors `create_punch`'s direct `rbac.resolve_data_scope()`
+    call exactly, since the gating permission here also depends on the request body."""
+    target_employee_id = body.employee_id or user.employee_id
+    if target_employee_id is None:
+        raise ValidationError("employee_id is required — the caller has no linked employee record")
+
+    on_behalf = body.employee_id is not None and body.employee_id != user.employee_id
+    required_permission = (
+        ATTENDANCE_REGULARIZATION_REQUEST_ON_BEHALF
+        if on_behalf
+        else ATTENDANCE_REGULARIZATION_REQUEST
+    )
+    scope = await rbac.resolve_data_scope(user.user_id, user.company_id, required_permission)
+    if not scope.levels:
+        raise PermissionDeniedError(
+            f"Permission {required_permission} is required", code="PERMISSION_DENIED"
+        )
+
+    data = await service.submit(
+        tenant.company_id,
+        target_employee_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        on_behalf=on_behalf,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/regularizations", status_code=status.HTTP_200_OK)
+async def list_regularization_requests(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[RegularizationRequestService, Depends(get_regularization_request_service)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    date_from: Annotated[date | None, Query()] = None,
+    date_to: Annotated[date | None, Query()] = None,
+    request_status: Annotated[str | None, Query()] = None,
+    request_type: Annotated[str | None, Query()] = None,
+) -> ListEnvelope[RegularizationRequestRead]:
+    data = await service.list(
+        tenant.company_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        employee_id=employee_id,
+        date_from=date_from,
+        date_to=date_to,
+        status=request_status,
+        request_type=request_type,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/regularizations/{request_id}", status_code=status.HTTP_200_OK)
+async def get_regularization_request(
+    request_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[RegularizationRequestService, Depends(get_regularization_request_service)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+) -> DataEnvelope[RegularizationRequestRead]:
+    data = await service.get(
+        tenant.company_id, request_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/regularizations/{request_id}/cancel", status_code=status.HTTP_200_OK)
+async def cancel_regularization_request(
+    request_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[RegularizationRequestService, Depends(get_regularization_request_service)],
+) -> DataEnvelope[RegularizationRequestRead]:
+    """Only the original submitter may cancel (enforced in the service); this route accepts
+    either submission permission since a cancel is available to whichever kind of submitter
+    created the request — the service's `submitted_by_user_id` check is the real gate, this is
+    only "does the caller hold some regularization-submission grant at all"."""
+    self_scope = await rbac.resolve_data_scope(
+        user.user_id, user.company_id, ATTENDANCE_REGULARIZATION_REQUEST
+    )
+    on_behalf_scope = await rbac.resolve_data_scope(
+        user.user_id, user.company_id, ATTENDANCE_REGULARIZATION_REQUEST_ON_BEHALF
+    )
+    combined_scope = DataScope(levels=self_scope.levels | on_behalf_scope.levels)
+    if not combined_scope.levels:
+        raise PermissionDeniedError(
+            f"Permission {ATTENDANCE_REGULARIZATION_REQUEST} is required", code="PERMISSION_DENIED"
+        )
+
+    data = await service.cancel(
+        tenant.company_id,
+        request_id,
+        scope=combined_scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/regularizations/{request_id}/approve", status_code=status.HTTP_200_OK)
+async def approve_regularization_request(
+    request_id: UUID,
+    body: RegularizationReviewInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_REGULARIZATION_APPROVE))],
+    service: Annotated[RegularizationRequestService, Depends(get_regularization_request_service)],
+) -> DataEnvelope[RegularizationRequestRead]:
+    """§14: `MANAGER` stage requires the caller to *be* the snapshotted
+    `resolved_approver_manager_id`; `HR` stage requires a COMPANY-scoped grant — both checked in
+    the service (`RegularizationRequestService._get_reviewable`), not here, since the correct
+    check depends on the request's current stage."""
+    data = await service.approve(
+        tenant.company_id,
+        request_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/regularizations/{request_id}/reject", status_code=status.HTTP_200_OK)
+async def reject_regularization_request(
+    request_id: UUID,
+    body: RegularizationReviewInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_REGULARIZATION_APPROVE))],
+    service: Annotated[RegularizationRequestService, Depends(get_regularization_request_service)],
+) -> DataEnvelope[RegularizationRequestRead]:
+    data = await service.reject(
+        tenant.company_id,
+        request_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )

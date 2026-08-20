@@ -221,8 +221,9 @@ async def test_registration_success_full_row_graph(
             # admin would have zero Employee access. ORG.CALENDAR.MANAGE/ORG.HOLIDAY.MANAGE
             # added by the Workforce Calendar (W1) slice, ATTENDANCE.POLICY_MANAGE added by
             # the Attendance Policy (W3) slice, ATTENDANCE.VIEW/.VIEW_ALL/.PUNCH/
-            # .PUNCH_ON_BEHALF/.RECOMPUTE added by the Punch/AttendanceDay (W4) slice — same
-            # "must grant at live registration, not just the demo seed" rule.
+            # .PUNCH_ON_BEHALF/.RECOMPUTE added by the Punch/AttendanceDay (W4) slice,
+            # ATTENDANCE.ROSTER_MANAGE added by the Shift Roster (W5) slice — same "must grant
+            # at live registration, not just the demo seed" rule.
             assert codes == {
                 ORG_COMPANY_MANAGE,
                 DASHBOARD_COMPANY_VIEW,
@@ -240,6 +241,7 @@ async def test_registration_success_full_row_graph(
                 "ATTENDANCE.PUNCH",
                 "ATTENDANCE.PUNCH_ON_BEHALF",
                 "ATTENDANCE.RECOMPUTE",
+                "ATTENDANCE.ROSTER_MANAGE",
                 "EMPLOYEE.VIEW",
                 "EMPLOYEE.VIEW_ALL",
                 "EMPLOYEE.CREATE",

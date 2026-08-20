@@ -450,6 +450,87 @@ def test_evaluate_day_missing_shift_absent_when_policy_says_absent() -> None:
 
 
 # ---------------------------------------------------------------------------
+# W5 — ShiftRoster overrides (architecture §9.7, WD-27)
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_day_roster_week_off_override_no_shift_no_punches_not_expected() -> None:
+    """A pure roster week-off row (`shift_id=NULL`) must not fall through to
+    `missing_shift_behaviour` and be misread as an unresolved-shift config problem — it is a
+    deliberate day-off fact, checked ahead of the missing-shift branch."""
+    result = evaluate_day(
+        _base_input(
+            shift=None,
+            scheduled_start=None,
+            scheduled_end=None,
+            roster_week_off_override=True,
+        )
+    )
+    assert result.attendance_status == "NOT_EXPECTED"
+    assert result.paid_day_fraction == "1.00"
+
+
+def test_evaluate_day_roster_week_off_override_wins_over_working_calendar() -> None:
+    """§9.7's motivating case: a rotating-crew day off that the calendar/weekly-off pattern
+    alone cannot represent. `calendar_day_type` stays WORKING (WD-04/WD-07 — roster never
+    rewrites calendar type); only the expectation-of-presence outcome changes."""
+    result = evaluate_day(
+        _base_input(calendar_day_type="WORKING", roster_week_off_override=True, punches=[])
+    )
+    assert result.attendance_status == "NOT_EXPECTED"
+    assert result.calendar_day_type == "WORKING"
+
+
+def test_evaluate_day_roster_week_off_override_with_punches_still_evaluates_presence() -> None:
+    """Working on a roster-marked off day is not a terminal short-circuit — it falls through to
+    ordinary presence evaluation, the same way calendar-WEEKLY_OFF-with-punches does."""
+    punches = [_punch(3, 30, "IN", day=10), _punch(12, 30, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(calendar_day_type="WORKING", roster_week_off_override=True, punches=punches)
+    )
+    assert result.attendance_status == "PRESENT"
+
+
+def test_evaluate_day_roster_holiday_working_override_present() -> None:
+    """architecture's explicit example: assignment default is a normal shift, roster marks a
+    holiday as a working day for this one employee — the calendar stays HOLIDAY, but the shift
+    is treated as operating, so a full day's punches evaluate to PRESENT +
+    `worked_on_holiday`."""
+    punches = [_punch(3, 30, "IN", day=10), _punch(12, 30, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(
+            calendar_day_type="HOLIDAY",
+            holiday_name="Test Holiday",
+            roster_holiday_working_override=True,
+            punches=punches,
+        )
+    )
+    assert result.attendance_status == "PRESENT"
+    assert result.worked_on_holiday is True
+    assert result.calendar_day_type == "HOLIDAY"
+
+
+def test_evaluate_day_roster_holiday_working_override_no_punches_still_not_expected() -> None:
+    """`roster_holiday_working_override` is wired through exactly like the existing
+    `shift.operates_on_holiday` flag it's OR'd alongside (`shift_operates`) — including that
+    flag's existing zero-punch behaviour: `_resolve_primary_status`'s worked_minutes==0 branch
+    keys off `not_expected` alone (day_type-derived), not `shift_operates`, so an "operates on
+    holiday" shift with nobody actually punching in is still NOT_EXPECTED today, override or
+    not. This is pre-existing W4 engine behaviour (same for a non-roster
+    `operates_on_holiday=True` shift), not something W5 changes — this test pins it so a
+    future change to that precedence doesn't silently regress unnoticed."""
+    result = evaluate_day(
+        _base_input(
+            calendar_day_type="HOLIDAY",
+            holiday_name="Test Holiday",
+            roster_holiday_working_override=True,
+            punches=[],
+        )
+    )
+    assert result.attendance_status == "NOT_EXPECTED"
+
+
+# ---------------------------------------------------------------------------
 # Break matching
 # ---------------------------------------------------------------------------
 

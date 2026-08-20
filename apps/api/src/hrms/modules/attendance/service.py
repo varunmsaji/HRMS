@@ -15,8 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
-from hrms.core.errors.base import NotFoundError
-from hrms.core.rbac.types import DataScope
+from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
+from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.attendance import calculation as calc
 from hrms.modules.attendance.exceptions import (
     AttendanceDayLockedError,
@@ -31,16 +31,37 @@ from hrms.modules.attendance.exceptions import (
     PolicyVersionNotFoundForDateError,
     PolicyVersionOverlapError,
     PolicyVersionPreviousVersionRequiredError,
+    RegularizationApproverMismatchError,
+    RegularizationAttachmentRequiredError,
+    RegularizationBlockedByLockError,
+    RegularizationDuplicateActiveRequestError,
+    RegularizationInvalidTransitionError,
+    RegularizationNotPermittedError,
+    RegularizationPolicyNotResolvedError,
+    RegularizationReasonRequiredError,
+    RegularizationRequestLimitExceededError,
+    RegularizationRequestNotFoundError,
+    RegularizationSelfApprovalNotAllowedError,
+    RegularizationTypeNotAllowedError,
+    RegularizationWindowExceededError,
+    ShiftRosterDateConflictError,
+    ShiftRosterNotFoundError,
     StalePolicyResourceError,
+    StaleRegularizationRequestResourceError,
+    StaleShiftRosterResourceError,
 )
-from hrms.modules.attendance.models import AttendanceDay
+from hrms.modules.attendance.models import AttendanceDay, AttendanceRegularizationRequest
 from hrms.modules.attendance.repository import (
     AttendanceBreakRepository,
     AttendanceDayRepository,
     AttendancePolicyRepository,
+    AttendanceRegularizationActionRepository,
+    AttendanceRegularizationRequestedPunchRepository,
+    AttendanceRegularizationRequestRepository,
     OvertimePolicyRepository,
     PunchRepository,
     RegularizationPolicyRepository,
+    ShiftRosterRepository,
 )
 from hrms.modules.attendance.resolution import PolicyResolutionService
 from hrms.modules.attendance.schemas import (
@@ -69,6 +90,13 @@ from hrms.modules.attendance.schemas import (
     RegularizationPolicyVersionPublishRequest,
     RegularizationPolicyVersionRead,
     RegularizationPolicyVersionUpdate,
+    RegularizationRequestCreate,
+    RegularizationRequestRead,
+    RegularizationReviewInput,
+    ShiftRosterBulkCreate,
+    ShiftRosterCreate,
+    ShiftRosterRead,
+    ShiftRosterUpdate,
     _parse_time,
     attendance_day_to_audit_dict,
     attendance_day_to_read,
@@ -82,6 +110,7 @@ from hrms.modules.attendance.schemas import (
     build_overtime_policy_version_update_values,
     build_regularization_policy_update_values,
     build_regularization_policy_version_update_values,
+    build_shift_roster_update_values,
     overtime_policy_to_audit_dict,
     overtime_policy_to_read,
     overtime_policy_version_to_audit_dict,
@@ -92,6 +121,10 @@ from hrms.modules.attendance.schemas import (
     regularization_policy_to_read,
     regularization_policy_version_to_audit_dict,
     regularization_policy_version_to_read,
+    regularization_request_to_audit_dict,
+    regularization_request_to_read,
+    shift_roster_to_audit_dict,
+    shift_roster_to_read,
 )
 
 
@@ -1828,6 +1861,360 @@ async def _ensure_employee_visible(
     )
 
 
+class ShiftRosterService:
+    """Per-employee-per-date schedule override CRUD (W5 — architecture §4.2/§9.7, WD-27). The
+    calculation engine's *read* of a resolved roster shift goes straight through
+    `ShiftRosterRepository.get_published_for_date` in `AttendanceDayService`, not through this
+    service — this class is the `ATTENDANCE.ROSTER_MANAGE` write surface plus the
+    `ATTENDANCE.VIEW`-gated list/get.
+
+    Every mutation checks `_ensure_employee_visible` on the *target* `employee_id`, not just
+    that the caller holds `ATTENDANCE.ROSTER_MANAGE` at all — the same DataScope-resolved-then-
+    discarded bug class fixed for punches in commit `fecb740` (see `PunchService.record_punch`'s
+    docstring); a COMPANY-scoped grant is the common case per architecture §23.2, but nothing
+    here assumes it."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = ShiftRosterRepository()
+        self._audit = AuditService()
+
+    async def create_roster_entry(
+        self,
+        company_id: UUID,
+        body: ShiftRosterCreate,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftRosterRead:
+        await _ensure_employee_visible(
+            self._session, company_id, body.employee_id, scope, caller_employee_id
+        )
+        return await self._insert(
+            company_id,
+            employee_id=body.employee_id,
+            roster_date=body.roster_date,
+            shift_id=body.shift_id,
+            is_week_off_override=body.is_week_off_override,
+            is_holiday_working_override=body.is_holiday_working_override,
+            reason=body.reason,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def bulk_create(
+        self,
+        company_id: UUID,
+        body: ShiftRosterBulkCreate,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> list[ShiftRosterRead]:
+        """architecture §25 `/rosters bulk + per employee/date` — an explicit per-date list,
+        not a rotation-pattern generator (WD-27 — `ShiftRotationPattern` stays deferred to
+        optional W11). A fixed roster (same shift every day) or a rotating/monthly pattern is
+        expanded into concrete `(date, shift_id)` entries by the caller before this is called;
+        the backend only ever persists dated rows, matching WD-12's typed/no-generic-engine
+        posture. Entries are inserted one at a time so a single conflicting date fails with a
+        precise `ShiftRosterDateConflictError` rather than aborting the whole batch opaquely."""
+        await _ensure_employee_visible(
+            self._session, company_id, body.employee_id, scope, caller_employee_id
+        )
+        created: list[ShiftRosterRead] = []
+        for entry in body.entries:
+            created.append(
+                await self._insert(
+                    company_id,
+                    employee_id=body.employee_id,
+                    roster_date=entry.roster_date,
+                    shift_id=entry.shift_id,
+                    is_week_off_override=entry.is_week_off_override,
+                    is_holiday_working_override=entry.is_holiday_working_override,
+                    reason=body.reason,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            )
+        return created
+
+    async def _insert(
+        self,
+        company_id: UUID,
+        *,
+        employee_id: UUID,
+        roster_date: date,
+        shift_id: UUID | None,
+        is_week_off_override: bool,
+        is_holiday_working_override: bool,
+        reason: str | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> ShiftRosterRead:
+        now = datetime.now(UTC)
+        roster_id = uuid4()
+        data = {
+            "id": roster_id,
+            "company_id": company_id,
+            "employee_id": employee_id,
+            "roster_date": roster_date,
+            "shift_id": shift_id,
+            "is_week_off_override": is_week_off_override,
+            "is_holiday_working_override": is_holiday_working_override,
+            "status": "DRAFT",
+            "reason": reason,
+            "created_by": actor_user_id,
+            "updated_by": actor_user_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            row = await self._repo.insert(self._session, data=data)
+        except IntegrityError as exc:
+            raise ShiftRosterDateConflictError() from exc
+
+        read = shift_roster_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_ROSTER_CREATED",
+            entity_type="shift_roster",
+            entity_id=roster_id,
+            after=shift_roster_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def update_roster_entry(
+        self,
+        company_id: UUID,
+        roster_id: UUID,
+        patch: ShiftRosterUpdate,
+        *,
+        expected_version: int,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftRosterRead:
+        row = await self._repo.get(self._session, company_id=company_id, roster_id=roster_id)
+        if row is None:
+            raise ShiftRosterNotFoundError()
+        await _ensure_employee_visible(
+            self._session, company_id, row.employee_id, scope, caller_employee_id
+        )
+        before_read = shift_roster_to_read(row)
+
+        values = build_shift_roster_update_values(patch)
+        if not values:
+            return before_read
+
+        now = datetime.now(UTC)
+        try:
+            updated = await self._repo.update(
+                self._session,
+                company_id=company_id,
+                roster_id=roster_id,
+                values={**values, "updated_by": actor_user_id},
+                expected_version=expected_version,
+                now=now,
+            )
+        except IntegrityError as exc:
+            raise ShiftRosterDateConflictError() from exc
+        if updated is None:
+            updated = await self._repo.get(
+                self._session, company_id=company_id, roster_id=roster_id
+            )
+            if updated is None:
+                raise ShiftRosterNotFoundError()
+            raise StaleShiftRosterResourceError(
+                "This roster entry has been modified by another request",
+                current=shift_roster_to_audit_dict(shift_roster_to_read(updated)),
+            )
+
+        after_read = shift_roster_to_read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_ROSTER_UPDATED",
+            entity_type="shift_roster",
+            entity_id=roster_id,
+            before=shift_roster_to_audit_dict(before_read),
+            after=shift_roster_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def publish_roster_entry(
+        self,
+        company_id: UUID,
+        roster_id: UUID,
+        *,
+        expected_version: int,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftRosterRead:
+        """DRAFT -> PUBLISHED (WD-27). Only a `PUBLISHED` row is visible to the calculation
+        engine (`ShiftRosterRepository.get_published_for_date`) — publishing is the moment a
+        staged roster actually goes live for attendance. Idempotent: publishing an
+        already-PUBLISHED row is a no-op, not an error or a pointless version bump."""
+        row = await self._repo.get(self._session, company_id=company_id, roster_id=roster_id)
+        if row is None:
+            raise ShiftRosterNotFoundError()
+        await _ensure_employee_visible(
+            self._session, company_id, row.employee_id, scope, caller_employee_id
+        )
+        before_read = shift_roster_to_read(row)
+        if before_read.status == "PUBLISHED":
+            return before_read
+
+        now = datetime.now(UTC)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            roster_id=roster_id,
+            values={"status": "PUBLISHED", "updated_by": actor_user_id},
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            current = await self._repo.get(
+                self._session, company_id=company_id, roster_id=roster_id
+            )
+            if current is None:
+                raise ShiftRosterNotFoundError()
+            raise StaleShiftRosterResourceError(
+                "This roster entry has been modified by another request",
+                current=shift_roster_to_audit_dict(shift_roster_to_read(current)),
+            )
+
+        after_read = shift_roster_to_read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_ROSTER_PUBLISHED",
+            entity_type="shift_roster",
+            entity_id=roster_id,
+            before=shift_roster_to_audit_dict(before_read),
+            after=shift_roster_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def delete_roster_entry(
+        self,
+        company_id: UUID,
+        roster_id: UUID,
+        *,
+        expected_version: int,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ShiftRosterRead:
+        row = await self._repo.get(self._session, company_id=company_id, roster_id=roster_id)
+        if row is None:
+            raise ShiftRosterNotFoundError()
+        await _ensure_employee_visible(
+            self._session, company_id, row.employee_id, scope, caller_employee_id
+        )
+        before_read = shift_roster_to_read(row)
+
+        now = datetime.now(UTC)
+        deleted = await self._repo.soft_delete(
+            self._session,
+            company_id=company_id,
+            roster_id=roster_id,
+            expected_version=expected_version,
+            now=now,
+        )
+        if deleted is None:
+            current = await self._repo.get(
+                self._session, company_id=company_id, roster_id=roster_id
+            )
+            if current is None:
+                raise ShiftRosterNotFoundError()
+            raise StaleShiftRosterResourceError(
+                "This roster entry has been modified by another request",
+                current=shift_roster_to_audit_dict(shift_roster_to_read(current)),
+            )
+
+        after_read = shift_roster_to_read(deleted)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_ROSTER_DELETED",
+            entity_type="shift_roster",
+            entity_id=roster_id,
+            before=shift_roster_to_audit_dict(before_read),
+            after=shift_roster_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def get_roster_entry(
+        self,
+        company_id: UUID,
+        roster_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> ShiftRosterRead:
+        row = await self._repo.get(self._session, company_id=company_id, roster_id=roster_id)
+        if row is None:
+            raise ShiftRosterNotFoundError()
+        await _ensure_employee_visible(
+            self._session, company_id, row.employee_id, scope, caller_employee_id
+        )
+        return shift_roster_to_read(row)
+
+    async def list_roster_entries(
+        self,
+        company_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[ShiftRosterRead]:
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        rows = await self._repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+        return [shift_roster_to_read(r) for r in rows]
+
+
 class PunchService:
     """Punch ingestion (architecture §19.1 step 9, WD-11 — punches are immutable, append-only
     once written; corrections are new punches, never an UPDATE/DELETE of this row)."""
@@ -1948,6 +2335,7 @@ class AttendanceDayService:
         self._attendance_policy_repo = AttendancePolicyRepository()
         self._overtime_repo = OvertimePolicyRepository()
         self._punch_repo = PunchRepository()
+        self._roster_repo = ShiftRosterRepository()
         self._resolution = PolicyResolutionService(session)
         self._audit = AuditService()
 
@@ -2218,11 +2606,29 @@ class AttendanceDayService:
             branch = await organisation_service.get_branch(company_id, branch_id)
             branch_timezone = branch.timezone
 
+        # W5 (architecture §9.7) — a PUBLISHED `ShiftRoster` row for this employee-date outranks
+        # `EmployeeAssignment.shift_id`; falling back to the assignment default when none
+        # exists. Only PUBLISHED rows are considered (`get_published_for_date`) — a staged
+        # DRAFT roster must never change a live calculation (WD-27).
+        roster_entry = await self._roster_repo.get_published_for_date(
+            self._session, company_id=company_id, employee_id=employee_id, roster_date=target_date
+        )
+        roster_week_off_override = (
+            roster_entry.is_week_off_override if roster_entry is not None else False
+        )
+        roster_holiday_working_override = (
+            roster_entry.is_holiday_working_override if roster_entry is not None else False
+        )
+
         shift_inputs: calc.ShiftInputs | None = None
         shift_version_timezone: str | None = None
         shift_version_id: UUID | None = None
         raw_start_time = raw_end_time = raw_window_start = raw_window_end = None
-        shift_id = assignment.shift_id if assignment else None
+        shift_id = (
+            roster_entry.shift_id
+            if roster_entry is not None
+            else (assignment.shift_id if assignment else None)
+        )
         if shift_id is not None:
             try:
                 shift_version = await organisation_service.resolve_shift_version_as_of(
@@ -2462,6 +2868,8 @@ class AttendanceDayService:
             early_bands=early_bands,
             ot_policy=ot_inputs,
             punches=punches,
+            roster_week_off_override=roster_week_off_override,
+            roster_holiday_working_override=roster_holiday_working_override,
         )
         resolved_refs: dict[str, UUID | None] = {
             "shift_id": shift_id,
@@ -2492,3 +2900,807 @@ def _validate_allowed_types(allowed_types: list[Any]) -> None:
                 f"regularization_type '{row.regularization_type}' appears more than once"
             )
         seen.add(row.regularization_type)
+
+
+# ---------------------------------------------------------------------------
+# W6 — Regularization request workflow (architecture §13/§14, decision log WD-28)
+# ---------------------------------------------------------------------------
+
+
+class RegularizationRequestService:
+    """Employee/manager/HR regularization requests. Applies an approved correction only through
+    the two mechanisms that already exist — synthetic `Punch` rows (`source='REGULARIZATION'`)
+    and, for `WRONG_SHIFT`, a `PUBLISHED` `ShiftRoster` row — followed by the existing
+    `AttendanceDayService.calculate()` (WD-28 decision 1). No new calculation-engine logic is
+    added anywhere in this class."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = AttendanceRegularizationRequestRepository()
+        self._requested_punch_repo = AttendanceRegularizationRequestedPunchRepository()
+        self._action_repo = AttendanceRegularizationActionRepository()
+        self._regularization_policy_repo = RegularizationPolicyRepository()
+        self._day_repo = AttendanceDayRepository()
+        self._punch_repo = PunchRepository()
+        self._roster_repo = ShiftRosterRepository()
+        self._resolution = PolicyResolutionService(session)
+        self._day_service = AttendanceDayService(session)
+        self._audit = AuditService()
+
+    async def _read(
+        self, row: AttendanceRegularizationRequest, *, company_id: UUID
+    ) -> RegularizationRequestRead:
+        punches = await self._requested_punch_repo.list_for_request(
+            self._session, company_id=company_id, request_id=row.id
+        )
+        actions = await self._action_repo.list_for_request(
+            self._session, company_id=company_id, request_id=row.id
+        )
+        return regularization_request_to_read(row, requested_punches=punches, actions=actions)
+
+    async def _record_action(
+        self,
+        *,
+        company_id: UUID,
+        request_id: UUID,
+        action: str,
+        actor_user_id: UUID | None,
+        actor_employee_id: UUID | None,
+        stage: str | None,
+        comment: str | None,
+    ) -> None:
+        await self._action_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "request_id": request_id,
+                "action": action,
+                "actor_user_id": actor_user_id,
+                "actor_employee_id": actor_employee_id,
+                "stage": stage,
+                "comment": comment,
+            },
+        )
+
+    async def submit(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: RegularizationRequestCreate,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        on_behalf: bool,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> RegularizationRequestRead:
+        """`scope`/`caller_employee_id` gate the *target* employee, not just whether the caller
+        holds `ATTENDANCE.REGULARIZATION_REQUEST`/`_ON_BEHALF` at all — same reasoning as
+        `PunchService.record_punch` (fix `fecb740`). Checked first, before any policy read."""
+        await _ensure_employee_visible(
+            self._session, company_id, employee_id, scope, caller_employee_id
+        )
+
+        if body.attendance_date > date.today():
+            raise ValidationError("attendance_date cannot be in the future")
+
+        resolution = await self._resolution.resolve(
+            company_id,
+            "REGULARIZATION_POLICY",
+            employee_id=employee_id,
+            target_date=body.attendance_date,
+        )
+        if (
+            resolution.config_incomplete
+            or resolution.resolved_policy_id is None
+            or resolution.resolved_version_id is None
+        ):
+            raise RegularizationPolicyNotResolvedError()
+
+        policy_version = await self._regularization_policy_repo.get_version(
+            self._session,
+            company_id=company_id,
+            policy_id=resolution.resolved_policy_id,
+            version_id=resolution.resolved_version_id,
+        )
+        if policy_version is None:
+            raise RegularizationPolicyNotResolvedError()
+
+        allowed_types = await self._regularization_policy_repo.list_allowed_types(
+            self._session, company_id=company_id, policy_version_id=policy_version.id
+        )
+        allowed_codes = {row.regularization_type for row in allowed_types}
+        if body.request_type not in allowed_codes:
+            # WD-21 fail-closed: an empty `allowed_codes` (no configured types at all) also
+            # lands here — never silently permit every type because none were configured.
+            raise RegularizationTypeNotAllowedError()
+
+        if on_behalf:
+            if not (policy_version.allow_manager_request or policy_version.allow_hr_request):
+                raise RegularizationNotPermittedError(
+                    "The applicable policy does not allow on-behalf requests"
+                )
+        elif not policy_version.allow_employee_request:
+            raise RegularizationNotPermittedError(
+                "The applicable policy does not allow employee self-service requests"
+            )
+
+        if policy_version.max_backdated_days is not None:
+            backdated_days = (date.today() - body.attendance_date).days
+            if backdated_days > policy_version.max_backdated_days:
+                raise RegularizationWindowExceededError()
+
+        if policy_version.reason_required and not body.reason:
+            raise RegularizationReasonRequiredError()
+        if policy_version.attachment_required and not body.attachment_reference:
+            raise RegularizationAttachmentRequiredError()
+
+        now = datetime.now(UTC)
+        if policy_version.max_requests_per_month is not None:
+            month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+            count = await self._repo.count_since(
+                self._session, company_id=company_id, employee_id=employee_id, since=month_start
+            )
+            if count >= policy_version.max_requests_per_month:
+                raise RegularizationRequestLimitExceededError()
+
+        existing_active = await self._repo.get_active_for_date(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            attendance_date=body.attendance_date,
+        )
+        if existing_active is not None:
+            raise RegularizationDuplicateActiveRequestError()
+
+        existing_day = await self._day_repo.get_by_employee_date(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            attendance_date=body.attendance_date,
+        )
+        if (
+            existing_day is not None
+            and existing_day.is_locked
+            and policy_version.blocked_when_locked
+        ):
+            raise RegularizationBlockedByLockError()
+
+        approval_chain = policy_version.approval_chain
+        resolved_manager_id: UUID | None = None
+        approval_stage: str | None
+        if approval_chain == "AUTO":
+            approval_stage = None
+        elif approval_chain == "HR":
+            approval_stage = "HR"
+        else:  # MANAGER or MANAGER_THEN_HR
+            # Local, function-scoped import — mirrors the established convention this codebase
+            # uses for every cross-`hrms.modules` call (e.g. `calendar_resolution.py` importing
+            # `employee.service`; `attendance.resolution` importing
+            # `organisation.calendar_resolution`).
+            from hrms.modules.employee.service import EmployeeAssignmentService
+
+            assignment_service = EmployeeAssignmentService(self._session)
+            assignment = await assignment_service.get_assignment_as_of(
+                company_id, employee_id, body.attendance_date
+            )
+            resolved_manager_id = assignment.reporting_manager_id if assignment else None
+            # §14: "Resolution failure (no manager): route to HR, audit
+            # APPROVER_UNRESOLVED. Never auto-approve on failure."
+            approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
+
+        request_id = uuid4()
+        data = {
+            "id": request_id,
+            "company_id": company_id,
+            "employee_id": employee_id,
+            "attendance_day_id": existing_day.id if existing_day is not None else None,
+            "attendance_date": body.attendance_date,
+            "request_type": body.request_type,
+            "reason": body.reason,
+            "requested_shift_id": body.requested_shift_id,
+            "attachment_reference": body.attachment_reference,
+            "status": "SUBMITTED",
+            "approval_chain": approval_chain,
+            "approval_stage": approval_stage,
+            "regularization_policy_version_id": policy_version.id,
+            "resolved_approver_manager_id": resolved_manager_id,
+            "submitted_by_user_id": actor_user_id,
+            "submitted_at": now,
+        }
+        try:
+            row = await self._repo.insert(self._session, data=data)
+        except IntegrityError as exc:
+            raise RegularizationDuplicateActiveRequestError() from exc
+
+        if body.requested_punches:
+            await self._requested_punch_repo.insert_many(
+                self._session,
+                rows=[
+                    {
+                        "id": uuid4(),
+                        "company_id": company_id,
+                        "request_id": request_id,
+                        "direction": p.direction,
+                        "requested_time": p.requested_time,
+                        "sort_order": index,
+                    }
+                    for index, p in enumerate(body.requested_punches)
+                ],
+            )
+
+        await self._record_action(
+            company_id=company_id,
+            request_id=request_id,
+            action="SUBMITTED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=None,
+            comment=body.reason,
+        )
+        if approval_chain in ("MANAGER", "MANAGER_THEN_HR") and resolved_manager_id is None:
+            await self._record_action(
+                company_id=company_id,
+                request_id=request_id,
+                action="APPROVER_UNRESOLVED",
+                actor_user_id=None,
+                actor_employee_id=None,
+                stage="MANAGER",
+                comment="No manager resolved as of the attendance date; routed to HR",
+            )
+
+        read = await self._read(row, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="REGULARIZATION_SUBMITTED",
+            entity_type="attendance_regularization_request",
+            entity_id=request_id,
+            after=regularization_request_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        if existing_day is not None:
+            await self._day_repo.set_pending_approval(
+                self._session,
+                company_id=company_id,
+                attendance_day_id=existing_day.id,
+                is_pending_approval=True,
+                now=now,
+            )
+
+        if approval_chain == "AUTO":
+            read = await self._approve_internal(
+                company_id,
+                row,
+                actor_user_id=actor_user_id,
+                actor_employee_id=caller_employee_id,
+                reviewer_comment="Auto-approved per policy (approval_chain=AUTO)",
+                expected_version=row.version,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        return read
+
+    async def cancel(
+        self,
+        company_id: UUID,
+        request_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> RegularizationRequestRead:
+        """Only the original submitter may cancel (Phase 11: "Employee: ... Cancel eligible
+        request" — no manager/HR cancel path is specified), and only while still `SUBMITTED`."""
+        row = await self._repo.get(self._session, company_id=company_id, request_id=request_id)
+        if row is None:
+            raise RegularizationRequestNotFoundError()
+        await _ensure_employee_visible(
+            self._session, company_id, row.employee_id, scope, caller_employee_id
+        )
+        if row.submitted_by_user_id != actor_user_id:
+            raise PermissionDeniedError("Only the original submitter may cancel this request")
+        if row.status != "SUBMITTED":
+            raise RegularizationInvalidTransitionError()
+
+        now = datetime.now(UTC)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            request_id=request_id,
+            values={
+                "status": "CANCELLED",
+                "approval_stage": None,
+                "cancelled_at": now,
+                "cancelled_by_user_id": actor_user_id,
+            },
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, request_id)
+
+        await self._record_action(
+            company_id=company_id,
+            request_id=request_id,
+            action="CANCELLED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=None,
+            comment=None,
+        )
+        read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="REGULARIZATION_CANCELLED",
+            entity_type="attendance_regularization_request",
+            entity_id=request_id,
+            after=regularization_request_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        if row.attendance_day_id is not None:
+            await self._day_repo.set_pending_approval(
+                self._session,
+                company_id=company_id,
+                attendance_day_id=row.attendance_day_id,
+                is_pending_approval=False,
+                now=now,
+            )
+        return read
+
+    async def approve(
+        self,
+        company_id: UUID,
+        request_id: UUID,
+        body: RegularizationReviewInput,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> RegularizationRequestRead:
+        row = await self._get_reviewable(
+            company_id, request_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        return await self._approve_internal(
+            company_id,
+            row,
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            reviewer_comment=body.reviewer_comment,
+            expected_version=expected_version,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def reject(
+        self,
+        company_id: UUID,
+        request_id: UUID,
+        body: RegularizationReviewInput,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> RegularizationRequestRead:
+        row = await self._get_reviewable(
+            company_id, request_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        now = datetime.now(UTC)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            request_id=request_id,
+            values={
+                "status": "REJECTED",
+                "approval_stage": None,
+                "reviewed_by_user_id": actor_user_id,
+                "reviewed_at": now,
+                "reviewer_comment": body.reviewer_comment,
+                "rejection_reason": body.rejection_reason,
+            },
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, request_id)
+
+        await self._record_action(
+            company_id=company_id,
+            request_id=request_id,
+            action="REJECTED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=row.approval_stage,
+            comment=body.rejection_reason or body.reviewer_comment,
+        )
+        read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="REGULARIZATION_REJECTED",
+            entity_type="attendance_regularization_request",
+            entity_id=request_id,
+            before=regularization_request_to_audit_dict(
+                await self._read(row, company_id=company_id)
+            ),
+            after=regularization_request_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        # A rejected request cannot be treated as approved (Phase 5): no correction is applied,
+        # and any earlier pending-approval flag on the day is cleared without touching
+        # `is_regularized` (WD-28 decision 3 / `set_pending_approval`).
+        if row.attendance_day_id is not None:
+            await self._day_repo.set_pending_approval(
+                self._session,
+                company_id=company_id,
+                attendance_day_id=row.attendance_day_id,
+                is_pending_approval=False,
+                now=now,
+            )
+        return read
+
+    async def _get_reviewable(
+        self,
+        company_id: UUID,
+        request_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> AttendanceRegularizationRequest:
+        row = await self._repo.get(self._session, company_id=company_id, request_id=request_id)
+        if row is None:
+            raise RegularizationRequestNotFoundError()
+        if row.status != "SUBMITTED" or row.approval_stage is None:
+            raise RegularizationInvalidTransitionError()
+        # WD-28 decision 5 — self-approval is always blocked, no policy escape hatch exists.
+        if caller_employee_id is not None and row.employee_id == caller_employee_id:
+            raise RegularizationSelfApprovalNotAllowedError()
+
+        if row.approval_stage == "MANAGER":
+            # §14: "MANAGER -> reporting_manager_id as of the attendance date" — identity match
+            # against the snapshot, not merely "any REPORTEES-scoped grant" (defence in depth:
+            # the caller must also hold the permission at all, enforced at the router).
+            if caller_employee_id is None or caller_employee_id != row.resolved_approver_manager_id:
+                raise RegularizationApproverMismatchError()
+        else:  # HR
+            # §14: "HR -> any user with ATTENDANCE.REGULARISE_APPROVE at COMPANY".
+            if DataScopeLevel.COMPANY not in scope.levels:
+                raise RegularizationApproverMismatchError(
+                    "HR-stage approval requires a company-wide REGULARIZATION_APPROVE grant"
+                )
+        return row
+
+    async def _stale_error(
+        self, company_id: UUID, request_id: UUID
+    ) -> RegularizationRequestNotFoundError | StaleRegularizationRequestResourceError:
+        current = await self._repo.get(self._session, company_id=company_id, request_id=request_id)
+        if current is None:
+            return RegularizationRequestNotFoundError()
+        current_read = await self._read(current, company_id=company_id)
+        return StaleRegularizationRequestResourceError(
+            "This request has been modified by another request",
+            current=regularization_request_to_audit_dict(current_read),
+        )
+
+    async def _approve_internal(
+        self,
+        company_id: UUID,
+        row: AttendanceRegularizationRequest,
+        *,
+        actor_user_id: UUID | None,
+        actor_employee_id: UUID | None,
+        reviewer_comment: str | None,
+        expected_version: int,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> RegularizationRequestRead:
+        now = datetime.now(UTC)
+        is_final_stage = not (
+            row.approval_chain == "MANAGER_THEN_HR" and row.approval_stage == "MANAGER"
+        )
+        values: dict[str, Any] = (
+            {
+                "status": "APPROVED",
+                "approval_stage": None,
+                "reviewed_by_user_id": actor_user_id,
+                "reviewed_at": now,
+                "reviewer_comment": reviewer_comment,
+            }
+            if is_final_stage
+            else {"approval_stage": "HR"}
+        )
+
+        before_read = await self._read(row, company_id=company_id)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            request_id=row.id,
+            values=values,
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, row.id)
+
+        if not is_final_stage:
+            await self._record_action(
+                company_id=company_id,
+                request_id=row.id,
+                action="STAGE_APPROVED",
+                actor_user_id=actor_user_id,
+                actor_employee_id=actor_employee_id,
+                stage="MANAGER",
+                comment=reviewer_comment,
+            )
+            read = await self._read(updated, company_id=company_id)
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="REGULARIZATION_STAGE_APPROVED",
+                entity_type="attendance_regularization_request",
+                entity_id=row.id,
+                before=regularization_request_to_audit_dict(before_read),
+                after=regularization_request_to_audit_dict(read),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+            return read
+
+        await self._record_action(
+            company_id=company_id,
+            request_id=row.id,
+            action="APPROVED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=actor_employee_id,
+            stage=row.approval_stage,
+            comment=reviewer_comment,
+        )
+        approved_read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="REGULARIZATION_APPROVED",
+            entity_type="attendance_regularization_request",
+            entity_id=row.id,
+            before=regularization_request_to_audit_dict(before_read),
+            after=regularization_request_to_audit_dict(approved_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        return await self._apply_correction(
+            company_id,
+            updated,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def _apply_correction(
+        self,
+        company_id: UUID,
+        row: AttendanceRegularizationRequest,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> RegularizationRequestRead:
+        """WD-28 decision 1 — the only two mechanisms an approved request may use: synthetic
+        punches and, for `WRONG_SHIFT`, a `PUBLISHED` roster row. Both already exist; nothing
+        here is a new calculation path. Runs inside the same transaction as the approval write
+        that preceded it — if `AttendanceDayService.calculate()` refuses a locked day, the whole
+        transaction (including the `status='APPROVED'` write) rolls back with the exception, so
+        a request is never left `APPROVED` without its correction actually applied."""
+        now = datetime.now(UTC)
+
+        if row.requested_shift_id is not None:
+            existing_roster = await self._roster_repo.get_for_date(
+                self._session,
+                company_id=company_id,
+                employee_id=row.employee_id,
+                roster_date=row.attendance_date,
+            )
+            if existing_roster is None:
+                roster_row = await self._roster_repo.insert(
+                    self._session,
+                    data={
+                        "id": uuid4(),
+                        "company_id": company_id,
+                        "employee_id": row.employee_id,
+                        "roster_date": row.attendance_date,
+                        "shift_id": row.requested_shift_id,
+                        "is_week_off_override": False,
+                        "is_holiday_working_override": False,
+                        "status": "PUBLISHED",
+                        "reason": f"Applied from regularization request {row.id}",
+                        "version": 1,
+                        "created_by": actor_user_id,
+                        "updated_by": actor_user_id,
+                    },
+                )
+                await self._audit.record(
+                    self._session,
+                    company_id=company_id,
+                    actor_user_id=actor_user_id,
+                    action="SHIFT_ROSTER_CREATED",
+                    entity_type="shift_roster",
+                    entity_id=roster_row.id,
+                    after=shift_roster_to_audit_dict(shift_roster_to_read(roster_row)),
+                    ip=ip_address,
+                    user_agent=user_agent,
+                )
+            else:
+                roster_before = shift_roster_to_read(existing_roster)
+                updated_roster = await self._roster_repo.update(
+                    self._session,
+                    company_id=company_id,
+                    roster_id=existing_roster.id,
+                    values={
+                        "shift_id": row.requested_shift_id,
+                        "status": "PUBLISHED",
+                        "reason": f"Applied from regularization request {row.id}",
+                        "updated_by": actor_user_id,
+                    },
+                    expected_version=existing_roster.version,
+                    now=now,
+                )
+                # A concurrent roster edit racing this exact apply is not guarded further — if
+                # lost, the roster simply keeps its newer state and the punch-based correction
+                # and recompute below still proceed (the fail-safe direction: no state is lost,
+                # worst case the shift correction silently no-ops and the day recomputes without
+                # it, visible on inspection since `applied_at` is still set truthfully by what
+                # actually happened below).
+                if updated_roster is not None:
+                    await self._audit.record(
+                        self._session,
+                        company_id=company_id,
+                        actor_user_id=actor_user_id,
+                        action="SHIFT_ROSTER_UPDATED",
+                        entity_type="shift_roster",
+                        entity_id=updated_roster.id,
+                        before=shift_roster_to_audit_dict(roster_before),
+                        after=shift_roster_to_audit_dict(shift_roster_to_read(updated_roster)),
+                        ip=ip_address,
+                        user_agent=user_agent,
+                    )
+
+        requested_punches = await self._requested_punch_repo.list_for_request(
+            self._session, company_id=company_id, request_id=row.id
+        )
+        for requested in requested_punches:
+            punch_row = await self._punch_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": row.employee_id,
+                    "punch_time": requested.requested_time,
+                    "direction": requested.direction,
+                    "source": "REGULARIZATION",
+                    "idempotency_key": None,
+                    "recorded_by_user_id": actor_user_id,
+                    "reference": f"regularization:{row.id}",
+                    "created_at": now,
+                },
+            )
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="PUNCH_CREATED",
+                entity_type="punch",
+                entity_id=punch_row.id,
+                after=punch_to_audit_dict(punch_to_read(punch_row)),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+
+        day_read = await self._day_service.calculate(
+            company_id,
+            row.employee_id,
+            row.attendance_date,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        await self._day_repo.mark_regularized(
+            self._session, company_id=company_id, attendance_day_id=day_read.id, now=now
+        )
+        await self._repo.mark_applied(
+            self._session,
+            company_id=company_id,
+            request_id=row.id,
+            attendance_day_id=None if row.attendance_day_id == day_read.id else day_read.id,
+            now=now,
+        )
+        applied_row = await self._repo.get(self._session, company_id=company_id, request_id=row.id)
+        assert applied_row is not None  # status write above already succeeded uniquely
+
+        await self._record_action(
+            company_id=company_id,
+            request_id=row.id,
+            action="APPLIED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=None,
+            stage=None,
+            comment=None,
+        )
+        final_read = await self._read(applied_row, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="REGULARIZATION_APPLIED",
+            entity_type="attendance_regularization_request",
+            entity_id=row.id,
+            after=regularization_request_to_audit_dict(final_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return final_read
+
+    async def get(
+        self,
+        company_id: UUID,
+        request_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> RegularizationRequestRead:
+        row = await self._repo.get(self._session, company_id=company_id, request_id=request_id)
+        if row is None:
+            raise RegularizationRequestNotFoundError()
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        if visible_ids is not None and row.employee_id not in visible_ids:
+            raise RegularizationRequestNotFoundError()
+        return await self._read(row, company_id=company_id)
+
+    async def list(
+        self,
+        company_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+        employee_id: UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        status: str | None = None,
+        request_type: str | None = None,
+    ) -> list[RegularizationRequestRead]:
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        rows = await self._repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+            request_type=request_type,
+        )
+        return [await self._read(r, company_id=company_id) for r in rows]

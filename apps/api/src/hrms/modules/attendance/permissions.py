@@ -19,6 +19,15 @@ ATTENDANCE_VIEW_ALL = "ATTENDANCE.VIEW_ALL"
 ATTENDANCE_PUNCH = "ATTENDANCE.PUNCH"
 ATTENDANCE_PUNCH_ON_BEHALF = "ATTENDANCE.PUNCH_ON_BEHALF"
 ATTENDANCE_RECOMPUTE = "ATTENDANCE.RECOMPUTE"
+ATTENDANCE_ROSTER_MANAGE = "ATTENDANCE.ROSTER_MANAGE"
+
+# W6 (WD-28 decision 6) — regularization workflow. Reads reuse `ATTENDANCE_VIEW` (no fourth
+# code), mirroring WD-27's "roster viewing reuses ATTENDANCE.VIEW". Spelling kept as
+# "REGULARIZATION" (codebase convention: `RegularizationPolicy`/`regularization_policy`),
+# not architecture §23.2's one inconsistent "REGULARISE" instance.
+ATTENDANCE_REGULARIZATION_REQUEST = "ATTENDANCE.REGULARIZATION_REQUEST"
+ATTENDANCE_REGULARIZATION_REQUEST_ON_BEHALF = "ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF"
+ATTENDANCE_REGULARIZATION_APPROVE = "ATTENDANCE.REGULARIZATION_APPROVE"
 
 ATTENDANCE_PERMISSIONS = [
     (
@@ -31,4 +40,24 @@ ATTENDANCE_PERMISSIONS = [
     (ATTENDANCE_PUNCH, "ATTENDANCE", "Record own punches"),
     (ATTENDANCE_PUNCH_ON_BEHALF, "ATTENDANCE", "Record punches on behalf of other employees"),
     (ATTENDANCE_RECOMPUTE, "ATTENDANCE", "Trigger a privileged recompute of an attendance day"),
+    (
+        ATTENDANCE_ROSTER_MANAGE,
+        "ATTENDANCE",
+        "Create, update, publish, and delete shift roster entries",
+    ),
+    (
+        ATTENDANCE_REGULARIZATION_REQUEST,
+        "ATTENDANCE",
+        "Submit a regularization request for own attendance",
+    ),
+    (
+        ATTENDANCE_REGULARIZATION_REQUEST_ON_BEHALF,
+        "ATTENDANCE",
+        "Submit a regularization request on behalf of another employee",
+    ),
+    (
+        ATTENDANCE_REGULARIZATION_APPROVE,
+        "ATTENDANCE",
+        "Approve or reject regularization requests",
+    ),
 ]

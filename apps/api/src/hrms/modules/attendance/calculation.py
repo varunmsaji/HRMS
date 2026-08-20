@@ -152,6 +152,11 @@ class AttendanceCalculationInput:
     early_bands: list[BandData] = field(default_factory=list)
     ot_policy: OvertimePolicyInputs | None = None
     punches: list[PunchData] = field(default_factory=list)
+    # W5 (architecture §9.7, WD-27) — set from a PUBLISHED `ShiftRoster` row for this
+    # employee-date, if one exists. Roster overrides only change expectation-of-presence in
+    # `evaluate_day`; they never touch `calendar_day_type` (WD-04/WD-07).
+    roster_week_off_override: bool = False
+    roster_holiday_working_override: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,6 +671,15 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     if inputs.policy is None:
         return _terminal_result("CONFIG_ERROR", inputs, snapshot, reason="no_policy_resolved")
 
+    # W5 (architecture §9.7) — a roster week-off override is a schedule fact, independent of
+    # whether a shift resolved: "you're off this day" needs no shift to be meaningful, and must
+    # win even when the calendar itself says WORKING (a rotating-crew Wednesday-off case, not
+    # representable by the calendar/weekly-off pattern alone). Checked ahead of the "missing
+    # shift" branch below so a pure roster week-off row (shift_id NULL) doesn't fall through to
+    # `missing_shift_behaviour` and get misread as an unresolved-shift config problem.
+    if inputs.roster_week_off_override and not inputs.punches:
+        return _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override")
+
     # §19.1 step 4 — missing shift
     if inputs.shift is None:
         behaviour = "INCOMPLETE"  # missing_shift_behaviour default; real value read from policy
@@ -678,9 +692,18 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
         return _evaluate_no_schedule(inputs, snapshot)
 
     day_type = inputs.calendar_day_type
-    not_expected = day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN")
-    shift_operates = (day_type == "HOLIDAY" and inputs.shift.operates_on_holiday) or (
-        day_type == "WEEKLY_OFF" and inputs.shift.operates_on_weekly_off
+    # W5: roster overrides extend §19.1 step 8 without ever touching `calendar_day_type`
+    # (WD-04/WD-07 — calendar type is Calendar's concern; roster only changes whether presence
+    # is *expected*). `roster_holiday_working_override` mirrors what a per-shift
+    # `operates_on_holiday`/`operates_on_weekly_off` flag already does, just scoped to one
+    # employee-date instead of the whole shift.
+    not_expected = (
+        day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN") or inputs.roster_week_off_override
+    )
+    shift_operates = (
+        (day_type == "HOLIDAY" and inputs.shift.operates_on_holiday)
+        or (day_type == "WEEKLY_OFF" and inputs.shift.operates_on_weekly_off)
+        or inputs.roster_holiday_working_override
     )
 
     collapsed = collapse_duplicate_punches(

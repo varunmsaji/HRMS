@@ -360,6 +360,56 @@ class RegularizationPolicyAllowedType(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# ShiftRoster — per-employee-per-date schedule override (W5 — architecture §4.2/§9.7/§17,
+# decision log WD-27)
+# ---------------------------------------------------------------------------
+
+
+class ShiftRoster(Base, TimestampMixin):
+    """Per-employee-per-date schedule override. The calculation engine's shift resolution
+    (`AttendanceDayService._build_calculation_input`) checks for a `PUBLISHED` row here first,
+    falling back to `EmployeeAssignment.shift_id` only when none exists (§9.7). `shift_id` is
+    nullable — a pure "day off" or "no schedule" roster fact needs none.
+    `is_week_off_override`/`is_holiday_working_override` are schedule facts only; they never
+    change `calendar_day_type` (WD-04/WD-07 — calendar type stays Calendar's concern), only the
+    calculation engine's expectation-of-presence branch. Mutually exclusive (DB CHECK).
+
+    Mutable master, not an insert-new history — mirrors `Shift`, not `ShiftVersion`: a single
+    row per `(company_id, employee_id, roster_date)` (§17 — "the roster_date is the effective
+    date"). `status` DRAFT|PUBLISHED (WD-27, not literally named in architecture's field list
+    but not prohibited either): only `PUBLISHED` rows are visible to the calculation engine, so
+    HR can stage a roster before it affects live attendance. Every mutation is audited via
+    `AuditService.record` (architecture §24 names "Roster write" as an audited action) rather
+    than a separate revision table."""
+
+    __tablename__ = "shift_roster"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    roster_date: Mapped[date] = mapped_column(Date)
+    shift_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("shift.id"), nullable=True
+    )
+    is_week_off_override: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_holiday_working_override: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(10), default="DRAFT")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+# ---------------------------------------------------------------------------
 # Punch — immutable, append-only raw event (W4, WD-11)
 # ---------------------------------------------------------------------------
 
@@ -507,6 +557,134 @@ class AttendanceDay(Base, TimestampMixin):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     locked_by: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# AttendanceRegularizationRequest — employee/manager/HR correction request (W6 — architecture
+# §13, decision log WD-28)
+# ---------------------------------------------------------------------------
+
+
+class AttendanceRegularizationRequest(Base, TimestampMixin):
+    """A request to correct one employee's attendance for one date. Applied only through the
+    two mechanisms that already exist — synthetic `Punch` rows (`source='REGULARIZATION'`) and,
+    for `WRONG_SHIFT`, a `PUBLISHED` `ShiftRoster` row — followed by the existing
+    `AttendanceDayService.calculate()` (WD-28 decision 1). Never mutates a punch or writes a new
+    calculation-engine status branch.
+
+    `attendance_day_id` is nullable: a day may never have been calculated yet (zero punches ever
+    recorded, no batch job has touched it), so `attendance_date` is the canonical reference and
+    `attendance_day_id` is resolved/backfilled once `calculate()` has run at least once (at
+    submit time if a row already exists, always by apply time).
+
+    `approval_chain`/`regularization_policy_version_id` are snapshotted at submit time (mirrors
+    `AttendanceDay`'s own version-FK-plus-snapshot reproducibility posture, WD-11) so a later
+    policy edit cannot retroactively change how an in-flight request is reviewed.
+    `approval_stage` tracks whose turn it is next (`MANAGER`|`HR`|`NULL` once terminal or
+    `AUTO`) — WD-28 decision 4."""
+
+    __tablename__ = "attendance_regularization_request"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    attendance_day_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_day.id"), nullable=True
+    )
+    attendance_date: Mapped[date] = mapped_column(Date)
+
+    request_type: Mapped[str] = mapped_column(String(30))
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_shift_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("shift.id"), nullable=True
+    )
+    attachment_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(20), default="SUBMITTED")
+    approval_chain: Mapped[str] = mapped_column(String(20))
+    approval_stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    regularization_policy_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("regularization_policy_version.id")
+    )
+    resolved_approver_manager_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
+
+    submitted_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    reviewed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewer_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class AttendanceRegularizationRequestedPunch(Base, TimestampMixin):
+    """Typed correction payload — one row per requested IN/OUT instant (WD-12/WD-20: typed
+    child table, not a JSON list). Applying an approved request turns each row into a new
+    immutable `Punch` (`source='REGULARIZATION'`); this row is the auditable record of what was
+    *requested*, which never changes even if the resulting punch is later collapsed/paired
+    differently by a recompute."""
+
+    __tablename__ = "attendance_regularization_requested_punch"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    request_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_regularization_request.id"), index=True
+    )
+    direction: Mapped[str] = mapped_column(String(10))
+    requested_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AttendanceRegularizationAction(Base, TimestampMixin):
+    """Append-only per-request timeline (architecture §13.2/§33.4 names `RegularizationAction`
+    explicitly) — the per-stage history `RegularizationRequest`'s single
+    `reviewed_by_user_id`/`reviewed_at` pair cannot hold for a `MANAGER_THEN_HR` chain, and the
+    read model the frontend timeline queries directly without needing `audit_log` read access
+    (WD-28 decision 7). `AuditService.record` is called in addition, once per transition — the
+    two are not redundant, see WD-28 decision 7."""
+
+    __tablename__ = "attendance_regularization_action"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    request_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_regularization_request.id"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(30))
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_employee_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
+    stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

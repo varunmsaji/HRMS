@@ -206,6 +206,7 @@ async def _cleanup_attendance_day(*, company_id: UUID) -> None:
         for table in (
             "attendance_break",
             "attendance_day",
+            "shift_roster",
             "punch",
             "policy_assignment",
             "attendance_policy_version",

@@ -16,6 +16,9 @@ if TYPE_CHECKING:
         AttendancePolicyHourBand,
         AttendancePolicyLateBand,
         AttendancePolicyVersion,
+        AttendanceRegularizationAction,
+        AttendanceRegularizationRequest,
+        AttendanceRegularizationRequestedPunch,
         OvertimePolicy,
         OvertimePolicyRateRow,
         OvertimePolicyVersion,
@@ -23,6 +26,7 @@ if TYPE_CHECKING:
         RegularizationPolicy,
         RegularizationPolicyAllowedType,
         RegularizationPolicyVersion,
+        ShiftRoster,
     )
 
 # ---------------------------------------------------------------------------
@@ -1034,11 +1038,135 @@ class PolicyResolutionRead(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# W5 — ShiftRoster (architecture §4.2/§9.7, WD-27)
+# ---------------------------------------------------------------------------
+
+_ROSTER_STATUSES = ("DRAFT", "PUBLISHED")
+
+
+def _check_roster_overrides(is_week_off_override: bool, is_holiday_working_override: bool) -> None:
+    if is_week_off_override and is_holiday_working_override:
+        raise ValueError(
+            "is_week_off_override and is_holiday_working_override are mutually exclusive"
+        )
+
+
+class ShiftRosterCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: UUID
+    roster_date: date
+    shift_id: UUID | None = None
+    is_week_off_override: bool = False
+    is_holiday_working_override: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "ShiftRosterCreate":
+        _check_roster_overrides(self.is_week_off_override, self.is_holiday_working_override)
+        if self.is_week_off_override and self.shift_id is not None:
+            raise ValueError("a week-off override row must not carry a shift_id")
+        return self
+
+
+class ShiftRosterBulkCreateItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    roster_date: date
+    shift_id: UUID | None = None
+    is_week_off_override: bool = False
+    is_holiday_working_override: bool = False
+
+    @model_validator(mode="after")
+    def _validate(self) -> "ShiftRosterBulkCreateItem":
+        _check_roster_overrides(self.is_week_off_override, self.is_holiday_working_override)
+        if self.is_week_off_override and self.shift_id is not None:
+            raise ValueError("a week-off override row must not carry a shift_id")
+        return self
+
+
+class ShiftRosterBulkCreate(BaseModel):
+    """Covers the brief's "fixed roster" (repeat one shift across a date range, expanded
+    client-side into `entries`) and "monthly roster" (an explicit date→shift list) — no
+    rotation-pattern generator is built server-side (WD-27); the backend only ever sees dated
+    rows, matching the architecture's typed/no-generic-engine posture (WD-12)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: UUID
+    entries: list[ShiftRosterBulkCreateItem] = Field(min_length=1, max_length=366)
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _validate_unique_dates(self) -> "ShiftRosterBulkCreate":
+        dates = [entry.roster_date for entry in self.entries]
+        if len(dates) != len(set(dates)):
+            raise ValueError("entries must not repeat the same roster_date")
+        return self
+
+
+class ShiftRosterUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shift_id: UUID | None = None
+    is_week_off_override: bool | None = None
+    is_holiday_working_override: bool | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "ShiftRosterUpdate":
+        _check_roster_overrides(
+            bool(self.is_week_off_override), bool(self.is_holiday_working_override)
+        )
+        return self
+
+
+class ShiftRosterRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    roster_date: date
+    shift_id: UUID | None
+    is_week_off_override: bool
+    is_holiday_working_override: bool
+    status: str
+    reason: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def shift_roster_to_read(row: "ShiftRoster") -> ShiftRosterRead:
+    return ShiftRosterRead(
+        id=row.id,
+        company_id=row.company_id,
+        employee_id=row.employee_id,
+        roster_date=row.roster_date,
+        shift_id=row.shift_id,
+        is_week_off_override=row.is_week_off_override,
+        is_holiday_working_override=row.is_holiday_working_override,
+        status=row.status,
+        reason=row.reason,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def shift_roster_to_audit_dict(read: ShiftRosterRead) -> dict[str, Any]:
+    return read.model_dump(mode="json")
+
+
+def build_shift_roster_update_values(patch: ShiftRosterUpdate) -> dict[str, Any]:
+    return {field: getattr(patch, field) for field in patch.model_fields_set}
+
+
+# ---------------------------------------------------------------------------
 # W4 — Punch / AttendanceDay / AttendanceBreak
 # ---------------------------------------------------------------------------
 
 _PUNCH_DIRECTIONS = ("IN", "OUT")
-_PUNCH_SOURCES = ("WEB", "MOBILE", "DEVICE", "IMPORT", "ADMIN", "API")
+_PUNCH_SOURCES = ("WEB", "MOBILE", "DEVICE", "IMPORT", "ADMIN", "API", "REGULARIZATION")
 _ATTENDANCE_STATUSES = (
     "NOT_JOINED",
     "EXITED",
@@ -1272,4 +1400,204 @@ def attendance_day_to_read(
 
 
 def attendance_day_to_audit_dict(read: AttendanceDayRead) -> dict[str, Any]:
+    return read.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# W6 — AttendanceRegularizationRequest / RequestedPunch / Action (architecture §13, WD-28)
+# ---------------------------------------------------------------------------
+
+_REGULARIZATION_STATUSES = ("SUBMITTED", "APPROVED", "REJECTED", "CANCELLED")
+_APPROVAL_STAGES = ("MANAGER", "HR")
+_REGULARIZATION_ACTIONS = (
+    "SUBMITTED",
+    "APPROVER_UNRESOLVED",
+    "STAGE_APPROVED",
+    "APPROVED",
+    "REJECTED",
+    "CANCELLED",
+    "APPLIED",
+)
+
+
+class RegularizationRequestedPunchInput(BaseModel):
+    """One requested IN/OUT instant — reuses `_PUNCH_DIRECTIONS` verbatim (WD-12: don't
+    redefine a second direction enum)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    direction: str
+    requested_time: datetime
+
+    @field_validator("direction")
+    @classmethod
+    def validate_direction(cls, value: str) -> str:
+        if value not in _PUNCH_DIRECTIONS:
+            raise ValueError(f"direction must be one of {_PUNCH_DIRECTIONS}")
+        return value
+
+
+class RegularizationRequestedPunchRead(BaseModel):
+    id: UUID
+    direction: str
+    requested_time: str
+    sort_order: int
+
+
+def requested_punch_to_read(
+    row: "AttendanceRegularizationRequestedPunch",
+) -> RegularizationRequestedPunchRead:
+    return RegularizationRequestedPunchRead(
+        id=row.id,
+        direction=row.direction,
+        requested_time=_format_timestamp(row.requested_time) or "",
+        sort_order=row.sort_order,
+    )
+
+
+class RegularizationActionRead(BaseModel):
+    id: UUID
+    action: str
+    actor_user_id: UUID | None
+    actor_employee_id: UUID | None
+    stage: str | None
+    comment: str | None
+    created_at: str
+
+
+def regularization_action_to_read(
+    row: "AttendanceRegularizationAction",
+) -> RegularizationActionRead:
+    return RegularizationActionRead(
+        id=row.id,
+        action=row.action,
+        actor_user_id=row.actor_user_id,
+        actor_employee_id=row.actor_employee_id,
+        stage=row.stage,
+        comment=row.comment,
+        created_at=_format_timestamp(row.created_at) or "",
+    )
+
+
+class RegularizationRequestCreate(BaseModel):
+    """Shared by self-submit and on-behalf-submit (router decides `employee_id`, mirrors
+    `PunchCreate` — architecture §23.2: self is SELF-scoped, on-behalf is COMPANY-scoped).
+    WD-28 decision 2: every request must carry `requested_punches` and/or `requested_shift_id`
+    so an approval always has a well-defined, engine-supported effect."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: UUID | None = None
+    attendance_date: date
+    request_type: str
+    reason: str | None = None
+    requested_shift_id: UUID | None = None
+    attachment_reference: str | None = Field(default=None, max_length=500)
+    requested_punches: list[RegularizationRequestedPunchInput] = Field(default_factory=list)
+
+    @field_validator("request_type")
+    @classmethod
+    def validate_request_type(cls, value: str) -> str:
+        if value not in _REGULARIZATION_TYPES:
+            raise ValueError(f"request_type must be one of {_REGULARIZATION_TYPES}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_correction_payload(self) -> "RegularizationRequestCreate":
+        if not self.requested_punches and self.requested_shift_id is None:
+            raise ValueError(
+                "requested_punches or requested_shift_id is required — see WD-28 decision 2"
+            )
+        return self
+
+
+class RegularizationReviewInput(BaseModel):
+    """Body for approve/reject. `rejection_reason` is only meaningful (and only persisted) on
+    reject; the service ignores it on approve rather than erroring, since a caller-supplied
+    but-unused field on the wrong action is not itself invalid input."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_comment: str | None = None
+    rejection_reason: str | None = None
+
+
+class RegularizationRequestRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    attendance_day_id: UUID | None
+    attendance_date: date
+
+    request_type: str
+    reason: str | None
+    requested_shift_id: UUID | None
+    attachment_reference: str | None
+
+    status: str
+    approval_chain: str
+    approval_stage: str | None
+    regularization_policy_version_id: UUID
+    resolved_approver_manager_id: UUID | None
+
+    submitted_by_user_id: UUID | None
+    submitted_at: str
+
+    reviewed_by_user_id: UUID | None
+    reviewed_at: str | None
+    reviewer_comment: str | None
+    rejection_reason: str | None
+
+    applied_at: str | None
+    cancelled_at: str | None
+    cancelled_by_user_id: UUID | None
+
+    version: int
+
+    requested_punches: list[RegularizationRequestedPunchRead]
+    actions: list[RegularizationActionRead]
+
+    created_at: str
+    updated_at: str
+
+
+def regularization_request_to_read(
+    row: "AttendanceRegularizationRequest",
+    *,
+    requested_punches: list["AttendanceRegularizationRequestedPunch"],
+    actions: list["AttendanceRegularizationAction"],
+) -> RegularizationRequestRead:
+    return RegularizationRequestRead(
+        id=row.id,
+        company_id=row.company_id,
+        employee_id=row.employee_id,
+        attendance_day_id=row.attendance_day_id,
+        attendance_date=row.attendance_date,
+        request_type=row.request_type,
+        reason=row.reason,
+        requested_shift_id=row.requested_shift_id,
+        attachment_reference=row.attachment_reference,
+        status=row.status,
+        approval_chain=row.approval_chain,
+        approval_stage=row.approval_stage,
+        regularization_policy_version_id=row.regularization_policy_version_id,
+        resolved_approver_manager_id=row.resolved_approver_manager_id,
+        submitted_by_user_id=row.submitted_by_user_id,
+        submitted_at=_format_timestamp(row.submitted_at) or "",
+        reviewed_by_user_id=row.reviewed_by_user_id,
+        reviewed_at=_format_timestamp(row.reviewed_at),
+        reviewer_comment=row.reviewer_comment,
+        rejection_reason=row.rejection_reason,
+        applied_at=_format_timestamp(row.applied_at),
+        cancelled_at=_format_timestamp(row.cancelled_at),
+        cancelled_by_user_id=row.cancelled_by_user_id,
+        version=row.version,
+        requested_punches=[requested_punch_to_read(p) for p in requested_punches],
+        actions=[regularization_action_to_read(a) for a in actions],
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def regularization_request_to_audit_dict(read: RegularizationRequestRead) -> dict[str, Any]:
     return read.model_dump(mode="json")
