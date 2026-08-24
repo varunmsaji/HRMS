@@ -4,7 +4,7 @@ from sqlalchemy import delete, select
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session_factory
-from hrms.modules.organisation.models import Plan, PlanFeature
+from hrms.modules.organisation.models import Plan, PlanFeature, Subscription
 from hrms.seed.plan_catalogue import PLAN_CATALOGUE, seed_plan_catalogue
 
 _REGISTRATION_RATE_LIMIT_KEY = "ratelimit:auth:127.0.0.1"
@@ -31,10 +31,8 @@ async def seeded_plan_catalogue() -> None:
         await session.commit()
     yield
     async with factory() as session:
-        await session.execute(
-            delete(PlanFeature).where(
-                PlanFeature.plan_id.in_(select(Plan.id).where(Plan.code.in_(codes)))
-            )
-        )
+        plan_ids = select(Plan.id).where(Plan.code.in_(codes))
+        await session.execute(delete(Subscription).where(Subscription.plan_id.in_(plan_ids)))
+        await session.execute(delete(PlanFeature).where(PlanFeature.plan_id.in_(plan_ids)))
         await session.execute(delete(Plan).where(Plan.code.in_(codes)))
         await session.commit()

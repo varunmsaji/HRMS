@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session_factory
-from hrms.modules.organisation.models import Plan, PlanFeature
+from hrms.modules.organisation.models import Plan, PlanFeature, Subscription
 from hrms.seed.bootstrap import clear_b1_seed, seed_b1_foundation
 from hrms.seed.plan_catalogue import PLAN_CATALOGUE, seed_plan_catalogue
 
@@ -50,10 +50,8 @@ async def seeded_plan_catalogue() -> None:
         await session.commit()
     yield
     async with factory() as session:
-        await session.execute(
-            delete(PlanFeature).where(
-                PlanFeature.plan_id.in_(select(Plan.id).where(Plan.code.in_(codes)))
-            )
-        )
+        plan_ids = select(Plan.id).where(Plan.code.in_(codes))
+        await session.execute(delete(Subscription).where(Subscription.plan_id.in_(plan_ids)))
+        await session.execute(delete(PlanFeature).where(PlanFeature.plan_id.in_(plan_ids)))
         await session.execute(delete(Plan).where(Plan.code.in_(codes)))
         await session.commit()
