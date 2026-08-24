@@ -459,6 +459,21 @@ class EmploymentService:
         except NotFoundError as exc:
             raise InvalidLegalEntityReferenceError() from exc
 
+    async def list_spans_overlapping(
+        self, company_id: UUID, *, date_from: date, date_to: date
+    ) -> list[tuple[UUID, date, date | None]]:
+        """`(employee_id, joining_date, last_working_day)` for every employment spell
+        overlapping `[date_from, date_to]`, company-wide (no `DataScope` — this is an internal
+        cross-module fact query, not an API-facing list). Consumed by
+        `AttendancePeriodService`'s finalization validation (W8) to determine which employees
+        are in scope for a period and how many calendar days each was actually employed within
+        it; never exposes the `Employment` ORM row itself across the module boundary (Module
+        Standard §2)."""
+        rows = await self._repo.list_spans_overlapping(
+            self._session, company_id=company_id, date_from=date_from, date_to=date_to
+        )
+        return [(row.employee_id, row.joining_date, row.last_working_day) for row in rows]
+
     async def create_employment(
         self,
         company_id: UUID,

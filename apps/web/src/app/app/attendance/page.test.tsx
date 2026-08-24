@@ -67,6 +67,7 @@ const sampleDay: AttendanceDay = {
   is_pending_approval: false,
   worked_on_holiday: false,
   worked_on_weekly_off: false,
+  work_on_leave_flagged: false,
   paid_day_fraction: "1",
   lop_fraction: "0",
   ot_minutes_detected: 0,

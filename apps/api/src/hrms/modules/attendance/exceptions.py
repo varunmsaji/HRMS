@@ -420,6 +420,209 @@ class StaleRegularizationRequestResourceError(ConflictError):
         )
 
 
+class OvertimeRecordNotFoundError(NotFoundError):
+    code = "OVERTIME_RECORD_NOT_FOUND"
+
+    def __init__(self, message: str = "Overtime record not found") -> None:
+        super().__init__(message)
+
+
+class OvertimeInvalidTransitionError(ConflictError):
+    code = "OVERTIME_INVALID_TRANSITION"
+
+    def __init__(
+        self, message: str = "This overtime record is not in a state that allows this action"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "status", "code": self.code, "message": message}]
+        )
+
+
+class OvertimeSelfApprovalNotAllowedError(PermissionDeniedError):
+    """WD-29 decision 4 — mirrors WD-28 decision 5: self-approval is always blocked, no policy
+    field exists to permit it."""
+
+    code = "OVERTIME_SELF_APPROVAL_NOT_ALLOWED"
+
+    def __init__(self, message: str = "You cannot approve or reject your own overtime") -> None:
+        super().__init__(
+            message, details=[{"field": "employee_id", "code": self.code, "message": message}]
+        )
+
+
+class OvertimeApproverMismatchError(PermissionDeniedError):
+    code = "OVERTIME_APPROVER_MISMATCH"
+
+    def __init__(
+        self,
+        message: str = "You are not the resolved approver for this overtime record's current stage",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "approval_stage", "code": self.code, "message": message}]
+        )
+
+
+class StaleOvertimeRecordResourceError(ConflictError):
+    code = "STALE_RESOURCE"
+
+    def __init__(self, message: str, *, current: dict[str, Any]) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "version",
+                    "code": "STALE_RESOURCE",
+                    "message": message,
+                    "context": {"current": current},
+                }
+            ],
+        )
+
+
+class AttendancePeriodNotFoundError(NotFoundError):
+    code = "ATTENDANCE_PERIOD_NOT_FOUND"
+
+    def __init__(self, message: str = "Attendance period not found") -> None:
+        super().__init__(message)
+
+
+class AttendancePeriodOverlapError(ConflictError):
+    """The GiST exclusion constraint on `(company_id, daterange(period_start, period_end))`
+    backs this — mirrors `PolicyVersionOverlapError`'s pattern of converting a DB-level
+    `IntegrityError` into the documented envelope."""
+
+    code = "ATTENDANCE_PERIOD_OVERLAP"
+
+    def __init__(
+        self, message: str = "Another attendance period already covers part of this date range"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "period_start", "code": self.code, "message": message}]
+        )
+
+
+class AttendancePeriodInvalidTransitionError(ConflictError):
+    """Raised when finalize/reopen is attempted against a period that is not in the state that
+    action requires (e.g. finalizing an already-`CLOSED` period, reopening an `OPEN` one)."""
+
+    code = "ATTENDANCE_PERIOD_INVALID_TRANSITION"
+
+    def __init__(
+        self, message: str = "This attendance period is not in a state that allows this action"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "status", "code": self.code, "message": message}]
+        )
+
+
+class AttendancePeriodFinalizationBlockedError(ConflictError):
+    """Fail-closed: finalize refuses whenever a fresh validation run (never a stale cached
+    result) finds any blocking reason. `reasons` mirrors the shape `GET .../validate` returns so
+    the caller sees identical detail whether they checked first or not."""
+
+    code = "ATTENDANCE_FINALIZATION_BLOCKED"
+
+    def __init__(
+        self,
+        message: str = (
+            "This attendance period cannot be finalized until all blocking issues are resolved"
+        ),
+        *,
+        reasons: list[dict[str, Any]],
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "status",
+                    "code": self.code,
+                    "message": message,
+                    "context": {"reasons": reasons},
+                }
+            ],
+        )
+
+
+class AttendancePeriodClosedError(ConflictError):
+    """The authoritative lock-enforcement error: a mutation (punch, roster write, regularization
+    submission, overtime approval) targets a date covered by a `CLOSED` `AttendancePeriod`.
+    Distinct from `AttendanceDayLockedError` (raised only by `AttendanceDayService.calculate()`
+    against an already-computed, already-`is_locked` day row) — this one is the period-level
+    check every other mutating service consults, including for a date that has no
+    `AttendanceDay` row at all yet (WD-30 — the period, not the per-day flag, is the source of
+    truth; `is_locked`/`locked_at` is a synchronized denormalization set atomically by
+    finalize/reopen)."""
+
+    code = "ATTENDANCE_PERIOD_CLOSED"
+
+    def __init__(
+        self,
+        message: str = "This date falls within a closed attendance period and cannot be changed",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "attendance_date", "code": self.code, "message": message}]
+        )
+
+
+class StaleAttendancePeriodResourceError(ConflictError):
+    code = "STALE_RESOURCE"
+
+    def __init__(self, message: str, *, current: dict[str, Any]) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "version",
+                    "code": "STALE_RESOURCE",
+                    "message": message,
+                    "context": {"current": current},
+                }
+            ],
+        )
+
+
+class LeaveProjectionNotFoundError(NotFoundError):
+    code = "LEAVE_PROJECTION_NOT_FOUND"
+
+    def __init__(self, message: str = "Leave projection not found") -> None:
+        super().__init__(message)
+
+
+class LeaveProjectionOverlapError(ConflictError):
+    """W9 (architecture §21 "fail closed if ambiguous") — active (`APPROVED`) leave projection
+    fractions for one employee-date must never sum to more than 1.00. Raised at sync time, before
+    any row is written."""
+
+    code = "LEAVE_PROJECTION_OVERLAP"
+
+    def __init__(
+        self,
+        message: str = (
+            "Active leave projections for this employee and date would sum to more than 1.00"
+        ),
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "fraction", "code": self.code, "message": message}]
+        )
+
+
+class StaleLeaveProjectionResourceError(ConflictError):
+    code = "STALE_RESOURCE"
+
+    def __init__(self, message: str, *, current: dict[str, Any]) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "version",
+                    "code": "STALE_RESOURCE",
+                    "message": message,
+                    "context": {"current": current},
+                }
+            ],
+        )
+
+
 class DuplicatePunchIdempotencyKeyError(ConflictError):
     """The partial unique index on `(company_id, idempotency_key)` backs this — mirrors
     `PolicyCodeAlreadyExistsError`'s pattern of converting a DB-level `IntegrityError` into the

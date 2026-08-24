@@ -29,12 +29,18 @@ from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.attendance.dependencies import (
     get_attendance_day_service,
+    get_attendance_period_service,
     get_attendance_service,
+    get_leave_projection_service,
+    get_overtime_record_service,
     get_punch_service,
     get_regularization_request_service,
     get_shift_roster_service,
 )
 from hrms.modules.attendance.permissions import (
+    ATTENDANCE_LEAVE_PROJECTION_SYNC,
+    ATTENDANCE_LOCK,
+    ATTENDANCE_OVERTIME_APPROVE,
     ATTENDANCE_POLICY_MANAGE,
     ATTENDANCE_PUNCH,
     ATTENDANCE_PUNCH_ON_BEHALF,
@@ -43,11 +49,17 @@ from hrms.modules.attendance.permissions import (
     ATTENDANCE_REGULARIZATION_REQUEST,
     ATTENDANCE_REGULARIZATION_REQUEST_ON_BEHALF,
     ATTENDANCE_ROSTER_MANAGE,
+    ATTENDANCE_UNLOCK,
     ATTENDANCE_VIEW,
     ATTENDANCE_VIEW_ALL,
 )
 from hrms.modules.attendance.schemas import (
     AttendanceDayRead,
+    AttendancePeriodCreate,
+    AttendancePeriodRead,
+    AttendancePeriodReopenInput,
+    AttendancePeriodSummaryRead,
+    AttendancePeriodValidationRead,
     AttendancePolicyCreate,
     AttendancePolicyRead,
     AttendancePolicyUpdate,
@@ -55,6 +67,9 @@ from hrms.modules.attendance.schemas import (
     AttendancePolicyVersionPublishRequest,
     AttendancePolicyVersionRead,
     AttendancePolicyVersionUpdate,
+    LeaveDayProjectionRead,
+    LeaveProjectionCancelInput,
+    LeaveProjectionSync,
     OvertimePolicyCreate,
     OvertimePolicyRead,
     OvertimePolicyUpdate,
@@ -62,6 +77,8 @@ from hrms.modules.attendance.schemas import (
     OvertimePolicyVersionPublishRequest,
     OvertimePolicyVersionRead,
     OvertimePolicyVersionUpdate,
+    OvertimeRecordRead,
+    OvertimeReviewInput,
     PolicyResolutionRead,
     PunchCreate,
     PunchRead,
@@ -82,7 +99,10 @@ from hrms.modules.attendance.schemas import (
 )
 from hrms.modules.attendance.service import (
     AttendanceDayService,
+    AttendancePeriodService,
     AttendanceService,
+    LeaveProjectionService,
+    OvertimeRecordService,
     PunchService,
     RegularizationRequestService,
     ShiftRosterService,
@@ -1214,6 +1234,322 @@ async def reject_regularization_request(
         caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# W7 — Overtime records (architecture §12, decision log WD-29)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/overtime", status_code=status.HTTP_200_OK)
+async def list_overtime_records(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[OvertimeRecordService, Depends(get_overtime_record_service)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    date_from: Annotated[date | None, Query()] = None,
+    date_to: Annotated[date | None, Query()] = None,
+    record_status: Annotated[str | None, Query()] = None,
+) -> ListEnvelope[OvertimeRecordRead]:
+    data = await service.list(
+        tenant.company_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        employee_id=employee_id,
+        date_from=date_from,
+        date_to=date_to,
+        status=record_status,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/overtime/{record_id}", status_code=status.HTTP_200_OK)
+async def get_overtime_record(
+    record_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[OvertimeRecordService, Depends(get_overtime_record_service)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+) -> DataEnvelope[OvertimeRecordRead]:
+    data = await service.get(
+        tenant.company_id, record_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/overtime/{record_id}/approve", status_code=status.HTTP_200_OK)
+async def approve_overtime_record(
+    record_id: UUID,
+    body: OvertimeReviewInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_OVERTIME_APPROVE))],
+    service: Annotated[OvertimeRecordService, Depends(get_overtime_record_service)],
+) -> DataEnvelope[OvertimeRecordRead]:
+    """Mirrors regularization's approve route: the `MANAGER`-vs-`HR` stage check happens in the
+    service (`OvertimeRecordService._get_reviewable`), since the correct check depends on the
+    record's current stage, not something a static route dependency can express."""
+    data = await service.approve(
+        tenant.company_id,
+        record_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/overtime/{record_id}/reject", status_code=status.HTTP_200_OK)
+async def reject_overtime_record(
+    record_id: UUID,
+    body: OvertimeReviewInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_OVERTIME_APPROVE))],
+    service: Annotated[OvertimeRecordService, Depends(get_overtime_record_service)],
+) -> DataEnvelope[OvertimeRecordRead]:
+    data = await service.reject(
+        tenant.company_id,
+        record_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# W8 — Attendance periods (architecture §4.2/§22, decision log WD-30)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/attendance-periods", status_code=status.HTTP_201_CREATED)
+async def create_attendance_period(
+    body: AttendancePeriodCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_LOCK))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+) -> DataEnvelope[AttendancePeriodRead]:
+    """Create always opens the period immediately — there is no separate "open" action
+    (WD-30, mirrors WD-28's no-DRAFT-state precedent)."""
+    data = await service.create(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance-periods", status_code=status.HTTP_200_OK)
+async def list_attendance_periods(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+    period_status: Annotated[str | None, Query()] = None,
+) -> ListEnvelope[AttendancePeriodRead]:
+    data = await service.list_periods(tenant.company_id, status=period_status)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance-periods/{period_id}", status_code=status.HTTP_200_OK)
+async def get_attendance_period(
+    period_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+) -> DataEnvelope[AttendancePeriodRead]:
+    data = await service.get(tenant.company_id, period_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance-periods/{period_id}/summary", status_code=status.HTTP_200_OK)
+async def get_attendance_period_summary(
+    period_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+) -> ListEnvelope[AttendancePeriodSummaryRead]:
+    """A live, unpersisted preview while `OPEN`; the frozen snapshot once `CLOSED`
+    (architecture §4.2 — "regenerated only while unlocked; frozen at lock/snapshot")."""
+    data = await service.get_summary(tenant.company_id, period_id)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance-periods/{period_id}/validate", status_code=status.HTTP_200_OK)
+async def validate_attendance_period(
+    period_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_LOCK))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+) -> DataEnvelope[AttendancePeriodValidationRead]:
+    """Fail-closed finalization-readiness check (architecture §5) — always re-derives READY/
+    BLOCKED live; never returns a stale cached result. `POST`, not `GET`, since it also records
+    a `VALIDATED`/`VALIDATION_FAILED` action and refreshes the period's cached validation
+    status (audit-visible, per Phase 10's "validation failure" requirement)."""
+    data = await service.validate(tenant.company_id, period_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance-periods/{period_id}/finalize", status_code=status.HTTP_200_OK)
+async def finalize_attendance_period(
+    period_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_LOCK))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+) -> DataEnvelope[AttendancePeriodRead]:
+    """Closes and locks the period — `AttendanceDay.is_locked=true` across its whole range,
+    a frozen `AttendancePeriodSummary` snapshot, and refuses fail-closed
+    (`ATTENDANCE_FINALIZATION_BLOCKED`) unless a fresh validation is `READY`."""
+    data = await service.finalize(
+        tenant.company_id,
+        period_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance-periods/{period_id}/reopen", status_code=status.HTTP_200_OK)
+async def reopen_attendance_period(
+    period_id: UUID,
+    body: AttendancePeriodReopenInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_UNLOCK))],
+    service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+) -> DataEnvelope[AttendancePeriodRead]:
+    """`ATTENDANCE.UNLOCK` — a materially higher-risk action than finalize, gated by its own
+    permission (architecture §23.2), mandatory `reason`."""
+    data = await service.reopen(
+        tenant.company_id,
+        period_id,
+        body,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# W9 — Leave projection adapter (architecture §21, decision log WD-31)
+#
+# A narrow, explicitly-internal seam: the Leave -> Attendance contract, not a Leave CRUD API.
+# `ATTENDANCE.LEAVE_PROJECTION_SYNC` is the one gate for both mutating routes; reads reuse
+# `ATTENDANCE.VIEW`/`ATTENDANCE.VIEW_ALL` per this file's established read-reuse convention.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/leave-projections", status_code=status.HTTP_201_CREATED)
+async def sync_leave_projection(
+    body: LeaveProjectionSync,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_LEAVE_PROJECTION_SYNC))],
+    service: Annotated[LeaveProjectionService, Depends(get_leave_projection_service)],
+) -> DataEnvelope[LeaveDayProjectionRead]:
+    """Publishes (or, for an already-known `leave_application_id`, republishes as a correction)
+    one approved leave day projection and synchronously recomputes the affected `AttendanceDay`
+    (architecture §21/§25 — an in-process call standing in for a real event bus)."""
+    data = await service.sync(
+        tenant.company_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/leave-projections", status_code=status.HTTP_200_OK)
+async def list_leave_projections(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[LeaveProjectionService, Depends(get_leave_projection_service)],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    date_from: Annotated[date | None, Query()] = None,
+    date_to: Annotated[date | None, Query()] = None,
+    projection_status: Annotated[str | None, Query(alias="status")] = None,
+) -> ListEnvelope[LeaveDayProjectionRead]:
+    data = await service.list_projections(
+        tenant.company_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        employee_id=employee_id,
+        date_from=date_from,
+        date_to=date_to,
+        status=projection_status,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/leave-projections/{projection_id}", status_code=status.HTTP_200_OK)
+async def get_leave_projection(
+    projection_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[LeaveProjectionService, Depends(get_leave_projection_service)],
+) -> DataEnvelope[LeaveDayProjectionRead]:
+    data = await service.get_projection(
+        tenant.company_id, projection_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/leave-projections/{projection_id}/cancel", status_code=status.HTTP_200_OK)
+async def cancel_leave_projection(
+    projection_id: UUID,
+    body: LeaveProjectionCancelInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_LEAVE_PROJECTION_SYNC))],
+    service: Annotated[LeaveProjectionService, Depends(get_leave_projection_service)],
+) -> DataEnvelope[LeaveDayProjectionRead]:
+    """Withdraws an approved projection (`status=CANCELLED`, never a delete — provenance is
+    preserved) and synchronously recomputes the affected `AttendanceDay`. Refused with
+    `ATTENDANCE_PERIOD_CLOSED` if the date's period is locked (architecture §21 — "default
+    refuse"; the only correction path for a locked date is a full period reopen, PD-LOCK-2)."""
+    data = await service.cancel(
+        tenant.company_id,
+        projection_id,
+        body,
+        expected_version=int(if_match),
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )

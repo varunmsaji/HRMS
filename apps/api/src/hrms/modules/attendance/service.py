@@ -20,10 +20,21 @@ from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.attendance import calculation as calc
 from hrms.modules.attendance.exceptions import (
     AttendanceDayLockedError,
+    AttendancePeriodClosedError,
+    AttendancePeriodFinalizationBlockedError,
+    AttendancePeriodInvalidTransitionError,
+    AttendancePeriodNotFoundError,
+    AttendancePeriodOverlapError,
     DuplicatePunchIdempotencyKeyError,
     InvalidPolicyBandError,
     InvalidPolicyRateRowError,
     InvalidRegularizationAllowedTypeError,
+    LeaveProjectionNotFoundError,
+    LeaveProjectionOverlapError,
+    OvertimeApproverMismatchError,
+    OvertimeInvalidTransitionError,
+    OvertimeRecordNotFoundError,
+    OvertimeSelfApprovalNotAllowedError,
     PolicyCodeAlreadyExistsError,
     PolicyDraftAlreadyExistsError,
     PolicyPublishIncompleteError,
@@ -46,19 +57,36 @@ from hrms.modules.attendance.exceptions import (
     RegularizationWindowExceededError,
     ShiftRosterDateConflictError,
     ShiftRosterNotFoundError,
+    StaleAttendancePeriodResourceError,
+    StaleLeaveProjectionResourceError,
+    StaleOvertimeRecordResourceError,
     StalePolicyResourceError,
     StaleRegularizationRequestResourceError,
     StaleShiftRosterResourceError,
 )
-from hrms.modules.attendance.models import AttendanceDay, AttendanceRegularizationRequest
+from hrms.modules.attendance.models import (
+    AttendanceDay,
+    AttendancePeriod,
+    AttendanceRegularizationRequest,
+    LeaveDayProjection,
+    OvertimePolicyRateRow,
+    OvertimePolicyVersion,
+    OvertimeRecord,
+)
 from hrms.modules.attendance.repository import (
     AttendanceBreakRepository,
     AttendanceDayRepository,
+    AttendancePeriodActionRepository,
+    AttendancePeriodRepository,
+    AttendancePeriodSummaryRepository,
     AttendancePolicyRepository,
     AttendanceRegularizationActionRepository,
     AttendanceRegularizationRequestedPunchRepository,
     AttendanceRegularizationRequestRepository,
+    LeaveDayProjectionRepository,
+    OvertimeActionRepository,
     OvertimePolicyRepository,
+    OvertimeRecordRepository,
     PunchRepository,
     RegularizationPolicyRepository,
     ShiftRosterRepository,
@@ -66,6 +94,12 @@ from hrms.modules.attendance.repository import (
 from hrms.modules.attendance.resolution import PolicyResolutionService
 from hrms.modules.attendance.schemas import (
     AttendanceDayRead,
+    AttendancePeriodBlockingReason,
+    AttendancePeriodCreate,
+    AttendancePeriodRead,
+    AttendancePeriodReopenInput,
+    AttendancePeriodSummaryRead,
+    AttendancePeriodValidationRead,
     AttendancePolicyCreate,
     AttendancePolicyRead,
     AttendancePolicyUpdate,
@@ -73,6 +107,9 @@ from hrms.modules.attendance.schemas import (
     AttendancePolicyVersionPublishRequest,
     AttendancePolicyVersionRead,
     AttendancePolicyVersionUpdate,
+    LeaveDayProjectionRead,
+    LeaveProjectionCancelInput,
+    LeaveProjectionSync,
     OvertimePolicyCreate,
     OvertimePolicyRead,
     OvertimePolicyUpdate,
@@ -80,6 +117,8 @@ from hrms.modules.attendance.schemas import (
     OvertimePolicyVersionPublishRequest,
     OvertimePolicyVersionRead,
     OvertimePolicyVersionUpdate,
+    OvertimeRecordRead,
+    OvertimeReviewInput,
     PolicyResolutionRead,
     PunchCreate,
     PunchRead,
@@ -97,9 +136,13 @@ from hrms.modules.attendance.schemas import (
     ShiftRosterCreate,
     ShiftRosterRead,
     ShiftRosterUpdate,
+    _format_timestamp,
     _parse_time,
     attendance_day_to_audit_dict,
     attendance_day_to_read,
+    attendance_period_summary_to_read,
+    attendance_period_to_audit_dict,
+    attendance_period_to_read,
     attendance_policy_to_audit_dict,
     attendance_policy_to_read,
     attendance_policy_version_to_audit_dict,
@@ -111,10 +154,14 @@ from hrms.modules.attendance.schemas import (
     build_regularization_policy_update_values,
     build_regularization_policy_version_update_values,
     build_shift_roster_update_values,
+    leave_day_projection_to_audit_dict,
+    leave_day_projection_to_read,
     overtime_policy_to_audit_dict,
     overtime_policy_to_read,
     overtime_policy_version_to_audit_dict,
     overtime_policy_version_to_read,
+    overtime_record_to_audit_dict,
+    overtime_record_to_read,
     punch_to_audit_dict,
     punch_to_read,
     regularization_policy_to_audit_dict,
@@ -1861,6 +1908,24 @@ async def _ensure_employee_visible(
     )
 
 
+async def _ensure_date_open(session: AsyncSession, company_id: UUID, target_date: date) -> None:
+    """W8 (WD-30) — the authoritative period-lock check every mutating service in this module
+    consults before writing anything that could affect a date's attendance facts: punch
+    ingestion, roster writes, regularization submission, and overtime approve/reject all call
+    this. Deliberately independent of `AttendanceDay.is_locked` — that flag only exists on a
+    row that has already been computed, so it cannot protect a date that has no `AttendanceDay`
+    row yet (a new joiner backdated into an already-closed period, for instance).
+    `AttendanceDayService.calculate()` additionally keeps its own pre-existing `is_locked`
+    check (`AttendanceDayLockedError`) for the already-computed-row case, so a locked day is
+    refused by two independent, defence-in-depth paths, not one."""
+    period_repo = AttendancePeriodRepository()
+    closed_period = await period_repo.get_covering(
+        session, company_id=company_id, target_date=target_date, status="CLOSED"
+    )
+    if closed_period is not None:
+        raise AttendancePeriodClosedError()
+
+
 class ShiftRosterService:
     """Per-employee-per-date schedule override CRUD (W5 — architecture §4.2/§9.7, WD-27). The
     calculation engine's *read* of a resolved roster shift goes straight through
@@ -1959,6 +2024,7 @@ class ShiftRosterService:
         ip_address: str | None,
         user_agent: str | None,
     ) -> ShiftRosterRead:
+        await _ensure_date_open(self._session, company_id, roster_date)
         now = datetime.now(UTC)
         roster_id = uuid4()
         data = {
@@ -2014,6 +2080,7 @@ class ShiftRosterService:
         await _ensure_employee_visible(
             self._session, company_id, row.employee_id, scope, caller_employee_id
         )
+        await _ensure_date_open(self._session, company_id, row.roster_date)
         before_read = shift_roster_to_read(row)
 
         values = build_shift_roster_update_values(patch)
@@ -2080,6 +2147,7 @@ class ShiftRosterService:
         await _ensure_employee_visible(
             self._session, company_id, row.employee_id, scope, caller_employee_id
         )
+        await _ensure_date_open(self._session, company_id, row.roster_date)
         before_read = shift_roster_to_read(row)
         if before_read.status == "PUBLISHED":
             return before_read
@@ -2137,6 +2205,7 @@ class ShiftRosterService:
         await _ensure_employee_visible(
             self._session, company_id, row.employee_id, scope, caller_employee_id
         )
+        await _ensure_date_open(self._session, company_id, row.roster_date)
         before_read = shift_roster_to_read(row)
 
         now = datetime.now(UTC)
@@ -2262,6 +2331,16 @@ class PunchService:
                 return punch_to_read(existing)
 
         now = datetime.now(UTC)
+        # WD-30 — the UTC calendar date of the punch is the only date knowable *before* shift
+        # resolution (which itself depends on the date), so this is a deliberate, documented
+        # approximation: an overnight shift's punch a few minutes into the *next* UTC day, whose
+        # attendance actually attributes to the *previous* shift-start date (FR-ATT-005), could
+        # in principle land just outside this check's window at a period boundary. The backstop
+        # that never allows a locked historical fact to actually change is unconditional
+        # regardless: `AttendanceDayService.calculate()` refuses a locked day outright, so a
+        # stray punch here is at worst an inert, orphaned row (WD-11 — additive, never mutates
+        # facts), never a silent rewrite.
+        await _ensure_date_open(self._session, company_id, (body.punch_time or now).date())
         punch_id = uuid4()
         data = {
             "id": punch_id,
@@ -2334,8 +2413,11 @@ class AttendanceDayService:
         self._break_repo = AttendanceBreakRepository()
         self._attendance_policy_repo = AttendancePolicyRepository()
         self._overtime_repo = OvertimePolicyRepository()
+        self._ot_record_repo = OvertimeRecordRepository()
+        self._ot_action_repo = OvertimeActionRepository()
         self._punch_repo = PunchRepository()
         self._roster_repo = ShiftRosterRepository()
+        self._leave_repo = LeaveDayProjectionRepository()
         self._resolution = PolicyResolutionService(session)
         self._audit = AuditService()
 
@@ -2409,6 +2491,12 @@ class AttendanceDayService:
         patch). Refuses to touch a locked day (WD-11) — nothing in W4 can set `is_locked=true`
         yet (plan decision 2), so this path is exercised by tests via a direct flag flip, ready
         for W8's `AttendanceLock`."""
+        # WD-30 — period-level check first (catches a date with no `AttendanceDay` row yet at
+        # all); the pre-existing row-level `is_locked` check right after it stays as the
+        # specific, narrower error for the already-computed-row case (`ATTENDANCE_DAY_LOCKED`,
+        # not `ATTENDANCE_PERIOD_CLOSED`) — two independent, defence-in-depth guards, since the
+        # two should never actually disagree (finalize/reopen sets both together).
+        await _ensure_date_open(self._session, company_id, target_date)
         existing = await self._day_repo.get_by_employee_date(
             self._session,
             company_id=company_id,
@@ -2418,12 +2506,41 @@ class AttendanceDayService:
         if existing is not None and existing.is_locked:
             raise AttendanceDayLockedError()
 
-        calc_input, resolved_refs = await self._build_calculation_input(
+        calc_input, resolved_refs, ot_version, ot_rate_rows = await self._build_calculation_input(
             company_id, employee_id, target_date
         )
         result = calc.evaluate_day(calc_input)
         now = datetime.now(UTC)
         values = self._result_to_values(calc_input, result, resolved_refs)
+
+        existing_ot_record: OvertimeRecord | None = None
+        if existing is not None:
+            existing_ot_record = await self._ot_record_repo.get_by_attendance_day(
+                self._session, company_id=company_id, attendance_day_id=existing.id
+            )
+        ot_decision = await self._resolve_ot_decision(
+            company_id=company_id,
+            employee_id=employee_id,
+            target_date=target_date,
+            result=result,
+            ot_version=ot_version,
+            ot_rate_rows=ot_rate_rows,
+            existing_ot_record=existing_ot_record,
+        )
+        # W7 (WD-29 decision 2) — the OT-facing summary columns on the day row always reflect
+        # the current *decision*, not raw engine output: a frozen terminal record's own values
+        # win outright, and a fresh AUTO_APPROVED decision (e.g. `approval_chain=AUTO` even when
+        # `requires_post_approval=True`) is applied immediately rather than left at the engine's
+        # provisional pending numbers.
+        if ot_decision is not None:
+            values["ot_minutes_approved"] = ot_decision["minutes_approved"]
+            # `overtime_record.comp_off_minutes` (below) always carries the policy-computed
+            # fact regardless of decision state; the day's payroll-facing summary only reflects
+            # it once actually decided (0 while `PENDING`), consistent with `ot_minutes_approved`.
+            values["comp_off_minutes_earned"] = (
+                ot_decision["comp_off_minutes"] if ot_decision["status"] != "PENDING" else 0
+            )
+            values["ot_pending"] = ot_decision["status"] == "PENDING"
 
         row: AttendanceDay | None
         if existing is None:
@@ -2457,6 +2574,20 @@ class AttendanceDayService:
                 # same fail-closed posture as the upfront check.
                 raise AttendanceDayLockedError()
             action = "ATTENDANCE_DAY_RECOMPUTED"
+
+        await self._sync_overtime_record(
+            company_id=company_id,
+            employee_id=employee_id,
+            attendance_day_id=row.id,
+            attendance_date=target_date,
+            overtime_policy_version_id=resolved_refs["overtime_policy_version_id"],
+            decision=ot_decision,
+            existing_ot_record=existing_ot_record,
+            actor_user_id=actor_user_id,
+            now=now,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
         break_rows = [
             {
@@ -2557,6 +2688,7 @@ class AttendanceDayService:
             "is_pending_approval": result.ot_pending,
             "worked_on_holiday": result.worked_on_holiday,
             "worked_on_weekly_off": result.worked_on_weekly_off,
+            "work_on_leave_flagged": result.work_on_leave_flagged,
             "paid_day_fraction": Decimal(result.paid_day_fraction),
             "lop_fraction": Decimal(result.lop_fraction),
             "ot_minutes_detected": result.ot_minutes_detected,
@@ -2570,7 +2702,12 @@ class AttendanceDayService:
 
     async def _build_calculation_input(
         self, company_id: UUID, employee_id: UUID, target_date: date
-    ) -> tuple[calc.AttendanceCalculationInput, dict[str, UUID | None]]:
+    ) -> tuple[
+        calc.AttendanceCalculationInput,
+        dict[str, UUID | None],
+        OvertimePolicyVersion | None,
+        list[OvertimePolicyRateRow],
+    ]:
         # Local, function-scoped imports — the established cross-module-seam convention
         # (module docstring; mirrors `PolicyResolutionService.resolve`,
         # `CalendarResolutionService._scope_candidates`, `EmployeeService._check_seat_limit`).
@@ -2793,6 +2930,8 @@ class AttendanceDayService:
         )
         ot_inputs: calc.OvertimePolicyInputs | None = None
         overtime_policy_version_id: UUID | None = None
+        ot_version: OvertimePolicyVersion | None = None
+        ot_rate_rows: list[OvertimePolicyRateRow] = []
         if (
             not overtime_resolution.config_incomplete
             and overtime_resolution.resolved_policy_id is not None
@@ -2806,9 +2945,42 @@ class AttendanceDayService:
             )
             if ot_version is not None:
                 overtime_policy_version_id = ot_version.id
-                rate_rows = await self._overtime_repo.list_rate_rows(
+                ot_rate_rows = await self._overtime_repo.list_rate_rows(
                     self._session, company_id=company_id, policy_version_id=ot_version.id
                 )
+                # W7 (WD-29 decision 3) — the weekly/monthly cumulative budget already consumed
+                # by sibling days, computed here (DB access) before handing off to the pure
+                # engine, exactly like every other policy/calendar input on this input object.
+                remaining_weekly_minutes: int | None = None
+                if ot_version.weekly_cap_minutes is not None:
+                    week_start = target_date - timedelta(days=target_date.weekday())
+                    week_end = week_start + timedelta(days=6)
+                    week_sum = await self._ot_record_repo.sum_minutes_detected_for_range(
+                        self._session,
+                        company_id=company_id,
+                        employee_id=employee_id,
+                        date_from=week_start,
+                        date_to=week_end,
+                        exclude_date=target_date,
+                    )
+                    remaining_weekly_minutes = max(0, ot_version.weekly_cap_minutes - week_sum)
+                remaining_monthly_minutes: int | None = None
+                if ot_version.monthly_cap_minutes is not None:
+                    month_start = target_date.replace(day=1)
+                    month_end = (
+                        date(target_date.year, 12, 31)
+                        if target_date.month == 12
+                        else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
+                    )
+                    month_sum = await self._ot_record_repo.sum_minutes_detected_for_range(
+                        self._session,
+                        company_id=company_id,
+                        employee_id=employee_id,
+                        date_from=month_start,
+                        date_to=month_end,
+                        exclude_date=target_date,
+                    )
+                    remaining_monthly_minutes = max(0, ot_version.monthly_cap_minutes - month_sum)
                 ot_inputs = calc.OvertimePolicyInputs(
                     eligibility=ot_version.eligibility,
                     min_ot_minutes=ot_version.min_ot_minutes,
@@ -2824,8 +2996,10 @@ class AttendanceDayService:
                         calc.OvertimeRateRowData(
                             day_class=r.day_class, classification_code=r.classification_code
                         )
-                        for r in rate_rows
+                        for r in ot_rate_rows
                     ],
+                    remaining_weekly_minutes=remaining_weekly_minutes,
+                    remaining_monthly_minutes=remaining_monthly_minutes,
                 )
 
         regularization_resolution = await self._resolution.resolve(
@@ -2851,6 +3025,19 @@ class AttendanceDayService:
                 for p in punch_rows
             ]
 
+        # W9 (architecture §21) — active approved leave projections for this employee-date,
+        # resolved here (DB access) exactly like the roster overrides above, then handed to the
+        # pure engine as plain values.
+        leave_entries = [
+            calc.LeaveOverlayEntry(fraction=str(p.fraction), is_paid=p.is_paid, half=p.half)
+            for p in await self._leave_repo.list_active_for_employee_date(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                attendance_date=target_date,
+            )
+        ]
+
         calc_input = calc.AttendanceCalculationInput(
             employee_id=employee_id,
             attendance_date=target_date,
@@ -2870,6 +3057,7 @@ class AttendanceDayService:
             punches=punches,
             roster_week_off_override=roster_week_off_override,
             roster_holiday_working_override=roster_holiday_working_override,
+            leave_entries=leave_entries,
         )
         resolved_refs: dict[str, UUID | None] = {
             "shift_id": shift_id,
@@ -2879,7 +3067,244 @@ class AttendanceDayService:
             "overtime_policy_version_id": overtime_policy_version_id,
             "regularization_policy_version_id": regularization_policy_version_id,
         }
-        return calc_input, resolved_refs
+        return calc_input, resolved_refs, ot_version, ot_rate_rows
+
+    async def _resolve_ot_decision(
+        self,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        target_date: date,
+        result: calc.AttendanceCalculationResult,
+        ot_version: OvertimePolicyVersion | None,
+        ot_rate_rows: list[OvertimePolicyRateRow],
+        existing_ot_record: OvertimeRecord | None,
+    ) -> dict[str, Any] | None:
+        """W7 (WD-29 decisions 2/4) — the single source of truth for "what is this
+        calculate() call's OT decision", used both to override the day row's OT summary
+        columns and to sync `overtime_record`. Returns `None` when there is nothing to record
+        (no prior record and nothing newly eligible this run) — the caller then deletes any
+        stale `PENDING` record and leaves the day's OT columns at the engine's own output
+        (already zeroed for a no-OT day)."""
+        if existing_ot_record is not None and existing_ot_record.status != "PENDING":
+            # Frozen (WD-29 decision 2) — a terminal decision is never revised by a recompute,
+            # however that recompute was triggered.
+            return {
+                "frozen": True,
+                "status": existing_ot_record.status,
+                "minutes_approved": existing_ot_record.minutes_approved,
+                "comp_off_minutes": existing_ot_record.comp_off_minutes,
+            }
+
+        if result.ot_minutes_detected <= 0 or ot_version is None:
+            return None
+
+        approval_chain = ot_version.approval_chain
+        resolved_manager_id: UUID | None = None
+        approval_stage: str | None = None
+        approver_unresolved = False
+        needs_review = approval_chain != "AUTO" and ot_version.requires_post_approval
+        if needs_review:
+            if approval_chain == "HR":
+                approval_stage = "HR"
+            else:  # MANAGER or MANAGER_THEN_HR
+                # Local, function-scoped import — established cross-module-seam convention
+                # (mirrors `RegularizationRequestService.submit`'s identical resolution).
+                from hrms.modules.employee.service import EmployeeAssignmentService
+
+                assignment_service = EmployeeAssignmentService(self._session)
+                assignment = await assignment_service.get_assignment_as_of(
+                    company_id, employee_id, target_date
+                )
+                resolved_manager_id = assignment.reporting_manager_id if assignment else None
+                approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
+                approver_unresolved = resolved_manager_id is None
+
+        if needs_review:
+            status = "PENDING"
+            minutes_approved = 0
+        else:
+            # `approval_chain == "AUTO"` always auto-approves immediately, even when
+            # `requires_post_approval` is set — the chain says no human ever reviews this
+            # (WD-29 decision 4). Otherwise `requires_post_approval=False` means the engine
+            # already auto-approved the detected minutes.
+            status = "AUTO_APPROVED"
+            minutes_approved = result.ot_minutes_detected
+
+        # Policy-computed fact stored on the record regardless of decision state (mirrors how
+        # the engine itself already computes `comp_off_minutes_earned` unconditionally) — only
+        # the day row's payroll-facing summary is gated on the decision (see `calculate()`).
+        comp_off_minutes = result.comp_off_minutes_earned
+        comp_off_expiry_date: date | None = None
+        if comp_off_minutes > 0 and ot_version.comp_off_expiry_days is not None:
+            comp_off_expiry_date = target_date + timedelta(days=ot_version.comp_off_expiry_days)
+
+        configured_multiplier = next(
+            (r.multiplier_decimal for r in ot_rate_rows if r.day_class == result.ot_day_class),
+            None,
+        )
+
+        return {
+            "frozen": False,
+            "status": status,
+            "approval_chain": approval_chain,
+            "approval_stage": approval_stage,
+            "resolved_manager_id": resolved_manager_id,
+            "approver_unresolved": approver_unresolved,
+            "minutes_detected": result.ot_minutes_detected,
+            "minutes_approved": minutes_approved,
+            "day_class": result.ot_day_class,
+            "classification_code": result.ot_classification,
+            "configured_multiplier": configured_multiplier,
+            "comp_off_minutes": comp_off_minutes,
+            "comp_off_expiry_date": comp_off_expiry_date,
+        }
+
+    async def _sync_overtime_record(
+        self,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        attendance_day_id: UUID,
+        attendance_date: date,
+        overtime_policy_version_id: UUID | None,
+        decision: dict[str, Any] | None,
+        existing_ot_record: OvertimeRecord | None,
+        actor_user_id: UUID | None,
+        now: datetime,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """Applies `decision` (from `_resolve_ot_decision`) to the `overtime_record` table.
+        A frozen decision touches nothing. `None` (nothing detected, nothing pre-existing —
+        or a pre-existing `PENDING` record that no longer has anything to decide) deletes any
+        stale `PENDING` row. Otherwise upserts — in place if a `PENDING` row already exists
+        (preserving its `overtime_action` history), inserted fresh otherwise — and records the
+        `DETECTED`/`AUTO_APPROVED`/`APPROVER_UNRESOLVED` actions for this run."""
+        if decision is not None and decision["frozen"]:
+            return
+
+        if decision is None:
+            if existing_ot_record is not None:
+                await self._ot_record_repo.delete_if_pending(
+                    self._session, company_id=company_id, attendance_day_id=attendance_day_id
+                )
+            return
+
+        values = {
+            "employee_id": employee_id,
+            "attendance_date": attendance_date,
+            "overtime_policy_version_id": overtime_policy_version_id,
+            "day_class": decision["day_class"],
+            "classification_code": decision["classification_code"],
+            "configured_multiplier": decision["configured_multiplier"],
+            "minutes_detected": decision["minutes_detected"],
+            "minutes_approved": decision["minutes_approved"],
+            "status": decision["status"],
+            "approval_chain": decision["approval_chain"],
+            "approval_stage": decision["approval_stage"],
+            "resolved_approver_manager_id": decision["resolved_manager_id"],
+            "comp_off_minutes": decision["comp_off_minutes"],
+            "comp_off_expiry_date": decision["comp_off_expiry_date"],
+        }
+
+        record: OvertimeRecord | None = None
+        if existing_ot_record is not None:
+            record = await self._ot_record_repo.replace_pending_for_day(
+                self._session,
+                company_id=company_id,
+                attendance_day_id=attendance_day_id,
+                values=values,
+                now=now,
+            )
+        if record is None:
+            record = await self._ot_record_repo.insert(
+                self._session,
+                data={
+                    **values,
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "attendance_day_id": attendance_day_id,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+
+        await self._ot_action_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "overtime_record_id": record.id,
+                "action": "DETECTED",
+                "actor_user_id": None,
+                "actor_employee_id": None,
+                "stage": None,
+                "comment": None,
+            },
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="OVERTIME_DETECTED",
+            entity_type="overtime_record",
+            entity_id=record.id,
+            after=overtime_record_to_audit_dict(overtime_record_to_read(record, actions=[])),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        if decision["approver_unresolved"]:
+            await self._ot_action_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "overtime_record_id": record.id,
+                    "action": "APPROVER_UNRESOLVED",
+                    "actor_user_id": None,
+                    "actor_employee_id": None,
+                    "stage": "MANAGER",
+                    "comment": "No manager resolved as of the attendance date; routed to HR",
+                },
+            )
+
+        if decision["status"] == "AUTO_APPROVED":
+            await self._ot_action_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "overtime_record_id": record.id,
+                    "action": "AUTO_APPROVED",
+                    "actor_user_id": None,
+                    "actor_employee_id": None,
+                    "stage": None,
+                    "comment": "Auto-approved per policy",
+                },
+            )
+            if decision["comp_off_minutes"] > 0:
+                await self._audit.record(
+                    self._session,
+                    company_id=company_id,
+                    actor_user_id=actor_user_id,
+                    action="COMP_OFF_EARNED",
+                    entity_type="overtime_record",
+                    entity_id=record.id,
+                    after={
+                        "employee_id": str(employee_id),
+                        "attendance_date": attendance_date.isoformat(),
+                        "minutes": decision["comp_off_minutes"],
+                        "expiry_date": (
+                            decision["comp_off_expiry_date"].isoformat()
+                            if decision["comp_off_expiry_date"]
+                            else None
+                        ),
+                    },
+                    ip=ip_address,
+                    user_agent=user_agent,
+                )
 
 
 def _validate_rate_rows(rate_rows: list[Any]) -> None:
@@ -2982,6 +3407,12 @@ class RegularizationRequestService:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
+        # WD-30 — unconditional, independent of `RegularizationPolicyVersion.blocked_when_locked`
+        # (that flag only ever gated the day-level `is_locked` check below it, when a day row
+        # already exists). A period-level close is a company-wide administrative decision no
+        # per-policy flag can opt out of, and it is the only check that can catch a backdated
+        # request for a date that has no `AttendanceDay` row at all yet.
+        await _ensure_date_open(self._session, company_id, body.attendance_date)
 
         if body.attendance_date > date.today():
             raise ValidationError("attendance_date cannot be in the future")
@@ -3704,3 +4135,1250 @@ class RegularizationRequestService:
             request_type=request_type,
         )
         return [await self._read(r, company_id=company_id) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# W7 — OvertimeRecord approval workflow (architecture §12, decision log WD-29)
+# ---------------------------------------------------------------------------
+
+
+class OvertimeRecordService:
+    """Approve/reject for system-detected overtime. There is no submit/cancel/apply — detection,
+    auto-approval, and the day-row sync all happen inside `AttendanceDayService.calculate()`
+    (WD-29 decision 1: engine-detected only, no manual request flow). This class is purely the
+    `PENDING -> APPROVED|REJECTED` review surface, mirroring `RegularizationRequestService`'s
+    approval mechanics (manager-as-of resolution, self-approval block, `MANAGER_THEN_HR`
+    staging, optimistic concurrency) as closely as the underlying entity allows."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = OvertimeRecordRepository()
+        self._action_repo = OvertimeActionRepository()
+        self._day_repo = AttendanceDayRepository()
+        self._audit = AuditService()
+
+    async def _read(self, row: OvertimeRecord, *, company_id: UUID) -> OvertimeRecordRead:
+        actions = await self._action_repo.list_for_record(
+            self._session, company_id=company_id, overtime_record_id=row.id
+        )
+        return overtime_record_to_read(row, actions=actions)
+
+    async def _record_action(
+        self,
+        *,
+        company_id: UUID,
+        overtime_record_id: UUID,
+        action: str,
+        actor_user_id: UUID | None,
+        actor_employee_id: UUID | None,
+        stage: str | None,
+        comment: str | None,
+    ) -> None:
+        await self._action_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "overtime_record_id": overtime_record_id,
+                "action": action,
+                "actor_user_id": actor_user_id,
+                "actor_employee_id": actor_employee_id,
+                "stage": stage,
+                "comment": comment,
+            },
+        )
+
+    async def get(
+        self,
+        company_id: UUID,
+        record_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> OvertimeRecordRead:
+        row = await self._repo.get_by_id(self._session, company_id=company_id, record_id=record_id)
+        if row is None:
+            raise OvertimeRecordNotFoundError()
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        if visible_ids is not None and row.employee_id not in visible_ids:
+            raise OvertimeRecordNotFoundError()
+        return await self._read(row, company_id=company_id)
+
+    async def list(
+        self,
+        company_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+        employee_id: UUID | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        status: str | None = None,
+    ) -> list[OvertimeRecordRead]:
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        rows = await self._repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+        return [await self._read(r, company_id=company_id) for r in rows]
+
+    async def _get_reviewable(
+        self,
+        company_id: UUID,
+        record_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> OvertimeRecord:
+        row = await self._repo.get_by_id(self._session, company_id=company_id, record_id=record_id)
+        if row is None:
+            raise OvertimeRecordNotFoundError()
+        if row.status != "PENDING" or row.approval_stage is None:
+            raise OvertimeInvalidTransitionError()
+        # WD-29 decision 4 — self-approval is always blocked, no policy escape hatch exists.
+        if caller_employee_id is not None and row.employee_id == caller_employee_id:
+            raise OvertimeSelfApprovalNotAllowedError()
+
+        if row.approval_stage == "MANAGER":
+            if caller_employee_id is None or caller_employee_id != row.resolved_approver_manager_id:
+                raise OvertimeApproverMismatchError()
+        else:  # HR
+            if DataScopeLevel.COMPANY not in scope.levels:
+                raise OvertimeApproverMismatchError(
+                    "HR-stage approval requires a company-wide OVERTIME_APPROVE grant"
+                )
+        return row
+
+    async def _stale_error(
+        self, company_id: UUID, record_id: UUID
+    ) -> OvertimeRecordNotFoundError | StaleOvertimeRecordResourceError:
+        current = await self._repo.get_by_id(
+            self._session, company_id=company_id, record_id=record_id
+        )
+        if current is None:
+            return OvertimeRecordNotFoundError()
+        current_read = await self._read(current, company_id=company_id)
+        return StaleOvertimeRecordResourceError(
+            "This overtime record has been modified by another request",
+            current=overtime_record_to_audit_dict(current_read),
+        )
+
+    async def approve(
+        self,
+        company_id: UUID,
+        record_id: UUID,
+        body: OvertimeReviewInput,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OvertimeRecordRead:
+        row = await self._get_reviewable(
+            company_id, record_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        # WD-30 — OT approve/reject writes `AttendanceDay.ot_minutes_approved`/
+        # `comp_off_minutes_earned` directly (`mark_ot_approved`, below), entirely outside
+        # `AttendanceDayService.calculate()` — its own `is_locked` check never runs for this
+        # path, so the period check here is the *only* guard, not defence-in-depth.
+        await _ensure_date_open(self._session, company_id, row.attendance_date)
+        now = datetime.now(UTC)
+        is_final_stage = not (
+            row.approval_chain == "MANAGER_THEN_HR" and row.approval_stage == "MANAGER"
+        )
+        values: dict[str, Any] = (
+            {
+                "status": "APPROVED",
+                "approval_stage": None,
+                "minutes_approved": row.minutes_detected,
+                "reviewed_by_user_id": actor_user_id,
+                "reviewed_at": now,
+                "reviewer_comment": body.reviewer_comment,
+            }
+            if is_final_stage
+            else {"approval_stage": "HR"}
+        )
+
+        before_read = await self._read(row, company_id=company_id)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            record_id=record_id,
+            values=values,
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, record_id)
+
+        if not is_final_stage:
+            await self._record_action(
+                company_id=company_id,
+                overtime_record_id=record_id,
+                action="STAGE_APPROVED",
+                actor_user_id=actor_user_id,
+                actor_employee_id=caller_employee_id,
+                stage="MANAGER",
+                comment=body.reviewer_comment,
+            )
+            read = await self._read(updated, company_id=company_id)
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="OVERTIME_STAGE_APPROVED",
+                entity_type="overtime_record",
+                entity_id=record_id,
+                before=overtime_record_to_audit_dict(before_read),
+                after=overtime_record_to_audit_dict(read),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+            return read
+
+        await self._record_action(
+            company_id=company_id,
+            overtime_record_id=record_id,
+            action="APPROVED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=row.approval_stage,
+            comment=body.reviewer_comment,
+        )
+        await self._day_repo.mark_ot_approved(
+            self._session,
+            company_id=company_id,
+            attendance_day_id=updated.attendance_day_id,
+            minutes_approved=updated.minutes_approved,
+            comp_off_minutes=updated.comp_off_minutes,
+            now=now,
+        )
+        read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="OVERTIME_APPROVED",
+            entity_type="overtime_record",
+            entity_id=record_id,
+            before=overtime_record_to_audit_dict(before_read),
+            after=overtime_record_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        if updated.comp_off_minutes > 0:
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="COMP_OFF_EARNED",
+                entity_type="overtime_record",
+                entity_id=record_id,
+                after={
+                    "employee_id": str(updated.employee_id),
+                    "attendance_date": updated.attendance_date.isoformat(),
+                    "minutes": updated.comp_off_minutes,
+                    "expiry_date": (
+                        updated.comp_off_expiry_date.isoformat()
+                        if updated.comp_off_expiry_date
+                        else None
+                    ),
+                },
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+        return read
+
+    async def reject(
+        self,
+        company_id: UUID,
+        record_id: UUID,
+        body: OvertimeReviewInput,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OvertimeRecordRead:
+        row = await self._get_reviewable(
+            company_id, record_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        # WD-30 — OT approve/reject writes `AttendanceDay.ot_minutes_approved`/
+        # `comp_off_minutes_earned` directly (`mark_ot_approved`, below), entirely outside
+        # `AttendanceDayService.calculate()` — its own `is_locked` check never runs for this
+        # path, so the period check here is the *only* guard, not defence-in-depth.
+        await _ensure_date_open(self._session, company_id, row.attendance_date)
+        now = datetime.now(UTC)
+        before_read = await self._read(row, company_id=company_id)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            record_id=record_id,
+            values={
+                "status": "REJECTED",
+                "approval_stage": None,
+                "minutes_approved": 0,
+                "comp_off_minutes": 0,
+                "reviewed_by_user_id": actor_user_id,
+                "reviewed_at": now,
+                "reviewer_comment": body.reviewer_comment,
+                "rejection_reason": body.rejection_reason,
+            },
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, record_id)
+
+        await self._record_action(
+            company_id=company_id,
+            overtime_record_id=record_id,
+            action="REJECTED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=row.approval_stage,
+            comment=body.rejection_reason or body.reviewer_comment,
+        )
+        # A rejected overtime record cannot become a payroll fact (mirrors WD-28's identical
+        # regularization rule): the day's OT summary is cleared to zero, never left at whatever
+        # the engine last provisionally detected.
+        await self._day_repo.mark_ot_approved(
+            self._session,
+            company_id=company_id,
+            attendance_day_id=updated.attendance_day_id,
+            minutes_approved=0,
+            comp_off_minutes=0,
+            now=now,
+        )
+        read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="OVERTIME_REJECTED",
+            entity_type="overtime_record",
+            entity_id=record_id,
+            before=overtime_record_to_audit_dict(before_read),
+            after=overtime_record_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+
+# ---------------------------------------------------------------------------
+# W8 — AttendancePeriod (architecture §4.2/§22, decision log WD-30)
+# ---------------------------------------------------------------------------
+
+
+class AttendancePeriodService:
+    """Period lifecycle (`OPEN` -> `CLOSED`), finalization validation, and the payroll-facing
+    `AttendancePeriodSummary` snapshot. `CLOSED` *is* locked — closing a period is what actually
+    sets `AttendanceDay.is_locked=true` across its range (via `AttendanceDayRepository.bulk_lock`)
+    for the first time anywhere in this codebase; every other service in this module only ever
+    *checked* that flag before this slice existed."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = AttendancePeriodRepository()
+        self._action_repo = AttendancePeriodActionRepository()
+        self._summary_repo = AttendancePeriodSummaryRepository()
+        self._day_repo = AttendanceDayRepository()
+        self._reg_repo = AttendanceRegularizationRequestRepository()
+        self._ot_repo = OvertimeRecordRepository()
+        self._roster_repo = ShiftRosterRepository()
+        self._policy_repo = AttendancePolicyRepository()
+        self._audit = AuditService()
+
+    async def _read(self, row: "AttendancePeriod") -> AttendancePeriodRead:
+        actions = await self._action_repo.list_for_period(
+            self._session, company_id=row.company_id, attendance_period_id=row.id
+        )
+        return attendance_period_to_read(row, actions=actions)
+
+    async def _record_action(
+        self,
+        *,
+        company_id: UUID,
+        attendance_period_id: UUID,
+        action: str,
+        actor_user_id: UUID | None,
+        comment: str | None,
+    ) -> None:
+        await self._action_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "attendance_period_id": attendance_period_id,
+                "action": action,
+                "actor_user_id": actor_user_id,
+                "comment": comment,
+                "created_at": datetime.now(UTC),
+            },
+        )
+
+    async def _get_or_404(self, company_id: UUID, period_id: UUID) -> "AttendancePeriod":
+        row = await self._repo.get(self._session, company_id=company_id, period_id=period_id)
+        if row is None:
+            raise AttendancePeriodNotFoundError()
+        return row
+
+    async def _stale_error(
+        self, company_id: UUID, period_id: UUID
+    ) -> AttendancePeriodNotFoundError | StaleAttendancePeriodResourceError:
+        current = await self._repo.get(self._session, company_id=company_id, period_id=period_id)
+        if current is None:
+            return AttendancePeriodNotFoundError()
+        current_read = await self._read(current)
+        return StaleAttendancePeriodResourceError(
+            "This attendance period has been modified by another request",
+            current=attendance_period_to_audit_dict(current_read),
+        )
+
+    async def create(
+        self,
+        company_id: UUID,
+        body: AttendancePeriodCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> AttendancePeriodRead:
+        """Create always opens immediately (WD-30) — there is no separate "open" action."""
+        now = datetime.now(UTC)
+        period_id = uuid4()
+        data = {
+            "id": period_id,
+            "company_id": company_id,
+            "legal_entity_id": None,
+            "period_start": body.period_start,
+            "period_end": body.period_end,
+            "label": body.label,
+            "status": "OPEN",
+            "opened_by_user_id": actor_user_id,
+            "opened_at": now,
+            "version": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+        try:
+            row = await self._repo.insert(self._session, data=data)
+        except IntegrityError as exc:
+            raise AttendancePeriodOverlapError() from exc
+
+        await self._record_action(
+            company_id=company_id,
+            attendance_period_id=period_id,
+            action="OPENED",
+            actor_user_id=actor_user_id,
+            comment=None,
+        )
+        read = await self._read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_PERIOD_OPENED",
+            entity_type="attendance_period",
+            entity_id=period_id,
+            after=attendance_period_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_periods(
+        self, company_id: UUID, *, status: str | None
+    ) -> list[AttendancePeriodRead]:
+        rows = await self._repo.list_filtered(self._session, company_id=company_id, status=status)
+        return [await self._read(row) for row in rows]
+
+    async def get(self, company_id: UUID, period_id: UUID) -> AttendancePeriodRead:
+        row = await self._get_or_404(company_id, period_id)
+        return await self._read(row)
+
+    # -- finalization validation --------------------------------------------------------
+
+    async def _run_validation(
+        self, company_id: UUID, period: "AttendancePeriod"
+    ) -> tuple[AttendancePeriodValidationRead, list["AttendanceDay"]]:
+        """Fail-closed (WD-21): any non-empty bucket blocks. Returns the raw `AttendanceDay`
+        rows alongside the verdict so `finalize` never re-queries them — the summary snapshot
+        and the lock-time INCOMPLETE resolution both need the exact same row set validation
+        just inspected, not a second read that could race against it."""
+        day_rows = await self._day_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=None,
+            employee_id=None,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            status=None,
+        )
+        reasons: list[AttendancePeriodBlockingReason] = []
+
+        # EMPLOYEES_WITHOUT_ATTENDANCE — every employment spell overlapping the period must have
+        # an `AttendanceDay` row for each calendar day it overlaps the period (architecture §19.1:
+        # `calculate()` always writes a row, even NOT_JOINED/EXITED/CONFIG_ERROR ones, once run —
+        # a missing row means it was simply never run for that employee-date).
+        from hrms.modules.employee.service import EmploymentService
+
+        employment_service = EmploymentService(self._session)
+        spans = await employment_service.list_spans_overlapping(
+            company_id, date_from=period.period_start, date_to=period.period_end
+        )
+        day_counts: dict[UUID, int] = {}
+        for day_row in day_rows:
+            day_counts[day_row.employee_id] = day_counts.get(day_row.employee_id, 0) + 1
+        missing_employees: list[str] = []
+        for employee_id, joining_date, last_working_day in spans:
+            span_start = max(joining_date, period.period_start)
+            span_last_day = last_working_day or period.period_end
+            span_end = min(span_last_day, period.period_end)
+            expected = (span_end - span_start).days + 1
+            if day_counts.get(employee_id, 0) < expected:
+                missing_employees.append(str(employee_id))
+        if missing_employees:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="EMPLOYEES_WITHOUT_ATTENDANCE",
+                    message=(
+                        "Some employees are missing calculated attendance for one or more days "
+                        "in this period — run calculation for every employee-date before "
+                        "finalizing"
+                    ),
+                    count=len(missing_employees),
+                    sample=missing_employees[:20],
+                )
+            )
+
+        # CONFIG_ERROR — WD-21 fail-closed, no lock-time resolution mechanism exists for this
+        # (unlike INCOMPLETE, below); must be fixed and recomputed before finalize.
+        config_error_rows = [r for r in day_rows if r.attendance_status == "CONFIG_ERROR"]
+        if config_error_rows:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="CONFIG_ERROR",
+                    message="Some attendance days have an unresolved configuration error",
+                    count=len(config_error_rows),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}"
+                        for r in config_error_rows[:20]
+                    ],
+                )
+            )
+
+        # INCOMPLETE_ATTENDANCE — architecture §11.4: a `KEEP_INCOMPLETE` policy blocks; a
+        # `TREAT_ABSENT`/`TREAT_PRESENT` policy is auto-resolved by `finalize` itself, not a
+        # blocker.
+        incomplete_rows = [r for r in day_rows if r.attendance_status == "INCOMPLETE"]
+        if incomplete_rows:
+            version_ids = {
+                r.attendance_policy_version_id
+                for r in incomplete_rows
+                if r.attendance_policy_version_id is not None
+            }
+            versions = await self._policy_repo.get_versions_by_ids(
+                self._session, company_id=company_id, version_ids=version_ids
+            )
+            behaviour_by_version: dict[UUID | None, str] = {
+                v.id: v.incomplete_at_lock_behaviour for v in versions
+            }
+            blocking_incomplete = [
+                r
+                for r in incomplete_rows
+                if behaviour_by_version.get(r.attendance_policy_version_id, "TREAT_ABSENT")
+                == "KEEP_INCOMPLETE"
+            ]
+            if blocking_incomplete:
+                reasons.append(
+                    AttendancePeriodBlockingReason(
+                        code="INCOMPLETE_ATTENDANCE",
+                        message=(
+                            "Some attendance days are still INCOMPLETE under a policy that "
+                            "requires manual resolution before locking (incomplete_at_lock_"
+                            "behaviour=KEEP_INCOMPLETE)"
+                        ),
+                        count=len(blocking_incomplete),
+                        sample=[
+                            f"{r.employee_id}:{r.attendance_date.isoformat()}"
+                            for r in blocking_incomplete[:20]
+                        ],
+                    )
+                )
+
+        # PENDING_REGULARIZATION
+        pending_reg = await self._reg_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=None,
+            employee_id=None,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            status="SUBMITTED",
+            request_type=None,
+        )
+        if pending_reg:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="PENDING_REGULARIZATION",
+                    message=(
+                        "Some regularization requests in this period are still awaiting a decision"
+                    ),
+                    count=len(pending_reg),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}" for r in pending_reg[:20]
+                    ],
+                )
+            )
+
+        # PENDING_OVERTIME_APPROVAL
+        pending_ot = await self._ot_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=None,
+            employee_id=None,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            status="PENDING",
+        )
+        if pending_ot:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="PENDING_OVERTIME_APPROVAL",
+                    message="Some detected overtime in this period is still awaiting approval",
+                    count=len(pending_ot),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}" for r in pending_ot[:20]
+                    ],
+                )
+            )
+
+        # UNPUBLISHED_ROSTER
+        draft_roster = await self._roster_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=None,
+            employee_id=None,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            status="DRAFT",
+        )
+        if draft_roster:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="UNPUBLISHED_ROSTER",
+                    message="Some roster entries in this period are still DRAFT, not PUBLISHED",
+                    count=len(draft_roster),
+                    sample=[
+                        f"{r.employee_id}:{r.roster_date.isoformat()}" for r in draft_roster[:20]
+                    ],
+                )
+            )
+
+        status = "BLOCKED" if reasons else "READY"
+        result = AttendancePeriodValidationRead(
+            status=status,
+            reasons=reasons,
+            validated_at=_format_timestamp(datetime.now(UTC)) or "",
+        )
+        return result, day_rows
+
+    async def validate(self, company_id: UUID, period_id: UUID) -> AttendancePeriodValidationRead:
+        period = await self._get_or_404(company_id, period_id)
+        result, _ = await self._run_validation(company_id, period)
+        now = datetime.now(UTC)
+        await self._repo.record_validation(
+            self._session, company_id=company_id, period_id=period_id, status=result.status, now=now
+        )
+        await self._record_action(
+            company_id=company_id,
+            attendance_period_id=period_id,
+            action="VALIDATED" if result.status == "READY" else "VALIDATION_FAILED",
+            actor_user_id=None,
+            comment=f"{len(result.reasons)} blocking reason(s)" if result.reasons else None,
+        )
+        return result
+
+    # -- summary aggregation --------------------------------------------------------
+
+    @staticmethod
+    def _aggregate_day_rows(day_rows: list["AttendanceDay"]) -> dict[UUID, dict[str, Any]]:
+        """Pure read-side aggregation of already-computed `AttendanceDay` facts (architecture
+        §22.2) — never derives a new attendance fact, only tallies existing ones."""
+        by_employee: dict[UUID, dict[str, Any]] = {}
+        for row in day_rows:
+            agg = by_employee.setdefault(
+                row.employee_id,
+                {
+                    "present_days": Decimal("0.00"),
+                    "absent_days": Decimal("0.00"),
+                    "leave_days": Decimal("0.00"),
+                    "holiday_days": Decimal("0.00"),
+                    "weekly_off_days": Decimal("0.00"),
+                    "half_days": Decimal("0.00"),
+                    "lop_days": Decimal("0.00"),
+                    "ot_minutes_normal": 0,
+                    "ot_minutes_weekly_off": 0,
+                    "ot_minutes_holiday": 0,
+                    "ot_minutes_night": 0,
+                    "comp_off_minutes_earned": 0,
+                    "late_count": 0,
+                    "worked_minutes_total": 0,
+                },
+            )
+            if row.attendance_status == "PRESENT":
+                agg["present_days"] += 1
+            elif row.attendance_status == "HALF_DAY":
+                agg["half_days"] += 1
+            elif row.attendance_status == "ABSENT":
+                agg["absent_days"] += 1
+            elif row.attendance_status == "LEAVE":
+                agg["leave_days"] += 1
+            if row.calendar_day_type == "HOLIDAY":
+                agg["holiday_days"] += 1
+            elif row.calendar_day_type == "WEEKLY_OFF":
+                agg["weekly_off_days"] += 1
+            agg["lop_days"] += Decimal(str(row.lop_fraction))
+            if row.ot_classification == "WEEKLY_OFF":
+                agg["ot_minutes_weekly_off"] += row.ot_minutes_approved
+            elif row.ot_classification == "HOLIDAY":
+                agg["ot_minutes_holiday"] += row.ot_minutes_approved
+            elif row.ot_classification == "NIGHT":
+                agg["ot_minutes_night"] += row.ot_minutes_approved
+            elif row.ot_minutes_approved:
+                agg["ot_minutes_normal"] += row.ot_minutes_approved
+            agg["comp_off_minutes_earned"] += row.comp_off_minutes_earned
+            if row.is_late:
+                agg["late_count"] += 1
+            agg["worked_minutes_total"] += row.worked_minutes
+        return by_employee
+
+    async def get_summary(
+        self, company_id: UUID, period_id: UUID
+    ) -> list[AttendancePeriodSummaryRead]:
+        """ "Regenerated only while unlocked; frozen at lock/snapshot" (architecture §4.2) — an
+        `OPEN` period computes a live, unpersisted preview on every call; a `CLOSED` period
+        returns the frozen rows `finalize` wrote once and only once."""
+        period = await self._get_or_404(company_id, period_id)
+        if period.status == "CLOSED":
+            rows = await self._summary_repo.list_for_period(
+                self._session, company_id=company_id, attendance_period_id=period_id
+            )
+            return [attendance_period_summary_to_read(row, frozen=True) for row in rows]
+
+        day_rows = await self._day_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=None,
+            employee_id=None,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            status=None,
+        )
+        now_str = _format_timestamp(datetime.now(UTC)) or ""
+        aggregates = self._aggregate_day_rows(day_rows)
+        return [
+            AttendancePeriodSummaryRead(
+                employee_id=employee_id,
+                present_days=str(agg["present_days"]),
+                absent_days=str(agg["absent_days"]),
+                leave_days=str(agg["leave_days"]),
+                holiday_days=str(agg["holiday_days"]),
+                weekly_off_days=str(agg["weekly_off_days"]),
+                half_days=str(agg["half_days"]),
+                lop_days=str(agg["lop_days"]),
+                ot_minutes_normal=agg["ot_minutes_normal"],
+                ot_minutes_weekly_off=agg["ot_minutes_weekly_off"],
+                ot_minutes_holiday=agg["ot_minutes_holiday"],
+                ot_minutes_night=agg["ot_minutes_night"],
+                comp_off_minutes_earned=agg["comp_off_minutes_earned"],
+                late_count=agg["late_count"],
+                worked_minutes_total=agg["worked_minutes_total"],
+                generated_at=now_str,
+                frozen=False,
+            )
+            for employee_id, agg in aggregates.items()
+        ]
+
+    # -- finalize / reopen --------------------------------------------------------
+
+    async def _apply_incomplete_lock_resolution(
+        self, company_id: UUID, day_rows: list["AttendanceDay"]
+    ) -> None:
+        """Architecture §11.4 — resolves every still-`INCOMPLETE` day's `paid_day_fraction`/
+        `lop_fraction` per its own snapshotted policy's `incomplete_at_lock_behaviour`
+        immediately before locking. `_run_validation` already guarantees no `KEEP_INCOMPLETE`
+        row reaches this point."""
+        incomplete_rows = [r for r in day_rows if r.attendance_status == "INCOMPLETE"]
+        if not incomplete_rows:
+            return
+        version_ids = {
+            r.attendance_policy_version_id
+            for r in incomplete_rows
+            if r.attendance_policy_version_id is not None
+        }
+        versions = await self._policy_repo.get_versions_by_ids(
+            self._session, company_id=company_id, version_ids=version_ids
+        )
+        behaviour_by_version: dict[UUID | None, str] = {
+            v.id: v.incomplete_at_lock_behaviour for v in versions
+        }
+        now = datetime.now(UTC)
+        for row in incomplete_rows:
+            behaviour = behaviour_by_version.get(row.attendance_policy_version_id, "TREAT_ABSENT")
+            if behaviour == "TREAT_PRESENT":
+                paid_day_fraction, lop_fraction = Decimal("1.00"), Decimal("0.00")
+            else:  # TREAT_ABSENT (default) — KEEP_INCOMPLETE already blocked validation
+                paid_day_fraction, lop_fraction = Decimal("0.00"), Decimal("1.00")
+            await self._day_repo.set_lock_time_incomplete_resolution(
+                self._session,
+                company_id=company_id,
+                attendance_day_id=row.id,
+                paid_day_fraction=paid_day_fraction,
+                lop_fraction=lop_fraction,
+                now=now,
+            )
+
+    async def finalize(
+        self,
+        company_id: UUID,
+        period_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> AttendancePeriodRead:
+        """Fail-closed, race-safe, atomic (WD-30): re-validates fresh (never trusts
+        `last_validation_status`), then wins the version-guarded `status='CLOSED'` write
+        *before* touching any `AttendanceDay`/`AttendancePeriodSummary` row — a losing
+        concurrent finalize aborts cheaply, before locking anything, and the whole request is
+        one transaction, so any failure after the version-guarded write rolls that write back
+        too (no partial finalization)."""
+        period = await self._get_or_404(company_id, period_id)
+        if period.status != "OPEN":
+            raise AttendancePeriodInvalidTransitionError("Only an OPEN period can be finalized")
+
+        # A BLOCKED verdict raises immediately, aborting this transaction — neither the
+        # validation-status cache nor a `VALIDATION_FAILED` action would survive being written
+        # here anyway, so this deliberately does not attempt either (unlike the standalone
+        # `validate()` above, which never raises and therefore can and does persist both). A
+        # caller wanting a persisted, audited BLOCKED record ahead of attempting finalize should
+        # call `POST .../validate` first.
+        result, day_rows = await self._run_validation(company_id, period)
+        if result.status != "READY":
+            raise AttendancePeriodFinalizationBlockedError(
+                reasons=[r.model_dump() for r in result.reasons]
+            )
+
+        now = datetime.now(UTC)
+
+        before_read = await self._read(period)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            period_id=period_id,
+            values={"status": "CLOSED", "closed_by_user_id": actor_user_id, "closed_at": now},
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, period_id)
+
+        await self._apply_incomplete_lock_resolution(company_id, day_rows)
+
+        aggregates = self._aggregate_day_rows(day_rows)
+        summary_rows = [
+            {
+                "id": uuid4(),
+                "company_id": company_id,
+                "attendance_period_id": period_id,
+                "employee_id": employee_id,
+                **agg,
+                "generated_at": now,
+                "created_at": now,
+                "updated_at": now,
+            }
+            for employee_id, agg in aggregates.items()
+        ]
+        await self._summary_repo.replace_for_period(
+            self._session,
+            company_id=company_id,
+            attendance_period_id=period_id,
+            rows=summary_rows,
+        )
+
+        await self._day_repo.bulk_lock(
+            self._session,
+            company_id=company_id,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            locked_by=actor_user_id,
+            now=now,
+        )
+
+        await self._record_action(
+            company_id=company_id,
+            attendance_period_id=period_id,
+            action="CLOSED",
+            actor_user_id=actor_user_id,
+            comment=None,
+        )
+        read = await self._read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_PERIOD_CLOSED",
+            entity_type="attendance_period",
+            entity_id=period_id,
+            before=attendance_period_to_audit_dict(before_read),
+            after=attendance_period_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def reopen(
+        self,
+        company_id: UUID,
+        period_id: UUID,
+        body: AttendancePeriodReopenInput,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> AttendancePeriodRead:
+        """`ATTENDANCE.UNLOCK` (architecture §13.4/§23.2) — clears `AttendanceDay.is_locked`
+        across the period's range and reopens it for correction. Does not recompute or restore
+        anything by itself; a day made mutable again is only actually changed by a later,
+        ordinary `calculate()`/regularization/adjustment call, and re-finalizing regenerates a
+        fresh frozen `AttendancePeriodSummary` snapshot (`AttendancePeriodSummaryRepository.
+        replace_for_period` is a full delete/recreate, never a stale leftover)."""
+        period = await self._get_or_404(company_id, period_id)
+        if period.status != "CLOSED":
+            raise AttendancePeriodInvalidTransitionError("Only a CLOSED period can be reopened")
+
+        before_read = await self._read(period)
+        now = datetime.now(UTC)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            period_id=period_id,
+            values={
+                "status": "OPEN",
+                "reopened_by_user_id": actor_user_id,
+                "reopened_at": now,
+                "reopen_reason": body.reason,
+            },
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, period_id)
+
+        await self._day_repo.bulk_unlock(
+            self._session,
+            company_id=company_id,
+            date_from=period.period_start,
+            date_to=period.period_end,
+            now=now,
+        )
+
+        await self._record_action(
+            company_id=company_id,
+            attendance_period_id=period_id,
+            action="REOPENED",
+            actor_user_id=actor_user_id,
+            comment=body.reason,
+        )
+        read = await self._read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_PERIOD_REOPENED",
+            entity_type="attendance_period",
+            entity_id=period_id,
+            before=attendance_period_to_audit_dict(before_read),
+            after=attendance_period_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+
+class LeaveProjectionService:
+    """W9 — the Leave -> Attendance projection adapter (architecture §21, decision log WD-31).
+    `sync`/`cancel` are the two mutating operations a future Leave module (or, until it exists,
+    an authorized internal/test caller under `ATTENDANCE.LEAVE_PROJECTION_SYNC`) uses to publish
+    or withdraw an approved leave day projection; each triggers a synchronous in-process
+    recompute of the affected `AttendanceDay` (architecture §25 — acceptable "since the ADR-0012
+    event/outbox infra doesn't exist yet"). Reads (`list_projections`/`get_projection`) reuse
+    `ATTENDANCE.VIEW`/`ATTENDANCE.VIEW_ALL`, mirroring every other read-reuse precedent in this
+    module (WD-28 decision 6 / WD-29 decision 6 / WD-30's identical reasoning)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = LeaveDayProjectionRepository()
+        self._audit = AuditService()
+
+    async def sync(
+        self,
+        company_id: UUID,
+        body: LeaveProjectionSync,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveDayProjectionRead:
+        await _ensure_employee_visible(
+            self._session, company_id, body.employee_id, scope, caller_employee_id
+        )
+        # §21 — "Leave module must consult AttendanceLock (service). Default refuse." A closed
+        # period refuses the publish outright, before any row is written or recomputed.
+        await _ensure_date_open(self._session, company_id, body.attendance_date)
+
+        existing = await self._repo.get_by_natural_key(
+            self._session,
+            company_id=company_id,
+            employee_id=body.employee_id,
+            attendance_date=body.attendance_date,
+            leave_application_id=body.leave_application_id,
+        )
+        other_active = [
+            p
+            for p in await self._repo.list_active_for_employee_date(
+                self._session,
+                company_id=company_id,
+                employee_id=body.employee_id,
+                attendance_date=body.attendance_date,
+            )
+            if existing is None or p.id != existing.id
+        ]
+        already_active = sum((Decimal(str(p.fraction)) for p in other_active), Decimal("0.00"))
+        if already_active + Decimal(body.fraction) > Decimal("1.00"):
+            raise LeaveProjectionOverlapError()
+
+        now = datetime.now(UTC)
+        before_read = leave_day_projection_to_read(existing) if existing is not None else None
+        row: LeaveDayProjection | None
+        if existing is None:
+            row = await self._repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": body.employee_id,
+                    "attendance_date": body.attendance_date,
+                    "leave_application_id": body.leave_application_id,
+                    "leave_type_id": body.leave_type_id,
+                    "leave_type_code": body.leave_type_code,
+                    "fraction": Decimal(body.fraction),
+                    "half": body.half,
+                    "is_paid": body.is_paid,
+                    "status": "APPROVED",
+                    "source_version": 1,
+                    "synced_at": now,
+                    "cancelled_at": None,
+                    "cancelled_reason": None,
+                    "created_by_user_id": actor_user_id,
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            action = "LEAVE_PROJECTION_SYNCED"
+        else:
+            # A resync of the same natural key is a correction, not a new fact (mirrors
+            # `AttendanceDay`'s own full-replace-on-recompute posture, WD-10) — it also revives a
+            # previously `CANCELLED` row rather than leaving it orphaned.
+            row = await self._repo.update(
+                self._session,
+                company_id=company_id,
+                projection_id=existing.id,
+                values={
+                    "leave_type_id": body.leave_type_id,
+                    "leave_type_code": body.leave_type_code,
+                    "fraction": Decimal(body.fraction),
+                    "half": body.half,
+                    "is_paid": body.is_paid,
+                    "status": "APPROVED",
+                    "source_version": existing.source_version + 1,
+                    "synced_at": now,
+                    "cancelled_at": None,
+                    "cancelled_reason": None,
+                },
+                expected_version=existing.version,
+                now=now,
+            )
+            if row is None:
+                raise await self._stale_error(company_id, existing.id)
+            action = "LEAVE_PROJECTION_RESYNCED"
+
+        read = leave_day_projection_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="leave_day_projection",
+            entity_id=row.id,
+            before=leave_day_projection_to_audit_dict(before_read) if before_read else None,
+            after=leave_day_projection_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        # Recompute-on-event (architecture §30's own naming for this slice) — an in-process call,
+        # not a real event bus (§25), exactly like every other cross-module seam in this module.
+        await AttendanceDayService(self._session).calculate(
+            company_id,
+            body.employee_id,
+            body.attendance_date,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def cancel(
+        self,
+        company_id: UUID,
+        projection_id: UUID,
+        body: LeaveProjectionCancelInput,
+        *,
+        expected_version: int,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveDayProjectionRead:
+        existing = await self._repo.get(
+            self._session, company_id=company_id, projection_id=projection_id
+        )
+        if existing is None:
+            raise LeaveProjectionNotFoundError()
+        await _ensure_employee_visible(
+            self._session, company_id, existing.employee_id, scope, caller_employee_id
+        )
+        # §21 "Leave approved after payroll lock... default refuse" applies symmetrically to
+        # cancellation — refuse rather than silently rewriting an already-locked day. Matches
+        # PD-LOCK-2's scope boundary (W8): no arrears mechanism exists, so the only correction
+        # path for a locked date is a full `ATTENDANCE.UNLOCK` period reopen.
+        await _ensure_date_open(self._session, company_id, existing.attendance_date)
+
+        before_read = leave_day_projection_to_read(existing)
+        now = datetime.now(UTC)
+        row = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            projection_id=projection_id,
+            values={"status": "CANCELLED", "cancelled_at": now, "cancelled_reason": body.reason},
+            expected_version=expected_version,
+            now=now,
+        )
+        if row is None:
+            raise await self._stale_error(company_id, projection_id)
+
+        read = leave_day_projection_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_PROJECTION_CANCELLED",
+            entity_type="leave_day_projection",
+            entity_id=projection_id,
+            before=leave_day_projection_to_audit_dict(before_read),
+            after=leave_day_projection_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        await AttendanceDayService(self._session).calculate(
+            company_id,
+            existing.employee_id,
+            existing.attendance_date,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_projections(
+        self,
+        company_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[LeaveDayProjectionRead]:
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        rows = await self._repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+        return [leave_day_projection_to_read(r) for r in rows]
+
+    async def get_projection(
+        self,
+        company_id: UUID,
+        projection_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> LeaveDayProjectionRead:
+        row = await self._repo.get(
+            self._session, company_id=company_id, projection_id=projection_id
+        )
+        if row is None:
+            raise LeaveProjectionNotFoundError()
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
+        if visible_ids is not None and row.employee_id not in visible_ids:
+            raise LeaveProjectionNotFoundError()
+        return leave_day_projection_to_read(row)
+
+    async def _stale_error(
+        self, company_id: UUID, projection_id: UUID
+    ) -> LeaveProjectionNotFoundError | StaleLeaveProjectionResourceError:
+        current = await self._repo.get(
+            self._session, company_id=company_id, projection_id=projection_id
+        )
+        if current is None:
+            return LeaveProjectionNotFoundError()
+        current_read = leave_day_projection_to_read(current)
+        return StaleLeaveProjectionResourceError(
+            "This leave projection has been modified since you last read it",
+            current=leave_day_projection_to_audit_dict(current_read),
+        )

@@ -26,10 +26,22 @@ Known, documented simplifications (not silent gaps):
   W4 therefore only deducts unpaid minutes for *detected* gaps (matched against `ShiftBreak`
   windows); a mandatory break with zero punched gap is not silently deducted — documented as a
   known limitation, not invented behaviour.
+- (W7, WD-29 decision 3) `OvertimePolicyInputs.remaining_weekly_minutes`/
+  `remaining_monthly_minutes` make a day's detected OT depend on sibling-day state computed by
+  `service.py` immediately before calling `evaluate_day`. This means `evaluate_day` is **not**
+  strictly idempotent across that one dimension: recomputing the same day with unchanged punches
+  can still produce a different `ot_minutes_detected` if a sibling day's `overtime_record` state
+  changed in between. Accepted and documented, not silently discovered — see WD-29.
+- (W9) Half-day leave's "computed only on the working half" (§19.4) is implemented as a flat
+  0.50 contribution from whatever the punch-derived outcome already produced, not a minute-by-
+  minute re-evaluation restricted to one half of the shift — the same block-level-not-finer-
+  grained simplification `_evaluate_split` already applies to SPLIT shift duty blocks. See
+  `_apply_leave_overlay` and decision log WD-31.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -118,6 +130,11 @@ class OvertimePolicyInputs:
     night_window_start: time | None
     night_window_end: time | None
     rate_rows: list[OvertimeRateRowData] = field(default_factory=list)
+    # W7 (WD-29 decision 3) — sibling-day cumulative budget remaining for this employee's ISO
+    # week / calendar month, computed by `service.py` (DB access) before calling this pure
+    # engine. `None` means uncapped, matching `daily_cap_minutes`'s own convention.
+    remaining_weekly_minutes: int | None = None
+    remaining_monthly_minutes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +149,19 @@ class ShiftInputs:
     core_start: time | None = None
     core_end: time | None = None
     required_minutes: int | None = None  # FLEXIBLE
+
+
+@dataclass(frozen=True, slots=True)
+class LeaveOverlayEntry:
+    """One active (`APPROVED`, not `CANCELLED`) `LeaveDayProjection` row for this employee-date
+    (W9 — architecture §21). `fraction` is Decimal-as-str (`"0.50"`/`"1.00"`), matching
+    `AttendanceCalculationResult.paid_day_fraction`'s own convention. `half` is carried through
+    for snapshot/provenance only — the overlay's own arithmetic (`_apply_leave_overlay`) only
+    ever needs the fraction and `is_paid`."""
+
+    fraction: str
+    is_paid: bool
+    half: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +187,10 @@ class AttendanceCalculationInput:
     # `evaluate_day`; they never touch `calendar_day_type` (WD-04/WD-07).
     roster_week_off_override: bool = False
     roster_holiday_working_override: bool = False
+    # W9 (architecture §21) — active approved leave projections for this employee-date, resolved
+    # by `service.py` from `LeaveDayProjection` before calling this pure engine, mirroring how
+    # the roster overrides above are resolved. Empty list => overlay is a no-op.
+    leave_entries: list[LeaveOverlayEntry] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,7 +243,16 @@ class AttendanceCalculationResult:
     ot_pending: bool
     ot_classification: str | None
     comp_off_minutes_earned: int
+    # W7 — the day_class (NORMAL|WEEKLY_OFF|HOLIDAY|NIGHT) `ot_classification` was resolved
+    # against, surfaced separately since `detect_overtime` only returns the policy-configured
+    # `classification_code`, not the day_class it matched (WD-29).
+    ot_day_class: str | None
     snapshot: dict[str, Any]
+    # W9 — set only when an approved leave projection covers this day, punches exist despite it,
+    # and policy `work_on_leave_behaviour=PRESENT_CANCEL_LEAVE_HINT`: the punch-derived outcome
+    # is kept as-is and this flag tells Leave the application may need cancelling (§19.3).
+    # Attendance never writes the leave ledger itself.
+    work_on_leave_flagged: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +633,23 @@ def lookup_band(value: int, bands: list[BandData]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def classify_ot_day(
+    *, is_holiday: bool, is_weekly_off: bool, is_night: bool, night_ot_mode: str
+) -> str:
+    """The day_class (NORMAL|WEEKLY_OFF|HOLIDAY|NIGHT) OT is classified against for rate-row
+    lookup — extracted so `service.py` can recover it for `OvertimeRecord.day_class` (W7) without
+    `detect_overtime` needing to change its tested return shape."""
+    return (
+        "HOLIDAY"
+        if is_holiday
+        else "WEEKLY_OFF"
+        if is_weekly_off
+        else "NIGHT"
+        if (is_night and night_ot_mode in ("WINDOW", "BOTH"))
+        else "NORMAL"
+    )
+
+
 def detect_overtime(
     *,
     worked_minutes: int,
@@ -619,15 +679,16 @@ def detect_overtime(
 
     if policy.daily_cap_minutes is not None:
         excess = min(excess, policy.daily_cap_minutes)
+    if policy.remaining_weekly_minutes is not None:
+        excess = min(excess, policy.remaining_weekly_minutes)
+    if policy.remaining_monthly_minutes is not None:
+        excess = min(excess, policy.remaining_monthly_minutes)
 
-    day_class = (
-        "HOLIDAY"
-        if is_holiday
-        else "WEEKLY_OFF"
-        if is_weekly_off
-        else "NIGHT"
-        if (is_night and policy.night_ot_mode in ("WINDOW", "BOTH"))
-        else "NORMAL"
+    day_class = classify_ot_day(
+        is_holiday=is_holiday,
+        is_weekly_off=is_weekly_off,
+        is_night=is_night,
+        night_ot_mode=policy.night_ot_mode,
     )
     classification = next(
         (row.classification_code for row in policy.rate_rows if row.day_class == day_class), None
@@ -641,12 +702,13 @@ def detect_overtime(
 
 
 def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationResult:
-    """The full §19.1 pipeline (steps 3, 8-18) for a single employee-date, entirely in memory —
-    every DB read has already happened in `service.py`. Leave/regularization overlays
-    (§19.1 steps 14-15) are no-op seams in W4 (plan decision 3) — Leave and
-    AttendanceRegularization do not exist yet, so this always evaluates the punch-derived
-    outcome directly per §19.4's overlay order once NOT_JOINED/EXITED/NOT_EXPECTED are ruled
-    out."""
+    """The full §19.1 pipeline (steps 3, 8-19) for a single employee-date, entirely in memory —
+    every DB read has already happened in `service.py`. The regularization overlay (§19.1 step
+    15) remains a no-op seam here — regularization is applied upstream as synthetic punches
+    (WD-28 decision 1), never as a status branch inside this engine. The leave overlay (§19.1
+    step 14/16, §19.4) is real as of W9: `_apply_leave_overlay` is applied once the punch-derived
+    outcome is known, for every path except the population gate (NOT_JOINED/EXITED, which ranks
+    above LEAVE in §19.4's precedence) and CONFIG_ERROR (nothing well-defined to overlay onto)."""
     snapshot: dict[str, Any] = {
         "inputs": {
             "employee_id": str(inputs.employee_id),
@@ -678,7 +740,10 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     # shift" branch below so a pure roster week-off row (shift_id NULL) doesn't fall through to
     # `missing_shift_behaviour` and get misread as an unresolved-shift config problem.
     if inputs.roster_week_off_override and not inputs.punches:
-        return _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override")
+        return _apply_leave_overlay(
+            _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override"),
+            inputs,
+        )
 
     # §19.1 step 4 — missing shift
     if inputs.shift is None:
@@ -687,9 +752,11 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
             behaviour = inputs.policy.missing_shift_behaviour
         if not inputs.punches:
             status = "ABSENT" if behaviour == "ABSENT" else "INCOMPLETE"
-            return _terminal_result(status, inputs, snapshot, reason="missing_shift")
+            return _apply_leave_overlay(
+                _terminal_result(status, inputs, snapshot, reason="missing_shift"), inputs
+            )
         # Punches exist despite no shift — evaluate presence with no schedule to compare against.
-        return _evaluate_no_schedule(inputs, snapshot)
+        return _apply_leave_overlay(_evaluate_no_schedule(inputs, snapshot), inputs)
 
     day_type = inputs.calendar_day_type
     # W5: roster overrides extend §19.1 step 8 without ever touching `calendar_day_type`
@@ -714,8 +781,11 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
 
     # §19.1 step 8 — not expected + shift does not operate + no punches => NOT_EXPECTED
     if not_expected and not shift_operates and not collapsed:
-        return _terminal_result(
-            "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
+        return _apply_leave_overlay(
+            _terminal_result(
+                "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
+            ),
+            inputs,
         )
 
     pairing = pair_punches(collapsed)
@@ -729,7 +799,84 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     else:
         result = _evaluate_fixed_or_flex(inputs, pairing, snapshot, day_type, not_expected)
 
-    return result
+    return _apply_leave_overlay(result, inputs)
+
+
+def _apply_leave_overlay(
+    result: AttendanceCalculationResult, inputs: AttendanceCalculationInput
+) -> AttendanceCalculationResult:
+    """§19.3/§19.4 (W9) — approved leave overlay, applied once the punch-derived outcome is
+    known. Never touches `calendar_day_type` (Calendar's own concern, WD-04/WD-07) — only
+    `attendance_status`/`paid_day_fraction`/`lop_fraction`/late-early fields, mirroring exactly
+    what the W5 roster overrides already do to expectation-of-presence.
+
+    Full-day leave (active fractions summing to >= 1.00) wins outright per §19.4's precedence —
+    it ranks above calendar `NOT_EXPECTED`, so it can apply even on a holiday/weekly-off date
+    that Leave has (redundantly) projected as covered; `calendar_day_type` itself still reports
+    HOLIDAY/WEEKLY_OFF unchanged, matching the architecture's contract-table note that Attendance
+    "will still classify the calendar type as HOLIDAY/WO" regardless. `NOT_JOINED`/`EXITED`
+    (population gate) and `CONFIG_ERROR` (nothing well-defined to overlay onto — fail closed) are
+    never touched; the caller skips this function entirely for the population-gate case, and it
+    short-circuits below for the other two.
+
+    Punches despite full-day leave: `work_on_leave_behaviour=KEEP_LEAVE` (default) keeps
+    `attendance_status=LEAVE` and zeroes late/early (§19.3 — "full-day leave: late/early not
+    computed"); `PRESENT_CANCEL_LEAVE_HINT` keeps the punch-derived outcome untouched and only
+    raises `work_on_leave_flagged` for Leave to see (Attendance never cancels the leave itself).
+
+    Half-day leave (0 < fraction < 1.00): the remaining half of the day is whatever the
+    punch-derived outcome already computed, contributed as a flat 0.50 (documented
+    simplification, module docstring) — `status="HALF_DAY"` if punches produced any worked
+    minutes, else `"LEAVE"` (mirrors "if they do not punch, LEAVE not ABSENT", scaled to a half
+    day)."""
+    if not inputs.leave_entries:
+        return result
+    if result.attendance_status in ("NOT_JOINED", "EXITED", "CONFIG_ERROR"):
+        return result
+
+    total_fraction = sum(
+        (Decimal(entry.fraction) for entry in inputs.leave_entries), Decimal("0.00")
+    )
+    paid_from_leave = sum(
+        (Decimal(entry.fraction) for entry in inputs.leave_entries if entry.is_paid),
+        Decimal("0.00"),
+    )
+    lop_from_leave = total_fraction - paid_from_leave
+    has_work = result.worked_minutes > 0
+    behaviour = inputs.policy.work_on_leave_behaviour if inputs.policy else "KEEP_LEAVE"
+    hint = has_work and behaviour == "PRESENT_CANCEL_LEAVE_HINT"
+
+    if total_fraction >= Decimal("1.00"):
+        if hint:
+            return replace(result, work_on_leave_flagged=True)
+        return replace(
+            result,
+            attendance_status="LEAVE",
+            late_minutes=0,
+            late_classification=None,
+            early_departure_minutes=0,
+            early_departure_classification=None,
+            is_late=False,
+            is_early_out=False,
+            paid_day_fraction=str(paid_from_leave.quantize(Decimal("0.01"))),
+            lop_fraction=str(lop_from_leave.quantize(Decimal("0.01"))),
+            work_on_leave_flagged=False,
+        )
+
+    # Half-day leave (0 < total_fraction < 1.00).
+    if hint:
+        return replace(result, work_on_leave_flagged=True)
+    remaining = Decimal("1.00") - total_fraction
+    work_paid = remaining if has_work else Decimal("0.00")
+    work_lop = Decimal("0.00") if has_work else remaining
+    status = "HALF_DAY" if has_work else "LEAVE"
+    return replace(
+        result,
+        attendance_status=status,
+        paid_day_fraction=str((paid_from_leave + work_paid).quantize(Decimal("0.01"))),
+        lop_fraction=str((lop_from_leave + work_lop).quantize(Decimal("0.01"))),
+        work_on_leave_flagged=False,
+    )
 
 
 def _terminal_result(
@@ -781,6 +928,7 @@ def _terminal_result(
         ot_pending=False,
         ot_classification=None,
         comp_off_minutes_earned=0,
+        ot_day_class=None,
         snapshot=snapshot,
     )
 
@@ -831,6 +979,7 @@ def _evaluate_no_schedule(
         ot_pending=False,
         ot_classification=None,
         comp_off_minutes_earned=0,
+        ot_day_class=None,
         snapshot=snapshot,
     )
 
@@ -923,6 +1072,7 @@ def _evaluate_fixed_or_flex(
     ot_approved = 0
     ot_pending = False
     comp_off_minutes = 0
+    ot_day_class: str | None = None
     if ot_eligible and ot_minutes > 0:
         if inputs.ot_policy is not None and not inputs.ot_policy.requires_post_approval:
             ot_approved = ot_minutes
@@ -930,6 +1080,12 @@ def _evaluate_fixed_or_flex(
             ot_pending = True
         if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
             comp_off_minutes = ot_minutes
+        ot_day_class = classify_ot_day(
+            is_holiday=worked_on_holiday,
+            is_weekly_off=worked_on_weekly_off,
+            is_night=is_night,
+            night_ot_mode=inputs.ot_policy.night_ot_mode if inputs.ot_policy else "SHIFT_FLAG",
+        )
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
 
@@ -966,6 +1122,7 @@ def _evaluate_fixed_or_flex(
         ot_pending=ot_pending,
         ot_classification=ot_classification,
         comp_off_minutes_earned=comp_off_minutes,
+        ot_day_class=ot_day_class,
         snapshot=snapshot,
     )
 
@@ -1039,6 +1196,40 @@ def _evaluate_split(
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
 
+    worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
+    worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
+
+    # W7 (WD-29 decision 5) — SPLIT shifts previously never detected overtime at all. No input
+    # is actually missing here: `scheduled_minutes=shift.required_minutes` is the same fallback
+    # `_evaluate_fixed_or_flex` uses whenever no `scheduled_start`/`scheduled_end` is set, so the
+    # detection call is wired in identically to that path.
+    ot_minutes, ot_classification, ot_eligible = detect_overtime(
+        worked_minutes=worked_minutes,
+        scheduled_minutes=shift.required_minutes,
+        is_shift_ot_eligible=shift.is_ot_eligible,
+        is_holiday=worked_on_holiday,
+        is_weekly_off=worked_on_weekly_off,
+        is_night=shift.is_cross_midnight,
+        policy=inputs.ot_policy,
+    )
+    ot_approved = 0
+    ot_pending = False
+    comp_off_minutes = 0
+    ot_day_class: str | None = None
+    if ot_eligible and ot_minutes > 0:
+        if inputs.ot_policy is not None and not inputs.ot_policy.requires_post_approval:
+            ot_approved = ot_minutes
+        else:
+            ot_pending = True
+        if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
+            comp_off_minutes = ot_minutes
+        ot_day_class = classify_ot_day(
+            is_holiday=worked_on_holiday,
+            is_weekly_off=worked_on_weekly_off,
+            is_night=shift.is_cross_midnight,
+            night_ot_mode=inputs.ot_policy.night_ot_mode if inputs.ot_policy else "SHIFT_FLAG",
+        )
+
     return AttendanceCalculationResult(
         attendance_status=status,
         calendar_day_type=day_type,
@@ -1062,16 +1253,17 @@ def _evaluate_split(
         auto_closed=False,
         is_late=False,
         is_early_out=False,
-        is_overtime=False,
-        worked_on_holiday=day_type == "HOLIDAY" and worked_minutes > 0,
-        worked_on_weekly_off=day_type == "WEEKLY_OFF" and worked_minutes > 0,
+        is_overtime=ot_minutes > 0,
+        worked_on_holiday=worked_on_holiday,
+        worked_on_weekly_off=worked_on_weekly_off,
         paid_day_fraction=paid_fraction,
         lop_fraction=lop_fraction,
-        ot_minutes_detected=0,
-        ot_minutes_approved=0,
-        ot_pending=False,
-        ot_classification=None,
-        comp_off_minutes_earned=0,
+        ot_minutes_detected=ot_minutes,
+        ot_minutes_approved=ot_approved,
+        ot_pending=ot_pending,
+        ot_classification=ot_classification,
+        comp_off_minutes_earned=comp_off_minutes,
+        ot_day_class=ot_day_class,
         snapshot=snapshot,
     )
 

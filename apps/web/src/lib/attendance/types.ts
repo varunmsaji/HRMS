@@ -112,6 +112,7 @@ export interface AttendanceDay {
   is_pending_approval: boolean;
   worked_on_holiday: boolean;
   worked_on_weekly_off: boolean;
+  work_on_leave_flagged: boolean;
 
   paid_day_fraction: string;
   lop_fraction: string;

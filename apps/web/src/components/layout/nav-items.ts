@@ -1,4 +1,5 @@
 import {
+  AlarmClock,
   Briefcase,
   Building,
   Building2,
@@ -16,6 +17,7 @@ import {
   Layers,
   Link2,
   ListChecks,
+  Lock,
   Network,
   Search,
   Timer,
@@ -44,6 +46,8 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/app/rosters", label: "Shift Rosters", icon: CalendarCheck },
   { href: "/app/attendance", label: "Attendance", icon: CalendarClock },
   { href: "/app/regularizations", label: "Regularizations", icon: ClipboardEdit },
+  { href: "/app/overtime", label: "Overtime", icon: AlarmClock },
+  { href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock },
   { href: "/app/work-calendars", label: "Work Calendars", icon: CalendarRange },
   { href: "/app/holiday-calendars", label: "Holiday Calendars", icon: CalendarDays },
   { href: "/app/weekly-off-patterns", label: "Weekly-Off Patterns", icon: CalendarOff },

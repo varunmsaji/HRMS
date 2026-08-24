@@ -173,6 +173,23 @@ class EmploymentRepository:
         await session.flush()
         return row
 
+    async def list_spans_overlapping(
+        self, session: AsyncSession, *, company_id: UUID, date_from: date, date_to: date
+    ) -> list[Employment]:
+        """Every employment spell that overlaps `[date_from, date_to]` at all — i.e.
+        `joining_date <= date_to AND (last_working_day IS NULL OR last_working_day >=
+        date_from)`. Consumed by Attendance's period-finalization "employees without
+        calculated attendance" check (W8) via `EmploymentService.list_spans_overlapping`, never
+        by a direct model import (Module Standard §2 — cross-module callers use `.service`
+        only)."""
+        stmt = select(Employment).where(
+            Employment.company_id == company_id,
+            Employment.deleted_at.is_(None),
+            Employment.joining_date <= date_to,
+            or_(Employment.last_working_day.is_(None), Employment.last_working_day >= date_from),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def get_latest_employment(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
     ) -> Employment | None:

@@ -25,6 +25,7 @@ import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import { formatDateTime, formatMinutes } from "@/lib/attendance/format";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import type { LeaveDayProjection } from "@/lib/leave-projection/types";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -42,6 +43,7 @@ export default function AttendanceDayDetailPage() {
   const { can } = usePermissions();
 
   const [day, setDay] = useState<AttendanceDay | null>(null);
+  const [leaveProjections, setLeaveProjections] = useState<LeaveDayProjection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -55,6 +57,22 @@ export default function AttendanceDayDetailPage() {
     try {
       const data = await apiClient.get<AttendanceDay>(`/attendance/days/${params.id}`);
       setDay(data);
+      // Best-effort — a caller without ATTENDANCE.VIEW-equivalent leave-projection visibility
+      // (or simply no projections for this day) just sees an empty overlay/provenance section,
+      // never a blocking error on the attendance day itself.
+      try {
+        const projectionParams = new URLSearchParams({
+          employee_id: data.employee_id,
+          date_from: data.attendance_date,
+          date_to: data.attendance_date,
+        });
+        const projections = await apiClient.get<LeaveDayProjection[]>(
+          `/leave-projections?${projectionParams.toString()}`,
+        );
+        setLeaveProjections(projections);
+      } catch {
+        setLeaveProjections([]);
+      }
     } catch (err) {
       setDay(null);
       setError(
@@ -133,6 +151,9 @@ export default function AttendanceDayDetailPage() {
             {day.worked_on_holiday ? <Badge variant="info">Worked on holiday</Badge> : null}
             {day.worked_on_weekly_off ? <Badge variant="info">Worked on weekly off</Badge> : null}
             {day.missing_punch ? <Badge variant="danger">Missing punch</Badge> : null}
+            {day.work_on_leave_flagged ? (
+              <Badge variant="warning">Flagged for Leave review</Badge>
+            ) : null}
             {day.is_locked ? <Badge variant="outline">Locked</Badge> : null}
           </div>
 
@@ -213,6 +234,46 @@ export default function AttendanceDayDetailPage() {
               </dl>
             </CardContent>
           </Card>
+
+          {leaveProjections.length > 0 ? (
+            <Card>
+              <CardContent className="pt-6">
+                <h2 className="mb-4 text-sm font-medium text-foreground">
+                  Leave overlay (W9 — approved leave projections for this date)
+                </h2>
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">Leave application</th>
+                        <th className="px-3 py-2 text-left font-medium">Fraction</th>
+                        <th className="px-3 py-2 text-left font-medium">Half</th>
+                        <th className="px-3 py-2 text-left font-medium">Paid</th>
+                        <th className="px-3 py-2 text-left font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {leaveProjections.map((projection) => (
+                        <tr key={projection.id}>
+                          <td className="px-3 py-2 font-mono text-xs">
+                            {projection.leave_application_id}
+                          </td>
+                          <td className="px-3 py-2">{projection.fraction}</td>
+                          <td className="px-3 py-2">{projection.half ?? "—"}</td>
+                          <td className="px-3 py-2">{projection.is_paid ? "Yes" : "No"}</td>
+                          <td className="px-3 py-2">{projection.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-foreground-muted">
+                  Provenance only — Attendance does not own these facts. They mirror what Leave
+                  published as approved; Leave, not Attendance, owns entitlement/balance/approval.
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card>
             <CardContent className="pt-6">

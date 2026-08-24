@@ -782,5 +782,381 @@ requires a punch or shift payload before it can transition past `SUBMITTED`.
 
 ---
 
+## WD-29 — W7 `OvertimeRecord`: engine-detected only, single mutable-then-frozen record per
+day, weekly/monthly caps computed pre-engine, terminal decisions frozen against recompute
+
+**Status:** LOCKED (recorded before implementation, per this document's own rule; product
+decisions confirmed with the requester before coding began)
+
+**Context:** unlike W6, overtime *detection* is not greenfield. W3/W4 already implemented
+`calculation.detect_overtime()`, wired end-to-end through `AttendanceDayService.calculate()`,
+with policy resolution, daily-cap clamping, min-threshold, rounding, night/holiday/weekly-off
+classification, and 1:1 comp-off crediting already live (`AttendanceDay.ot_minutes_detected`/
+`ot_minutes_approved`/`ot_pending`/`ot_classification`/`comp_off_minutes_earned` are not dead
+columns — they are written by every `calculate()` call). W7's actual scope is: weekly/monthly
+cap enforcement, an approval **workflow entity** (nothing today acts on `approval_chain`/
+`requires_post_approval` for OT), a comp-off fact with expiry, and a confirmed engine gap
+(`_evaluate_split` never calls `detect_overtime` at all).
+
+**Decision:**
+
+1. **There is no manual "request overtime" submission flow.** Architecture §12.2 only
+   describes detect-then-post-approve; `requires_pre_approval` (`OvertimePolicyVersion`) has no
+   described mechanic for OT that is only knowable retrospectively via `calculate()`. W7 leaves
+   it unenforced and documented, the same treatment WD-28 gave
+   `auto_approve_within_minutes`. API surface is `GET /overtime`, `GET /overtime/{id}`,
+   `POST /overtime/{id}/approve`, `POST /overtime/{id}/reject` only — no create route.
+
+2. **`OvertimeRecord` is a single mutable-then-frozen row per `AttendanceDay`
+   (`attendance_day_id` is `UNIQUE`), not an accumulating history** like
+   `AttendanceRegularizationRequest`. A `PENDING` record is fully replaced on every recompute of
+   its day (mirrors `AttendanceBreak`'s delete/recreate posture — nothing has been decided yet).
+   A recompute that now detects zero eligible OT deletes a prior `PENDING` record outright (there
+   is nothing left to decide). Once a record reaches a terminal status (`AUTO_APPROVED`,
+   `APPROVED`, `REJECTED`), it is **frozen**: `AttendanceDayService.calculate()` still refreshes
+   `AttendanceDay.ot_minutes_detected`/`ot_classification`/`is_overtime` in the day row
+   (informational, same as every other derived column), but overrides
+   `ot_minutes_approved`/`comp_off_minutes_earned`/`ot_pending` in that same write with the
+   terminal record's own values, not the freshly recomputed engine output. No revision/void
+   action exists in W7 — a terminal decision survives any later recompute, including one driven
+   by an approved regularization correction to the same day (confirmed with the requester:
+   "freeze forever" over "block the regularization instead" or leaving this undefined).
+
+3. **Weekly/monthly cap enforcement runs in `service.py`, before the pure engine, exactly like
+   the existing daily cap runs inside it.** A new `OvertimeRecordRepository
+   .sum_minutes_detected_for_range` sums `minutes_detected` across non-`REJECTED`
+   `overtime_record` rows (`PENDING` + `AUTO_APPROVED` + `APPROVED` all reserve budget as soon as
+   detected — confirmed with the requester, consistent with how the existing daily cap already
+   clamps against detected, not yet approved, minutes) in the ISO week / calendar month
+   containing the target date (excluding the day being recomputed), producing
+   `remaining_weekly_minutes`/`remaining_monthly_minutes` passed into `OvertimePolicyInputs` and
+   clamped in `detect_overtime()` identically to `daily_cap_minutes`. **Confirmed and accepted
+   with the requester**: this makes a day's detected OT depend on sibling-day state, which is
+   explicitly **not idempotent** in the sense `AttendanceDayService.calculate()`'s own docstring
+   claims ("same punches + versions produce the same result") — a day's detected OT can change
+   between two recomputes with zero change to that day's own punches, purely because a sibling
+   day's `overtime_record` state changed in between. Accepted as a known, documented limitation
+   of period-cumulative caps computed this way; no cascading recompute across days is triggered.
+
+4. **Approval workflow mirrors WD-28 decisions 4/5/6 exactly**, substituting `overtime_record`
+   for `attendance_regularization_request`: `approval_chain` snapshotted from the resolved
+   `OvertimePolicyVersion` at detection time; `AUTO` chain sets `AUTO_APPROVED` immediately with
+   no manual step ever; `MANAGER`/`MANAGER_THEN_HR`/`HR` create a `PENDING` record only when
+   `requires_post_approval` is true (otherwise `AUTO_APPROVED` with no review step, matching how
+   the engine already auto-approves when `requires_post_approval=False`); manager identity
+   resolved via `EmployeeAssignmentService.get_assignment_as_of(employee_id, attendance_date)` at
+   detection time, not review time; no-manager-resolved routes straight to `HR` stage and records
+   `overtime_action(action='APPROVER_UNRESOLVED')` — never auto-approves on failure.
+   `MANAGER_THEN_HR` uses an `approval_stage` field, not a second status enum. Self-approval is
+   always blocked, including for a caller who holds `ATTENDANCE.OVERTIME_APPROVE`.
+
+5. **SPLIT-shift overtime detection gap (`calculation.py` `_evaluate_split`) is fixed in this
+   slice, not deferred.** Unlike a genuinely underspecified gap, this one has no missing input:
+   `scheduled_minutes` already resolves to `shift.required_minutes` for SPLIT shifts (the same
+   fallback the FIXED/FLEX path already uses when no `scheduled_start`/`scheduled_end` is set),
+   so `detect_overtime()` is wired in identically to the FIXED/FLEX path. Confirmed with the
+   requester as in-scope for W7 rather than a separately-reported pre-existing defect (unlike
+   W6's RLS bug, this sits inside the pure engine module W7 already owns for this slice).
+
+6. **Permission: `ATTENDANCE.OVERTIME_APPROVE` only, appended to the existing
+   `ATTENDANCE_PERMISSIONS` list** (not a new list/registration site — both registration call
+   sites, `organisation.service.register_company` and `seed/bootstrap.py`, already iterate that
+   list generically). Reads reuse `ATTENDANCE.VIEW`/`ATTENDANCE.VIEW_ALL` (no fourth code,
+   mirrors WD-28 decision 6) — OT records are system-detected and attached to attendance days the
+   caller can already view, not self-submitted content needing its own view gate.
+
+**Rejected:** a manual pre-approval submission flow (decision 1 — no described mechanic exists);
+an accumulating multiple-records-per-day history table (decision 2 — one row per day is
+sufficient since nothing is ever re-detected concurrently); silently overwriting a terminal
+record's approved/comp-off minutes on every recompute (decision 2 — would let an unrelated
+regularization correction silently revise a rendered approval decision); scoping weekly/monthly
+caps out of W7 to preserve strict idempotency (decision 3 — the task brief explicitly asks for
+all three cap levels; the non-idempotency is accepted instead); only counting
+`APPROVED`/`AUTO_APPROVED` minutes toward the weekly/monthly budget (decision 3 — would let a
+day's cap-clamped amount retroactively shrink once an earlier `PENDING` day is later approved);
+deferring the SPLIT-shift fix as a separately-reported defect (decision 5 — it is mechanical and
+sits inside this slice's own engine surface); a fourth view permission (decision 6).
+
+**OPEN (new, PD-OT-1):** whether a terminal `overtime_record` should ever become
+revisable/voidable — e.g. an HR-initiated correction after a later regularization proves the
+underlying punches were wrong. Default shipped: frozen, no revision path in W7 (decision 2).
+
+**OPEN (new, PD-OT-2):** `requires_pre_approval` remains entirely unenforced (decision 1) — if a
+future slice needs it, its interaction with `calculate()`'s retrospective detection timing needs
+its own scoped design, not a guess bolted onto this one.
+
+---
+
+## WD-30 — W8 `AttendancePeriod`: two-state lock (`OPEN`/`CLOSED`), company grain,
+period is the authoritative lock check, `incomplete_at_lock_behaviour` resolved at finalize
+
+**Status:** LOCKED (recorded before implementation, per this document's own rule; product
+decisions confirmed via the task brief's own explicit defaults where architecture left a
+question genuinely open)
+
+**Context:** architecture §4.2 names `AttendanceLock` (period lock) and `AttendancePeriodSummary`
+(payroll-facing roll-up) as W8's two new entities. Neither had any writer before this slice —
+`AttendanceDay.is_locked`/`locked_at`/`locked_by` (W4), `RegularizationPolicyVersion.
+blocked_when_locked` (W3), and `AttendancePolicyVersion.incomplete_at_lock_behaviour` (W3) all
+shipped as dead/unused columns explicitly reserved for this slice, confirmed by direct audit of
+`models.py`'s own docstrings and `calculation.py` (`incomplete_at_lock_behaviour` declared on
+`PolicyInputs` but never read anywhere in the engine). `AttendanceDayService.calculate()` and
+`RegularizationRequestService.submit()` already had a locked-day refusal wired (`WD-11`/W6), but
+nothing could ever set the flag; `PunchService.record_punch`, `ShiftRosterService`'s four mutating
+methods, and `OvertimeRecordService.approve`/`reject` (which writes `AttendanceDay.
+ot_minutes_approved`/`comp_off_minutes_earned` directly, bypassing `calculate()` entirely) had no
+lock awareness at all — confirmed by direct read of `service.py`, not assumed.
+
+**Decision:**
+
+1. **Two persisted states only: `OPEN`/`CLOSED`.** `CLOSED` *is* locked — architecture's own
+   `AttendanceLock` never describes a closed-but-unlocked state, and finalization is synchronous
+   (no Celery fan-out, matching every W1-W7 mutation in this module), so a durable `CLOSING` state
+   has no code path that would ever observe it. Create always opens immediately (no separate
+   "open" action), mirroring WD-28's no-DRAFT-state precedent.
+
+2. **The period, not `AttendanceDay.is_locked`, is the authoritative lock source of truth.**
+   `AttendanceDay.is_locked`/`locked_at`/`locked_by` remain a synchronized denormalization set
+   atomically by finalize/reopen (`AttendanceDayRepository.bulk_lock`/`bulk_unlock`), read by
+   `AttendanceDayService.calculate()`'s pre-existing check for the already-computed-row case. A
+   new shared `_ensure_date_open()` helper, consulted by `PunchService.record_punch`,
+   `ShiftRosterService`'s four mutating methods, `RegularizationRequestService.submit`, and
+   `OvertimeRecordService.approve`/`reject`, queries the period directly — the only way to refuse
+   a mutation against a date that has no `AttendanceDay` row yet at all (a backdated request into
+   an already-closed period, for an employee whose day was never computed). `ATTENDANCE_PERIOD_
+   CLOSED` (409) is this new, period-level refusal; the pre-existing `ATTENDANCE_DAY_LOCKED` stays
+   as the narrower, already-computed-row-specific error `calculate()` raises. Two independent,
+   defence-in-depth guards, not one — they should never disagree since finalize/reopen sets both
+   together.
+
+3. **Lock grain: company only in V1** (PD-LOCK-1, architecture §32, genuinely open). The
+   architecture's own stated default — legal-entity grain *only if* Payroll will be LE-scoped —
+   cannot be evaluated because Payroll does not exist yet; V1 ships the other half of that same
+   documented default (company grain) with a reserved, unused `legal_entity_id` column on
+   `attendance_period` for a future slice, mirroring how `is_locked`/`locked_at` themselves
+   shipped unused ahead of this one.
+
+4. **`incomplete_at_lock_behaviour` (architecture §11.4) is resolved as part of `finalize`,
+   not treated as a blanket blocker.** A still-`INCOMPLETE` day's own snapshotted
+   `AttendancePolicyVersion.incomplete_at_lock_behaviour` governs: `KEEP_INCOMPLETE` blocks
+   finalization (`INCOMPLETE_ATTENDANCE` reason); `TREAT_ABSENT` (the shipped default) or
+   `TREAT_PRESENT` is auto-resolved by `finalize` itself, immediately before locking —
+   `paid_day_fraction`/`lop_fraction` are set to the ABSENT/PRESENT mapping architecture §11.4
+   already defines, `attendance_status` itself is left `INCOMPLETE` (the architecture table
+   names only the two fraction columns, not a status rewrite). Verified live, end to end, against
+   a real running server: a day that became `INCOMPLETE` from an approved regularization's
+   additive punches was correctly *not* blocked (default policy), correctly resolved to
+   `paid_day_fraction=0.00`/`lop_fraction=1.00` at finalize, and correctly locked.
+
+5. **Finalization validation is fail-closed across six typed reason codes**:
+   `EMPLOYEES_WITHOUT_ATTENDANCE` (an employment spell's day count vs. `AttendanceDay` row count
+   in range — computed via `EmploymentService.list_spans_overlapping`, a new, minimal, primitive-
+   tuple-returning method added to the *employee* module and consumed through `.service`, never
+   `.repository`/`.models`, per Module Standard §2), `CONFIG_ERROR` (unconditional — no lock-time
+   resolution mechanism exists for this, unlike `INCOMPLETE_ATTENDANCE`), `INCOMPLETE_ATTENDANCE`
+   (only the `KEEP_INCOMPLETE` subset, decision 4), `PENDING_REGULARIZATION` (any `SUBMITTED`
+   request in range), `PENDING_OVERTIME_APPROVAL` (any `PENDING` record in range), and
+   `UNPUBLISHED_ROSTER` (any `DRAFT` roster row in range). `finalize` always re-validates fresh
+   inside its own version-guarded transaction — it never trusts the cached `last_validation_
+   status` a prior `POST .../validate` call wrote.
+
+6. **`AttendancePeriodSummary` is a full delete/recreate snapshot, written exactly once per
+   successful `finalize` call, inside the same transaction as the lock.** "Regenerated only while
+   unlocked" (architecture §4.2) is implemented as a live, unpersisted, per-request aggregation
+   (`GET .../summary` while `OPEN`) rather than a second persisted-and-continuously-updated table —
+   there is no described requirement for the `OPEN`-state numbers to survive a server restart, and
+   persisting a table nobody reads until finalize would be exactly the kind of "generic
+   config/cache nobody asked for" this codebase's own review gate (architecture §31 "generic JSON
+   creeping in") warns against for a different column shape. A period finalized more than once
+   across its lifetime (finalize → reopen-for-correction → finalize again) gets a fresh, correct
+   frozen snapshot each time, never a stale leftover from an earlier close.
+
+7. **`ATTENDANCE.LOCK` covers create/validate/finalize; `ATTENDANCE.UNLOCK` is separate**
+   (architecture §23.2 names exactly these two codes). No third "view periods" code — reads reuse
+   `ATTENDANCE.VIEW`/`ATTENDANCE.VIEW_ALL`, mirroring WD-28 decision 6 / WD-29 decision 6's
+   identical "no fourth/third read code" reasoning. Both are COMPANY-scoped only — a period has no
+   `employee_id` to resolve a narrower `DataScope` against.
+
+8. **No `AttendanceAdjustment` / `APPROVED_PENDING_ARREARS` path in this slice** (Phase 7 of the
+   task brief: verify whether W8 must introduce it, and stop rather than build an uncontrolled
+   override if the answer is unclear). Architecture §13.4 itself states the default plainly:
+   "reject with a clear error; pending-arrears is an explicit HR action" — the reject-by-default
+   half is exactly what `_ensure_date_open`/`ATTENDANCE_PERIOD_CLOSED` already gives every
+   mutating service. The arrears half needs `AttendanceAdjustment`, a distinct entity WD-18
+   already named but which no W1-W8 slice has built, and architecture never assigns it to a
+   specific W-numbered slice. Building it here would be inventing an unresolved business rule
+   (which post-lock correction paths get arrears vs. flat rejection, what "explicit HR action"
+   concretely means) rather than reading one off the architecture. The only sanctioned path back
+   to mutability in V1 is `ATTENDANCE.UNLOCK` reopening the whole period.
+
+**Rejected:** a persisted `CLOSING` state (decision 1 — no code path would ever observe it given
+synchronous finalization); relying on `AttendanceDay.is_locked` alone for lock enforcement
+(decision 2 — cannot refuse a mutation for a date with no day row yet); legal-entity lock grain
+(decision 3 — architecture's own stated condition for it, LE-scoped Payroll, does not exist yet);
+treating every `INCOMPLETE` day as an unconditional finalization blocker (decision 4 — architecture
+names an explicit lock-time resolution policy field for exactly this, TREAT_ABSENT/TREAT_PRESENT
+would then never be exercised); a persisted, continuously-regenerated summary table for the `OPEN`
+state (decision 6 — no described requirement survives a restart, and it would be a second
+"generic cache" the architecture's own review gate warns against); a fourth/third read permission
+code (decision 7); an `AttendanceAdjustment`/arrears mechanism invented without an architecturally
+assigned owner or defined rule set (decision 8).
+
+**OPEN (unresolved, PD-LOCK-1 remains open):** whether a future slice should switch lock grain to
+legal-entity once Payroll is LE-scoped. The reserved `legal_entity_id` column exists for exactly
+that; V1 does not read or write it.
+
+**OPEN (new, PD-LOCK-2):** whether `AttendanceAdjustment` / an `APPROVED_PENDING_ARREARS` path
+should ever be built for controlled post-lock correction without a full period reopen. Default
+shipped: reject with `ATTENDANCE_PERIOD_CLOSED`; the only correction path is `ATTENDANCE.UNLOCK`
+reopening the whole period (decision 8).
+
+**Observed during live verification, not a W8 defect (recorded for W6/W9 awareness):** approving
+a regularization request whose proposed punches duplicate an already-fully-punched day (e.g. a
+`MISSING_PUNCH` request approved against a day that was never actually missing a punch) can
+produce two near-identical `IN`/`OUT` pairs on the same `AttendanceDay`, and `calculation.py`'s
+existing punch-pairing can turn a previously-`PRESENT` day `INCOMPLETE` as a result — reproduced
+live against a real server (§18 of the implementation report). This is pre-existing W4/W6
+punch-pairing-under-duplicate-punches behavior (WD-28's "corrections are always additive" already
+establishes that original punches are never touched or deduplicated against a new correction),
+not something W8 introduced or should silently work around; W8's own `incomplete_at_lock_
+behaviour` resolution (decision 4) handled the resulting `INCOMPLETE` day correctly. Flagged here,
+not fixed, per this slice's own scope boundary.
+
+---
+
+## WD-31 — W9 `LeaveDayProjection`: attendance-owned mirror of Leave's read model, real
+leave overlay in `evaluate_day`, refuse-only lock interaction
+
+**Status:** LOCKED (recorded before implementation, per this document's own rule; two genuinely
+open design points — projection backing store, ingestion API surface — were put to the user
+before any code was written, per the task brief's own "stop and ask, don't silently choose" rule;
+both were resolved with an explicit answer, recorded below)
+
+**Context:** architecture §21 fully specifies the `LeaveDayProjection` contract (fields, precedence,
+fraction/LOP mapping) and §30 names W9's scope exactly: "Leave projection adapter (mocked until
+Leave exists) + recompute-on-event." No Leave module, package, table, or service exists anywhere in
+this codebase (confirmed by full-repo grep, not assumed from prior reports). `calculation.py`'s own
+docstrings state, verbatim, that the leave overlay is a "no-op seam" — `work_on_leave_behaviour`
+(W3, `AttendancePolicyVersion`), the `LEAVE`/`ON_DUTY`/`WFH` `attendance_status` enum values, and
+`AttendancePeriodSummary.leave_days` (W8) all shipped as dead/unused surface explicitly reserved for
+this slice, mirroring how `AttendanceLock`'s columns shipped dead ahead of W8. `AttendancePeriodSummary`'s
+`leave_days` aggregation code (`service.py`) already existed but had never once fired, since nothing
+ever produced `attendance_status="LEAVE"`.
+
+**Decision:**
+
+1. **`leave_day_projection` is a real, attendance-owned table — a temporary mirror of the
+   contract, not the leave ledger.** Architecture §21 describes the projection as "a read model
+   published by Leave (service method, not table sharing)," but no Leave module exists to publish
+   it. Put to the user as an explicit choice (minimal owned table vs. a pure interface with no
+   persistence): the owned-table option was chosen, matching the precedent §12.3 already
+   established for comp-off ("store the fact on `AttendanceDay`... so nothing is lost" until Leave
+   exists to own the real ledger). `leave_day_projection` is explicitly documented (model
+   docstring, this entry) as replaceable wholesale once a real Leave module ships — nothing else in
+   this module depends on its storage shape, only on the typed `LeaveOverlayEntry` values resolved
+   from active rows. It is never described or treated as the leave ledger; ADR-0004 stays untouched.
+
+2. **A narrow internal HTTP endpoint (`POST /leave-projections`, `POST /leave-projections/{id}/cancel`,
+   reads via `GET`), not a Python-only service method.** Also put to the user explicitly: architecture
+   §25 sanctions "in-process service calls... acceptable... as a temporary seam" (no real
+   event/outbox infra exists yet, ADR-0012), which would have permitted a service-method-only
+   design. The HTTP option was chosen so Phase 11's live-verification requirement (inject a real
+   projection through the intended contract, via real HTTP) is actually exercisable, and so a
+   future Leave module — or an ops tool, meanwhile — has a real integration point. This is the
+   adapter's own narrow surface (sync/cancel/list/get for one entity), not a Leave CRUD API: no
+   leave type, balance, application-workflow, or approval endpoint exists anywhere.
+
+3. **The leave overlay is real in `evaluate_day` as of this slice — `_apply_leave_overlay`,
+   applied once the punch-derived outcome is known, for every branch except the population gate
+   (`NOT_JOINED`/`EXITED`, which ranks above `LEAVE` in §19.4) and `CONFIG_ERROR` (nothing
+   well-defined to overlay onto).** Full-day leave (active fractions summing to >= 1.00) wins
+   outright per §19.4's literal precedence order — which places `LEAVE` *above* calendar
+   `NOT_EXPECTED` — without ever touching `calendar_day_type` itself (still Calendar's concern,
+   WD-04/WD-07); `calendar_day_type` continues to report HOLIDAY/WEEKLY_OFF/WORKING/SHUTDOWN
+   unchanged regardless of what the overlay does to `attendance_status`. `work_on_leave_behaviour`
+   (W3, dead until now) is consulted for the one case §19.3 names explicitly — punches exist
+   despite full-day leave: `KEEP_LEAVE` (default) keeps `attendance_status=LEAVE` and zeroes
+   late/early; `PRESENT_CANCEL_LEAVE_HINT` keeps the punch-derived outcome and raises a new
+   `work_on_leave_flagged` column (additive migration) for Leave to see — Attendance never cancels
+   the leave application itself, matching §19.3's "Attendance never writes the leave ledger."
+
+4. **Half-day leave (0 < fraction < 1.00) treats the remaining half of the day as a flat 0.50
+   contribution from whatever the punch-derived outcome already computed** — not a minute-by-minute
+   re-evaluation scoped to one half of the shift. This is a documented simplification, not a silent
+   gap, and directly mirrors the precedent `_evaluate_split` already set for SPLIT shift duty
+   blocks ("checked for at least one overlapping pair... not further sub-analysed"). It reproduces
+   architecture §19.4's own worked example exactly: half-day unpaid leave + a fully-punched other
+   half → `paid_day_fraction=0.50`/`lop_fraction=0.50`; half-day *paid* leave with no other work
+   correctly falls through to `attendance_status=HALF_DAY`/`LEAVE` with the fraction math §11.4
+   already specifies. Verified live against a real server, not just unit tests.
+
+5. **Multiple leave projections may cover the same employee-date** (§21 explicitly permits this —
+   the half-day-AM-plus-half-day-PM case). Active (`APPROVED`) fractions are summed; a sync that
+   would push the total above 1.00 is rejected fail-closed (`LEAVE_PROJECTION_OVERLAP`, 409) before
+   any row is written — Phase 2's "fail closed if the projection is ambiguous or invalid,"
+   implemented as a service-layer cross-row check (no DB constraint can express a cross-row sum),
+   mirroring `InvalidPolicyBandError`'s identical validate-in-service posture.
+
+6. **Cancellation is `status='CANCELLED'`, never a delete** — provenance/audit is preserved,
+   mirroring WD-11's never-mutate-the-fact posture. A resync of the same `(employee_id,
+   attendance_date, leave_application_id)` natural key updates the existing row in place (bumping
+   `source_version`), reviving a previously-cancelled row rather than accumulating duplicates —
+   idempotent republish, matching how a corrected projection is expected to arrive.
+
+7. **Both `sync` and `cancel` consult `_ensure_date_open` (the exact W8 seam, unmodified) and
+   refuse with the pre-existing `ATTENDANCE_PERIOD_CLOSED` (409) against a locked period — no new
+   lock mechanism, and no `AttendanceAdjustment`/arrears path.** Architecture §21's own contract row
+   ("Leave approved after payroll lock... default refuse; HR exception creates arrears, not a
+   rewrite") has no implementable target for its "arrears" half: `AttendanceAdjustment` does not
+   exist through W8 (PD-LOCK-2, still OPEN). W9 implements only the "refuse" half, exactly
+   consistent with how W8 itself scoped the identical problem for regularization/overtime — the
+   only correction path for a locked date remains a full `ATTENDANCE.UNLOCK` period reopen.
+
+8. **Recompute-on-event (architecture §30's own naming) is a synchronous, in-process call to the
+   existing `AttendanceDayService.calculate()`** — not a new recompute code path, and not a real
+   event bus (§25 sanctions this explicitly as a temporary seam given no ADR-0012 infra exists
+   yet). `sync`/`cancel` each trigger exactly one `calculate()` call for the affected employee-date,
+   inside the same request, after the projection write is committed.
+
+9. **`ATTENDANCE.LEAVE_PROJECTION_SYNC` is one new COMPANY-scoped code covering both `sync` and
+   `cancel`** (mirrors `ATTENDANCE_LOCK`'s static-gate posture — this is an internal integration
+   seam, not self-service). Reads (`list`/`get`) reuse `ATTENDANCE.VIEW`/`ATTENDANCE.VIEW_ALL` — no
+   third code, mirroring every other read-reuse precedent in this module (WD-28 decision 6 / WD-29
+   decision 6 / WD-30 decision 7's identical reasoning).
+
+**Rejected:** a pure interface/Protocol with no persistence (decision 1 — would make Phase 10/11's
+recompute, locking, and payroll-fact tests, and live verification, unexercisable with real data); a
+Python-only service method with no HTTP route (decision 2 — technically sanctioned by §25 but makes
+real live verification impossible); building `AttendanceAdjustment`/an arrears mechanism for
+leave-approved-after-lock (decision 7 — same reasoning as WD-30 decision 8: no architecturally
+assigned owner or defined rule set exists yet, PD-LOCK-2 stays open); a minute-by-minute half-day
+split evaluation (decision 4 — no finer contract specified, and the SPLIT-shift precedent already
+established that block/half-level granularity is this codebase's accepted simplification tier);
+treating LEAVE as ranking below calendar `NOT_EXPECTED` (rejected as a misreading of §19.4's own
+literal precedence list, which places LEAVE above NOT_EXPECTED); a fourth/third read permission code
+(decision 9); a generic JSON leave-rules engine (WD-22 forbids this outright).
+
+**OPEN (unchanged, PD-LOCK-2):** whether `AttendanceAdjustment`/an `APPROVED_PENDING_ARREARS` path
+should ever be built — W9's leave-cancellation-after-lock case hits the exact same open question W8
+already recorded; no new information resolves it here.
+
+**OPEN (new, PD-LEAVE-1):** the real Leave module, when built, must decide whether it *replaces*
+`leave_day_projection` wholesale (dropping this table, switching Attendance's read to a real
+in-process service call per §21's own literal wording) or *becomes* the writer of this same table
+(keeping the schema, changing only who populates it). Architecture doesn't specify which — flagged
+for whoever builds Leave, not resolved here.
+
+---
+
+## Divergences index (quick reference) — continued
+
+| Prior source | This log |
+|---|---|
+| W7 task brief's literal read of "build overtime detection" | WD-29 (already built in W3/W4; W7 scope narrowed to approval/caps/comp-off-fact/SPLIT-fix after audit) |
+| W8 task brief's implicit assumption of a richer `OPEN → CLOSING → CLOSED/LOCKED` lifecycle | WD-30 decision 1 (collapsed to two persisted states; `CLOSING` has no observable code path under synchronous finalization) |
+| Architecture §21's literal "service method, not table sharing" | WD-31 decision 1 (an owned mirror table, since no Leave module exists to expose that service method — explicitly a temporary, replaceable stand-in) |
+
+---
+
 **STOP.** Implementation does not start until the architecture and this log are reviewed and
 explicitly approved.

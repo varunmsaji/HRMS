@@ -3,15 +3,19 @@ mirroring `organisation.repository`'s `ShiftVersionRepository` shape (identity C
 CRUD + full-replace typed children, no independent lifecycle for children)."""
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.attendance.models import (
     AttendanceBreak,
     AttendanceDay,
+    AttendancePeriod,
+    AttendancePeriodAction,
+    AttendancePeriodSummary,
     AttendancePolicy,
     AttendancePolicyEarlyDepartureBand,
     AttendancePolicyHourBand,
@@ -20,9 +24,12 @@ from hrms.modules.attendance.models import (
     AttendanceRegularizationAction,
     AttendanceRegularizationRequest,
     AttendanceRegularizationRequestedPunch,
+    LeaveDayProjection,
+    OvertimeAction,
     OvertimePolicy,
     OvertimePolicyRateRow,
     OvertimePolicyVersion,
+    OvertimeRecord,
     Punch,
     RegularizationPolicy,
     RegularizationPolicyAllowedType,
@@ -119,6 +126,21 @@ class AttendancePolicyRepository:
             AttendancePolicyVersion.deleted_at.is_(None),
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_versions_by_ids(
+        self, session: AsyncSession, *, company_id: UUID, version_ids: set[UUID]
+    ) -> list[AttendancePolicyVersion]:
+        """W8 finalization validation — resolves `incomplete_at_lock_behaviour` for every
+        `INCOMPLETE` day's already-snapshotted `attendance_policy_version_id` in one query,
+        rather than re-resolving by date (the day's own snapshot is what actually governed it,
+        WD-11)."""
+        if not version_ids:
+            return []
+        stmt = select(AttendancePolicyVersion).where(
+            AttendancePolicyVersion.company_id == company_id,
+            AttendancePolicyVersion.id.in_(version_ids),
+        )
+        return list((await session.execute(stmt)).scalars().all())
 
     async def get_open_draft(
         self, session: AsyncSession, *, company_id: UUID, policy_id: UUID
@@ -1116,6 +1138,103 @@ class AttendanceDayRepository:
             .values(is_regularized=True, is_pending_approval=False, updated_at=now)
         )
 
+    async def mark_ot_approved(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        attendance_day_id: UUID,
+        minutes_approved: int,
+        comp_off_minutes: int,
+        now: datetime,
+    ) -> None:
+        """W7 (WD-29 decision 2) — out-of-band terminal write, mirrors `mark_regularized`.
+        Called once an `OvertimeRecord` reaches `APPROVED`/`REJECTED`, pushing that terminal
+        decision onto the day row's payroll-facing summary fields. `ot_pending` always clears —
+        a decision has been made, whatever it was."""
+        await session.execute(
+            update(AttendanceDay)
+            .where(AttendanceDay.id == attendance_day_id, AttendanceDay.company_id == company_id)
+            .values(
+                ot_minutes_approved=minutes_approved,
+                comp_off_minutes_earned=comp_off_minutes,
+                ot_pending=False,
+                updated_at=now,
+            )
+        )
+
+    async def set_lock_time_incomplete_resolution(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        attendance_day_id: UUID,
+        paid_day_fraction: Decimal,
+        lop_fraction: Decimal,
+        now: datetime,
+    ) -> None:
+        """Architecture §11.4 — "lock-time default for still-INCOMPLETE" governed by the day's
+        own already-snapshotted `AttendancePolicyVersion.incomplete_at_lock_behaviour`
+        (`TREAT_ABSENT`/`TREAT_PRESENT`). Runs once, inside `AttendancePeriodService.finalize`,
+        immediately before the day is locked — never touches `attendance_status` itself (the
+        architecture table only names `paid_day_fraction`/`lop_fraction` for this resolution;
+        the row remains visibly `INCOMPLETE` in its own status column, its payroll-facing facts
+        now resolved)."""
+        await session.execute(
+            update(AttendanceDay)
+            .where(AttendanceDay.id == attendance_day_id, AttendanceDay.company_id == company_id)
+            .values(paid_day_fraction=paid_day_fraction, lop_fraction=lop_fraction, updated_at=now)
+        )
+
+    async def bulk_lock(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        date_from: date,
+        date_to: date,
+        locked_by: UUID | None,
+        now: datetime,
+    ) -> None:
+        """W8 — the only writer that ever sets `is_locked=true` (models.py's own W4 docstring
+        names this exact seam). Every row already in range is locked regardless of its current
+        `attendance_status`, including `CONFIG_ERROR`/`INCOMPLETE` rows — finalize's own
+        validation gate is what prevents those from ever reaching this point (a `CLOSED` period
+        with an unresolved exception inside it should never be reachable, not silently skipped
+        here)."""
+        await session.execute(
+            update(AttendanceDay)
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.attendance_date >= date_from,
+                AttendanceDay.attendance_date <= date_to,
+            )
+            .values(is_locked=True, locked_at=now, locked_by=locked_by, updated_at=now)
+        )
+
+    async def bulk_unlock(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        date_from: date,
+        date_to: date,
+        now: datetime,
+    ) -> None:
+        """Reopen (`ATTENDANCE.UNLOCK`) — clears the denormalized flag this same repository set
+        in `bulk_lock`. Does not recompute anything; a day made mutable again is only actually
+        changed by a later, ordinary `calculate()`/regularization/adjustment call."""
+        await session.execute(
+            update(AttendanceDay)
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.attendance_date >= date_from,
+                AttendanceDay.attendance_date <= date_to,
+                AttendanceDay.is_locked.is_(True),
+            )
+            .values(is_locked=False, locked_at=None, locked_by=None, updated_at=now)
+        )
+
 
 class AttendanceBreakRepository:
     async def replace_breaks(
@@ -1340,3 +1459,447 @@ class AttendanceRegularizationActionRepository:
             .order_by(AttendanceRegularizationAction.created_at)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# W7 — OvertimeRecord / OvertimeAction (architecture §12, decision log WD-29)
+# ---------------------------------------------------------------------------
+
+
+class OvertimeRecordRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> OvertimeRecord:
+        row = OvertimeRecord(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_by_id(
+        self, session: AsyncSession, *, company_id: UUID, record_id: UUID
+    ) -> OvertimeRecord | None:
+        stmt = select(OvertimeRecord).where(
+            OvertimeRecord.id == record_id, OvertimeRecord.company_id == company_id
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_attendance_day(
+        self, session: AsyncSession, *, company_id: UUID, attendance_day_id: UUID
+    ) -> OvertimeRecord | None:
+        stmt = select(OvertimeRecord).where(
+            OvertimeRecord.company_id == company_id,
+            OvertimeRecord.attendance_day_id == attendance_day_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def replace_pending_for_day(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        attendance_day_id: UUID,
+        values: dict[str, Any],
+        now: datetime,
+    ) -> OvertimeRecord | None:
+        """Full replace of a `PENDING` record's fields on recompute (WD-29 decision 2) — the
+        `WHERE status='PENDING'` guard means this is a no-op against a terminal row even if a
+        caller forgets to check first (defence in depth; the real gate is in `service.py`).
+        Returns `None` if no `PENDING` row exists for this day, in which case the caller
+        `insert`s a fresh one instead."""
+        stmt = (
+            update(OvertimeRecord)
+            .where(
+                OvertimeRecord.company_id == company_id,
+                OvertimeRecord.attendance_day_id == attendance_day_id,
+                OvertimeRecord.status == "PENDING",
+            )
+            .values(**values, updated_at=now)
+            .returning(OvertimeRecord)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_if_pending(
+        self, session: AsyncSession, *, company_id: UUID, attendance_day_id: UUID
+    ) -> None:
+        """A recompute that now detects zero eligible OT removes a prior `PENDING` record
+        outright — there is nothing left to decide (WD-29 decision 2). Never touches a terminal
+        row."""
+        await session.execute(
+            delete(OvertimeRecord).where(
+                OvertimeRecord.company_id == company_id,
+                OvertimeRecord.attendance_day_id == attendance_day_id,
+                OvertimeRecord.status == "PENDING",
+            )
+        )
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        record_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> OvertimeRecord | None:
+        stmt = (
+            update(OvertimeRecord)
+            .where(
+                OvertimeRecord.id == record_id,
+                OvertimeRecord.company_id == company_id,
+                OvertimeRecord.version == expected_version,
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(OvertimeRecord)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[OvertimeRecord]:
+        conditions = [OvertimeRecord.company_id == company_id]
+        if visible_employee_ids is not None:
+            if not visible_employee_ids:
+                return []
+            conditions.append(OvertimeRecord.employee_id.in_(visible_employee_ids))
+        if employee_id is not None:
+            conditions.append(OvertimeRecord.employee_id == employee_id)
+        if date_from is not None:
+            conditions.append(OvertimeRecord.attendance_date >= date_from)
+        if date_to is not None:
+            conditions.append(OvertimeRecord.attendance_date <= date_to)
+        if status is not None:
+            conditions.append(OvertimeRecord.status == status)
+        stmt = (
+            select(OvertimeRecord)
+            .where(*conditions)
+            .order_by(OvertimeRecord.attendance_date.desc(), OvertimeRecord.employee_id)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def sum_minutes_detected_for_range(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        date_from: date,
+        date_to: date,
+        exclude_date: date | None = None,
+    ) -> int:
+        """W7 (WD-29 decision 3) — the weekly/monthly cap budget already consumed by sibling
+        days. Counts `PENDING`+`AUTO_APPROVED`+`APPROVED` minutes (everything except
+        `REJECTED`), consistent with how the existing daily cap already clamps against detected,
+        not yet approved, minutes. Excludes by `attendance_date`, not `attendance_day_id` — the
+        day currently being calculated may not have an `AttendanceDay` row yet on its first
+        calculation."""
+        conditions = [
+            OvertimeRecord.company_id == company_id,
+            OvertimeRecord.employee_id == employee_id,
+            OvertimeRecord.attendance_date >= date_from,
+            OvertimeRecord.attendance_date <= date_to,
+            OvertimeRecord.status != "REJECTED",
+        ]
+        if exclude_date is not None:
+            conditions.append(OvertimeRecord.attendance_date != exclude_date)
+        stmt = select(func.coalesce(func.sum(OvertimeRecord.minutes_detected), 0)).where(
+            *conditions
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
+
+class OvertimeActionRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> OvertimeAction:
+        row = OvertimeAction(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_for_record(
+        self, session: AsyncSession, *, company_id: UUID, overtime_record_id: UUID
+    ) -> list[OvertimeAction]:
+        stmt = (
+            select(OvertimeAction)
+            .where(
+                OvertimeAction.company_id == company_id,
+                OvertimeAction.overtime_record_id == overtime_record_id,
+            )
+            .order_by(OvertimeAction.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# W8 — AttendancePeriod / AttendancePeriodAction / AttendancePeriodSummary (WD-30)
+# ---------------------------------------------------------------------------
+
+
+class AttendancePeriodRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> AttendancePeriod:
+        row = AttendancePeriod(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, period_id: UUID
+    ) -> AttendancePeriod | None:
+        stmt = select(AttendancePeriod).where(
+            AttendancePeriod.id == period_id, AttendancePeriod.company_id == company_id
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_filtered(
+        self, session: AsyncSession, *, company_id: UUID, status: str | None
+    ) -> list[AttendancePeriod]:
+        conditions = [AttendancePeriod.company_id == company_id]
+        if status is not None:
+            conditions.append(AttendancePeriod.status == status)
+        stmt = (
+            select(AttendancePeriod)
+            .where(*conditions)
+            .order_by(AttendancePeriod.period_start.desc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_covering(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        target_date: date,
+        status: str | None = None,
+    ) -> AttendancePeriod | None:
+        """WD-30 — the authoritative period lookup every lock-enforcement check in this module
+        consults. The GiST exclusion on `attendance_period` guarantees at most one row can ever
+        match, for any `target_date`, regardless of `status`."""
+        conditions = [
+            AttendancePeriod.company_id == company_id,
+            AttendancePeriod.period_start <= target_date,
+            AttendancePeriod.period_end >= target_date,
+        ]
+        if status is not None:
+            conditions.append(AttendancePeriod.status == status)
+        stmt = select(AttendancePeriod).where(*conditions)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        period_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> AttendancePeriod | None:
+        stmt = (
+            update(AttendancePeriod)
+            .where(
+                AttendancePeriod.id == period_id,
+                AttendancePeriod.company_id == company_id,
+                AttendancePeriod.version == expected_version,
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(AttendancePeriod)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def record_validation(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        period_id: UUID,
+        status: str,
+        now: datetime,
+    ) -> None:
+        """Informational cache only (`last_validated_at`/`last_validation_status`), deliberately
+        *not* version-guarded and does not bump `version` — `POST .../validate` is a read-mostly
+        diagnostic action, not a lifecycle transition, and `finalize` never trusts this cached
+        value (it always re-validates fresh inside its own version-guarded transaction)."""
+        await session.execute(
+            update(AttendancePeriod)
+            .where(AttendancePeriod.id == period_id, AttendancePeriod.company_id == company_id)
+            .values(last_validated_at=now, last_validation_status=status, updated_at=now)
+        )
+
+
+class AttendancePeriodActionRepository:
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> AttendancePeriodAction:
+        row = AttendancePeriodAction(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_for_period(
+        self, session: AsyncSession, *, company_id: UUID, attendance_period_id: UUID
+    ) -> list[AttendancePeriodAction]:
+        stmt = (
+            select(AttendancePeriodAction)
+            .where(
+                AttendancePeriodAction.company_id == company_id,
+                AttendancePeriodAction.attendance_period_id == attendance_period_id,
+            )
+            .order_by(AttendancePeriodAction.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+
+class AttendancePeriodSummaryRepository:
+    async def replace_for_period(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        attendance_period_id: UUID,
+        rows: list[dict[str, Any]],
+    ) -> list[AttendancePeriodSummary]:
+        """Full delete/recreate on every finalize (WD-30 — mirrors `AttendanceBreak`'s
+        no-independent-lifecycle posture). A period can be finalized more than once across its
+        lifetime (finalize -> reopen-for-correction -> finalize again), and each finalize must
+        produce a fresh, correct frozen snapshot, not silently keep a stale one from a previous
+        close."""
+        await session.execute(
+            delete(AttendancePeriodSummary).where(
+                AttendancePeriodSummary.company_id == company_id,
+                AttendancePeriodSummary.attendance_period_id == attendance_period_id,
+            )
+        )
+        created = [AttendancePeriodSummary(**row) for row in rows]
+        session.add_all(created)
+        await session.flush()
+        return created
+
+    async def list_for_period(
+        self, session: AsyncSession, *, company_id: UUID, attendance_period_id: UUID
+    ) -> list[AttendancePeriodSummary]:
+        stmt = (
+            select(AttendancePeriodSummary)
+            .where(
+                AttendancePeriodSummary.company_id == company_id,
+                AttendancePeriodSummary.attendance_period_id == attendance_period_id,
+            )
+            .order_by(AttendancePeriodSummary.employee_id)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# W9 — LeaveDayProjection (architecture §21, decision log WD-31)
+# ---------------------------------------------------------------------------
+
+
+class LeaveDayProjectionRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> LeaveDayProjection:
+        row = LeaveDayProjection(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, projection_id: UUID
+    ) -> LeaveDayProjection | None:
+        stmt = select(LeaveDayProjection).where(
+            LeaveDayProjection.id == projection_id,
+            LeaveDayProjection.company_id == company_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_natural_key(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        attendance_date: date,
+        leave_application_id: UUID,
+    ) -> LeaveDayProjection | None:
+        """A resync of the same `leave_application_id` for the same employee-date updates this
+        row in place (idempotent republish) rather than accumulating duplicates."""
+        stmt = select(LeaveDayProjection).where(
+            LeaveDayProjection.company_id == company_id,
+            LeaveDayProjection.employee_id == employee_id,
+            LeaveDayProjection.attendance_date == attendance_date,
+            LeaveDayProjection.leave_application_id == leave_application_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_active_for_employee_date(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        attendance_date: date,
+    ) -> list[LeaveDayProjection]:
+        """The calculation-engine read (`AttendanceDayService._build_calculation_input`) —
+        only `APPROVED` rows are ever visible (architecture §21)."""
+        stmt = select(LeaveDayProjection).where(
+            LeaveDayProjection.company_id == company_id,
+            LeaveDayProjection.employee_id == employee_id,
+            LeaveDayProjection.attendance_date == attendance_date,
+            LeaveDayProjection.status == "APPROVED",
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[LeaveDayProjection]:
+        conditions = [LeaveDayProjection.company_id == company_id]
+        if visible_employee_ids is not None:
+            if not visible_employee_ids:
+                return []
+            conditions.append(LeaveDayProjection.employee_id.in_(visible_employee_ids))
+        if employee_id is not None:
+            conditions.append(LeaveDayProjection.employee_id == employee_id)
+        if date_from is not None:
+            conditions.append(LeaveDayProjection.attendance_date >= date_from)
+        if date_to is not None:
+            conditions.append(LeaveDayProjection.attendance_date <= date_to)
+        if status is not None:
+            conditions.append(LeaveDayProjection.status == status)
+        stmt = (
+            select(LeaveDayProjection)
+            .where(*conditions)
+            .order_by(LeaveDayProjection.attendance_date)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        projection_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> LeaveDayProjection | None:
+        stmt = (
+            update(LeaveDayProjection)
+            .where(
+                LeaveDayProjection.id == projection_id,
+                LeaveDayProjection.company_id == company_id,
+                LeaveDayProjection.version == expected_version,
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(LeaveDayProjection)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()

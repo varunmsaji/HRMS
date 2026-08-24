@@ -222,8 +222,12 @@ async def test_registration_success_full_row_graph(
             # added by the Workforce Calendar (W1) slice, ATTENDANCE.POLICY_MANAGE added by
             # the Attendance Policy (W3) slice, ATTENDANCE.VIEW/.VIEW_ALL/.PUNCH/
             # .PUNCH_ON_BEHALF/.RECOMPUTE added by the Punch/AttendanceDay (W4) slice,
-            # ATTENDANCE.ROSTER_MANAGE added by the Shift Roster (W5) slice — same "must grant
-            # at live registration, not just the demo seed" rule.
+            # ATTENDANCE.ROSTER_MANAGE added by the Shift Roster (W5) slice,
+            # ATTENDANCE.REGULARIZATION_REQUEST/_ON_BEHALF/.REGULARIZATION_APPROVE added by the
+            # Regularization (W6) slice, ATTENDANCE.OVERTIME_APPROVE added by the Overtime (W7)
+            # slice, ATTENDANCE.LOCK/.UNLOCK added by the Attendance Period (W8) slice,
+            # ATTENDANCE.LEAVE_PROJECTION_SYNC added by the Leave Projection Adapter (W9)
+            # slice — same "must grant at live registration, not just the demo seed" rule.
             assert codes == {
                 ORG_COMPANY_MANAGE,
                 DASHBOARD_COMPANY_VIEW,
@@ -242,6 +246,13 @@ async def test_registration_success_full_row_graph(
                 "ATTENDANCE.PUNCH_ON_BEHALF",
                 "ATTENDANCE.RECOMPUTE",
                 "ATTENDANCE.ROSTER_MANAGE",
+                "ATTENDANCE.REGULARIZATION_REQUEST",
+                "ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF",
+                "ATTENDANCE.REGULARIZATION_APPROVE",
+                "ATTENDANCE.OVERTIME_APPROVE",
+                "ATTENDANCE.LOCK",
+                "ATTENDANCE.UNLOCK",
+                "ATTENDANCE.LEAVE_PROJECTION_SYNC",
                 "EMPLOYEE.VIEW",
                 "EMPLOYEE.VIEW_ALL",
                 "EMPLOYEE.CREATE",

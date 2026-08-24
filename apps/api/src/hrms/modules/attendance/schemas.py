@@ -11,6 +11,9 @@ if TYPE_CHECKING:
     from hrms.modules.attendance.models import (
         AttendanceBreak,
         AttendanceDay,
+        AttendancePeriod,
+        AttendancePeriodAction,
+        AttendancePeriodSummary,
         AttendancePolicy,
         AttendancePolicyEarlyDepartureBand,
         AttendancePolicyHourBand,
@@ -19,9 +22,12 @@ if TYPE_CHECKING:
         AttendanceRegularizationAction,
         AttendanceRegularizationRequest,
         AttendanceRegularizationRequestedPunch,
+        LeaveDayProjection,
+        OvertimeAction,
         OvertimePolicy,
         OvertimePolicyRateRow,
         OvertimePolicyVersion,
+        OvertimeRecord,
         Punch,
         RegularizationPolicy,
         RegularizationPolicyAllowedType,
@@ -66,6 +72,16 @@ _REGULARIZATION_TYPES = (
 )
 
 _POLICY_RESOLUTION_KINDS = ("ATTENDANCE_POLICY", "OVERTIME_POLICY", "REGULARIZATION_POLICY")
+
+_OVERTIME_RECORD_STATUSES = ("PENDING", "AUTO_APPROVED", "APPROVED", "REJECTED")
+_OVERTIME_ACTIONS = (
+    "DETECTED",
+    "APPROVER_UNRESOLVED",
+    "AUTO_APPROVED",
+    "STAGE_APPROVED",
+    "APPROVED",
+    "REJECTED",
+)
 
 
 def _format_timestamp(value: Any) -> str | None:
@@ -1315,6 +1331,7 @@ class AttendanceDayRead(BaseModel):
     is_pending_approval: bool
     worked_on_holiday: bool
     worked_on_weekly_off: bool
+    work_on_leave_flagged: bool
 
     paid_day_fraction: str
     lop_fraction: str
@@ -1380,6 +1397,7 @@ def attendance_day_to_read(
         is_pending_approval=row.is_pending_approval,
         worked_on_holiday=row.worked_on_holiday,
         worked_on_weekly_off=row.worked_on_weekly_off,
+        work_on_leave_flagged=row.work_on_leave_flagged,
         paid_day_fraction=str(row.paid_day_fraction),
         lop_fraction=str(row.lop_fraction),
         ot_minutes_detected=row.ot_minutes_detected,
@@ -1600,4 +1618,394 @@ def regularization_request_to_read(
 
 
 def regularization_request_to_audit_dict(read: RegularizationRequestRead) -> dict[str, Any]:
+    return read.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# W7 — OvertimeRecord / OvertimeAction (architecture §12, decision log WD-29)
+# ---------------------------------------------------------------------------
+
+
+class OvertimeReviewInput(BaseModel):
+    """Body for approve/reject — identical shape to `RegularizationReviewInput`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_comment: str | None = None
+    rejection_reason: str | None = None
+
+
+class OvertimeActionRead(BaseModel):
+    id: UUID
+    action: str
+    actor_user_id: UUID | None
+    actor_employee_id: UUID | None
+    stage: str | None
+    comment: str | None
+    created_at: str
+
+
+def overtime_action_to_read(row: "OvertimeAction") -> OvertimeActionRead:
+    return OvertimeActionRead(
+        id=row.id,
+        action=row.action,
+        actor_user_id=row.actor_user_id,
+        actor_employee_id=row.actor_employee_id,
+        stage=row.stage,
+        comment=row.comment,
+        created_at=_format_timestamp(row.created_at) or "",
+    )
+
+
+class OvertimeRecordRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    attendance_day_id: UUID
+    attendance_date: date
+    overtime_policy_version_id: UUID
+
+    day_class: str | None
+    classification_code: str | None
+    configured_multiplier: str | None
+
+    minutes_detected: int
+    minutes_approved: int
+
+    status: str
+    approval_chain: str
+    approval_stage: str | None
+    resolved_approver_manager_id: UUID | None
+
+    reviewed_by_user_id: UUID | None
+    reviewed_at: str | None
+    reviewer_comment: str | None
+    rejection_reason: str | None
+
+    comp_off_minutes: int
+    comp_off_expiry_date: date | None
+
+    version: int
+
+    actions: list[OvertimeActionRead]
+
+    created_at: str
+    updated_at: str
+
+
+def overtime_record_to_read(
+    row: "OvertimeRecord", *, actions: list["OvertimeAction"]
+) -> OvertimeRecordRead:
+    return OvertimeRecordRead(
+        id=row.id,
+        company_id=row.company_id,
+        employee_id=row.employee_id,
+        attendance_day_id=row.attendance_day_id,
+        attendance_date=row.attendance_date,
+        overtime_policy_version_id=row.overtime_policy_version_id,
+        day_class=row.day_class,
+        classification_code=row.classification_code,
+        configured_multiplier=(
+            str(row.configured_multiplier) if row.configured_multiplier is not None else None
+        ),
+        minutes_detected=row.minutes_detected,
+        minutes_approved=row.minutes_approved,
+        status=row.status,
+        approval_chain=row.approval_chain,
+        approval_stage=row.approval_stage,
+        resolved_approver_manager_id=row.resolved_approver_manager_id,
+        reviewed_by_user_id=row.reviewed_by_user_id,
+        reviewed_at=_format_timestamp(row.reviewed_at),
+        reviewer_comment=row.reviewer_comment,
+        rejection_reason=row.rejection_reason,
+        comp_off_minutes=row.comp_off_minutes,
+        comp_off_expiry_date=row.comp_off_expiry_date,
+        version=row.version,
+        actions=[overtime_action_to_read(a) for a in actions],
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def overtime_record_to_audit_dict(read: OvertimeRecordRead) -> dict[str, Any]:
+    return read.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# W8 — AttendancePeriod (architecture §4.2/§22, decision log WD-30)
+# ---------------------------------------------------------------------------
+
+_ATTENDANCE_PERIOD_STATUSES = ("OPEN", "CLOSED")
+_ATTENDANCE_PERIOD_VALIDATION_STATUSES = ("READY", "BLOCKED")
+_ATTENDANCE_PERIOD_BLOCKING_REASON_CODES = (
+    "EMPLOYEES_WITHOUT_ATTENDANCE",
+    "CONFIG_ERROR",
+    "INCOMPLETE_ATTENDANCE",
+    "PENDING_REGULARIZATION",
+    "PENDING_OVERTIME_APPROVAL",
+    "UNPUBLISHED_ROSTER",
+)
+
+
+class AttendancePeriodCreate(BaseModel):
+    """Create always opens immediately — no separate "open" action, mirroring WD-28's
+    no-DRAFT-state precedent (a period isn't useful in a created-but-not-open state; every date
+    inside it is mutable/computable from the instant it exists)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    period_start: date
+    period_end: date
+    label: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "AttendancePeriodCreate":
+        if self.period_end < self.period_start:
+            raise ValueError("period_end must not be before period_start")
+        return self
+
+
+class AttendancePeriodReopenInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class AttendancePeriodActionRead(BaseModel):
+    id: UUID
+    action: str
+    actor_user_id: UUID | None
+    comment: str | None
+    created_at: str
+
+
+def attendance_period_action_to_read(row: "AttendancePeriodAction") -> AttendancePeriodActionRead:
+    return AttendancePeriodActionRead(
+        id=row.id,
+        action=row.action,
+        actor_user_id=row.actor_user_id,
+        comment=row.comment,
+        created_at=_format_timestamp(row.created_at) or "",
+    )
+
+
+class AttendancePeriodRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    period_start: date
+    period_end: date
+    label: str | None
+    status: str
+
+    opened_by_user_id: UUID | None
+    opened_at: str
+
+    last_validated_at: str | None
+    last_validation_status: str | None
+
+    closed_by_user_id: UUID | None
+    closed_at: str | None
+
+    reopened_by_user_id: UUID | None
+    reopened_at: str | None
+    reopen_reason: str | None
+
+    version: int
+    actions: list[AttendancePeriodActionRead]
+    created_at: str
+    updated_at: str
+
+
+def attendance_period_to_read(
+    row: "AttendancePeriod", *, actions: list["AttendancePeriodAction"]
+) -> AttendancePeriodRead:
+    return AttendancePeriodRead(
+        id=row.id,
+        company_id=row.company_id,
+        period_start=row.period_start,
+        period_end=row.period_end,
+        label=row.label,
+        status=row.status,
+        opened_by_user_id=row.opened_by_user_id,
+        opened_at=_format_timestamp(row.opened_at) or "",
+        last_validated_at=_format_timestamp(row.last_validated_at),
+        last_validation_status=row.last_validation_status,
+        closed_by_user_id=row.closed_by_user_id,
+        closed_at=_format_timestamp(row.closed_at),
+        reopened_by_user_id=row.reopened_by_user_id,
+        reopened_at=_format_timestamp(row.reopened_at),
+        reopen_reason=row.reopen_reason,
+        version=row.version,
+        actions=[attendance_period_action_to_read(a) for a in actions],
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def attendance_period_to_audit_dict(read: AttendancePeriodRead) -> dict[str, Any]:
+    return read.model_dump(mode="json")
+
+
+class AttendancePeriodBlockingReason(BaseModel):
+    """One typed blocking bucket. `count` is the number of underlying rows/employees in this
+    bucket; `sample` carries up to 20 identifying values (employee ids, or `employee_id:date`
+    pairs) so the caller can navigate straight to the first few offenders without a second,
+    unbounded query."""
+
+    code: str
+    message: str
+    count: int
+    sample: list[str]
+
+
+class AttendancePeriodValidationRead(BaseModel):
+    status: str
+    reasons: list[AttendancePeriodBlockingReason]
+    validated_at: str
+
+
+class AttendancePeriodSummaryRead(BaseModel):
+    employee_id: UUID
+    present_days: str
+    absent_days: str
+    leave_days: str
+    holiday_days: str
+    weekly_off_days: str
+    half_days: str
+    lop_days: str
+    ot_minutes_normal: int
+    ot_minutes_weekly_off: int
+    ot_minutes_holiday: int
+    ot_minutes_night: int
+    comp_off_minutes_earned: int
+    late_count: int
+    worked_minutes_total: int
+    generated_at: str
+    frozen: bool
+
+
+def attendance_period_summary_to_read(
+    row: "AttendancePeriodSummary", *, frozen: bool
+) -> AttendancePeriodSummaryRead:
+    return AttendancePeriodSummaryRead(
+        employee_id=row.employee_id,
+        present_days=str(row.present_days),
+        absent_days=str(row.absent_days),
+        leave_days=str(row.leave_days),
+        holiday_days=str(row.holiday_days),
+        weekly_off_days=str(row.weekly_off_days),
+        half_days=str(row.half_days),
+        lop_days=str(row.lop_days),
+        ot_minutes_normal=row.ot_minutes_normal,
+        ot_minutes_weekly_off=row.ot_minutes_weekly_off,
+        ot_minutes_holiday=row.ot_minutes_holiday,
+        ot_minutes_night=row.ot_minutes_night,
+        comp_off_minutes_earned=row.comp_off_minutes_earned,
+        late_count=row.late_count,
+        worked_minutes_total=row.worked_minutes_total,
+        generated_at=_format_timestamp(row.generated_at) or "",
+        frozen=frozen,
+    )
+
+
+# ---------------------------------------------------------------------------
+# W9 — LeaveDayProjection (architecture §21, decision log WD-31)
+# ---------------------------------------------------------------------------
+
+_LEAVE_PROJECTION_FRACTIONS = ("0.50", "1.00")
+_LEAVE_PROJECTION_HALVES = ("FIRST", "SECOND")
+
+
+class LeaveProjectionSync(BaseModel):
+    """Publishes (or republishes, as a correction) one approved leave day projection —
+    architecture §21's `LeaveDayProjection` read model. Fail-closed per Phase 2: `fraction` and
+    `half` are typed/validated here, not left as free-form numbers; the cross-row "active
+    fractions for this employee-date must not exceed 1.00" check happens in the service layer,
+    where the other active rows are visible."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: UUID
+    attendance_date: date
+    leave_application_id: UUID
+    leave_type_id: UUID | None = None
+    leave_type_code: str | None = Field(default=None, max_length=30)
+    fraction: str
+    half: str | None = None
+    is_paid: bool
+
+    @field_validator("fraction")
+    @classmethod
+    def validate_fraction(cls, value: str) -> str:
+        if value not in _LEAVE_PROJECTION_FRACTIONS:
+            raise ValueError(f"fraction must be one of {_LEAVE_PROJECTION_FRACTIONS}")
+        return value
+
+    @field_validator("half")
+    @classmethod
+    def validate_half(cls, value: str | None) -> str | None:
+        if value is not None and value not in _LEAVE_PROJECTION_HALVES:
+            raise ValueError(f"half must be one of {_LEAVE_PROJECTION_HALVES}")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_half_matches_fraction(self) -> "LeaveProjectionSync":
+        if self.fraction == "0.50" and self.half is None:
+            raise ValueError("half is required (FIRST|SECOND) when fraction is 0.50")
+        if self.fraction == "1.00" and self.half is not None:
+            raise ValueError("half must be omitted when fraction is 1.00")
+        return self
+
+
+class LeaveProjectionCancelInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class LeaveDayProjectionRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    attendance_date: date
+    leave_application_id: UUID
+    leave_type_id: UUID | None
+    leave_type_code: str | None
+    fraction: str
+    half: str | None
+    is_paid: bool
+    status: str
+    source_version: int
+    synced_at: str
+    cancelled_at: str | None
+    cancelled_reason: str | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def leave_day_projection_to_read(row: "LeaveDayProjection") -> LeaveDayProjectionRead:
+    return LeaveDayProjectionRead(
+        id=row.id,
+        company_id=row.company_id,
+        employee_id=row.employee_id,
+        attendance_date=row.attendance_date,
+        leave_application_id=row.leave_application_id,
+        leave_type_id=row.leave_type_id,
+        leave_type_code=row.leave_type_code,
+        fraction=str(row.fraction),
+        half=row.half,
+        is_paid=row.is_paid,
+        status=row.status,
+        source_version=row.source_version,
+        synced_at=_format_timestamp(row.synced_at) or "",
+        cancelled_at=_format_timestamp(row.cancelled_at),
+        cancelled_reason=row.cancelled_reason,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def leave_day_projection_to_audit_dict(read: LeaveDayProjectionRead) -> dict[str, Any]:
     return read.model_dump(mode="json")

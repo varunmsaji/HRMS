@@ -540,6 +540,13 @@ class AttendanceDay(Base, TimestampMixin):
     worked_on_holiday: Mapped[bool] = mapped_column(Boolean, default=False)
     worked_on_weekly_off: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # W9 — leave overlay (§19.3). Set only when `AttendancePolicyVersion.work_on_leave_behaviour
+    # = PRESENT_CANCEL_LEAVE_HINT` and punches exist despite an approved leave projection
+    # covering the day: Attendance keeps the punch-derived outcome and raises this flag for Leave
+    # to see and decide whether to cancel the leave application — Attendance never writes the
+    # leave ledger itself (architecture §21).
+    work_on_leave_flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+
     paid_day_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
     lop_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
 
@@ -688,6 +695,94 @@ class AttendanceRegularizationAction(Base, TimestampMixin):
     )
 
 
+class OvertimeRecord(Base, TimestampMixin):
+    """The approval workflow entity for one `AttendanceDay`'s detected overtime (W7 — architecture
+    §12, decision log WD-29). `attendance_day_id` is `UNIQUE`: unlike
+    `AttendanceRegularizationRequest`, this is a single mutable-then-frozen row per day, not an
+    accumulating history — nothing is ever re-detected concurrently for the same day.
+
+    A `PENDING` row is fully replaced on every recompute of its day (mirrors `AttendanceBreak`'s
+    delete/recreate posture — nothing has been decided yet). Once `status` reaches a terminal
+    value (`AUTO_APPROVED`/`APPROVED`/`REJECTED`), `AttendanceDayService.calculate()` never
+    overwrites this row again (WD-29 decision 2) — a later recompute (e.g. driven by an approved
+    regularization) still refreshes `AttendanceDay.ot_minutes_detected`/`ot_classification`
+    informationally, but this row's own decision fields are frozen.
+
+    `configured_multiplier` is the snapshot payroll fact architecture §12.1/§22.1 calls for —
+    captured here rather than added as a new `AttendanceDay` column."""
+
+    __tablename__ = "overtime_record"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    attendance_day_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_day.id"), unique=True
+    )
+    attendance_date: Mapped[date] = mapped_column(Date)
+    overtime_policy_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("overtime_policy_version.id")
+    )
+
+    day_class: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    classification_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    configured_multiplier: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+
+    minutes_detected: Mapped[int] = mapped_column(Integer, default=0)
+    minutes_approved: Mapped[int] = mapped_column(Integer, default=0)
+
+    status: Mapped[str] = mapped_column(String(20))
+    approval_chain: Mapped[str] = mapped_column(String(20))
+    approval_stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    resolved_approver_manager_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
+
+    reviewed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewer_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    comp_off_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    comp_off_expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class OvertimeAction(Base, TimestampMixin):
+    """Append-only per-record timeline, mirroring `AttendanceRegularizationAction` (WD-28
+    decision 7 precedent) — the per-stage history a single `reviewed_by_user_id`/`reviewed_at`
+    pair on `OvertimeRecord` cannot hold for a `MANAGER_THEN_HR` chain."""
+
+    __tablename__ = "overtime_action"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    overtime_record_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("overtime_record.id"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(30))
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_employee_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
+    stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class AttendanceBreak(Base, TimestampMixin):
     """An actual break interval used in the calculation (auto-deducted and/or detected from
     punch gaps), child of `AttendanceDay` — no independent lifecycle, full-replace on every
@@ -710,3 +805,198 @@ class AttendanceBreak(Base, TimestampMixin):
     minutes: Mapped[int] = mapped_column(Integer, default=0)
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False)
     is_excess: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+# ---------------------------------------------------------------------------
+# W8 — AttendancePeriod / AttendancePeriodAction / AttendancePeriodSummary
+# (architecture §4.2 `AttendanceLock`/`AttendancePeriodSummary`, §22, decision log WD-30)
+# ---------------------------------------------------------------------------
+
+
+class AttendancePeriod(Base, TimestampMixin):
+    """The period lifecycle + lock entity architecture §4.2 names `AttendanceLock`. Two
+    persisted states only (`OPEN`/`CLOSED`) — WD-30: a period is mutable-and-computable the
+    instant it is created (no separate "open" action, mirroring WD-28's no-DRAFT-state
+    precedent for `AttendanceRegularizationRequest`), and finalization is synchronous within one
+    transaction (no Celery fan-out, matching every other W1-W7 mutation in this module), so a
+    durable `CLOSING` state has no code path that would ever observe it. `CLOSED` *is* locked —
+    architecture's own `AttendanceLock` never describes a closed-but-unlocked state either.
+
+    `[period_start, period_end]` inclusive-inclusive (§17 convention). No overlap with another
+    period for the same `company_id` (GiST exclusion, mirrors `PolicyAssignment`/`Employment`).
+
+    `legal_entity_id` is reserved, unused in V1 (always `NULL`; company grain only) — ships ahead
+    of use exactly like `AttendanceDay.is_locked` shipped in W4 before this table existed.
+    PD-LOCK-1 (architecture §32) is genuinely open between company/legal-entity/pay-cycle grain;
+    the architecture's own stated default — legal-entity grain *only if* payroll will be
+    LE-scoped — cannot be evaluated because Payroll does not exist yet, so V1 ships the other half
+    of that same documented default: company grain. The column is reserved so a future slice can
+    switch grain without a migration that touches every existing row."""
+
+    __tablename__ = "attendance_period"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("legal_entity.id"), nullable=True
+    )
+
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(20), default="OPEN")
+
+    opened_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    last_validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_validation_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    closed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    reopened_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reopen_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class AttendancePeriodAction(Base, TimestampMixin):
+    """Append-only per-period timeline, mirroring `AttendanceRegularizationAction`/
+    `OvertimeAction` (WD-28 decision 7 precedent)."""
+
+    __tablename__ = "attendance_period_action"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    attendance_period_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_period.id"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(30))
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AttendancePeriodSummary(Base, TimestampMixin):
+    """The payroll-facing per-employee roll-up architecture §4.2/§22.2 names
+    `AttendancePeriodSummary`. "Regenerated only while unlocked; frozen at lock/snapshot" (§4.2)
+    is implemented as: while the period is `OPEN`, `GET .../summary` computes a live aggregate
+    from `AttendanceDay` on every call and never persists it here; a row is written to this table
+    exactly once, inside the same transaction that sets `AttendancePeriod.status='CLOSED'`, and is
+    never regenerated after that — the frozen snapshot Payroll will eventually read (ADR-0005).
+    Never carries rupees (architecture §22.2 — penalty/bonus *amounts* are Payroll's)."""
+
+    __tablename__ = "attendance_period_summary"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    attendance_period_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_period.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+
+    present_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    absent_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    leave_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    holiday_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    weekly_off_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    half_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    lop_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+
+    ot_minutes_normal: Mapped[int] = mapped_column(Integer, default=0)
+    ot_minutes_weekly_off: Mapped[int] = mapped_column(Integer, default=0)
+    ot_minutes_holiday: Mapped[int] = mapped_column(Integer, default=0)
+    ot_minutes_night: Mapped[int] = mapped_column(Integer, default=0)
+    comp_off_minutes_earned: Mapped[int] = mapped_column(Integer, default=0)
+
+    late_count: Mapped[int] = mapped_column(Integer, default=0)
+    worked_minutes_total: Mapped[int] = mapped_column(Integer, default=0)
+
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# W9 — LeaveDayProjection (architecture §21, decision log WD-31)
+# ---------------------------------------------------------------------------
+
+
+class LeaveDayProjection(Base, TimestampMixin):
+    """The attendance-owned mirror of architecture §21's `LeaveDayProjection` read model —
+    "a read model published by Leave (service method, not table sharing)". No Leave module
+    exists yet (architecture §30: "Leave projection adapter, mocked until Leave exists"), so
+    this table is Attendance's own temporary backing store standing in for that service call —
+    it is **not** the leave ledger (ADR-0004 untouched; entitlement/balance/accrual/approval
+    remain entirely Leave's, whenever it ships) and is replaceable wholesale once a real Leave
+    module exists: nothing else in this module depends on its storage shape, only on the typed
+    `LeaveOverlayEntry` values `AttendanceDayService` resolves from active rows here.
+
+    Only `status='APPROVED'` rows are ever visible to calculation (architecture §21: "only
+    approved rows are visible"). Cancellation is `status='CANCELLED'`, never a delete, so
+    provenance/audit is preserved (mirrors WD-11's never-mutate-the-fact posture). Multiple rows
+    may cover the same `(employee_id, attendance_date)` — e.g. one half-day leave application for
+    the morning and a separate one for the afternoon — `leave_application_id` disambiguates them.
+    Active (APPROVED) fractions for one employee-date must sum to at most 1.00; enforced at sync
+    time in the service layer (fail-closed), not a DB constraint, mirroring
+    `InvalidPolicyBandError`'s validate-in-service posture rather than a CHECK that can't express
+    a cross-row sum.
+
+    Natural key `(company_id, employee_id, attendance_date, leave_application_id)` is unique
+    (partial index, mirrors `ShiftRosterDateConflictError`'s pattern) — a resync of the same
+    `leave_application_id` updates the existing row in place (bumping `source_version`) rather
+    than accumulating duplicates, so a corrected projection is idempotent to re-publish."""
+
+    __tablename__ = "leave_day_projection"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    attendance_date: Mapped[date] = mapped_column(Date)
+
+    # No FK — Leave does not exist yet, so this is an opaque external reference, not a joinable
+    # relationship (architecture §21 names it `leave_application_id`, a plain identifier).
+    leave_application_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    leave_type_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    leave_type_code: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2))
+    half: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    is_paid: Mapped[bool] = mapped_column(Boolean)
+
+    status: Mapped[str] = mapped_column(String(20), default="APPROVED")
+    source_version: Mapped[int] = mapped_column(Integer, default=1)
+
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)

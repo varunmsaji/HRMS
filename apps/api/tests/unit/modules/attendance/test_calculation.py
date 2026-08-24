@@ -14,8 +14,10 @@ from hrms.modules.attendance.calculation import (
     PolicyInputs,
     PunchData,
     ShiftBreakData,
+    ShiftDutyBlockData,
     ShiftInputs,
     calendar_day_window_utc,
+    classify_ot_day,
     collapse_duplicate_punches,
     detect_overtime,
     evaluate_day,
@@ -331,6 +333,110 @@ def test_detect_overtime_caps_at_daily_cap() -> None:
     assert minutes == 60
 
 
+def _ot_policy(**overrides: object) -> OvertimePolicyInputs:
+    defaults: dict[str, object] = dict(
+        eligibility="ALWAYS",
+        min_ot_minutes=0,
+        rounding_minutes=None,
+        rounding_mode="NONE",
+        requires_post_approval=True,
+        daily_cap_minutes=None,
+        comp_off_instead_of_pay=False,
+        night_ot_mode="SHIFT_FLAG",
+        night_window_start=None,
+        night_window_end=None,
+        rate_rows=[],
+    )
+    defaults.update(overrides)
+    return OvertimePolicyInputs(**defaults)  # type: ignore[arg-type]
+
+
+def test_detect_overtime_weekly_cap_clamps_below_daily_cap() -> None:
+    """W7 (WD-29 decision 3) — `remaining_weekly_minutes` clamps independently of, and can bind
+    tighter than, `daily_cap_minutes`."""
+    policy = _ot_policy(daily_cap_minutes=180, remaining_weekly_minutes=45)
+    minutes, _classification, eligible = detect_overtime(
+        worked_minutes=700,
+        scheduled_minutes=480,
+        is_shift_ot_eligible=True,
+        is_holiday=False,
+        is_weekly_off=False,
+        is_night=False,
+        policy=policy,
+    )
+    assert eligible is True
+    assert minutes == 45
+
+
+def test_detect_overtime_monthly_cap_clamps() -> None:
+    policy = _ot_policy(remaining_monthly_minutes=10)
+    minutes, _classification, eligible = detect_overtime(
+        worked_minutes=600,
+        scheduled_minutes=480,
+        is_shift_ot_eligible=True,
+        is_holiday=False,
+        is_weekly_off=False,
+        is_night=False,
+        policy=policy,
+    )
+    assert eligible is True
+    assert minutes == 10
+
+
+def test_detect_overtime_weekly_cap_exhausted_still_eligible_zero_minutes() -> None:
+    """A fully-consumed weekly budget still returns `eligible=True` with `0` minutes — never
+    silently discarded/miscounted, matching the existing daily-cap posture (`min_ot_minutes`
+    short-circuits to `eligible=False`, but an exhausted *cap* does not)."""
+    policy = _ot_policy(remaining_weekly_minutes=0)
+    minutes, _classification, eligible = detect_overtime(
+        worked_minutes=600,
+        scheduled_minutes=480,
+        is_shift_ot_eligible=True,
+        is_holiday=False,
+        is_weekly_off=False,
+        is_night=False,
+        policy=policy,
+    )
+    assert eligible is True
+    assert minutes == 0
+
+
+def test_classify_ot_day_holiday_wins_over_weekly_off_and_night() -> None:
+    assert (
+        classify_ot_day(is_holiday=True, is_weekly_off=True, is_night=True, night_ot_mode="BOTH")
+        == "HOLIDAY"
+    )
+
+
+def test_classify_ot_day_weekly_off_wins_over_night() -> None:
+    assert (
+        classify_ot_day(is_holiday=False, is_weekly_off=True, is_night=True, night_ot_mode="BOTH")
+        == "WEEKLY_OFF"
+    )
+
+
+def test_classify_ot_day_night_requires_window_or_both_mode() -> None:
+    assert (
+        classify_ot_day(
+            is_holiday=False, is_weekly_off=False, is_night=True, night_ot_mode="SHIFT_FLAG"
+        )
+        == "NORMAL"
+    )
+    assert (
+        classify_ot_day(
+            is_holiday=False, is_weekly_off=False, is_night=True, night_ot_mode="WINDOW"
+        )
+        == "NIGHT"
+    )
+
+
+def test_classify_ot_day_normal_default() -> None:
+    assert (
+        classify_ot_day(is_holiday=False, is_weekly_off=False, is_night=False, night_ot_mode="BOTH")
+        == "NORMAL"
+    )
+
+
 # ---------------------------------------------------------------------------
 # evaluate_day — terminal statuses
 # ---------------------------------------------------------------------------
@@ -614,3 +720,72 @@ def test_paid_break_gap_added_back_to_worked_minutes() -> None:
     # 4.5h (3:30-8:00) + 4h15m (8:15-12:30) = 525m clocked-in, plus the 15m paid break = 540m —
     # the same as if the employee had never punched out for the paid break at all.
     assert result.worked_minutes == 540
+
+
+# ---------------------------------------------------------------------------
+# SPLIT-shift overtime detection (W7, WD-29 decision 5 — previously always 0/never detected)
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_day_split_shift_detects_overtime() -> None:
+    shift = _shift(
+        shift_type="SPLIT",
+        duty_blocks=[
+            ShiftDutyBlockData(
+                sequence=1, start_time=time(9, 0), end_time=time(13, 0), crosses_midnight=False
+            ),
+            ShiftDutyBlockData(
+                sequence=2, start_time=time(14, 0), end_time=time(18, 0), crosses_midnight=False
+            ),
+        ],
+        required_minutes=480,
+    )
+    punches = [
+        _punch(9, 0, "IN", day=10),
+        _punch(13, 0, "OUT", day=10),
+        _punch(14, 0, "IN", day=10),
+        _punch(20, 0, "OUT", day=10),  # 2h past the second block's 18:00 end
+    ]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=None,
+            scheduled_end=None,
+            ot_policy=_ot_policy(),
+        )
+    )
+    assert result.attendance_status == "PRESENT"
+    assert result.worked_minutes == 600  # both blocks fully worked (240m + 360m), no gap credit
+    assert result.is_overtime is True
+    assert result.ot_minutes_detected == 120  # 600 worked - 480 required
+    assert result.ot_day_class == "NORMAL"
+
+
+def test_evaluate_day_split_shift_no_overtime_policy_detects_nothing() -> None:
+    """Confirms the SPLIT-shift fix is additive, not a silent behaviour change when no OT
+    policy resolves at all (`ot_policy=None`, the pre-W7 default)."""
+    shift = _shift(
+        shift_type="SPLIT",
+        duty_blocks=[
+            ShiftDutyBlockData(
+                sequence=1, start_time=time(9, 0), end_time=time(13, 0), crosses_midnight=False
+            ),
+        ],
+        required_minutes=240,
+    )
+    punches = [_punch(9, 0, "IN", day=10), _punch(15, 0, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=None,
+            scheduled_end=None,
+            ot_policy=None,
+        )
+    )
+    assert result.is_overtime is False
+    assert result.ot_minutes_detected == 0
+    assert result.ot_day_class is None

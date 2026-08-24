@@ -27,6 +27,7 @@ import AttendanceDayDetailPage from "@/app/app/attendance/[id]/page";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { AttendanceDay } from "@/lib/attendance/types";
+import type { LeaveDayProjection } from "@/lib/leave-projection/types";
 
 const mockedGet = vi.mocked(apiClient.get);
 const mockedPost = vi.mocked(apiClient.post);
@@ -69,6 +70,7 @@ const sampleDay: AttendanceDay = {
   is_pending_approval: false,
   worked_on_holiday: false,
   worked_on_weekly_off: false,
+  work_on_leave_flagged: false,
   paid_day_fraction: "1",
   lop_fraction: "0",
   ot_minutes_detected: 0,
@@ -87,6 +89,38 @@ const sampleDay: AttendanceDay = {
   updated_at: "2026-08-10T18:05:00Z",
 };
 
+function mockDayAndProjections(
+  day: AttendanceDay,
+  projections: LeaveDayProjection[] = [],
+): void {
+  mockedGet.mockImplementation((url: string) =>
+    url.startsWith("/leave-projections")
+      ? Promise.resolve(projections)
+      : Promise.resolve(day),
+  );
+}
+
+const sampleProjection: LeaveDayProjection = {
+  id: "projection-1",
+  company_id: "company-1",
+  employee_id: "emp-1",
+  attendance_date: "2026-08-10",
+  leave_application_id: "leave-app-1",
+  leave_type_id: null,
+  leave_type_code: "EL",
+  fraction: "1.00",
+  half: null,
+  is_paid: true,
+  status: "APPROVED",
+  source_version: 1,
+  synced_at: "2026-08-10T08:00:00Z",
+  cancelled_at: null,
+  cancelled_reason: null,
+  version: 1,
+  created_at: "2026-08-10T08:00:00Z",
+  updated_at: "2026-08-10T08:00:00Z",
+};
+
 describe("AttendanceDayDetailPage", () => {
   afterEach(() => {
     mockedGet.mockReset();
@@ -101,7 +135,7 @@ describe("AttendanceDayDetailPage", () => {
   });
 
   it("renders the day's fields once loaded", async () => {
-    mockedGet.mockResolvedValue(sampleDay);
+    mockDayAndProjections(sampleDay);
     render(<AttendanceDayDetailPage />);
 
     expect(await screen.findByText("WORKING")).toBeInTheDocument();
@@ -109,7 +143,11 @@ describe("AttendanceDayDetailPage", () => {
   });
 
   it("disables recompute for a locked day", async () => {
-    mockedGet.mockResolvedValue({ ...sampleDay, is_locked: true, locked_at: "2026-08-11T00:00:00Z" });
+    mockDayAndProjections({
+      ...sampleDay,
+      is_locked: true,
+      locked_at: "2026-08-11T00:00:00Z",
+    });
     render(<AttendanceDayDetailPage />);
 
     const recompute = await screen.findByRole("button", { name: /recompute/i });
@@ -124,7 +162,7 @@ describe("AttendanceDayDetailPage", () => {
   });
 
   it("recomputes and shows a success toast", async () => {
-    mockedGet.mockResolvedValue(sampleDay);
+    mockDayAndProjections(sampleDay);
     mockedPost.mockResolvedValue({ ...sampleDay, calculation_version: 2 });
     const user = userEvent.setup();
     render(<AttendanceDayDetailPage />);
@@ -139,5 +177,20 @@ describe("AttendanceDayDetailPage", () => {
     expect(toastMock).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Attendance day recomputed" }),
     );
+  });
+
+  it("shows the leave overlay card when an approved projection covers the day", async () => {
+    mockDayAndProjections({ ...sampleDay, attendance_status: "LEAVE" }, [sampleProjection]);
+    render(<AttendanceDayDetailPage />);
+
+    expect(await screen.findByText(/leave overlay/i)).toBeInTheDocument();
+    expect(screen.getByText("leave-app-1")).toBeInTheDocument();
+  });
+
+  it("shows the flagged-for-review badge when work_on_leave_flagged is set", async () => {
+    mockDayAndProjections({ ...sampleDay, work_on_leave_flagged: true }, [sampleProjection]);
+    render(<AttendanceDayDetailPage />);
+
+    expect(await screen.findByText(/flagged for leave review/i)).toBeInTheDocument();
   });
 });
