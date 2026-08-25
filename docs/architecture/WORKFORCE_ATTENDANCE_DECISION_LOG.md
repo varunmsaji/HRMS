@@ -1148,6 +1148,139 @@ for whoever builds Leave, not resolved here.
 
 ---
 
+## WD-32 — W10 candidate: five client sign-off change requests — core-hours, break-day and
+late-day cumulative half-day rules, early-departure pre-approval, real `ON_DUTY` status
+
+**Status:** LOCKED (client decisions captured via `docs/business-rules/ATTENDANCE_V1_CLIENT_SIGNOFF.md`,
+sections D/E/F/G/L, reviewed 2026-08-25; the two follow-up questions this entry originally raised —
+the §D3 dropdown/notes contradiction, and PD-ATT-1's rolling-window-vs-consecutive-days ambiguity —
+were put back to the client and both answered 2026-08-25: **§D3 — build it, per the note, dropdown
+disregarded. PD-ATT-1 — rolling window (Option A), matching the late-count shape.** Both resolved
+inline below; nothing in this entry remains guessed.)
+
+**Context:** unlike W1-W9, this entry's trigger is not a task-brief line but a client review pass
+against the existing `ATTENDANCE_V1_CLIENT_SIGNOFF.md` checklist (itself built from
+`docs/modules/attendance/ATTENDANCE_MASTER_RULE_MATRIX.md`'s STORED BUT NOT USED findings). Of 40
+questions answered, 5 were "Change requested" against a documented dormant setting or documented
+gap rather than "Confirmed as proposed." A pre-design read of the actual schema found four of the
+five already have complete or near-complete dormant field support from earlier slices — narrowing
+this the same way WD-29's pre-implementation audit narrowed W7:
+
+- `AttendancePolicyVersion.core_hours_breach_behaviour` (default `FLAG`) exists; `ShiftVersion
+  .core_start`/`.core_end` (Time, nullable) exist. Neither is read anywhere in `calculation.py`.
+- `AttendancePolicyVersion.late_count_window` (default `MONTH`) and `.lates_to_half_day_count`
+  (nullable int) exist. Neither is read anywhere in `calculation.py`.
+- `AttendancePolicyVersion.early_departure_requires_approval` (default `False`) exists. Nothing
+  enforces it — early departure is flagged/classified after the fact only, exactly as
+  `ATTENDANCE_V1_CLIENT_SIGNOFF.md` §G described.
+- `ON_DUTY` is already an accepted `correction_type` on `AttendanceRegularizationRequest`
+  (`schemas.py`), and `AttendancePolicyVersion.on_duty_requires_punch`/`.wfh_uses_shift_hours`
+  exist — but approving an `ON_DUTY` request today falls through to the generic additive-punch
+  path like any other correction type, and `_resolve_primary_status` never produces `"ON_DUTY"`
+  (`calculation.py:1283`'s own comment: "Leave/WFH/ON_DUTY overlays are W4 no-ops").
+- Break-day cumulative counting (decision 2, §E2) is the one item with **no existing field at
+  all** — `excess_break_behaviour` (default `FLAG`) only governs the single-day flag; there is no
+  `excess_break_*_window`/`*_count` pair mirroring the late-count fields.
+
+**Decision:**
+
+1. **Core-hours breach enforcement (§D3).** `core_hours_breach_behaviour` gains real teeth in
+   `calculation.py`'s FLEX evaluation path: when a `ShiftVersion` has both `core_start`/`core_end`
+   set, the day's paired punches are checked for full coverage of `[core_start, core_end]` (using
+   the same gap logic `match_breaks` already uses against punch pairs, not a new interval
+   primitive). A gap inside the core window is a breach; `core_hours_breach_behaviour` controls the
+   outcome — `FLAG` (existing default, informational only, current no-op behaviour becomes a real
+   flag instead of nothing), `HALF_DAY` (forces Half-Day the same way the late-band override in
+   `_resolve_primary_status` already forces one), or `ABSENT`. No new schema. **Confirmed with the
+   client 2026-08-25:** the note ("need to build this") is the operative answer, the dropdown
+   ("Confirmed as proposed") was a misclick — build it.
+
+2. **Cumulative excess-break-days -> Half-Day (§E2).** New fields on `AttendancePolicyVersion`,
+   named and shaped identically to the existing late-count pair: `excess_break_count_window`
+   (`String(10)`, default `MONTH`, same enum as `late_count_window`) and
+   `excess_break_days_to_half_day_count` (`Integer`, nullable, HR-set threshold — mirrors
+   `lates_to_half_day_count`). A new migration adds both columns. Engine behaviour mirrors decision
+   3 below exactly (shared counting helper, see decision 4). **PD-ATT-1, confirmed with the client
+   2026-08-25:** rolling-window occurrence count (Option A) — N is counted the same way
+   `lates_to_half_day_count` counts late days within `late_count_window`, not a consecutive-day
+   streak.
+
+3. **Cumulative late-days -> Half-Day (§F2).** `late_count_window`/`lates_to_half_day_count` wired
+   into `calculation.py`: on each day where chargeable lateness (`late_minutes > 0`, i.e. beyond
+   grace) is detected, count qualifying days for that employee within the trailing window
+   (`MONTH` = calendar month containing the date, mirroring how W7's weekly/monthly OT caps already
+   define their windows — `WD-29` decision 3) up to and including today. Once the count reaches
+   `lates_to_half_day_count`, force `HALF_DAY` on the day that crosses the threshold — same
+   override mechanic `late_classification == "HALF_DAY"` already uses in `_resolve_primary_status`,
+   just a second, independent trigger into the same override point. A day already forced to
+   `HALF_DAY`/`ABSENT` by the existing late-band logic is unaffected (no double-penalty; the
+   counter still increments for window purposes, but the override is a no-op if the status is
+   already at or below Half-Day). Same non-idempotency trade-off WD-29 decision 3 already accepted
+   and the requester already lives with for overtime caps: a day's status can now depend on sibling
+   days' state.
+
+4. **Shared counting mechanism for decisions 2 and 3.** One new repository method,
+   `AttendanceDayRepository.count_flagged_days_in_window(employee_id, flag, window, as_of_date)`,
+   parameterized by which per-day boolean it's counting (late-beyond-grace vs. excess-break-day),
+   rather than two independent implementations — both are "count qualifying days in a trailing
+   window, ending at today" with identical shape. Read at the same point in `calculate()` where the
+   existing daily/weekly/monthly OT cap lookups already run, keeping all cross-day-dependent reads
+   in one place in the pipeline.
+
+5. **Early-departure pre-approval (§G1).** No new approval entity — reuses the existing
+   `AttendanceRegularizationRequest` machinery (chain resolution, self-approval-blocked, `PENDING`/
+   `APPROVED`/`REJECTED`, backdating-window and monthly-limit checks all already built in W6/WD-28)
+   rather than building a second, parallel approval workflow. New `correction_type`:
+   `EARLY_DEPARTURE_APPROVAL`, submittable for a **future or same-day** date (the one exception to
+   W6's backdating-only framing — this is a forward-dated request by nature, e.g. "I need to leave
+   at 16:00 on Friday for an appointment"). When `AttendancePolicyVersion
+   .early_departure_requires_approval=True`: `calculate()` checks for an `APPROVED`
+   `EARLY_DEPARTURE_APPROVAL` request covering the punch date before applying the configured
+   early-departure bands. Found -> early departure evaluated normally against the existing bands
+   (as if pre-cleared). Not found -> the early departure is forced to the harshest configured band
+   outcome (mirrors decisions 1/3's "force worse status" override shape) rather than the graduated
+   bands, since the policy has declared unapproved early exits unacceptable. This gives
+   `requires_pre_approval`-shaped policy fields a real, scoped mechanic — the same class of problem
+   `WD-29`'s `PD-OT-2` left explicitly unresolved for overtime; solved here for early-departure only,
+   not retroactively for OT.
+
+6. **Real `ON_DUTY` attendance status (§L1).** Approving an `ON_DUTY` regularization request no
+   longer falls through to the generic additive-punch path. It creates a durable, date-scoped
+   marker (new `on_duty` boolean + `on_duty_regularization_id` FK pair on `AttendanceDay`, set at
+   approval time, mirroring how `work_on_leave_flagged` already gets set by the leave overlay in
+   W9) that `_resolve_primary_status` checks **before** the punch-based evaluation branch — same
+   precedence slot the leave overlay occupies, i.e. On-Duty is a day-level fact that can override
+   punch-derived status, not a punch-derived classification itself. `on_duty_requires_punch`
+   (existing field) decides which of two modes applies: `False` (default) -> status is `ON_DUTY`
+   outright, `paid_day_fraction=1.00`, no punch evaluation needed (mirrors the full-day-leave
+   short-circuit exactly). `True` -> punches are still evaluated normally and the resulting status
+   stands, but the day is tagged `on_duty=True` for reporting (mirrors `work_on_leave_flagged`'s
+   "keep punch status + flag" shape from WD-31). **WFH (§K) is architecturally identical** — same
+   two fields already exist (`wfh_requires_punch`, `wfh_uses_shift_hours`) — but §K is still "Not
+   yet discussed" per the sign-off record, so this decision scopes `ON_DUTY` only. Extending the
+   identical mechanism to `WFH` once §K is answered is expected to be a small follow-on, not a
+   redesign — flagged here so it isn't re-litigated from scratch later.
+
+**Rejected:** consecutive-days-streak semantics for PD-ATT-1 (decision 2 — client confirmed
+rolling-window, Option A, 2026-08-25); a new standalone approval entity for early-departure
+pre-approval (decision 5 — the existing regularization workflow already has every piece needed:
+chain resolution, self-approval blocking, audit trail); leaving the §D3 dropdown/notes
+contradiction unresolved rather than checking with the client (decision 1 — checked, note
+confirmed as operative, 2026-08-25); building `WFH` alongside `ON_DUTY` now on the assumption the
+client will answer §K the same way as §L (decision 6 — §K is explicitly unanswered; scope stays to
+what was actually confirmed).
+
+**RESOLVED, PD-ATT-1** (was OPEN): rolling-window-occurrence-count vs. consecutive-days-streak
+semantics for §E2's "exceed for more than one day" rule (decision 2). Client confirmed
+2026-08-25: rolling window (Option A), matching the late-count shape.
+
+**OPEN (unchanged, carried from WD-29):** `PD-OT-2` (`requires_pre_approval` for overtime remains
+unenforced) is a sibling problem to decision 5 above, now that early-departure pre-approval has a
+worked design. Whoever picks up `PD-OT-2` next can reuse this entry's decision 5 shape almost
+directly — flagged here as a pointer, not resolved by this entry.
+
+---
+
 ## Divergences index (quick reference) — continued
 
 | Prior source | This log |
@@ -1155,8 +1288,10 @@ for whoever builds Leave, not resolved here.
 | W7 task brief's literal read of "build overtime detection" | WD-29 (already built in W3/W4; W7 scope narrowed to approval/caps/comp-off-fact/SPLIT-fix after audit) |
 | W8 task brief's implicit assumption of a richer `OPEN → CLOSING → CLOSED/LOCKED` lifecycle | WD-30 decision 1 (collapsed to two persisted states; `CLOSING` has no observable code path under synchronous finalization) |
 | Architecture §21's literal "service method, not table sharing" | WD-31 decision 1 (an owned mirror table, since no Leave module exists to expose that service method — explicitly a temporary, replaceable stand-in) |
+| Client sign-off §D3's dropdown ("Confirmed as proposed") vs. its own written note ("need to build this") | WD-32 decision 1 (checked with client 2026-08-25, note confirmed as operative) |
 
 ---
 
 **STOP.** Implementation does not start until the architecture and this log are reviewed and
-explicitly approved.
+explicitly approved. WD-32 is now LOCKED — both follow-up questions (§D3, PD-ATT-1) were answered
+by the client 2026-08-25 — and ready for implementation.
