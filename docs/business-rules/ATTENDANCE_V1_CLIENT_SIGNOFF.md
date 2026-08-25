@@ -128,7 +128,10 @@ This checklist covers **business rules**, not technical implementation. No datab
 ## K. WFH rules
 
 **Question:** Does the client need a distinct "Work From Home" attendance status, separate from Present?
-**Current proposed behaviour:** **Not currently supported.** The system has a placeholder for this status, and a correction-request type named "WFH," but no working day-result is produced yet. If this is required, it should be scoped as a dedicated future build.
+**Current proposed behaviour:** **Not currently supported**, but the equivalent "On-Duty" status (§L) has since been built and confirmed — a real day status, approved in advance through the same correction-request workflow already used for other corrections. WFH would follow the identical pattern: an employee (or their manager) submits a WFH request for a day, it goes through the normal approval chain, and once approved the day is marked "WFH" instead of Present — with a policy switch for whether a punch is still required that day. Because the underlying mechanism already exists and is proven, this would be a small, fast addition rather than a new subsystem — but it still needs an explicit decision before it is built, following the same practice used for every other rule in this document.
+**Follow-up questions, if the client wants this built:**
+  - Should WFH require the employee to still punch in/out (so worked hours are captured), or is approval alone sufficient to mark the day as a full worked day?
+  - Should WFH count toward any of the same caps as on-duty/regularization (e.g., a monthly limit on how many WFH days are allowed)?
 **Client decision:** _______________________
 
 ---
@@ -136,8 +139,8 @@ This checklist covers **business rules**, not technical implementation. No datab
 ## L. On-duty rules
 
 **Question:** Does the client need a distinct "On-Duty" status for field/outdoor work, separate from Present?
-**Current proposed behaviour:** **Not currently supported**, same situation as WFH above.
-**Client decision:** _______________________
+**Current proposed behaviour:** **Built and confirmed** (see decision log WD-32, decision 6, confirmed 2026-08-25). An employee's on-duty request is approved through the existing correction-request workflow; once approved, the day is marked "On-Duty" instead of Present. A policy switch controls whether a punch is still required that day for the status to apply.
+**Client decision:** Confirmed as proposed — implemented.
 
 ---
 
