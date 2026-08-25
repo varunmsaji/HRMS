@@ -113,6 +113,9 @@ export interface AttendanceDay {
   worked_on_holiday: boolean;
   worked_on_weekly_off: boolean;
   work_on_leave_flagged: boolean;
+  is_core_hours_breach: boolean;
+  on_duty: boolean;
+  on_duty_regularization_id: string | null;
 
   paid_day_fraction: string;
   lop_fraction: string;

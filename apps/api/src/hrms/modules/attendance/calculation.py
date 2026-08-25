@@ -113,6 +113,13 @@ class PolicyInputs:
     excess_break_behaviour: str
     incomplete_at_lock_behaviour: str
     work_on_leave_behaviour: str
+    # WD-32 — cumulative-day counters and early-departure/on-duty enforcement. `None` count
+    # means "no cumulative rule configured" (matches `daily_cap_minutes`'s own None-means-
+    # uncapped convention elsewhere in this module).
+    lates_to_half_day_count: int | None = None
+    excess_break_days_to_half_day_count: int | None = None
+    early_departure_requires_approval: bool = False
+    on_duty_requires_punch: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +198,22 @@ class AttendanceCalculationInput:
     # by `service.py` from `LeaveDayProjection` before calling this pure engine, mirroring how
     # the roster overrides above are resolved. Empty list => overlay is a no-op.
     leave_entries: list[LeaveOverlayEntry] = field(default_factory=list)
+    # WD-32 decision 2/3 — count of *prior* qualifying days (late-beyond-grace / excess-break)
+    # for this employee within the policy's trailing counting window, excluding this date itself
+    # (mirrors `OvertimePolicyInputs.remaining_weekly_minutes`'s "sibling-day sum computed by
+    # service.py, combined with this day's own fresh computation inside the pure engine" shape,
+    # WD-29 decision 3). Resolved by `service.py`; 0 when no cumulative rule is configured or
+    # this is the first qualifying day in the window.
+    prior_late_days_in_window: int = 0
+    prior_excess_break_days_in_window: int = 0
+    # WD-32 decision 5 — whether an `APPROVED` `EARLY_DEPARTURE_APPROVAL` regularization request
+    # covers this date, resolved by `service.py`. Only consulted when
+    # `PolicyInputs.early_departure_requires_approval` is True.
+    early_departure_pre_approved: bool = False
+    # WD-32 decision 6 — whether an `APPROVED` `ON_DUTY` regularization request covers this date,
+    # resolved by `service.py`. Mirrors `leave_entries`: an empty/False value makes the overlay a
+    # complete no-op.
+    on_duty_approved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +276,14 @@ class AttendanceCalculationResult:
     # is kept as-is and this flag tells Leave the application may need cancelling (§19.3).
     # Attendance never writes the leave ledger itself.
     work_on_leave_flagged: bool = False
+    # WD-32 decision 1 — set whenever a FLEX shift's core hours are breached and
+    # `core_hours_breach_behaviour != IGNORE` (independent of whether the breach also forced a
+    # HALF_DAY/ABSENT status override).
+    is_core_hours_breach: bool = False
+    # WD-32 decision 6 — set only under `on_duty_requires_punch=True` ("keep punch status +
+    # flag" mode, mirroring `work_on_leave_flagged`'s own shape); the `on_duty_requires_punch
+    # =False` short-circuit path sets `attendance_status="ON_DUTY"` directly instead.
+    is_on_duty_flagged: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +659,18 @@ def lookup_band(value: int, bands: list[BandData]) -> str | None:
     return None
 
 
+_EARLY_BAND_SEVERITY = {"NONE": 0, "EARLY_DEPARTURE": 1, "HALF_DAY": 2, "ABSENT": 3}
+
+
+def _harshest_band_classification(bands: list[BandData]) -> str | None:
+    """WD-32 decision 5 — the most severe classification among a policy's *configured*
+    early-departure bands, used to force an unapproved-but-required early departure to the worst
+    outcome the policy actually set up — never invents a severity the policy didn't configure."""
+    if not bands:
+        return None
+    return max((b.classification for b in bands), key=lambda c: _EARLY_BAND_SEVERITY.get(c, 0))
+
+
 # ---------------------------------------------------------------------------
 # Overtime (§12)
 # ---------------------------------------------------------------------------
@@ -741,7 +784,12 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     # `missing_shift_behaviour` and get misread as an unresolved-shift config problem.
     if inputs.roster_week_off_override and not inputs.punches:
         return _apply_leave_overlay(
-            _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override"),
+            _apply_on_duty_overlay(
+                _terminal_result(
+                    "NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override"
+                ),
+                inputs,
+            ),
             inputs,
         )
 
@@ -753,10 +801,15 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
         if not inputs.punches:
             status = "ABSENT" if behaviour == "ABSENT" else "INCOMPLETE"
             return _apply_leave_overlay(
-                _terminal_result(status, inputs, snapshot, reason="missing_shift"), inputs
+                _apply_on_duty_overlay(
+                    _terminal_result(status, inputs, snapshot, reason="missing_shift"), inputs
+                ),
+                inputs,
             )
         # Punches exist despite no shift — evaluate presence with no schedule to compare against.
-        return _apply_leave_overlay(_evaluate_no_schedule(inputs, snapshot), inputs)
+        return _apply_leave_overlay(
+            _apply_on_duty_overlay(_evaluate_no_schedule(inputs, snapshot), inputs), inputs
+        )
 
     day_type = inputs.calendar_day_type
     # W5: roster overrides extend §19.1 step 8 without ever touching `calendar_day_type`
@@ -782,8 +835,11 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     # §19.1 step 8 — not expected + shift does not operate + no punches => NOT_EXPECTED
     if not_expected and not shift_operates and not collapsed:
         return _apply_leave_overlay(
-            _terminal_result(
-                "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
+            _apply_on_duty_overlay(
+                _terminal_result(
+                    "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
+                ),
+                inputs,
             ),
             inputs,
         )
@@ -799,7 +855,7 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     else:
         result = _evaluate_fixed_or_flex(inputs, pairing, snapshot, day_type, not_expected)
 
-    return _apply_leave_overlay(result, inputs)
+    return _apply_leave_overlay(_apply_on_duty_overlay(result, inputs), inputs)
 
 
 def _apply_leave_overlay(
@@ -876,6 +932,42 @@ def _apply_leave_overlay(
         paid_day_fraction=str((paid_from_leave + work_paid).quantize(Decimal("0.01"))),
         lop_fraction=str((lop_from_leave + work_lop).quantize(Decimal("0.01"))),
         work_on_leave_flagged=False,
+    )
+
+
+def _apply_on_duty_overlay(
+    result: AttendanceCalculationResult, inputs: AttendanceCalculationInput
+) -> AttendanceCalculationResult:
+    """WD-32 decision 6 — real `ON_DUTY` status, applied once the punch-derived outcome is known,
+    in the exact same precedence slot `_apply_leave_overlay` occupies (`evaluate_day` calls this
+    first, then wraps the result in `_apply_leave_overlay` — an active leave entry still wins
+    outright per §19.4 if both somehow cover the same date, mirroring how leave already outranks
+    every other overlay).
+
+    `on_duty_requires_punch=False` (the default) short-circuits straight to `ON_DUTY`, full paid
+    day, no punch evaluation needed — the exact shape of the full-day-leave short-circuit in
+    `_apply_leave_overlay`. `on_duty_requires_punch=True` keeps the punch-derived status and only
+    raises `is_on_duty_flagged` for reporting — the exact shape of `work_on_leave_flagged`'s
+    "keep punch status + flag" mode."""
+    if not inputs.on_duty_approved:
+        return result
+    if result.attendance_status in ("NOT_JOINED", "EXITED", "CONFIG_ERROR"):
+        return result
+    requires_punch = inputs.policy.on_duty_requires_punch if inputs.policy else False
+    if requires_punch:
+        return replace(result, is_on_duty_flagged=True)
+    return replace(
+        result,
+        attendance_status="ON_DUTY",
+        late_minutes=0,
+        late_classification=None,
+        early_departure_minutes=0,
+        early_departure_classification=None,
+        is_late=False,
+        is_early_out=False,
+        paid_day_fraction="1.00",
+        lop_fraction="0.00",
+        is_on_duty_flagged=False,
     )
 
 
@@ -984,6 +1076,32 @@ def _evaluate_no_schedule(
     )
 
 
+def _core_hours_breached(
+    *,
+    first_in: datetime | None,
+    last_out: datetime | None,
+    gaps: list[tuple[datetime, datetime]],
+    core_start: time,
+    core_end: time,
+    attendance_date: date,
+    tz_name: str,
+) -> bool:
+    """WD-32 decision 1 — block-level check (the same "not further sub-analysed" precedent this
+    module's docstring already sets for SPLIT duty blocks, applied here to core hours): breached
+    if presence doesn't fully span `[core_start, core_end]`, or a punch gap falls inside it. Not
+    minute-by-minute beyond that."""
+    if first_in is None or last_out is None:
+        return True
+    tz = ZoneInfo(tz_name)
+    core_start_utc = _local_to_utc(attendance_date, core_start, tz)
+    core_end_utc = _local_to_utc(attendance_date, core_end, tz)
+    if core_end_utc <= core_start_utc:
+        core_end_utc = core_end_utc + timedelta(days=1)
+    if first_in > core_start_utc or last_out < core_end_utc:
+        return True
+    return any(gap_start < core_end_utc and gap_end > core_start_utc for gap_start, gap_end in gaps)
+
+
 def _evaluate_fixed_or_flex(
     inputs: AttendanceCalculationInput,
     pairing: PairingResult,
@@ -1036,6 +1154,61 @@ def _evaluate_fixed_or_flex(
         early_minutes = max(0, early_raw - policy.grace_out_minutes)
         if early_minutes > 0:
             early_classification = lookup_band(early_minutes, inputs.early_bands)
+            # WD-32 decision 5 — an early departure beyond grace with no matching APPROVED
+            # `EARLY_DEPARTURE_APPROVAL` request on file is forced to the harshest *configured*
+            # band (mirrors decisions 1/3's "force the worse status" override shape) rather than
+            # the graduated bands the raw minutes would otherwise select — the policy has
+            # declared unapproved early exits unacceptable, not merely worth flagging.
+            if policy.early_departure_requires_approval and not inputs.early_departure_pre_approved:
+                harshest = _harshest_band_classification(inputs.early_bands)
+                if harshest is not None:
+                    early_classification = harshest
+
+    # WD-32 decision 1 — FLEX-only core-hours breach (§11.8: core hours is a flexible-shift
+    # concept; FIXED shifts have no window to breach). `IGNORE` computes nothing extra, matching
+    # its name; `FLAG`/`HALF_DAY`/`ABSENT` all set `is_core_hours_breach` for reporting, and only
+    # the latter two also override the resolved status (same override shape late/early already
+    # use).
+    is_core_hours_breach = False
+    core_hours_status_override: str | None = None
+    if (
+        shift.shift_type == "FLEXIBLE"
+        and shift.core_start is not None
+        and shift.core_end is not None
+        and policy.core_hours_breach_behaviour != "IGNORE"
+    ):
+        is_core_hours_breach = _core_hours_breached(
+            first_in=first_in,
+            last_out=last_out,
+            gaps=gaps,
+            core_start=shift.core_start,
+            core_end=shift.core_end,
+            attendance_date=inputs.attendance_date,
+            tz_name=inputs.timezone,
+        )
+        if is_core_hours_breach and policy.core_hours_breach_behaviour in ("HALF_DAY", "ABSENT"):
+            core_hours_status_override = policy.core_hours_breach_behaviour
+
+    # WD-32 decisions 2/3/4 — cumulative-day counters. Each counts this day (if it itself
+    # qualifies) plus `service.py`'s pre-computed sibling-day sum for the trailing window; once
+    # the HR-set threshold is met or crossed, the day is forced to HALF_DAY — same override shape
+    # as the late/early bands, just a second, independent trigger into the same override point
+    # (WD-29 decision 3's sibling-day-dependency trade-off applies here identically: a day's
+    # status can depend on sibling days' state, accepted and documented, not a silent gap).
+    cumulative_status_override: str | None = None
+    if (
+        policy.lates_to_half_day_count is not None
+        and late_minutes > 0
+        and (inputs.prior_late_days_in_window + 1) >= policy.lates_to_half_day_count
+    ):
+        cumulative_status_override = "HALF_DAY"
+    if (
+        policy.excess_break_days_to_half_day_count is not None
+        and excess_minutes > 0
+        and (inputs.prior_excess_break_days_in_window + 1)
+        >= policy.excess_break_days_to_half_day_count
+    ):
+        cumulative_status_override = "HALF_DAY"
 
     hour_band_status = lookup_band(worked_minutes, inputs.hour_bands) if worked_minutes else None
 
@@ -1048,6 +1221,8 @@ def _evaluate_fixed_or_flex(
         hour_band_status=hour_band_status,
         late_classification=late_classification,
         early_classification=early_classification,
+        core_hours_status_override=core_hours_status_override,
+        cumulative_status_override=cumulative_status_override,
     )
 
     worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
@@ -1124,6 +1299,7 @@ def _evaluate_fixed_or_flex(
         comp_off_minutes_earned=comp_off_minutes,
         ot_day_class=ot_day_class,
         snapshot=snapshot,
+        is_core_hours_breach=is_core_hours_breach,
     )
 
 
@@ -1278,9 +1454,17 @@ def _resolve_primary_status(
     hour_band_status: str | None,
     late_classification: str | None,
     early_classification: str | None,
+    core_hours_status_override: str | None = None,
+    cumulative_status_override: str | None = None,
 ) -> str:
     """§19.4 overlay precedence, collapsed to the punch-derived tier (NOT_JOINED/EXITED/
-    NOT_EXPECTED already ruled out by the caller; Leave/WFH/ON_DUTY overlays are W4 no-ops).
+    NOT_EXPECTED already ruled out by the caller; Leave and ON_DUTY are separate overlays applied
+    by the caller after this function returns — WFH remains a no-op, WD-32 scoped `ON_DUTY` only).
+
+    `core_hours_status_override`/`cumulative_status_override` (WD-32 decisions 1/2/3) are two more
+    independent triggers into the exact same override point late/early classifications already
+    use below — any one of the four can force HALF_DAY (or, for core-hours, ABSENT); none of them
+    interact with or suppress each other.
 
     §11.5: "ABSENT is harsh and must be an explicit policy choice" — a zero-punch expected
     working day therefore defaults to `INCOMPLETE` (the documented default for
@@ -1306,9 +1490,18 @@ def _resolve_primary_status(
     else:
         status = "PRESENT"
 
-    if late_classification == "ABSENT" or early_classification == "ABSENT":
+    if (
+        late_classification == "ABSENT"
+        or early_classification == "ABSENT"
+        or core_hours_status_override == "ABSENT"
+    ):
         return "ABSENT"
-    if late_classification == "HALF_DAY" or early_classification == "HALF_DAY":
+    if (
+        late_classification == "HALF_DAY"
+        or early_classification == "HALF_DAY"
+        or core_hours_status_override == "HALF_DAY"
+        or cumulative_status_override == "HALF_DAY"
+    ):
         return "HALF_DAY"
 
     return status

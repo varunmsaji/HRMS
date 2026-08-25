@@ -105,6 +105,8 @@ export interface AttendancePolicyVersion {
   late_count_window: "MONTH";
   lates_to_half_day_count: number | null;
   early_departure_requires_approval: boolean;
+  excess_break_count_window: "MONTH";
+  excess_break_days_to_half_day_count: number | null;
   incomplete_at_lock_behaviour: (typeof INCOMPLETE_AT_LOCK_BEHAVIOURS)[number];
 
   hour_bands: AttendancePolicyHourBand[];

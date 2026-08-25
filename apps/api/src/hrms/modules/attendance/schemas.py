@@ -69,6 +69,9 @@ _REGULARIZATION_TYPES = (
     "ON_DUTY",
     "EXCESS_BREAK",
     "FULL_DAY",
+    # WD-32 decision 5 — the one type that is forward-dated by nature; see
+    # `RegularizationRequestService.submit`'s future-date carve-out.
+    "EARLY_DEPARTURE_APPROVAL",
 )
 
 _POLICY_RESOLUTION_KINDS = ("ATTENDANCE_POLICY", "OVERTIME_POLICY", "REGULARIZATION_POLICY")
@@ -353,6 +356,8 @@ class AttendancePolicyVersionCreate(BaseModel):
     late_count_window: str = "MONTH"
     lates_to_half_day_count: int | None = Field(default=None, gt=0)
     early_departure_requires_approval: bool = False
+    excess_break_count_window: str = "MONTH"
+    excess_break_days_to_half_day_count: int | None = Field(default=None, gt=0)
     incomplete_at_lock_behaviour: str = "TREAT_ABSENT"
 
     hour_bands: list[AttendancePolicyHourBandInput] = Field(default_factory=list)
@@ -390,6 +395,9 @@ class AttendancePolicyVersionCreate(BaseModel):
         )
         _check_choice("late_count_window", self.late_count_window, _LATE_COUNT_WINDOWS)
         _check_choice(
+            "excess_break_count_window", self.excess_break_count_window, _LATE_COUNT_WINDOWS
+        )
+        _check_choice(
             "incomplete_at_lock_behaviour",
             self.incomplete_at_lock_behaviour,
             _INCOMPLETE_AT_LOCK_BEHAVIOURS,
@@ -426,6 +434,8 @@ class AttendancePolicyVersionUpdate(BaseModel):
     late_count_window: str | None = None
     lates_to_half_day_count: int | None = Field(default=None, gt=0)
     early_departure_requires_approval: bool | None = None
+    excess_break_count_window: str | None = None
+    excess_break_days_to_half_day_count: int | None = Field(default=None, gt=0)
     incomplete_at_lock_behaviour: str | None = None
 
     hour_bands: list[AttendancePolicyHourBandInput] | None = None
@@ -460,6 +470,9 @@ class AttendancePolicyVersionUpdate(BaseModel):
             "excess_break_behaviour", self.excess_break_behaviour, _EXCESS_BREAK_BEHAVIOURS
         )
         _check_choice("late_count_window", self.late_count_window, _LATE_COUNT_WINDOWS)
+        _check_choice(
+            "excess_break_count_window", self.excess_break_count_window, _LATE_COUNT_WINDOWS
+        )
         _check_choice(
             "incomplete_at_lock_behaviour",
             self.incomplete_at_lock_behaviour,
@@ -509,6 +522,8 @@ class AttendancePolicyVersionRead(BaseModel):
     late_count_window: str
     lates_to_half_day_count: int | None
     early_departure_requires_approval: bool
+    excess_break_count_window: str
+    excess_break_days_to_half_day_count: int | None
     incomplete_at_lock_behaviour: str
 
     hour_bands: list[AttendancePolicyHourBandRead]
@@ -561,6 +576,8 @@ def attendance_policy_version_to_read(
         late_count_window=row.late_count_window,
         lates_to_half_day_count=row.lates_to_half_day_count,
         early_departure_requires_approval=row.early_departure_requires_approval,
+        excess_break_count_window=row.excess_break_count_window,
+        excess_break_days_to_half_day_count=row.excess_break_days_to_half_day_count,
         incomplete_at_lock_behaviour=row.incomplete_at_lock_behaviour,
         hour_bands=[hour_band_to_read(b) for b in hour_bands],
         late_bands=[late_band_to_read(b) for b in late_bands],
@@ -1332,6 +1349,9 @@ class AttendanceDayRead(BaseModel):
     worked_on_holiday: bool
     worked_on_weekly_off: bool
     work_on_leave_flagged: bool
+    is_core_hours_breach: bool
+    on_duty: bool
+    on_duty_regularization_id: UUID | None
 
     paid_day_fraction: str
     lop_fraction: str
@@ -1398,6 +1418,9 @@ def attendance_day_to_read(
         worked_on_holiday=row.worked_on_holiday,
         worked_on_weekly_off=row.worked_on_weekly_off,
         work_on_leave_flagged=row.work_on_leave_flagged,
+        is_core_hours_breach=row.is_core_hours_breach,
+        on_duty=row.on_duty,
+        on_duty_regularization_id=row.on_duty_regularization_id,
         paid_day_fraction=str(row.paid_day_fraction),
         lop_fraction=str(row.lop_fraction),
         ot_minutes_detected=row.ot_minutes_detected,

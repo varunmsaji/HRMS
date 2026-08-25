@@ -1055,6 +1055,76 @@ async def test_wrong_shift_applies_via_roster(
         await _cleanup_scoped_users()
 
 
+async def test_on_duty_approval_produces_on_duty_status(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """WD-32 decision 6 — approving an `ON_DUTY` request produces a real `ON_DUTY` status
+    outright, overriding whatever the attached punches alone would have computed (not the
+    pre-WD-32 no-op fall-through where the day was just left as its punch-derived status).
+    `requested_punches` is required at submission (WD-28 decision 2, pre-existing, applies to
+    every correction type) — here only 2 hours, on-site with a client, which alone would land in
+    the wired policy's ABSENT band (0-239 min), demonstrating the overlay genuinely overrides
+    that rather than merely coinciding with an already-Present day."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        await _create_regularization_policy(
+            client, headers, allowed_types=["ON_DUTY"], approval_chain="HR"
+        )
+
+        created = await client.post(
+            "/v1/regularizations",
+            headers=headers,
+            json={
+                "employee_id": employee_id,
+                "attendance_date": "2026-08-10",
+                "request_type": "ON_DUTY",
+                "reason": "Client site visit",
+                "requested_punches": [
+                    {"direction": "IN", "requested_time": "2026-08-10T11:00:00Z"},
+                    {"direction": "OUT", "requested_time": "2026-08-10T13:00:00Z"},
+                ],
+            },
+        )
+        assert created.status_code == 201, created.text
+        request = created.json()["data"]
+
+        from hrms.modules.attendance.permissions import ATTENDANCE_REGULARIZATION_APPROVE
+
+        hr_headers, _ = await _create_permission_scoped_user(
+            company_id=company_id, permission_codes=[ATTENDANCE_REGULARIZATION_APPROVE]
+        )
+        approved = await client.post(
+            f"/v1/regularizations/{request['id']}/approve",
+            headers={**hr_headers, "If-Match": str(request["version"])},
+            json={},
+        )
+        assert approved.status_code == 200, approved.text
+        day = await client.get(
+            f"/v1/attendance/days/{approved.json()['data']['attendance_day_id']}", headers=headers
+        )
+        day_data = day.json()["data"]
+        assert day_data["attendance_status"] == "ON_DUTY"
+        assert day_data["on_duty"] is True
+        assert day_data["on_duty_regularization_id"] == request["id"]
+        assert day_data["paid_day_fraction"] == "1.00"
+
+        # Re-verify the overlay is re-resolved on a later recompute, not a one-time write —
+        # a subsequent punch-triggered recalculation must still see the approved request.
+        recompute = await client.post(
+            f"/v1/attendance/days/{approved.json()['data']['attendance_day_id']}/recompute",
+            headers=headers,
+        )
+        assert recompute.status_code == 200, recompute.text
+        assert recompute.json()["data"]["attendance_status"] == "ON_DUTY"
+    finally:
+        await _cleanup_regularization(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
 async def test_locked_day_blocks_new_request(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:

@@ -133,6 +133,12 @@ class AttendancePolicyVersion(Base, TimestampMixin):
     lates_to_half_day_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     early_departure_requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Cumulative excess-break-day counter (WD-32 decision 2) — same shape as the late counter
+    # above; no prior field existed for this (unlike core-hours/late-count/early-approval, which
+    # all had dormant fields from earlier slices).
+    excess_break_count_window: Mapped[str] = mapped_column(String(10), default="MONTH")
+    excess_break_days_to_half_day_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Lock-time default for still-INCOMPLETE days (§11.4)
     incomplete_at_lock_behaviour: Mapped[str] = mapped_column(String(20), default="TREAT_ABSENT")
 
@@ -546,6 +552,25 @@ class AttendanceDay(Base, TimestampMixin):
     # to see and decide whether to cancel the leave application — Attendance never writes the
     # leave ledger itself (architecture §21).
     work_on_leave_flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # WD-32 decision 6 — real ON_DUTY status. Set inside `calculate()` from an approved
+    # `ON_DUTY`-type `AttendanceRegularizationRequest` covering this date — a derived fact
+    # re-resolved on every recompute (mirrors `work_on_leave_flagged` above), not something the
+    # regularization approval step writes directly. `on_duty_regularization_id` is provenance
+    # only (which request produced this), same spirit as the version-FK snapshot fields above.
+    on_duty: Mapped[bool] = mapped_column(Boolean, default=False)
+    on_duty_regularization_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("attendance_regularization_request.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # WD-32 decision 1 — core-hours breach (FLEX shifts only). Mirrors `work_on_leave_flagged`'s
+    # shape: a derived, re-resolved-on-every-recompute fact, set whenever
+    # `AttendancePolicyVersion.core_hours_breach_behaviour` is not `IGNORE` and the punches don't
+    # fully cover `ShiftVersion.core_start`-`core_end`. Independent of whether the breach also
+    # forced a status override (`HALF_DAY`/`ABSENT`) — `FLAG` sets this with no status change.
+    is_core_hours_breach: Mapped[bool] = mapped_column(Boolean, default=False)
 
     paid_day_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
     lop_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))

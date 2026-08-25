@@ -1107,6 +1107,38 @@ class AttendanceDayRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def count_flagged_days_in_window(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        flag: str,  # "LATE" | "EXCESS_BREAK"
+        window_start: date,
+        window_end: date,
+    ) -> int:
+        """WD-32 decisions 2/3/4 — one shared counter for both cumulative-half-day rules
+        (repeated lateness, repeated excess-break days), parameterized by which per-day signal
+        it's counting rather than two near-identical queries. `window_end` is inclusive; the
+        caller passes the day *before* the date being recomputed (mirrors
+        `OvertimeRecordRepository.sum_minutes_detected_for_range`'s own exclude-today shape) so
+        this day's own fresh computation, done by the pure engine, is never double-counted."""
+        condition = (
+            AttendanceDay.is_late if flag == "LATE" else AttendanceDay.excess_break_minutes > 0
+        )
+        stmt = (
+            select(func.count())
+            .select_from(AttendanceDay)
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.employee_id == employee_id,
+                AttendanceDay.attendance_date >= window_start,
+                AttendanceDay.attendance_date <= window_end,
+                condition,
+            )
+        )
+        return (await session.execute(stmt)).scalar_one()
+
     async def set_pending_approval(
         self,
         session: AsyncSession,
@@ -1297,13 +1329,36 @@ class AttendanceRegularizationRequestRepository:
         employee_id: UUID,
         attendance_date: date,
     ) -> AttendanceRegularizationRequest | None:
-        """"Active" = `SUBMITTED` — the DB-level backstop for
+        """ "Active" = `SUBMITTED` — the DB-level backstop for
         `RegularizationDuplicateActiveRequestError` mirrors the partial unique index."""
         stmt = select(AttendanceRegularizationRequest).where(
             AttendanceRegularizationRequest.company_id == company_id,
             AttendanceRegularizationRequest.employee_id == employee_id,
             AttendanceRegularizationRequest.attendance_date == attendance_date,
             AttendanceRegularizationRequest.status == "SUBMITTED",
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_approved_for_date_and_type(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        attendance_date: date,
+        request_type: str,
+    ) -> AttendanceRegularizationRequest | None:
+        """WD-32 decisions 5/6 — looks up an `APPROVED` request of a specific type covering this
+        date. Consulted fresh on every `calculate()` call from `service.py`
+        (`ON_DUTY`/`EARLY_DEPARTURE_APPROVAL`), the same "re-resolved every recompute, never
+        cached on the day row's inputs" posture leave projections and roster overrides already
+        use."""
+        stmt = select(AttendanceRegularizationRequest).where(
+            AttendanceRegularizationRequest.company_id == company_id,
+            AttendanceRegularizationRequest.employee_id == employee_id,
+            AttendanceRegularizationRequest.attendance_date == attendance_date,
+            AttendanceRegularizationRequest.request_type == request_type,
+            AttendanceRegularizationRequest.status == "APPROVED",
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
@@ -1343,9 +1398,7 @@ class AttendanceRegularizationRequestRepository:
         if visible_employee_ids is not None:
             if not visible_employee_ids:
                 return []
-            conditions.append(
-                AttendanceRegularizationRequest.employee_id.in_(visible_employee_ids)
-            )
+            conditions.append(AttendanceRegularizationRequest.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(AttendanceRegularizationRequest.employee_id == employee_id)
         if date_from is not None:

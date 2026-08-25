@@ -393,6 +393,8 @@ class AttendanceService:
                 "late_count_window": body.late_count_window,
                 "lates_to_half_day_count": body.lates_to_half_day_count,
                 "early_departure_requires_approval": body.early_departure_requires_approval,
+                "excess_break_count_window": body.excess_break_count_window,
+                "excess_break_days_to_half_day_count": body.excess_break_days_to_half_day_count,
                 "incomplete_at_lock_behaviour": body.incomplete_at_lock_behaviour,
                 "publish_reason": None,
                 "published_at": None,
@@ -2418,6 +2420,7 @@ class AttendanceDayService:
         self._punch_repo = PunchRepository()
         self._roster_repo = ShiftRosterRepository()
         self._leave_repo = LeaveDayProjectionRepository()
+        self._regularization_repo = AttendanceRegularizationRequestRepository()
         self._resolution = PolicyResolutionService(session)
         self._audit = AuditService()
 
@@ -2662,6 +2665,7 @@ class AttendanceDayService:
             "attendance_policy_version_id": resolved_refs["attendance_policy_version_id"],
             "overtime_policy_version_id": resolved_refs["overtime_policy_version_id"],
             "regularization_policy_version_id": resolved_refs["regularization_policy_version_id"],
+            "on_duty_regularization_id": resolved_refs["on_duty_regularization_id"],
             "calendar_day_type": result.calendar_day_type,
             "holiday_name": result.holiday_name,
             "holiday_on_weekly_off": result.holiday_on_weekly_off,
@@ -2689,6 +2693,8 @@ class AttendanceDayService:
             "worked_on_holiday": result.worked_on_holiday,
             "worked_on_weekly_off": result.worked_on_weekly_off,
             "work_on_leave_flagged": result.work_on_leave_flagged,
+            "is_core_hours_breach": result.is_core_hours_breach,
+            "on_duty": result.attendance_status == "ON_DUTY" or result.is_on_duty_flagged,
             "paid_day_fraction": Decimal(result.paid_day_fraction),
             "lop_fraction": Decimal(result.lop_fraction),
             "ot_minutes_detected": result.ot_minutes_detected,
@@ -2863,6 +2869,11 @@ class AttendanceDayService:
         hour_bands: list[calc.BandData] = []
         late_bands: list[calc.BandData] = []
         early_bands: list[calc.BandData] = []
+        # WD-32 decisions 2/3 — sibling-day counts for the trailing window, excluding this date
+        # (same "prior sum computed here, combined with this day's own fresh computation inside
+        # the pure engine" shape as W7's weekly/monthly OT caps, WD-29 decision 3).
+        prior_late_days_in_window = 0
+        prior_excess_break_days_in_window = 0
         if (
             not attendance_resolution.config_incomplete
             and attendance_resolution.resolved_policy_id is not None
@@ -2893,6 +2904,12 @@ class AttendanceDayService:
                     excess_break_behaviour=version.excess_break_behaviour,
                     incomplete_at_lock_behaviour=version.incomplete_at_lock_behaviour,
                     work_on_leave_behaviour=version.work_on_leave_behaviour,
+                    lates_to_half_day_count=version.lates_to_half_day_count,
+                    excess_break_days_to_half_day_count=(
+                        version.excess_break_days_to_half_day_count
+                    ),
+                    early_departure_requires_approval=version.early_departure_requires_approval,
+                    on_duty_requires_punch=version.on_duty_requires_punch,
                 )
                 hour_bands = [
                     calc.BandData(
@@ -2924,6 +2941,42 @@ class AttendanceDayService:
                         self._session, company_id=company_id, policy_version_id=version.id
                     )
                 ]
+
+                # WD-32 decisions 2/3/4 — only queried when the corresponding threshold is
+                # actually configured; `late_count_window`/`excess_break_count_window` both only
+                # support `MONTH` today (schemas.py `_LATE_COUNT_WINDOWS`), so the boundary is
+                # the calendar month containing `target_date`, mirroring the OT monthly cap's own
+                # `month_start`/`month_end` computation below.
+                month_start = target_date.replace(day=1)
+                month_end = (
+                    date(target_date.year, 12, 31)
+                    if target_date.month == 12
+                    else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
+                )
+                window_end = target_date - timedelta(days=1)
+                if version.lates_to_half_day_count is not None and window_end >= month_start:
+                    prior_late_days_in_window = await self._day_repo.count_flagged_days_in_window(
+                        self._session,
+                        company_id=company_id,
+                        employee_id=employee_id,
+                        flag="LATE",
+                        window_start=month_start,
+                        window_end=window_end,
+                    )
+                if (
+                    version.excess_break_days_to_half_day_count is not None
+                    and window_end >= month_start
+                ):
+                    prior_excess_break_days_in_window = (
+                        await self._day_repo.count_flagged_days_in_window(
+                            self._session,
+                            company_id=company_id,
+                            employee_id=employee_id,
+                            flag="EXCESS_BREAK",
+                            window_start=month_start,
+                            window_end=window_end,
+                        )
+                    )
 
         overtime_resolution = await self._resolution.resolve(
             company_id, "OVERTIME_POLICY", employee_id=employee_id, target_date=target_date
@@ -3038,6 +3091,27 @@ class AttendanceDayService:
             )
         ]
 
+        # WD-32 decisions 5/6 — resolved fresh on every calculate() call, exactly like the leave
+        # entries above (never cached on the regularization request row itself).
+        early_departure_approval_request = (
+            await self._regularization_repo.get_approved_for_date_and_type(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                attendance_date=target_date,
+                request_type="EARLY_DEPARTURE_APPROVAL",
+            )
+        )
+        early_departure_pre_approved = early_departure_approval_request is not None
+        on_duty_request = await self._regularization_repo.get_approved_for_date_and_type(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            attendance_date=target_date,
+            request_type="ON_DUTY",
+        )
+        on_duty_approved = on_duty_request is not None
+
         calc_input = calc.AttendanceCalculationInput(
             employee_id=employee_id,
             attendance_date=target_date,
@@ -3058,6 +3132,10 @@ class AttendanceDayService:
             roster_week_off_override=roster_week_off_override,
             roster_holiday_working_override=roster_holiday_working_override,
             leave_entries=leave_entries,
+            prior_late_days_in_window=prior_late_days_in_window,
+            prior_excess_break_days_in_window=prior_excess_break_days_in_window,
+            early_departure_pre_approved=early_departure_pre_approved,
+            on_duty_approved=on_duty_approved,
         )
         resolved_refs: dict[str, UUID | None] = {
             "shift_id": shift_id,
@@ -3066,6 +3144,7 @@ class AttendanceDayService:
             "attendance_policy_version_id": attendance_policy_version_id,
             "overtime_policy_version_id": overtime_policy_version_id,
             "regularization_policy_version_id": regularization_policy_version_id,
+            "on_duty_regularization_id": on_duty_request.id if on_duty_request else None,
         }
         return calc_input, resolved_refs, ot_version, ot_rate_rows
 
@@ -3414,7 +3493,11 @@ class RegularizationRequestService:
         # request for a date that has no `AttendanceDay` row at all yet.
         await _ensure_date_open(self._session, company_id, body.attendance_date)
 
-        if body.attendance_date > date.today():
+        # WD-32 decision 5 — `EARLY_DEPARTURE_APPROVAL` is the one correction type that is
+        # forward-dated by nature ("I need to leave early on Friday"), not a backdated
+        # correction to something that already happened. Every other type keeps the existing
+        # future-date rejection.
+        if body.attendance_date > date.today() and body.request_type != "EARLY_DEPARTURE_APPROVAL":
             raise ValidationError("attendance_date cannot be in the future")
 
         resolution = await self._resolution.resolve(

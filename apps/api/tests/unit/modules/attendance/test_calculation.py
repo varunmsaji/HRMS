@@ -789,3 +789,266 @@ def test_evaluate_day_split_shift_no_overtime_policy_detects_nothing() -> None:
     assert result.is_overtime is False
     assert result.ot_minutes_detected == 0
     assert result.ot_day_class is None
+
+
+# ---------------------------------------------------------------------------
+# WD-32 — core-hours breach (decision 1)
+# ---------------------------------------------------------------------------
+
+
+def test_core_hours_breach_half_day_forces_status() -> None:
+    """FLEX shift, core hours 11:00-16:00 UTC; employee leaves at 13:00, well before core_end —
+    a breach, and `core_hours_breach_behaviour=HALF_DAY` forces the day to Half-Day even though
+    hours worked alone would say Present."""
+    shift = _shift(shift_type="FLEXIBLE", core_start=time(11, 0), core_end=time(16, 0))
+    policy = _policy(core_hours_breach_behaviour="HALF_DAY")
+    punches = [_punch(9, 0, "IN", day=10), _punch(13, 0, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            policy=policy,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 9, 0, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 18, 0, tzinfo=UTC),
+        )
+    )
+    assert result.is_core_hours_breach is True
+    assert result.attendance_status == "HALF_DAY"
+
+
+def test_core_hours_breach_flag_only_no_status_change() -> None:
+    """Same breach, but the default `FLAG` behaviour only records the fact — status is
+    unaffected."""
+    shift = _shift(shift_type="FLEXIBLE", core_start=time(11, 0), core_end=time(16, 0))
+    policy = _policy(core_hours_breach_behaviour="FLAG")
+    punches = [_punch(9, 0, "IN", day=10), _punch(13, 0, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            policy=policy,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 9, 0, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 18, 0, tzinfo=UTC),
+        )
+    )
+    assert result.is_core_hours_breach is True
+    assert result.attendance_status == "PRESENT"
+
+
+def test_core_hours_no_breach_when_fully_covered() -> None:
+    """Presence spans the whole core window — no breach, regardless of behaviour."""
+    shift = _shift(shift_type="FLEXIBLE", core_start=time(11, 0), core_end=time(16, 0))
+    policy = _policy(core_hours_breach_behaviour="HALF_DAY")
+    punches = [_punch(9, 0, "IN", day=10), _punch(18, 0, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            policy=policy,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 9, 0, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 18, 0, tzinfo=UTC),
+        )
+    )
+    assert result.is_core_hours_breach is False
+    assert result.attendance_status == "PRESENT"
+
+
+def test_core_hours_ignored_on_fixed_shift() -> None:
+    """§11.8: core hours is a FLEX-only concept — a FIXED shift with core_start/core_end set
+    (should never happen via the API, but the engine must not misbehave) is simply not checked."""
+    shift = _shift(shift_type="FIXED", core_start=time(11, 0), core_end=time(16, 0))
+    policy = _policy(core_hours_breach_behaviour="HALF_DAY")
+    punches = [_punch(9, 0, "IN", day=10), _punch(13, 0, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            policy=policy,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 9, 0, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 18, 0, tzinfo=UTC),
+        )
+    )
+    assert result.is_core_hours_breach is False
+
+
+# ---------------------------------------------------------------------------
+# WD-32 — cumulative repeated-lateness (decision 3) and excess-break-days (decision 2)
+# ---------------------------------------------------------------------------
+
+
+def test_cumulative_lateness_forces_half_day_once_threshold_crossed() -> None:
+    """Threshold is 3; two prior qualifying days already counted this window, and today is
+    late too — the third crossing forces Half-Day even though hours worked alone say Present."""
+    policy = _policy(lates_to_half_day_count=3)
+    punches = [_punch(4, 0, "IN", day=10), _punch(12, 30, "OUT", day=10)]  # 20 min late
+    result = evaluate_day(_base_input(policy=policy, punches=punches, prior_late_days_in_window=2))
+    assert result.is_late is True
+    assert result.attendance_status == "HALF_DAY"
+
+
+def test_cumulative_lateness_below_threshold_no_override() -> None:
+    """Same policy, but only one prior late day — today's lateness makes two, still under the
+    threshold of three, so status is unaffected by the cumulative rule."""
+    policy = _policy(lates_to_half_day_count=3)
+    punches = [_punch(4, 0, "IN", day=10), _punch(12, 30, "OUT", day=10)]  # 20 min late
+    result = evaluate_day(_base_input(policy=policy, punches=punches, prior_late_days_in_window=1))
+    assert result.is_late is True
+    assert result.attendance_status == "PRESENT"
+
+
+def test_cumulative_lateness_not_configured_is_a_no_op() -> None:
+    """`lates_to_half_day_count=None` (default) — the cumulative rule never engages, regardless
+    of how many prior late days are passed in."""
+    policy = _policy(lates_to_half_day_count=None)
+    punches = [_punch(4, 0, "IN", day=10), _punch(12, 30, "OUT", day=10)]
+    result = evaluate_day(_base_input(policy=policy, punches=punches, prior_late_days_in_window=10))
+    assert result.attendance_status == "PRESENT"
+
+
+def test_cumulative_excess_break_days_forces_half_day_once_threshold_crossed() -> None:
+    """Threshold is 2; one prior qualifying day already counted, and today's break overruns its
+    configured maximum too — the second crossing forces Half-Day."""
+    shift = _shift(
+        breaks=[
+            ShiftBreakData(
+                id=uuid4(),
+                break_kind="FIXED_WINDOW",
+                start_time=time(8, 0),
+                end_time=time(9, 0),
+                window_start=None,
+                window_end=None,
+                min_minutes=None,
+                max_minutes=30,
+                is_paid=False,
+                is_mandatory=True,
+            )
+        ]
+    )
+    policy = _policy(excess_break_days_to_half_day_count=2)
+    punches = [
+        _punch(3, 30, "IN", day=10),
+        _punch(8, 0, "OUT", day=10),
+        _punch(9, 30, "IN", day=10),  # 90-min gap against a 30-min-max break -> excess
+        _punch(12, 30, "OUT", day=10),
+    ]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            policy=policy,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 3, 30, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 12, 30, tzinfo=UTC),
+            prior_excess_break_days_in_window=1,
+        )
+    )
+    assert result.excess_break_minutes > 0
+    assert result.attendance_status == "HALF_DAY"
+
+
+# ---------------------------------------------------------------------------
+# WD-32 — early-departure pre-approval (decision 5)
+# ---------------------------------------------------------------------------
+
+
+def test_early_departure_requires_approval_forces_harshest_band_when_missing() -> None:
+    """Policy requires pre-approval; none is on file. Raw early-departure minutes would only
+    land in the lower `EARLY_DEPARTURE` band, but with no approval the day is forced to the
+    harshest *configured* band (`ABSENT` here) instead of the graduated one."""
+    policy = _policy(early_departure_requires_approval=True)
+    early_bands = [
+        BandData(min_minutes=0, max_minutes=59, classification="EARLY_DEPARTURE"),
+        BandData(min_minutes=60, max_minutes=None, classification="ABSENT"),
+    ]
+    punches = [_punch(3, 30, "IN", day=10), _punch(12, 0, "OUT", day=10)]  # 20 min early
+    result = evaluate_day(
+        _base_input(
+            policy=policy,
+            early_bands=early_bands,
+            punches=punches,
+            early_departure_pre_approved=False,
+        )
+    )
+    assert result.attendance_status == "ABSENT"
+
+
+def test_early_departure_pre_approved_uses_normal_graduated_bands() -> None:
+    """Same situation, but an approved pre-clearance is on file — the raw minutes are evaluated
+    against the graduated bands normally, not forced to the harshest one."""
+    policy = _policy(early_departure_requires_approval=True)
+    early_bands = [
+        BandData(min_minutes=0, max_minutes=59, classification="EARLY_DEPARTURE"),
+        BandData(min_minutes=60, max_minutes=None, classification="ABSENT"),
+    ]
+    punches = [_punch(3, 30, "IN", day=10), _punch(12, 0, "OUT", day=10)]  # 20 min early
+    result = evaluate_day(
+        _base_input(
+            policy=policy,
+            early_bands=early_bands,
+            punches=punches,
+            early_departure_pre_approved=True,
+        )
+    )
+    assert result.early_departure_classification == "EARLY_DEPARTURE"
+    assert result.attendance_status == "PRESENT"
+
+
+def test_early_departure_approval_not_required_is_unaffected() -> None:
+    """Default policy (`early_departure_requires_approval=False`) — the pre-approval machinery
+    never engages, identical to pre-WD-32 behaviour."""
+    policy = _policy(early_departure_requires_approval=False)
+    early_bands = [BandData(min_minutes=0, max_minutes=None, classification="EARLY_DEPARTURE")]
+    punches = [_punch(3, 30, "IN", day=10), _punch(12, 0, "OUT", day=10)]
+    result = evaluate_day(
+        _base_input(
+            policy=policy,
+            early_bands=early_bands,
+            punches=punches,
+            early_departure_pre_approved=False,
+        )
+    )
+    assert result.early_departure_classification == "EARLY_DEPARTURE"
+
+
+# ---------------------------------------------------------------------------
+# WD-32 — real ON_DUTY status (decision 6)
+# ---------------------------------------------------------------------------
+
+
+def test_on_duty_approved_no_punch_required_short_circuits_status() -> None:
+    """`on_duty_requires_punch=False` (default) — an approved ON_DUTY request alone produces
+    the status outright, full paid day, no punches needed."""
+    policy = _policy(on_duty_requires_punch=False)
+    result = evaluate_day(_base_input(policy=policy, punches=[], on_duty_approved=True))
+    assert result.attendance_status == "ON_DUTY"
+    assert result.paid_day_fraction == "1.00"
+    assert result.lop_fraction == "0.00"
+
+
+def test_on_duty_requires_punch_keeps_punch_status_and_flags() -> None:
+    """`on_duty_requires_punch=True` — the punch-derived status is kept as-is, and
+    `is_on_duty_flagged` is raised for reporting instead of overriding the status."""
+    policy = _policy(on_duty_requires_punch=True)
+    punches = [_punch(3, 25, "IN", day=10), _punch(12, 35, "OUT", day=10)]
+    result = evaluate_day(_base_input(policy=policy, punches=punches, on_duty_approved=True))
+    assert result.attendance_status == "PRESENT"
+    assert result.is_on_duty_flagged is True
+
+
+def test_on_duty_not_approved_is_a_no_op() -> None:
+    """No approved ON_DUTY request on file — the overlay never engages, identical to
+    pre-WD-32 behaviour."""
+    result = evaluate_day(_base_input(punches=[], on_duty_approved=False))
+    assert result.attendance_status == "INCOMPLETE"
+    assert result.is_on_duty_flagged is False
+
+
+def test_on_duty_overlay_does_not_apply_to_not_joined() -> None:
+    """Population gate still ranks above ON_DUTY — an approved request cannot resurrect a
+    NOT_JOINED day."""
+    result = evaluate_day(_base_input(population_status="NOT_JOINED", on_duty_approved=True))
+    assert result.attendance_status == "NOT_JOINED"
