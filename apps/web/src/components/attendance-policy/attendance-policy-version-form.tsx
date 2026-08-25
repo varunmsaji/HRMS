@@ -320,6 +320,17 @@ export function AttendancePolicyVersionForm({
               onChange={(e) => update("latesToHalfDayCount", e.target.value)}
             />
           </FormField>
+          <FormField
+            id="excess-break-days-to-half-day"
+            label="Excess-break-days-to-half-day count (per month)"
+            description="Leave blank to disable this escalation."
+          >
+            <Input
+              type="number"
+              value={values.excessBreakDaysToHalfDayCount}
+              onChange={(e) => update("excessBreakDaysToHalfDayCount", e.target.value)}
+            />
+          </FormField>
           <FormField id="incomplete-at-lock" label="Still-INCOMPLETE at lock time">
             <NativeSelect
               value={values.incompleteAtLockBehaviour}

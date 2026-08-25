@@ -10,6 +10,7 @@ export const REGULARIZATION_TYPES = [
   "ON_DUTY",
   "EXCESS_BREAK",
   "FULL_DAY",
+  "EARLY_DEPARTURE_APPROVAL",
 ] as const;
 export type RegularizationType = (typeof REGULARIZATION_TYPES)[number];
 
@@ -22,6 +23,7 @@ export const REGULARIZATION_TYPE_LABELS: Record<RegularizationType, string> = {
   ON_DUTY: "On duty",
   EXCESS_BREAK: "Excess break",
   FULL_DAY: "Full day correction",
+  EARLY_DEPARTURE_APPROVAL: "Early departure pre-approval",
 };
 
 export const REGULARIZATION_STATUSES = ["SUBMITTED", "APPROVED", "REJECTED", "CANCELLED"] as const;

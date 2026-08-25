@@ -154,6 +154,8 @@ export default function AttendanceDayDetailPage() {
             {day.work_on_leave_flagged ? (
               <Badge variant="warning">Flagged for Leave review</Badge>
             ) : null}
+            {day.is_core_hours_breach ? <Badge variant="warning">Core hours breach</Badge> : null}
+            {day.on_duty ? <Badge variant="info">On duty</Badge> : null}
             {day.is_locked ? <Badge variant="outline">Locked</Badge> : null}
           </div>
 

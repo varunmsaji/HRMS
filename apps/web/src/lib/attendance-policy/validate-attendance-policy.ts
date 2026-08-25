@@ -97,6 +97,7 @@ export interface AttendancePolicyVersionFormValues {
   workOnLeaveBehaviour: string;
   excessBreakBehaviour: string;
   latesToHalfDayCount: string;
+  excessBreakDaysToHalfDayCount: string;
   earlyDepartureRequiresApproval: boolean;
   incompleteAtLockBehaviour: string;
   hourBands: PolicyBandFormRow[];
@@ -129,6 +130,7 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
   workOnLeaveBehaviour: "KEEP_LEAVE",
   excessBreakBehaviour: "FLAG",
   latesToHalfDayCount: "",
+  excessBreakDaysToHalfDayCount: "",
   earlyDepartureRequiresApproval: false,
   incompleteAtLockBehaviour: "TREAT_ABSENT",
   hourBands: [],
@@ -192,6 +194,10 @@ export function attendancePolicyVersionToFormValues(
     excessBreakBehaviour: version.excess_break_behaviour,
     latesToHalfDayCount:
       version.lates_to_half_day_count === null ? "" : String(version.lates_to_half_day_count),
+    excessBreakDaysToHalfDayCount:
+      version.excess_break_days_to_half_day_count === null
+        ? ""
+        : String(version.excess_break_days_to_half_day_count),
     earlyDepartureRequiresApproval: version.early_departure_requires_approval,
     incompleteAtLockBehaviour: version.incomplete_at_lock_behaviour,
     hourBands: version.hour_bands
@@ -258,6 +264,8 @@ export function buildAttendancePolicyVersionPayload(
     excess_break_behaviour: values.excessBreakBehaviour,
     late_count_window: "MONTH",
     lates_to_half_day_count: intOrNull(values.latesToHalfDayCount),
+    excess_break_count_window: "MONTH",
+    excess_break_days_to_half_day_count: intOrNull(values.excessBreakDaysToHalfDayCount),
     early_departure_requires_approval: values.earlyDepartureRequiresApproval,
     incomplete_at_lock_behaviour: values.incompleteAtLockBehaviour,
     hour_bands: bandRowsToPayload(values.hourBands, "result_status", false),
