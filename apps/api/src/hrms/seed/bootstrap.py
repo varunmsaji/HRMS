@@ -143,8 +143,10 @@ async def clear_b1_seed(session: AsyncSession) -> None:
         )
     )
     await session.execute(delete(Role).where(Role.company_id.in_(company_ids)))
-    for code, _, _ in [*B1_PERMISSIONS, *ORGANISATION_PERMISSIONS, *EMPLOYEE_PERMISSIONS]:
-        await session.execute(delete(Permission).where(Permission.code == code))
+    # Permission rows are a global, code-keyed catalogue shared by every company (get-or-create in
+    # seed_b1_foundation, and in organisation.repository.get_or_create_permission) — other
+    # companies created by unrelated tests may still hold a role_permission FK to the same code, so
+    # they are never deleted here (same class of bug as the Plan/Subscription teardown fix).
     await session.execute(delete(Company).where(Company.id.in_(company_ids)))
     await session.flush()
 
