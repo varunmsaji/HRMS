@@ -1,3 +1,5 @@
+import type { Holiday } from "@/lib/holiday-calendar/types";
+
 export interface HolidayFormValues {
   date: string;
   name: string;
@@ -42,4 +44,33 @@ export function validateHolidayForm(values: HolidayFormValues): HolidayFormError
     errors.name = "Holiday name is required.";
   }
   return errors;
+}
+
+export function holidayToFormValues(holiday: Holiday): HolidayFormValues {
+  return {
+    date: holiday.date,
+    name: holiday.name,
+    holidayType: holiday.holiday_type,
+    isPaid: holiday.is_paid,
+    isWorking: holiday.is_working,
+    regionNote: holiday.region_note ?? "",
+  };
+}
+
+/** `date` and `calendar_id` are immutable after creation (architecture §25 — "no PATCH of used
+ * dates"; correcting a wrong date is deactivate + create a new row) and `HolidayUpdate` forbids
+ * extra fields, so `date` is never included here even though it's part of the shared form-values
+ * shape used for both add and edit. */
+export function buildHolidayUpdatePayload(
+  values: HolidayFormValues,
+  holiday: Holiday,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (values.name.trim() !== holiday.name) patch.name = values.name.trim();
+  if (values.holidayType !== holiday.holiday_type) patch.holiday_type = values.holidayType;
+  if (values.isPaid !== holiday.is_paid) patch.is_paid = values.isPaid;
+  if (values.isWorking !== holiday.is_working) patch.is_working = values.isWorking;
+  const regionNote = values.regionNote.trim() || null;
+  if (regionNote !== holiday.region_note) patch.region_note = regionNote;
+  return patch;
 }

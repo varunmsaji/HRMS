@@ -38,6 +38,8 @@ import {
 import {
   EMPTY_HOLIDAY_FORM_VALUES,
   buildHolidayCreatePayload,
+  buildHolidayUpdatePayload,
+  holidayToFormValues,
   validateHolidayForm,
   type HolidayFormErrors,
   type HolidayFormValues,
@@ -67,6 +69,12 @@ export default function HolidayCalendarDetailPage() {
   const [holidayValues, setHolidayValues] = useState<HolidayFormValues>(EMPTY_HOLIDAY_FORM_VALUES);
   const [holidayErrors, setHolidayErrors] = useState<HolidayFormErrors>({});
   const [savingHoliday, setSavingHoliday] = useState(false);
+
+  const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null);
+  const [editHolidayValues, setEditHolidayValues] =
+    useState<HolidayFormValues>(EMPTY_HOLIDAY_FORM_VALUES);
+  const [editHolidayErrors, setEditHolidayErrors] = useState<HolidayFormErrors>({});
+  const [savingEditHoliday, setSavingEditHoliday] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -252,6 +260,58 @@ export default function HolidayCalendarDetailPage() {
     }
   }
 
+  function openEditHoliday(holiday: Holiday) {
+    setEditingHoliday(holiday);
+    setEditHolidayValues(holidayToFormValues(holiday));
+    setEditHolidayErrors({});
+  }
+
+  async function handleEditHoliday() {
+    if (!editingHoliday) return;
+    const clientErrors = validateHolidayForm(editHolidayValues);
+    if (Object.keys(clientErrors).length > 0) {
+      setEditHolidayErrors(clientErrors);
+      return;
+    }
+    const patch = buildHolidayUpdatePayload(editHolidayValues, editingHoliday);
+    if (Object.keys(patch).length === 0) {
+      setEditingHoliday(null);
+      toast({ title: "No changes to save" });
+      return;
+    }
+    setSavingEditHoliday(true);
+    setEditHolidayErrors({});
+    try {
+      const updated = await apiClient.patch<Holiday>(`/holidays/${editingHoliday.id}`, patch, {
+        ifMatch: String(editingHoliday.version),
+      });
+      setHolidays((prev) => (prev ? prev.map((h) => (h.id === updated.id ? updated : h)) : prev));
+      setEditingHoliday(null);
+      toast({ title: "Holiday saved", variant: "success" });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "STALE_RESOURCE") {
+        setEditHolidayErrors({});
+        toast({
+          title: "This holiday was changed by someone else",
+          description: "Close the dialog and reopen it to see the latest version.",
+          variant: "danger",
+        });
+        return;
+      }
+      if (err instanceof ApiError && err.status === 422) {
+        setEditHolidayErrors({ name: getFieldError(err.details, "name") });
+        return;
+      }
+      toast({
+        title: "Could not save holiday",
+        description: describeApiError(err),
+        variant: "danger",
+      });
+    } finally {
+      setSavingEditHoliday(false);
+    }
+  }
+
   async function toggleHolidayActive(holiday: Holiday) {
     try {
       const updated = await apiClient.patch<Holiday>(
@@ -420,6 +480,16 @@ export default function HolidayCalendarDetailPage() {
                             type="button"
                             variant="outline"
                             size="sm"
+                            onClick={() => openEditHoliday(holiday)}
+                          >
+                            Edit
+                          </Button>
+                        ) : null}
+                        {canManage ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={() => void toggleHolidayActive(holiday)}
                           >
                             {holiday.is_active ? "Deactivate" : "Reactivate"}
@@ -555,6 +625,102 @@ export default function HolidayCalendarDetailPage() {
             </Button>
             <Button type="button" onClick={() => void handleAddHoliday()} disabled={savingHoliday}>
               {savingHoliday ? "Adding…" : "Add holiday"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editingHoliday !== null}
+        onOpenChange={(open) => (!savingEditHoliday && !open ? setEditingHoliday(null) : null)}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit Holiday</DialogTitle>
+            <DialogDescription>
+              The date can&apos;t be changed here — deactivate this holiday and add a new one on
+              the correct date instead.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField id="edit-holiday-date" label="Date">
+                <Input type="date" value={editHolidayValues.date} disabled />
+              </FormField>
+              <FormField id="edit-holiday-name" label="Name" required error={editHolidayErrors.name}>
+                <Input
+                  value={editHolidayValues.name}
+                  onChange={(e) =>
+                    setEditHolidayValues({ ...editHolidayValues, name: e.target.value })
+                  }
+                />
+              </FormField>
+              <FormField id="edit-holiday-type" label="Type">
+                <NativeSelect
+                  value={editHolidayValues.holidayType}
+                  onChange={(e) =>
+                    setEditHolidayValues({
+                      ...editHolidayValues,
+                      holidayType: e.target.value as HolidayFormValues["holidayType"],
+                    })
+                  }
+                >
+                  {HOLIDAY_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type.replace("_", " ")}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </FormField>
+              <FormField id="edit-holiday-region-note" label="Region note">
+                <Input
+                  value={editHolidayValues.regionNote}
+                  onChange={(e) =>
+                    setEditHolidayValues({ ...editHolidayValues, regionNote: e.target.value })
+                  }
+                />
+              </FormField>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  className="rounded border-border"
+                  checked={editHolidayValues.isPaid}
+                  onChange={(e) =>
+                    setEditHolidayValues({ ...editHolidayValues, isPaid: e.target.checked })
+                  }
+                />
+                Paid
+              </label>
+              <label className="flex items-center gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  className="rounded border-border"
+                  checked={editHolidayValues.isWorking}
+                  onChange={(e) =>
+                    setEditHolidayValues({ ...editHolidayValues, isWorking: e.target.checked })
+                  }
+                />
+                Working holiday (operations continue)
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditingHoliday(null)}
+              disabled={savingEditHoliday}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleEditHoliday()}
+              disabled={savingEditHoliday}
+            >
+              {savingEditHoliday ? "Saving…" : "Save changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
