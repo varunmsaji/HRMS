@@ -1281,6 +1281,85 @@ directly — flagged here as a pointer, not resolved by this entry.
 
 ---
 
+## WD-33 — §S client sign-off follow-up: HR-editable holiday calendar, Attendance/Payroll
+overtime-money boundary confirmed
+
+**Status:** LOCKED (client decisions captured via `docs/business-rules/ATTENDANCE_V1_CLIENT_SIGNOFF.md`
+§S, confirmed 2026-08-27).
+
+**Context:** two of §S's three questions were answered in this pass (the first, weekly-off pattern
+sufficiency, remains open/unanswered). Both answers turned out to need little or no new code —
+this entry exists to record the client's exact decisions and close the loop, following the same
+discipline as WD-32 (client sign-off answers become a locked, numbered decision before/instead of
+silent implementation), not because either answer required a redesign.
+
+**Decision:**
+
+1. **HR-editable holiday calendar (§S, question 2).** Client's ask: "a basic calendar with the
+   holiday list, and HR will be able to edit and add holidays if needed" — explicitly no built-in
+   statutory holiday pack. A pre-implementation audit found this **already almost entirely built**:
+   `HolidayCalendar`/`Holiday` models, full CRUD router (`organisation/router.py` — calendar
+   create/update/deactivate, nested holiday create/update), per-state assignment via
+   `HolidayCalendar.kind="REGIONAL"` + `state_code`, composition into a `WorkCalendar` and
+   assignment to a branch/state/employee via `PolicyAssignment` — all wired end-to-end, backend and
+   frontend, with no statutory pack anywhere (confirmed by grep — HR types every holiday in by
+   hand, matching the client's ask). The one real gap: the holiday-calendar detail page
+   (`apps/web/src/app/app/holiday-calendars/[id]/page.tsx`) had an "Add Holiday" dialog and an
+   Active/Inactive toggle per holiday, but **no way to edit an existing holiday's name, type,
+   paid/working flags, or region note** — even though the backend's `PATCH /holidays/{id}`
+   (`HolidayUpdate` schema) already supported all of it. Built the missing piece only: an "Edit"
+   button per holiday row opening a dialog identical in shape to "Add Holiday", pre-filled and
+   diffed against the current row (`holidayToFormValues`/`buildHolidayUpdatePayload` in
+   `validate-holiday.ts`), calling the existing `PATCH /holidays/{id}` endpoint. No backend or
+   schema change — this was a frontend-only gap.
+   One deliberate non-change, carried forward from the existing `HolidayUpdate` schema
+   (`schemas.py`, architecture §25): a holiday's **date** stays immutable after creation — "no PATCH
+   of used dates," correcting a wrong date means deactivate the row and add a new one, preserving
+   history. The new Edit dialog shows the date as read-only with an inline note explaining this,
+   rather than silently accepting an edit the backend would reject.
+
+2. **Overtime money boundary — Attendance records facts, Payroll calculates money (§S, question
+   3).** Client's decision, verbatim in intent: Attendance is responsible for OT eligibility,
+   minutes, classification (Normal/Weekly-Off/Holiday/Night), an *informational* reference
+   multiplier, approval status/history, and the policy+version that produced the result — never a
+   monetary amount. Payroll (future module) takes the approved OT record and applies the
+   company/statutory rate to produce money. Explicitly: **no universal statutory rate (e.g. "2x")
+   may be hard-coded into the Attendance module** — the rate is Payroll's concern, informed by
+   legislation/employee category/company policy/effective date.
+   A pre-implementation audit (this entry's only real work) found the current implementation
+   **already fully satisfies this as stated — no code change required**:
+   - `OvertimeRecord` (`models.py`) has no currency/amount field anywhere — only
+     `minutes_detected`/`minutes_approved`/`comp_off_minutes`, `day_class`, `classification_code`,
+     `status`, approval metadata, and `overtime_policy_version_id`.
+   - `detect_overtime()`'s own docstring: "Detection only — no approval, no money (§12.2/ADR-0006)."
+   - `OvertimeRecord.configured_multiplier` is a **snapshot** of
+     `OvertimePolicyRateRow.multiplier_decimal` (a per-company, per-day-class *configurable* field,
+     not a constant), copied through at detection time and never multiplied against anything in
+     Attendance code (grepped for `* multiplier`/`multiplier *` across `calculation.py`/
+     `service.py` — zero hits).
+   - No hard-coded rate literal (`2.0`, `"2x"`, etc.) exists anywhere in the OT engine — this is the
+     locked design rule from **WD-12** ("OT 2× ... all are data (or Leave/Payroll). Engine code
+     implements mechanisms, not a particular company's handbook") and was independently re-verified
+     here rather than taken on faith.
+   - `OvertimeRecord.overtime_policy_version_id` is exactly the "policy/rule reference and version"
+     mechanism the client asked for — a future Payroll module can join through it to the full rate
+     table without re-deriving anything from the attendance event.
+   This decision is recorded as **confirmation of an already-correct design boundary** (matching
+   WD-12/WD-29/ADR-0006), not a new build.
+
+**Rejected:** doing nothing on the holiday-edit gap on the theory that "add + deactivate" already
+covers "edit if needed" (decision 1 — the client's wording explicitly separated add and edit;
+deactivate-and-recreate is not the same UX as correcting a typo in a holiday's name); adding a new
+migration/field for the OT multiplier "to be safe" (decision 2 — the audit found the existing
+`configured_multiplier` field and `overtime_policy_version_id` FK already satisfy every part of the
+client's ask; inventing a parallel field would just duplicate `OvertimePolicyRateRow` for no reason).
+
+**Carried forward, unchanged:** §K (WFH) remains explicitly parked at the client's request (not
+"Not yet discussed" as in the original checklist text — deliberately deferred this round); §S's
+first question (weekly-off pattern sufficiency) remains unanswered.
+
+---
+
 ## Divergences index (quick reference) — continued
 
 | Prior source | This log |
@@ -1289,9 +1368,10 @@ directly — flagged here as a pointer, not resolved by this entry.
 | W8 task brief's implicit assumption of a richer `OPEN → CLOSING → CLOSED/LOCKED` lifecycle | WD-30 decision 1 (collapsed to two persisted states; `CLOSING` has no observable code path under synchronous finalization) |
 | Architecture §21's literal "service method, not table sharing" | WD-31 decision 1 (an owned mirror table, since no Leave module exists to expose that service method — explicitly a temporary, replaceable stand-in) |
 | Client sign-off §D3's dropdown ("Confirmed as proposed") vs. its own written note ("need to build this") | WD-32 decision 1 (checked with client 2026-08-25, note confirmed as operative) |
+| Sign-off doc §S's "no built-in statutory holiday pack" proposal read as "no editing needed" | WD-33 decision 1 (client explicitly wants add *and* edit; edit was the one real UI gap, now closed) |
 
 ---
 
 **STOP.** Implementation does not start until the architecture and this log are reviewed and
-explicitly approved. WD-32 is now LOCKED — both follow-up questions (§D3, PD-ATT-1) were answered
-by the client 2026-08-25 — and ready for implementation.
+explicitly approved. WD-32 and WD-33 are both LOCKED and implemented. §K (WFH) and §S's first
+question (weekly-off pattern sufficiency) remain open, pending further client input.

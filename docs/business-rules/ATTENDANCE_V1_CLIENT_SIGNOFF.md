@@ -132,7 +132,7 @@ This checklist covers **business rules**, not technical implementation. No datab
 **Follow-up questions, if the client wants this built:**
   - Should WFH require the employee to still punch in/out (so worked hours are captured), or is approval alone sufficient to mark the day as a full worked day?
   - Should WFH count toward any of the same caps as on-duty/regularization (e.g., a monthly limit on how many WFH days are allowed)?
-**Client decision:** _______________________
+**Client decision:** Parked for now (2026-08-27) — hold off on building this. Revisit later; the follow-up questions above still need answers when it's picked back up.
 
 ---
 
@@ -243,11 +243,11 @@ This checklist covers **business rules**, not technical implementation. No datab
 
 **Question:** Are state-specific/regional holiday calendars (e.g., Kerala vs. Maharashtra) sufficient as "HR manually loads the list per state," or is a built-in statutory holiday pack expected?
 **Current proposed behaviour:** No built-in statutory holiday pack exists — HR loads the dates manually per calendar.
-**Client decision:** _______________________
+**Client decision:** Confirmed as proposed — a basic calendar with a holiday list that HR can add to and edit, no built-in statutory pack. (See decision log WD-33, decision 1 — mostly already built; the one missing piece, editing an existing holiday's details, has been added.)
 
 **Question:** Is it acceptable that this system does not calculate statutory overtime pay rates (e.g., legally mandated 2x pay) as actual money — only records a reference multiplier and the classification (Holiday/Weekly-Off/Night/Normal)?
 **Current proposed behaviour:** Yes — this is a deliberate design boundary; statutory pay calculation belongs to the future Payroll module.
-**Client decision:** _______________________
+**Client decision:** APPROVED DESIGN CHOICE. Attendance records OT entitlement, duration, classification, approval, and the applicable rule/rate reference (including which policy version produced it); it does not calculate the final monetary amount. Payroll (future module) takes the approved OT record and determines the applicable statutory/company rate — by legislation, employee/category, company policy, and effective date — to calculate the actual money. Attendance must not hard-code a universal statutory rate (e.g. a fixed "2x"); the rate stays a Payroll-owned decision. This separation ("what overtime was earned, under which rule" vs. "how much should be paid for it") is confirmed as the permanent design boundary between the two modules. (See decision log WD-33, decision 2 — verified already fully satisfied by the existing implementation; no code change was needed.)
 
 ---
 
