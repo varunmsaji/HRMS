@@ -354,6 +354,89 @@ async def test_cross_tenant_isolation_and_full_lifecycle_under_runtime_role(
         await _teardown(company_id=company_b, user_id=user_b)
 
 
+# --- Login/refresh under the runtime role ---------------------------------------------------
+#
+# Gap found post-migration, not covered by A-Q above: registration (_register_tenant, used
+# throughout this file) issues tokens directly from the company_id it just created — it never
+# calls IdentityService.login or .refresh, so it never exercised `user_company` lookups by an
+# *unknown* company_id. A real user logging back in with email+password (or refreshing an
+# existing token) does exercise that path, and `user_company` carries `FORCE ROW LEVEL SECURITY`
+# with no exemption for "tenant not yet known" — before the `login_lookup_user_companies`
+# SECURITY DEFINER function (migration 20260828090000), this made every login/refresh attempt
+# fail under `hrms_app` with a plain "Invalid email or password" that was indistinguishable from
+# a real wrong-password case. See docs/architecture/POSTGRES_RLS_ROLE_MIGRATION_PLAN.md and its
+# implementation report — this specific path was not in either document's verification list.
+
+
+async def test_login_and_refresh_succeed_under_runtime_role(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    seeded_plan_catalogue: None,
+) -> None:
+    company_id: UUID | None = None
+    user_id: UUID | None = None
+    email = f"rls-login-test-{uuid4().hex[:10]}@acme.example"
+    password = "CorrectHorse9"
+    try:
+        async with _as_runtime_role(monkeypatch):
+            register_resp = await client.post(
+                "/v1/companies/register",
+                json={
+                    "name": f"RLS Login Test {uuid4().hex[:8]}",
+                    "industry_code": "MANUFACTURING",
+                    "company_size": "51-200",
+                    "admin_first_name": "Login",
+                    "admin_last_name": "Tester",
+                    "admin_email": email,
+                    "admin_password": password,
+                },
+            )
+            assert register_resp.status_code == 201, register_resp.text
+            company_id = UUID(register_resp.json()["data"]["company_id"])
+            factory = get_session_factory()
+            async with factory() as session:
+                from hrms.core.db.models.identity import Company as _Company
+
+                user_id = (
+                    await session.execute(
+                        select(_Company.created_by).where(_Company.id == company_id)
+                    )
+                ).scalar_one()
+
+            # The actual regression: an existing user re-authenticating by email+password, which
+            # (unlike registration) must discover its company_id from `user_company` rather than
+            # already knowing it.
+            login_resp = await client.post(
+                "/v1/auth/login", json={"email": email, "password": password}
+            )
+            assert login_resp.status_code == 200, login_resp.text
+            login_data = login_resp.json()["data"]
+            assert login_data["company_id"] == str(company_id)
+            assert login_data["companies"] == [
+                {
+                    "id": str(company_id),
+                    "name": register_resp.json()["data"]["companies"][0]["name"],
+                    "is_primary": True,
+                }
+            ]
+
+            # Wrong password must still be correctly rejected (proves this isn't a blanket bypass).
+            bad_login_resp = await client.post(
+                "/v1/auth/login", json={"email": email, "password": "WrongPassword9"}
+            )
+            assert bad_login_resp.status_code == 401
+
+            # Token refresh hits the same `user_company` lookup from a different entry point.
+            refresh_resp = await client.post(
+                "/v1/auth/token/refresh",
+                json={"refresh_token": login_data["refresh_token"]},
+            )
+            assert refresh_resp.status_code == 200, refresh_resp.text
+            assert refresh_resp.json()["data"]["company_id"] == str(company_id)
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
 # --- H/I/J: RBAC SELF/REPORTEES scope resolution under the runtime role --------------------
 
 

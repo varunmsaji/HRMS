@@ -1,7 +1,8 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import (
@@ -11,6 +12,12 @@ from hrms.core.db.models.identity import (
     User,
     UserCompany,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class UserCompanyMembership:
+    company_id: UUID
+    is_primary: bool
 
 
 class IdentityRepository:
@@ -26,12 +33,23 @@ class IdentityRepository:
         stmt = select(Company).where(Company.id == company_id, Company.deleted_at.is_(None))
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def list_user_companies(self, session: AsyncSession, user_id: UUID) -> list[UserCompany]:
-        stmt = select(UserCompany).where(
-            UserCompany.user_id == user_id,
-            UserCompany.status == "ACTIVE",
-        )
-        return list((await session.execute(stmt)).scalars().all())
+    async def list_user_companies_for_login(
+        self, session: AsyncSession, user_id: UUID
+    ) -> list[UserCompanyMembership]:
+        """Login/token-refresh only. Resolves a user's active company memberships *before* any
+        tenant context (and therefore the `app.company_id` RLS GUC) exists, by routing through the
+        `login_lookup_user_companies` SECURITY DEFINER function (migration 20260828090000) instead
+        of querying `user_company` directly — that table's `tenant_isolation` policy would
+        otherwise hide every row under the app's runtime role (`hrms_app`, which has no RLS bypass
+        by design; see docs/architecture/POSTGRES_RLS_ROLE_MIGRATION_PLAN.md). Do not use this for
+        an already tenant-scoped read — `get_user_company` below already covers that case
+        correctly under RLS."""
+        stmt = text("SELECT company_id, is_primary FROM login_lookup_user_companies(:user_id)")
+        rows = (await session.execute(stmt, {"user_id": str(user_id)})).all()
+        return [
+            UserCompanyMembership(company_id=row.company_id, is_primary=row.is_primary)
+            for row in rows
+        ]
 
     async def get_user_company(
         self,

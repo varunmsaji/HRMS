@@ -9,6 +9,7 @@ from hrms.core.auth.passwords import verify_password
 from hrms.core.auth.tokens import generate_refresh_token, hash_token
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.repositories.identity import IdentityRepository
+from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.auth import (
     AccountLockedError,
     InvalidCredentialsError,
@@ -54,7 +55,7 @@ class IdentityService:
 
         await self._repo.reset_failed_login(self._session, user.id)
 
-        memberships = await self._repo.list_user_companies(self._session, user.id)
+        memberships = await self._repo.list_user_companies_for_login(self._session, user.id)
         if not memberships:
             raise InvalidCredentialsError("Invalid email or password")
 
@@ -72,6 +73,13 @@ class IdentityService:
             active_company_id = primary.company_id
         elif not any(m.company_id == active_company_id for m in memberships):
             raise InvalidCredentialsError("Invalid email or password")
+
+        # `active_company_id` is now verified (matched against a real membership row above) —
+        # set the RLS GUC before issue_tokens_for, which resolves the caller's Employee row
+        # (RLS-protected) via _resolve_employee_id. Same GUC-timing shape as the
+        # get_tenant_context fix (POSTGRES_RLS_ROLE_MIGRATION_PLAN.md §16), applied here because
+        # login has no prior request-scoped tenant context to inherit it from.
+        await set_rls_company_id(self._session, str(active_company_id))
 
         return await self.issue_tokens_for(
             user_id=user.id,
@@ -105,7 +113,7 @@ class IdentityService:
 
         await self._repo.revoke_refresh_token(self._session, record.id, "ROTATED")
 
-        memberships = await self._repo.list_user_companies(self._session, record.user_id)
+        memberships = await self._repo.list_user_companies_for_login(self._session, record.user_id)
         summaries: list[CompanySummary] = []
         for m in memberships:
             company = await self._repo.get_company_by_id(self._session, m.company_id)
@@ -113,6 +121,11 @@ class IdentityService:
                 summaries.append(
                     CompanySummary(id=company.id, name=company.name, is_primary=m.is_primary)
                 )
+
+        # record.company_id is already known/verified (from the refresh_token row itself) —
+        # set the RLS GUC before issue_tokens_for's Employee lookup, same reasoning as login()
+        # above.
+        await set_rls_company_id(self._session, str(record.company_id))
 
         return await self.issue_tokens_for(
             user_id=record.user_id,

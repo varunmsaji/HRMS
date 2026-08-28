@@ -306,3 +306,47 @@ discarding it) — both P1, both already root-caused in the audit with an exact 
 own SELF-scope implementation as the reference), and both are prerequisites the audit already
 identifies before F5 (role-seeding) can safely ship. This session's `clear_b1_seed` finding (§11,
 §15) is a good candidate for a small, separate, low-risk follow-up task in the meantime.
+
+## 18. Addendum (2026-08-28) — login/token-refresh gap found and closed
+
+Found while manually verifying an unrelated frontend feature in a real browser against the live
+dev stack (`DATABASE_URL` → `hrms_app`, as configured by this plan): **`POST /v1/auth/login` and
+`POST /v1/auth/token/refresh` could not succeed for any user once `hrms_app` lost `BYPASSRLS`.**
+Neither §14's verification levels nor `tests/security/test_rls_runtime_role.py` (as it existed
+before this addendum) ever caught it, because every test in that file authenticates via
+`_register_tenant` (company self-registration, which issues tokens directly from the company_id
+it just created) — none of them re-authenticate an *existing* user by email+password or refresh
+an existing token, the two flows that must discover `company_id` from `user_company` rather than
+already knowing it.
+
+**Root cause:** `user_company` carries `FORCE ROW LEVEL SECURITY` (§4/§8 above), and
+`IdentityService.login`/`.refresh` read it *before* any `company_id` is known — there is no
+header, JWT, or prior verified state to derive the `app.company_id` GUC from at that point. This
+is the same shape of problem as §16's `get_tenant_context` GUC-timing gap, but one step further
+back: §16's fix only works once a company_id is already known (from a header/JWT); login/refresh
+are the code that discovers it in the first place, so there is nothing to set the GUC to yet.
+
+**Fix (migration `20260828090000_login_lookup_function.py`):** a narrow `SECURITY DEFINER`
+Postgres function, `login_lookup_user_companies(p_user_id uuid)`, owned by `hrms` (runs with the
+owner's RLS-bypass privileges regardless of caller), `EXECUTE` granted only to `hrms_app`,
+`SET search_path = public` (mandatory `SECURITY DEFINER` hardening), returning only
+`company_id`/`is_primary` — not the full `user_company` row, and no company_id parameter, so it
+cannot be used to enumerate an arbitrary company's membership list. `IdentityRepository` gained
+`list_user_companies_for_login`, used only by `login()`/`refresh()`; the old `list_user_companies`
+(RLS-scoped, correct for an already-tenant-scoped caller, but had no other caller) was removed.
+Both call sites also now call `set_rls_company_id` once their `company_id` is verified — matching
+§16's fix — so the subsequent `issue_tokens_for` → `_resolve_employee_id` → `employee` table read
+(also RLS-protected) works correctly too, not just the membership lookup itself.
+
+Considered and rejected: widening `hrms_app`'s own privileges (defeats the role split, this
+plan's entire point); a session-variable bypass flag set only for the one query (risky under this
+app's connection pooling — a forgotten reset could leak across pooled connections into an
+unrelated later request, unlike a stateless function call).
+
+**Verification:** new test `test_login_and_refresh_succeed_under_runtime_role` added to
+`tests/security/test_rls_runtime_role.py` (registers a tenant, then explicitly calls
+`/v1/auth/login` and `/v1/auth/token/refresh` under `_as_runtime_role`, asserting success, correct
+`company_id`, and that a wrong password is still correctly rejected). Full backend suite
+(952/952), `ruff check`/`format`, `mypy`, `lint-imports` all pass. Manually confirmed end-to-end
+through the real browser against the real dev stack: login, an authenticated `/v1/auth/me` call,
+and unrelated authenticated feature work (holiday calendar CRUD) all succeed under `hrms_app`.
