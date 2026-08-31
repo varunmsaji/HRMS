@@ -106,6 +106,7 @@ def build_leave_type_update_values(patch: LeaveTypeUpdate) -> dict[str, Any]:
 class LeavePolicyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    leave_type_id: UUID
     name: str = Field(min_length=1, max_length=150)
     code: str | None = Field(default=None, max_length=30)
 
@@ -121,6 +122,7 @@ class LeavePolicyUpdate(BaseModel):
 class LeavePolicyRead(BaseModel):
     id: UUID
     company_id: UUID
+    leave_type_id: UUID
     name: str
     code: str | None
     is_active: bool
@@ -133,6 +135,7 @@ def leave_policy_to_read(row: "LeavePolicy") -> LeavePolicyRead:
     return LeavePolicyRead(
         id=row.id,
         company_id=row.company_id,
+        leave_type_id=row.leave_type_id,
         name=row.name,
         code=row.code,
         is_active=row.is_active,

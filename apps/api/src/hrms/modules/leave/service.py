@@ -182,6 +182,7 @@ class LeavePolicyService:
         self._session = session
         self._audit = AuditService()
         self._repo = LeavePolicyRepository()
+        self._type_repo = LeaveTypeRepository()
 
     # -----------------------------------------------------------------
     # Leave Policy — identity
@@ -196,6 +197,12 @@ class LeavePolicyService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> LeavePolicyRead:
+        leave_type = await self._type_repo.get(
+            self._session, company_id=company_id, leave_type_id=body.leave_type_id
+        )
+        if leave_type is None:
+            raise NotFoundError("Resource not found")
+
         now = datetime.now(UTC)
         policy_id = uuid4()
         try:
@@ -204,6 +211,7 @@ class LeavePolicyService:
                 data={
                     "id": policy_id,
                     "company_id": company_id,
+                    "leave_type_id": body.leave_type_id,
                     "name": body.name,
                     "code": body.code,
                     "is_active": True,

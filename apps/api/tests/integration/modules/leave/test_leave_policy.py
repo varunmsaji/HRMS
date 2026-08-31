@@ -62,6 +62,9 @@ async def _create_leave_type(
 async def _create_leave_policy(
     client: AsyncClient, headers: dict[str, str], **extra: Any
 ) -> dict[str, Any]:
+    if "leave_type_id" not in extra:
+        leave_type = await _create_leave_type(client, headers)
+        extra["leave_type_id"] = leave_type["id"]
     payload = {"name": "Standard Leave Policy", **extra}
     response = await client.post("/v1/leave-policies", headers=headers, json=payload)
     assert response.status_code == 201, response.text
@@ -151,6 +154,28 @@ async def test_create_policy_has_no_draft_by_default(
         listed = await client.get(f"/v1/leave-policies/{policy['id']}/versions", headers=headers)
         assert listed.status_code == 200
         assert listed.json()["data"] == []
+    finally:
+        await _cleanup_leave(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_create_policy_unknown_leave_type_not_found(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """LD-10: `leave_policy` is bound to a specific `leave_type` at creation — an unknown id is
+    rejected up front, not silently accepted as an orphaned FK violation."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        response = await client.post(
+            "/v1/leave-policies",
+            headers=headers,
+            json={
+                "name": "Orphan Policy",
+                "leave_type_id": "00000000-0000-0000-0000-000000000000",
+            },
+        )
+        assert response.status_code == 404
     finally:
         await _cleanup_leave(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

@@ -57,14 +57,22 @@ class LeaveType(Base, TimestampMixin):
 
 
 class LeavePolicy(Base, TimestampMixin):
-    """Identity row — name/code/active only, never carries evaluation fields directly (mirrors
-    `AttendancePolicy`). The actual rule configuration lives on `LeavePolicyVersion`."""
+    """Identity row — name/code/active/leave_type_id only, never carries evaluation fields
+    directly (mirrors `AttendancePolicy`). The actual rule configuration lives on
+    `LeavePolicyVersion`.
+
+    `leave_type_id` (LD-10) binds every version of this policy to exactly one `LeaveType` — not
+    unique, since multiple policies may target the same leave type for different
+    `PolicyAssignment` scopes (e.g. "Casual Leave — HQ" vs "Casual Leave — Remote")."""
 
     __tablename__ = "leave_policy"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     company_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    leave_type_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_type.id"), index=True
     )
     name: Mapped[str] = mapped_column(String(150))
     code: Mapped[str | None] = mapped_column(String(30), nullable=True)
