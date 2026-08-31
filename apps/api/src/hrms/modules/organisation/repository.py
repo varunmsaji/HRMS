@@ -1373,10 +1373,14 @@ class PolicyAssignmentRepository:
         policy_kind: str,
         scope_type: str,
         scope_id: UUID | None,
+        leave_type_id: UUID | None = None,
     ) -> PolicyAssignment | None:
         stmt = select(PolicyAssignment).where(
             PolicyAssignment.company_id == company_id,
             PolicyAssignment.policy_kind == policy_kind,
+            PolicyAssignment.leave_type_id == leave_type_id
+            if leave_type_id is not None
+            else PolicyAssignment.leave_type_id.is_(None),
             PolicyAssignment.scope_type == scope_type,
             PolicyAssignment.scope_id == scope_id
             if scope_id is not None
@@ -1431,13 +1435,19 @@ class PolicyAssignmentRepository:
         scope_type: str,
         scope_id: UUID | None,
         as_of: date,
+        leave_type_id: UUID | None = None,
     ) -> PolicyAssignment | None:
         """The row of the given kind/scope active on `as_of` — at most one, by
         `policy_assignment_no_overlap`. Used by `calendar_resolution.resolve_policy_assignment`
-        for a single scope level in the WD-09 precedence walk."""
+        for a single scope level in the WD-09 precedence walk. `leave_type_id` (LD-11) narrows
+        further for `policy_kind="LEAVE_POLICY"`, where multiple assignments (one per leave type)
+        can be simultaneously active at the same scope."""
         stmt = select(PolicyAssignment).where(
             PolicyAssignment.company_id == company_id,
             PolicyAssignment.policy_kind == policy_kind,
+            PolicyAssignment.leave_type_id == leave_type_id
+            if leave_type_id is not None
+            else PolicyAssignment.leave_type_id.is_(None),
             PolicyAssignment.scope_type == scope_type,
             PolicyAssignment.scope_id == scope_id
             if scope_id is not None

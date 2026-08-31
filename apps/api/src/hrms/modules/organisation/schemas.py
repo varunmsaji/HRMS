@@ -1879,6 +1879,7 @@ class PolicyAssignmentCreate(BaseModel):
 
     policy_kind: str
     policy_id: UUID
+    leave_type_id: UUID | None = None
     scope_type: str
     scope_id: UUID | None = None
     effective_from: date
@@ -1908,12 +1909,24 @@ class PolicyAssignmentCreate(BaseModel):
             raise ValueError("scope_id is required unless scope_type is COMPANY")
         return self
 
+    @model_validator(mode="after")
+    def validate_leave_type_id_matches_policy_kind(self) -> Self:
+        # LD-11: leave_type_id is the extra partition dimension only LEAVE_POLICY needs — a
+        # company may have multiple simultaneous leave policies at the same scope, one per leave
+        # type, unlike every other policy_kind where exactly one policy governs a scope.
+        if self.policy_kind == "LEAVE_POLICY" and self.leave_type_id is None:
+            raise ValueError("leave_type_id is required when policy_kind is LEAVE_POLICY")
+        if self.policy_kind != "LEAVE_POLICY" and self.leave_type_id is not None:
+            raise ValueError("leave_type_id must be omitted unless policy_kind is LEAVE_POLICY")
+        return self
+
 
 class PolicyAssignmentRead(BaseModel):
     id: UUID
     company_id: UUID
     policy_kind: str
     policy_id: UUID
+    leave_type_id: UUID | None
     scope_type: str
     scope_id: UUID | None
     effective_from: date
@@ -1932,6 +1945,7 @@ def policy_assignment_to_read(row: "PolicyAssignment") -> PolicyAssignmentRead:
         company_id=row.company_id,
         policy_kind=row.policy_kind,
         policy_id=row.policy_id,
+        leave_type_id=row.leave_type_id,
         scope_type=row.scope_type,
         scope_id=row.scope_id,
         effective_from=row.effective_from,

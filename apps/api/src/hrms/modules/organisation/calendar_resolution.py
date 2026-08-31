@@ -286,10 +286,18 @@ class CalendarResolutionService:
         return candidates
 
     async def resolve_policy_assignment(
-        self, company_id: UUID, policy_kind: str, *, employee_id: UUID, target_date: date
+        self,
+        company_id: UUID,
+        policy_kind: str,
+        *,
+        employee_id: UUID,
+        target_date: date,
+        leave_type_id: UUID | None = None,
     ) -> tuple["PolicyAssignment", str] | None:
         """WD-09's 8-level precedence walk. Returns `(assignment, matched_scope_type)` or
-        `None` — fail-closed, never guesses a default (WD-21)."""
+        `None` — fail-closed, never guesses a default (WD-21). `leave_type_id` (LD-11) is passed
+        through for `policy_kind="LEAVE_POLICY"`, where a scope can have multiple simultaneously
+        active assignments, one per leave type."""
         for scope_type, scope_id in await self._scope_candidates(
             company_id, employee_id, target_date
         ):
@@ -300,6 +308,7 @@ class CalendarResolutionService:
                 scope_type=scope_type,
                 scope_id=scope_id,
                 as_of=target_date,
+                leave_type_id=leave_type_id,
             )
             if found is not None:
                 return found, scope_type

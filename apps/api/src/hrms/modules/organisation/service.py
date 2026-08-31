@@ -3667,7 +3667,11 @@ class OrganisationService:
     # -----------------------------------------------------------------
 
     async def _validate_policy_reference(
-        self, company_id: UUID, policy_kind: str, policy_id: UUID
+        self,
+        company_id: UUID,
+        policy_kind: str,
+        policy_id: UUID,
+        leave_type_id: UUID | None = None,
     ) -> None:
         found: Any
         if policy_kind == "WORK_CALENDAR":
@@ -3695,13 +3699,18 @@ class OrganisationService:
         elif policy_kind == "LEAVE_POLICY":
             # Same local-import rationale as the ATTENDANCE_POLICY/OVERTIME_POLICY/
             # REGULARIZATION_POLICY branch above — LeavePolicy's identity lives in the `leave`
-            # module (LEAVE_DECISION_LOG.md LD-04), not `organisation`.
+            # module (LEAVE_DECISION_LOG.md LD-04), not `organisation`. LD-11: also checks the
+            # referenced policy's own `leave_type_id` matches the assignment's — a request can't
+            # name a Casual Leave policy but tag the assignment as Earned Leave.
             from hrms.modules.leave.service import LeavePolicyService
 
-            exists = await LeavePolicyService(self._session).policy_exists(
-                company_id, policy_kind, policy_id
-            )
-            found = object() if exists else None
+            try:
+                policy = await LeavePolicyService(self._session).get_policy(
+                    company_id, policy_id
+                )
+                found = object() if policy.leave_type_id == leave_type_id else None
+            except NotFoundError:
+                found = None
         else:
             raise PolicyKindNotSupportedError(policy_kind)
         if found is None:
@@ -3718,9 +3727,12 @@ class OrganisationService:
         user_agent: str | None = None,
     ) -> PolicyAssignmentRead:
         """Insert-new/close-previous — mirrors `EmployeeAssignmentService.create_assignment`
-        (§15.1: "no overlap at same scope... close the old assignment and insert a new one"),
-        keyed on `(policy_kind, scope_type, scope_id)` instead of `employee_id`."""
-        await self._validate_policy_reference(company_id, body.policy_kind, body.policy_id)
+        (see architecture doc §15.1: "no overlap at same scope... close the old assignment and
+        insert a new one"), keyed on `(policy_kind, scope_type, scope_id)` instead of
+        `employee_id` — plus `leave_type_id` (LD-11) when `policy_kind` is `LEAVE_POLICY`."""
+        await self._validate_policy_reference(
+            company_id, body.policy_kind, body.policy_id, body.leave_type_id
+        )
 
         current = await self._policy_assignment_repo.get_current(
             self._session,
@@ -3728,6 +3740,7 @@ class OrganisationService:
             policy_kind=body.policy_kind,
             scope_type=body.scope_type,
             scope_id=body.scope_id,
+            leave_type_id=body.leave_type_id,
         )
         now = datetime.now(UTC)
         before_read: PolicyAssignmentRead | None = None
@@ -3768,6 +3781,7 @@ class OrganisationService:
                     "company_id": company_id,
                     "policy_kind": body.policy_kind,
                     "policy_id": body.policy_id,
+                    "leave_type_id": body.leave_type_id,
                     "scope_type": body.scope_type,
                     "scope_id": body.scope_id,
                     "effective_from": body.effective_from,

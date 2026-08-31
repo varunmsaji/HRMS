@@ -454,12 +454,14 @@ async def test_leave_policy_assignable_at_company_scope(
             json={
                 "policy_kind": "LEAVE_POLICY",
                 "policy_id": policy["id"],
+                "leave_type_id": policy["leave_type_id"],
                 "scope_type": "COMPANY",
                 "effective_from": "2026-01-01",
             },
         )
         assert assignment.status_code == 201, assignment.text
         assert assignment.json()["data"]["policy_kind"] == "LEAVE_POLICY"
+        assert assignment.json()["data"]["leave_type_id"] == policy["leave_type_id"]
 
         # A policy_id that doesn't exist is still rejected as an invalid reference, not
         # silently accepted just because the kind is now allowed. A non-COMPANY scope_type is
@@ -471,12 +473,93 @@ async def test_leave_policy_assignable_at_company_scope(
             json={
                 "policy_kind": "LEAVE_POLICY",
                 "policy_id": "00000000-0000-0000-0000-000000000000",
+                "leave_type_id": policy["leave_type_id"],
                 "scope_type": "DESIGNATION",
                 "scope_id": "11111111-2222-4333-8444-555555555555",
                 "effective_from": "2026-01-01",
             },
         )
         assert bad_ref.status_code in (400, 404, 422), bad_ref.text
+    finally:
+        await _cleanup_leave(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_two_leave_type_policies_assignable_at_same_company_scope(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """LD-11: unlike every other `policy_kind`, `LEAVE_POLICY` must allow multiple simultaneous
+    assignments at the same scope — one per leave type. Before this fix,
+    `policy_assignment_no_overlap` rejected the second assignment outright, regardless of leave
+    type, because it didn't partition on `leave_type_id`."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        casual = await _create_leave_type(client, headers, code="CL", name="Casual Leave")
+        earned = await _create_leave_type(client, headers, code="EL", name="Earned Leave")
+        casual_policy = await _create_leave_policy(
+            client, headers, name="Casual Leave Policy", leave_type_id=casual["id"]
+        )
+        earned_policy = await _create_leave_policy(
+            client, headers, name="Earned Leave Policy", leave_type_id=earned["id"]
+        )
+
+        first = await client.post(
+            "/v1/policy-assignments",
+            headers=headers,
+            json={
+                "policy_kind": "LEAVE_POLICY",
+                "policy_id": casual_policy["id"],
+                "leave_type_id": casual["id"],
+                "scope_type": "COMPANY",
+                "effective_from": "2026-01-01",
+            },
+        )
+        assert first.status_code == 201, first.text
+
+        second = await client.post(
+            "/v1/policy-assignments",
+            headers=headers,
+            json={
+                "policy_kind": "LEAVE_POLICY",
+                "policy_id": earned_policy["id"],
+                "leave_type_id": earned["id"],
+                "scope_type": "COMPANY",
+                "effective_from": "2026-01-01",
+            },
+        )
+        assert second.status_code == 201, second.text
+    finally:
+        await _cleanup_leave(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_leave_type_id_mismatch_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """LD-11: an assignment naming a Casual Leave policy but tagged with Earned Leave's
+    `leave_type_id` is an invalid reference, not silently accepted."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        casual = await _create_leave_type(client, headers, code="CL", name="Casual Leave")
+        earned = await _create_leave_type(client, headers, code="EL", name="Earned Leave")
+        casual_policy = await _create_leave_policy(
+            client, headers, name="Casual Leave Policy", leave_type_id=casual["id"]
+        )
+
+        response = await client.post(
+            "/v1/policy-assignments",
+            headers=headers,
+            json={
+                "policy_kind": "LEAVE_POLICY",
+                "policy_id": casual_policy["id"],
+                "leave_type_id": earned["id"],
+                "scope_type": "COMPANY",
+                "effective_from": "2026-01-01",
+            },
+        )
+        assert response.status_code in (400, 404, 422), response.text
     finally:
         await _cleanup_leave(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

@@ -563,7 +563,12 @@ class PolicyAssignment(Base, TimestampMixin):
     `WEEKLY_OFF` for now. `policy_id` has no DB foreign key (polymorphic across
     `work_calendar`/`weekly_off_pattern`; validated at the service layer), mirroring
     `audit_log.entity_id`. Insert-new/close-previous only — no in-place mutation of a
-    published assignment's core values (mirrors `EmployeeAssignment`)."""
+    published assignment's core values (mirrors `EmployeeAssignment`).
+
+    `leave_type_id` (LD-11): NULL for every kind except `LEAVE_POLICY`, where it's required — a
+    company needs multiple simultaneous leave policies at the same scope (one per leave type),
+    unlike every other kind where exactly one policy governs a scope. A real FK (unlike the
+    polymorphic `policy_id`), since this column is never anything but a leave type."""
 
     __tablename__ = "policy_assignment"
 
@@ -573,6 +578,9 @@ class PolicyAssignment(Base, TimestampMixin):
     )
     policy_kind: Mapped[str] = mapped_column(String(30))
     policy_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    leave_type_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_type.id"), nullable=True
+    )
     scope_type: Mapped[str] = mapped_column(String(20))
     scope_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     effective_from: Mapped[date] = mapped_column(Date)
