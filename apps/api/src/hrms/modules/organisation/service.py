@@ -409,6 +409,17 @@ class OrganisationService:
             for code, domain, description in ATTENDANCE_PERMISSIONS
         ]
 
+        # L1 — `LEAVE.*` (LEAVE_DECISION_LOG.md LD-08). Same live-registration-path rationale as
+        # `attendance_permission_rows` immediately above.
+        from hrms.modules.leave.permissions import LEAVE_PERMISSIONS
+
+        leave_permission_rows = [
+            await self._repo.get_or_create_permission(
+                self._session, code=code, domain=domain, description=description
+            )
+            for code, domain, description in LEAVE_PERMISSIONS
+        ]
+
         role = await self._repo.insert_role(
             self._session,
             company_id=company_id,
@@ -453,6 +464,10 @@ class OrganisationService:
                 self._session, role_id=role.id, permission_id=perm.id
             )
         for perm in attendance_permission_rows:
+            await self._repo.insert_role_permission(
+                self._session, role_id=role.id, permission_id=perm.id
+            )
+        for perm in leave_permission_rows:
             await self._repo.insert_role_permission(
                 self._session, role_id=role.id, permission_id=perm.id
             )
@@ -3674,6 +3689,16 @@ class OrganisationService:
             from hrms.modules.attendance.service import AttendanceService
 
             exists = await AttendanceService(self._session).policy_exists(
+                company_id, policy_kind, policy_id
+            )
+            found = object() if exists else None
+        elif policy_kind == "LEAVE_POLICY":
+            # Same local-import rationale as the ATTENDANCE_POLICY/OVERTIME_POLICY/
+            # REGULARIZATION_POLICY branch above — LeavePolicy's identity lives in the `leave`
+            # module (LEAVE_DECISION_LOG.md LD-04), not `organisation`.
+            from hrms.modules.leave.service import LeavePolicyService
+
+            exists = await LeavePolicyService(self._session).policy_exists(
                 company_id, policy_kind, policy_id
             )
             found = object() if exists else None

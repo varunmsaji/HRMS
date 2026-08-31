@@ -20,6 +20,7 @@ from hrms.core.db.models.identity import (
 from hrms.modules.attendance.permissions import ATTENDANCE_PERMISSIONS
 from hrms.modules.employee.permissions import EMPLOYEE_PERMISSIONS
 from hrms.modules.identity.permissions import B1_PERMISSIONS
+from hrms.modules.leave.permissions import LEAVE_PERMISSIONS
 from hrms.modules.organisation.permissions import ORGANISATION_PERMISSIONS
 from hrms.seed.constants import (
     ADMIN_EMAIL,
@@ -57,6 +58,7 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
         *ORGANISATION_PERMISSIONS,
         *EMPLOYEE_PERMISSIONS,
         *ATTENDANCE_PERMISSIONS,
+        *LEAVE_PERMISSIONS,
     ]:
         row = (
             await session.execute(select(Permission).where(Permission.code == code))

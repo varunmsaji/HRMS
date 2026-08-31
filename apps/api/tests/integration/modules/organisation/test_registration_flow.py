@@ -227,7 +227,9 @@ async def test_registration_success_full_row_graph(
             # Regularization (W6) slice, ATTENDANCE.OVERTIME_APPROVE added by the Overtime (W7)
             # slice, ATTENDANCE.LOCK/.UNLOCK added by the Attendance Period (W8) slice,
             # ATTENDANCE.LEAVE_PROJECTION_SYNC added by the Leave Projection Adapter (W9)
-            # slice — same "must grant at live registration, not just the demo seed" rule.
+            # slice, LEAVE.* added by the Leave module's L1 slice
+            # (LEAVE_DECISION_LOG.md LD-08) — same "must grant at live registration, not
+            # just the demo seed" rule.
             assert codes == {
                 ORG_COMPANY_MANAGE,
                 DASHBOARD_COMPANY_VIEW,
@@ -266,6 +268,14 @@ async def test_registration_success_full_row_graph(
                 "EMPLOYEE.VIEW_STATUTORY",
                 "EMPLOYEE.UPDATE_SENSITIVE",
                 "EMPLOYEE.VIEW_BANKING",
+                "LEAVE.TYPE_MANAGE",
+                "LEAVE.POLICY_MANAGE",
+                "LEAVE.BALANCE_VIEW",
+                "LEAVE.BALANCE_VIEW_ALL",
+                "LEAVE.BALANCE_ADJUST",
+                "LEAVE.APPLICATION_SUBMIT",
+                "LEAVE.APPLICATION_SUBMIT_ON_BEHALF",
+                "LEAVE.APPLICATION_APPROVE",
             }
 
             setup_progress = (
