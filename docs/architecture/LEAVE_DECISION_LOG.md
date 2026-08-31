@@ -233,8 +233,8 @@ above.
 
 | Slice | Scope | Blocked on |
 |---|---|---|
-| **L1** | `leave_type`, `leave_policy`/`leave_policy_version` (identity+config, no evaluation), `PolicyAssignment` wired for `LEAVE_POLICY`, permission scaffolding | Nothing — pure reuse of existing patterns (LD-02 shape, LD-04, LD-08) |
-| **L2** | `leave_ledger`, balance computation, manual adjustment entries (HR can view/adjust balances by hand) | L1 |
+| **L1 — DONE** | `leave_type`, `leave_policy`/`leave_policy_version` (identity+config, no evaluation), `PolicyAssignment` wired for `LEAVE_POLICY`, permission scaffolding | Nothing — pure reuse of existing patterns (LD-02 shape, LD-04, LD-08). Shipped: also required widening the DB-level `policy_assignment_policy_kind_check` CHECK constraint, not just the Pydantic allow-list — a real gap LD-04 didn't anticipate, found by manually testing the assignment endpoint end-to-end. |
+| **L2 — DONE** | `leave_ledger`, balance computation (`GET /leave-balances`), manual adjustment entries (`POST /leave-ledger/adjustments`, HR can view/adjust balances by hand), raw audit trail (`GET /leave-ledger`) | L1. Shipped: `LEAVE.BALANCE_VIEW`/`LEAVE.BALANCE_VIEW_ALL` read-gating uses the `cancel_regularization_request` combined-`DataScope` union shape (`attendance/router.py`) — the closest existing precedent for a route accepting either of two permission grants, confirmed via research before implementing rather than inventing a new pattern. |
 | **L3** | Accrual engine | L2 + LD-06's OPEN items answered |
 | **L4** | `leave_application` + approval workflow, writes `LeaveDayProjection` via the existing sync contract on approval | L2, LD-01, LD-05 |
 | **L5** | Comp-off redemption + expiry sweep | L2, LD-07's OPEN sub-question answered |
@@ -254,6 +254,6 @@ L1–L2 alone already give HR a working, auditable balance ledger before accrual
 
 ---
 
-**STOP.** L1 does not start until: (a) this log is reviewed and approved, and (b) at minimum
-LD-06's five OPEN questions and LD-07's one OPEN question have real answers — the same discipline
-that gated every WD entry in the Attendance log before its implementation began.
+**STOP.** L1 and L2 are done. L3 does not start until LD-06's five OPEN questions have real
+answers; L5 does not start until LD-07's one OPEN sub-question does — the same discipline that
+gated every WD entry in the Attendance log before its implementation began.

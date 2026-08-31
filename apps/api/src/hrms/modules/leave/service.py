@@ -1,7 +1,8 @@
 """Business logic for the Leave module — the public interface for other modules (Module
-Standard). L1 only: leave-type identity CRUD + leave-policy identity/version CRUD with the same
-draft/publish/discard lifecycle every other policy family in this codebase uses. No accrual (L3),
-application workflow (L4), or comp-off redemption (L5) yet — see LEAVE_DECISION_LOG.md LD-09."""
+Standard). L1: leave-type identity CRUD + leave-policy identity/version CRUD with the same
+draft/publish/discard lifecycle every other policy family in this codebase uses. L2: the
+append-only leave ledger (ADR-0004) and balance computation. No accrual (L3), application
+workflow (L4), or comp-off redemption (L5) yet — see LEAVE_DECISION_LOG.md LD-09."""
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.errors.base import NotFoundError
+from hrms.core.rbac.types import DataScope
 from hrms.modules.leave.exceptions import (
     LeavePolicyCodeAlreadyExistsError,
     LeavePolicyDraftAlreadyExistsError,
@@ -22,8 +24,15 @@ from hrms.modules.leave.exceptions import (
     LeaveTypeCodeAlreadyExistsError,
     StaleLeaveResourceError,
 )
-from hrms.modules.leave.repository import LeavePolicyRepository, LeaveTypeRepository
+from hrms.modules.leave.repository import (
+    LeaveLedgerRepository,
+    LeavePolicyRepository,
+    LeaveTypeRepository,
+)
 from hrms.modules.leave.schemas import (
+    LeaveBalanceRead,
+    LeaveLedgerAdjustmentCreate,
+    LeaveLedgerEntryRead,
     LeavePolicyCreate,
     LeavePolicyRead,
     LeavePolicyUpdate,
@@ -37,6 +46,8 @@ from hrms.modules.leave.schemas import (
     build_leave_policy_update_values,
     build_leave_policy_version_update_values,
     build_leave_type_update_values,
+    leave_ledger_entry_to_audit_dict,
+    leave_ledger_entry_to_read,
     leave_policy_to_audit_dict,
     leave_policy_to_read,
     leave_policy_version_to_audit_dict,
@@ -607,3 +618,144 @@ class LeavePolicyService:
             return False
         row = await self._repo.get_policy(self._session, company_id=company_id, policy_id=policy_id)
         return row is not None
+
+
+class LeaveLedgerService:
+    """L2 — the append-only balance ledger (ADR-0004/DEC-004: balance is always `SUM(amount)`
+    over `leave_ledger`, never a stored counter). Employee-visibility narrowing follows the
+    established cross-module seam (`EmployeeService.resolve_visible_employee_ids`, documented at
+    `employee/service.py` as "the exact seam a future Attendance/Leave/Payroll module would
+    call") rather than re-deriving reporting-hierarchy logic here — same pattern
+    `attendance.service`'s `_resolve_visible_employee_ids` wraps, called directly via local
+    import per this codebase's established cross-module-seam convention (not duplicated, unlike
+    the approval-chain logic in LD-05 — that was genuinely domain business logic each module
+    reimplements; visibility resolution is shared infrastructure every module already reuses the
+    same way)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._audit = AuditService()
+        self._repo = LeaveLedgerRepository()
+        self._type_repo = LeaveTypeRepository()
+
+    async def _resolve_visible_employee_ids(
+        self, company_id: UUID, scope: DataScope, caller_employee_id: UUID | None
+    ) -> frozenset[UUID] | None:
+        from hrms.modules.employee.service import EmployeeService
+
+        return await EmployeeService(self._session).resolve_visible_employee_ids(
+            company_id, scope, caller_employee_id
+        )
+
+    async def _ensure_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        visible_ids = await self._resolve_visible_employee_ids(
+            company_id, scope, caller_employee_id
+        )
+        if visible_ids is not None and employee_id not in visible_ids:
+            raise NotFoundError("Resource not found")
+
+    async def create_adjustment(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: LeaveLedgerAdjustmentCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveLedgerEntryRead:
+        """No `scope` narrowing here — deliberately. `LEAVE.BALANCE_ADJUST` is a COMPANY-scoped
+        HR-admin action (mirrors `ATTENDANCE.POLICY_MANAGE`'s posture: the permission grant
+        itself is the gate, not a per-employee visibility check), not a SELF/REPORTEES-scoped
+        read. The target employee still must exist in this company — enforced via the
+        `employee_id` FK at insert time (a nonexistent id raises `IntegrityError`, surfaced as a
+        plain 500 today; a dedicated `EmployeeNotFoundError` translation is a reasonable follow-
+        up but not required for L2's scope)."""
+        leave_type = await self._type_repo.get(
+            self._session, company_id=company_id, leave_type_id=body.leave_type_id
+        )
+        if leave_type is None:
+            raise NotFoundError("Resource not found")
+
+        entry_id = uuid4()
+        row = await self._repo.insert(
+            self._session,
+            data={
+                "id": entry_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "leave_type_id": body.leave_type_id,
+                "entry_type": "ADJUSTMENT",
+                "amount": body.amount,
+                "effective_date": body.effective_date,
+                "reference_id": None,
+                "reason": body.reason,
+                "created_by_user_id": actor_user_id,
+            },
+        )
+
+        read = leave_ledger_entry_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_LEDGER_ADJUSTMENT_CREATED",
+            entity_type="leave_ledger",
+            entity_id=entry_id,
+            after=leave_ledger_entry_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_entries(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        leave_type_id: UUID | None,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> list[LeaveLedgerEntryRead]:
+        await self._ensure_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        rows = await self._repo.list_for_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            leave_type_id=leave_type_id,
+        )
+        return [leave_ledger_entry_to_read(r) for r in rows]
+
+    async def get_balances(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> list[LeaveBalanceRead]:
+        await self._ensure_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        rows = await self._repo.get_balances(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [
+            LeaveBalanceRead(
+                employee_id=employee_id,
+                leave_type_id=r.leave_type_id,
+                leave_type_code=r.leave_type_code,
+                leave_type_name=r.leave_type_name,
+                balance=r.balance,
+            )
+            for r in rows
+        ]

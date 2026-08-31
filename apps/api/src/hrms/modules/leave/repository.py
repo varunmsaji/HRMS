@@ -2,14 +2,16 @@
 `attendance.repository`'s `AttendancePolicyRepository` shape (identity CRUD + version CRUD,
 insert-new/close-previous publish)."""
 
+from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.modules.leave.models import LeavePolicy, LeavePolicyVersion, LeaveType
+from hrms.modules.leave.models import LeaveLedgerEntry, LeavePolicy, LeavePolicyVersion, LeaveType
 
 
 class LeaveTypeRepository:
@@ -256,3 +258,82 @@ class LeavePolicyRepository:
             .returning(LeavePolicyVersion)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+
+@dataclass(frozen=True, slots=True)
+class LeaveBalanceRow:
+    """Result shape of `LeaveLedgerRepository.get_balances` — one row per `requires_balance`
+    leave type, joined with its ledger sum (COALESCE'd to 0 for a type with no entries yet)."""
+
+    leave_type_id: UUID
+    leave_type_code: str
+    leave_type_name: str
+    balance: Decimal
+
+
+class LeaveLedgerRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> LeaveLedgerEntry:
+        row = LeaveLedgerEntry(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_for_employee(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID | None = None,
+    ) -> list[LeaveLedgerEntry]:
+        conditions = [
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.employee_id == employee_id,
+        ]
+        if leave_type_id is not None:
+            conditions.append(LeaveLedgerEntry.leave_type_id == leave_type_id)
+        stmt = (
+            select(LeaveLedgerEntry)
+            .where(*conditions)
+            .order_by(LeaveLedgerEntry.effective_date.desc(), LeaveLedgerEntry.created_at.desc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_balances(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[LeaveBalanceRow]:
+        """Every active, `requires_balance` leave type for the company, left-joined against this
+        one employee's ledger entries and summed — a type with zero activity still appears, with
+        `balance=0`, rather than being silently omitted (LD-03: balance is always the derived
+        sum, computed fresh on every read, never cached)."""
+        balance_sum = func.coalesce(func.sum(LeaveLedgerEntry.amount), 0).label("balance")
+        stmt = (
+            select(
+                LeaveType.id,
+                LeaveType.code,
+                LeaveType.name,
+                balance_sum,
+            )
+            .select_from(LeaveType)
+            .outerjoin(
+                LeaveLedgerEntry,
+                (LeaveLedgerEntry.leave_type_id == LeaveType.id)
+                & (LeaveLedgerEntry.employee_id == employee_id)
+                & (LeaveLedgerEntry.company_id == company_id),
+            )
+            .where(
+                LeaveType.company_id == company_id,
+                LeaveType.requires_balance.is_(True),
+                LeaveType.is_active.is_(True),
+                LeaveType.deleted_at.is_(None),
+            )
+            .group_by(LeaveType.id, LeaveType.code, LeaveType.name)
+            .order_by(LeaveType.name)
+        )
+        rows = (await session.execute(stmt)).all()
+        return [
+            LeaveBalanceRow(
+                leave_type_id=r[0], leave_type_code=r[1], leave_type_name=r[2], balance=r[3]
+            )
+            for r in rows
+        ]

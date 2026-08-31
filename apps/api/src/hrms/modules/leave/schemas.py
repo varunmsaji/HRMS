@@ -1,4 +1,4 @@
-"""Pydantic request/response shapes for the Leave module (L1)."""
+"""Pydantic request/response shapes for the Leave module (L1/L2)."""
 
 from datetime import date
 from decimal import Decimal
@@ -8,10 +8,23 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 if TYPE_CHECKING:
-    from hrms.modules.leave.models import LeavePolicy, LeavePolicyVersion, LeaveType
+    from hrms.modules.leave.models import (
+        LeaveLedgerEntry,
+        LeavePolicy,
+        LeavePolicyVersion,
+        LeaveType,
+    )
 
 _ACCRUAL_FREQUENCIES = ("NONE", "MONTHLY", "YEARLY")
 _APPROVAL_CHAINS = ("AUTO", "MANAGER", "MANAGER_THEN_HR", "HR")
+_LEDGER_ENTRY_TYPES = (
+    "ACCRUAL",
+    "APPLICATION",
+    "ADJUSTMENT",
+    "ENCASHMENT",
+    "CARRY_FORWARD",
+    "COMP_OFF_CREDIT",
+)
 
 
 def _format_timestamp(value: Any) -> str | None:
@@ -286,3 +299,75 @@ def leave_policy_version_to_audit_dict(read: LeavePolicyVersionRead) -> dict[str
 
 def build_leave_policy_version_update_values(patch: LeavePolicyVersionUpdate) -> dict[str, Any]:
     return {field: getattr(patch, field) for field in patch.model_fields_set}
+
+
+# ---------------------------------------------------------------------------
+# Leave Ledger — L2
+# ---------------------------------------------------------------------------
+
+
+class LeaveLedgerAdjustmentCreate(BaseModel):
+    """Input for a manual HR balance correction — the only entry_type L2's API can write
+    (ACCRUAL/APPLICATION/ENCASHMENT/CARRY_FORWARD/COMP_OFF_CREDIT are reserved for L3/L4/L5).
+    `employee_id` lives in the body, mirroring `RegularizationRequestCreate`'s convention, not a
+    query param."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: UUID
+    leave_type_id: UUID
+    amount: Decimal = Field(description="Signed — positive credits, negative debits.")
+    effective_date: date
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount_nonzero(cls, value: Decimal) -> Decimal:
+        if value == 0:
+            raise ValueError("amount must not be zero")
+        return value
+
+
+class LeaveLedgerEntryRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    leave_type_id: UUID
+    entry_type: str
+    amount: Decimal
+    effective_date: date
+    reference_id: UUID | None
+    reason: str | None
+    created_by_user_id: UUID | None
+    created_at: str
+
+
+def leave_ledger_entry_to_read(row: "LeaveLedgerEntry") -> LeaveLedgerEntryRead:
+    return LeaveLedgerEntryRead(
+        id=row.id,
+        company_id=row.company_id,
+        employee_id=row.employee_id,
+        leave_type_id=row.leave_type_id,
+        entry_type=row.entry_type,
+        amount=row.amount,
+        effective_date=row.effective_date,
+        reference_id=row.reference_id,
+        reason=row.reason,
+        created_by_user_id=row.created_by_user_id,
+        created_at=_format_timestamp(row.created_at) or "",
+    )
+
+
+def leave_ledger_entry_to_audit_dict(read: LeaveLedgerEntryRead) -> dict[str, Any]:
+    return read.model_dump(mode="json")
+
+
+class LeaveBalanceRead(BaseModel):
+    """One row per leave type that `requires_balance` — a type with zero ledger activity still
+    appears, with `balance=0`, rather than being silently omitted."""
+
+    employee_id: UUID
+    leave_type_id: UUID
+    leave_type_code: str
+    leave_type_name: str
+    balance: Decimal

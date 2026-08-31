@@ -1,22 +1,24 @@
-"""ORM models owned by the Leave module (L1 —
-docs/architecture/LEAVE_DECISION_LOG.md LD-01/LD-02/LD-04).
+"""ORM models owned by the Leave module.
 
-Identity + immutable-published-version shape, mirroring `AttendancePolicy`/`AttendancePolicyVersion`
-(attendance/models.py) and `RegularizationPolicyVersion`'s "defines the contract, a later slice
-builds the engine that reads it" posture exactly: `LeavePolicyVersion` carries typed
-accrual/approval/request-limit fields, but no accrual job or application workflow exists yet in
-this slice (LD-09: those are L3/L4). `PolicyAssignment` (organisation/models.py) is reused as-is
-for scope/precedence — this module widens its `policy_kind` allow-list (LEAVE-DECISION-LOG LD-04)
-rather than duplicating that table.
+L1 (docs/architecture/LEAVE_DECISION_LOG.md LD-01/LD-02/LD-04) — identity + immutable-published-
+version shape, mirroring `AttendancePolicy`/`AttendancePolicyVersion` (attendance/models.py) and
+`RegularizationPolicyVersion`'s "defines the contract, a later slice builds the engine that reads
+it" posture exactly: `LeavePolicyVersion` carries typed accrual/approval/request-limit fields, but
+no accrual job or application workflow exists yet (LD-09: those are L3/L4). `PolicyAssignment`
+(organisation/models.py) is reused as-is for scope/precedence — this module widens its
+`policy_kind` allow-list (LD-04) rather than duplicating that table.
 
-`leave_ledger` (ADR-0004 — append-only, balance is always a derived SUM, never a stored counter)
-and `leave_application` (LD-04/LD-05) are explicitly NOT part of this slice — L2/L4."""
+L2 (LD-02/LD-03) — `LeaveLedgerEntry`: the append-only balance ledger (ADR-0004/DEC-004). Balance
+for an (employee, leave_type) is always `SUM(amount)` over this table — no code path anywhere may
+write a mutable balance column.
+
+`leave_application` (LD-05) is explicitly NOT part of this slice — L4."""
 
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -125,3 +127,60 @@ class LeavePolicyVersion(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Leave Ledger — L2, append-only (ADR-0004/DEC-004)
+# ---------------------------------------------------------------------------
+
+
+class LeaveLedgerEntry(Base):
+    """Append-only balance ledger (ADR-0004/DEC-004 — "every accrual, deduction, adjustment,
+    encashment and carry-forward is its own immutable row"; displayed balance is always a
+    derived `SUM(amount)`, never a column that gets incremented/decremented in place). No
+    update, no delete, no soft-delete flag, no `version` column — a correction is a new,
+    separate offsetting entry, never an edit of a past row, the same posture ADR-0005 already
+    established for finalised payroll runs.
+
+    Deliberately does **not** use `TimestampMixin` — an `updated_at` column would misleadingly
+    imply a row can change after being written. Mirrors `AttendanceRegularizationAction`'s
+    append-only-timeline shape (single `created_at`, no `updated_at`, no `version`), not the
+    identity/version tables above.
+
+    L2 only writes `ADJUSTMENT` entries (manual HR corrections, via
+    `LeaveLedgerService.create_adjustment`). `ACCRUAL` (L3), `APPLICATION`/`ENCASHMENT`/
+    `CARRY_FORWARD` (L4), and `COMP_OFF_CREDIT` (L5) are locked into the `entry_type` CHECK now
+    (LD-02's field-shape decision) but nothing writes them yet."""
+
+    __tablename__ = "leave_ledger"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    leave_type_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_type.id"), index=True
+    )
+
+    entry_type: Mapped[str] = mapped_column(String(20))
+    # Signed — positive credits the balance (ACCRUAL, CARRY_FORWARD, COMP_OFF_CREDIT, or a
+    # positive ADJUSTMENT), negative debits it (APPLICATION, ENCASHMENT, or a negative
+    # ADJUSTMENT). Never zero (CHECK, migration) — a zero entry has no ledger meaning.
+    amount: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    effective_date: Mapped[date] = mapped_column(Date)
+
+    # Opaque external reference (e.g. a future leave_application_id, or an OvertimeRecord.id for
+    # a COMP_OFF_CREDIT entry) — no FK, mirrors LeaveDayProjection.leave_application_id's own
+    # "not joinable yet" posture (L4/L5 not built).
+    reference_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
