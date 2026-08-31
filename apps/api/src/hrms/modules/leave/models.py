@@ -127,7 +127,9 @@ class LeavePolicyVersion(Base, TimestampMixin):
     max_carry_forward_days: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     encashment_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_negative_balance: Mapped[bool] = mapped_column(Boolean, default=False)
-    sandwich_rule_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # LD-06 decision 5: sandwich-leave rule applies for this client — new drafts default to it
+    # being on, though HR can still turn it off per policy.
+    sandwich_rule_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     publish_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

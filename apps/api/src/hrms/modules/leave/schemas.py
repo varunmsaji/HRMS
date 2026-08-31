@@ -176,7 +176,7 @@ class LeavePolicyVersionCreate(BaseModel):
     max_carry_forward_days: Decimal | None = Field(default=None, ge=0)
     encashment_allowed: bool = False
     allow_negative_balance: bool = False
-    sandwich_rule_enabled: bool = False
+    sandwich_rule_enabled: bool = True
 
     @field_validator("approval_chain")
     @classmethod

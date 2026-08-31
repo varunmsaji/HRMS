@@ -299,6 +299,29 @@ class LeaveLedgerRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def exists_for_cycle(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID,
+        entry_type: str,
+        effective_date: date,
+    ) -> bool:
+        """Idempotency guard for the accrual task (L3): has this exact
+        (employee, leave_type, entry_type, effective_date) combination already been written?
+        Append-only means a re-run must never write a duplicate `ACCRUAL` row for the same
+        cycle."""
+        stmt = select(LeaveLedgerEntry.id).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.employee_id == employee_id,
+            LeaveLedgerEntry.leave_type_id == leave_type_id,
+            LeaveLedgerEntry.entry_type == entry_type,
+            LeaveLedgerEntry.effective_date == effective_date,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none() is not None
+
     async def get_balances(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
     ) -> list[LeaveBalanceRow]:

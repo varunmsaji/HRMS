@@ -161,34 +161,100 @@ consumer appears, not decided here.
 
 ## LD-06 — Accrual engine
 
-**Status:** OPEN (mechanism partially designed below; values and several mechanism-level
-questions are not decided).
+**Status:** LOCKED.
 
 **Context:** this is the one genuinely novel piece of infrastructure in this module — nothing
 elsewhere in the codebase does periodic, proration-aware balance crediting.
 
-**Proposed mechanism (not locked):** a scheduled job (reusing whatever job-running mechanism the
-codebase settles on — none exists yet outside the trivial `health.ping` Celery task found during
-the RLS audit) that, per published `leave_policy_version`'s `accrual_frequency`, inserts one
+**Mechanism:** a Celery Beat-scheduled task, `leave.run_monthly_accrual` — this exact name and
+"monthly cron" schedule is already specified in `docs/architecture/04_Background_Job_Architecture.
+md` §5, not invented here. Correction to this log's earlier note: Celery + Redis is not an open
+question — it's the locked, ADR-0014-backed job system for this codebase (`entrypoints/worker.py`,
+`entrypoints/beat.py` already scaffolded; only the trivial `health.ping` task exists today, but the
+infrastructure and conventions — `company_id` first task argument, task naming
+`module.verb_noun`, DB session + RLS set inside the task body — are already decided in §3 of that
+doc). Per published `leave_policy_version`'s `accrual_frequency`, the task inserts one
 `leave_ledger` `ACCRUAL` row per eligible employee per cycle. Proration for an employee who joins
 mid-cycle uses `Employment.joining_date`; accrual stops the cycle `Employment.last_working_day`
 falls in.
 
-**OPEN — must be answered before L3 starts, not guessed:**
-1. Accrual rate(s) and frequency per leave type — client-specific numbers, not yet given.
-2. Carry-forward cap and whether it varies by leave type.
-3. Encashment: automatic at a fixed point (e.g. fiscal year-end) or always HR-initiated?
-4. **Negative balance**: is an employee ever allowed to go negative (advance leave), or is every
-   application hard-capped at current balance? No existing pattern in this codebase to infer from.
-5. **Sandwich-leave rule**: if an employee takes leave either side of a weekend/holiday, does the
-   weekend/holiday itself count as leave too? Flagged as a known open question in the existing
-   Attendance audit docs, never answered by the client.
+**Decisions (client answers, 2026-08-31):**
+1. **Accrual rate/frequency per leave type**: HR-configurable, not hardcoded — set via
+   `LeavePolicyVersion.accrual_frequency`/`accrual_rate_per_cycle`, one policy per leave type
+   (see LD-10). No fixed numbers baked into code; the engine reads whatever the published version
+   says.
+2. **Carry-forward cap**: also HR-configurable, not hardcoded — `LeavePolicyVersion.
+   max_carry_forward_days`, per policy (i.e. per leave type, via LD-10's binding). A leave type
+   with no cap set carries forward unlimited; `0` means use-it-or-lose-it.
+3. **Encashment**: always HR-initiated. `encashment_allowed` on the policy version gates whether
+   it's allowed at all; no automatic fiscal-year-end sweep is built. HR creates the `ENCASHMENT`
+   ledger entry explicitly (L5-adjacent, uses the same manual-entry shape as L2's `ADJUSTMENT`).
+4. **Negative balance**: never allowed. Every leave application is hard-capped at the employee's
+   current balance at time of application (enforced in L4). `allow_negative_balance` stays
+   `False`-only for now — the column remains in the schema (LD-02 lock) but nothing sets it `True`
+   until a future client asks for advance leave.
+5. **Sandwich-leave rule**: applies. A weekend/holiday sandwiched between two leave days is
+   itself counted and deducted as leave. `sandwich_rule_enabled` defaults `True` for newly
+   created leave policy versions going forward (L3 scope: the day-counting logic that honors
+   this flag when computing how many days an application/accrual period actually deducts).
+
+---
+
+## LD-10 — `LeavePolicy` must bind to exactly one `LeaveType`
+
+**Status:** LOCKED.
+
+**Context:** found while implementing HR-configurable accrual (LD-06 items 1–2). `LeavePolicy`/
+`LeavePolicyVersion` (L1) carry accrual rate, carry-forward cap, etc., but the L1 schema never
+linked a policy to *which* leave type those settings apply to — a real gap, not caught by L1's
+tests because L1 never exercised accrual fields end-to-end. `leave_policy` has 0 rows in every
+environment (dev included), so this is a clean schema fix, not a backfill.
+
+**Decision:** add `leave_type_id: UUID` (FK → `leave_type.id`, `NOT NULL`) to the `LeavePolicy`
+identity row (not `LeavePolicyVersion` — the binding doesn't change across a policy's versions,
+mirrors why `code`/`name` live on the identity row too). Not unique: multiple `LeavePolicy` rows
+may target the same `LeaveType` (e.g. "Casual Leave — HQ" vs "Casual Leave — Remote", assigned to
+different scopes via the existing `PolicyAssignment` precedence mechanism, LD-04). HR creates one
+`LeavePolicy` per (leave type × scope) combination that needs distinct rules.
+
+---
+
+## LD-11 — `PolicyAssignment` needs a `leave_type_id` dimension for `LEAVE_POLICY`
+
+**Status:** LOCKED.
+
+**Context:** found while building L3's employee→policy resolution. `policy_assignment_no_overlap`
+(`20260818130000_policy_assignment.py`) excludes on `(company_id, policy_kind, scope_type,
+scope_id, daterange)` — correct for every other `policy_kind`, where exactly one policy governs a
+scope at a time (one work calendar, one attendance policy, etc.). Leave is structurally different:
+a company legally needs *multiple simultaneous* leave policies at the same scope — one per leave
+type (Casual, Earned, Sick each accrue differently). As shipped, LD-10's `leave_type_id` binding
+on `LeavePolicy` is meaningless for resolution, because assigning a second `LEAVE_POLICY` (for a
+different leave type) at the same scope and overlapping dates is rejected outright by the
+exclusion constraint — there is no way today to have both a Casual Leave policy and an Earned
+Leave policy active at COMPANY scope at once. `policy_assignment` has 0 rows in every environment,
+so again a clean fix, not a backfill.
+
+**Decision:** add `leave_type_id: UUID | None` to `policy_assignment` (FK → `leave_type.id` — a
+real FK, unlike the polymorphic `policy_id`, since this column is never anything but a leave type
+once populated). `NULL` for every existing `policy_kind`; `NOT NULL` iff `policy_kind =
+'LEAVE_POLICY'` (CHECK, mirrors `scope_id_null_iff_company_check`'s pattern exactly). Widened
+exclusion constraint adds `COALESCE(leave_type_id, '00000000-...'::uuid) WITH =` as a new
+equality term — same sentinel-for-NULL trick already used for `scope_id`, so non-LEAVE_POLICY
+rows (`leave_type_id` always NULL → always the same sentinel) keep today's exact behavior, while
+LEAVE_POLICY rows now partition by leave type too. `get_current`/`find_effective`
+(`organisation/repository.py`) and `resolve_policy_assignment`
+(`organisation/calendar_resolution.py`) all gain an optional `leave_type_id` filter parameter,
+threaded through from the router. `_validate_policy_reference`'s `LEAVE_POLICY` branch
+additionally checks the referenced `LeavePolicy.leave_type_id` matches the assignment's
+`leave_type_id` — rejects a request that names a Casual Leave policy but tags it as the Earned
+Leave assignment.
 
 ---
 
 ## LD-07 — Comp-off redemption + expiry enforcement
 
-**Status:** LOCKED (mechanism) · one OPEN sub-question.
+**Status:** LOCKED.
 
 **Context:** Attendance already emits comp-off as a fact (`OvertimeRecord.comp_off_minutes` +
 `comp_off_expiry_date`, `AttendanceDay.comp_off_minutes_earned`, `AttendancePeriodSummary`
@@ -204,9 +270,9 @@ approved-with-comp-off state. Leave module owns expiry enforcement: a scheduled 
 appends an offsetting `ADJUSTMENT` row (never deletes/mutates the original credit — ADR-0004) for
 any comp-off credit whose `expiry_date` has passed and remains unconsumed.
 
-**OPEN:** exact redemption UX — does an employee explicitly "spend" comp-off against a specific
-leave application, or is it just another balance that any leave application draws down
-first-in-first-out alongside regular leave? Needs a decision before L5.
+**Redemption UX (client answer, 2026-08-31):** explicit spend — an employee must explicitly
+choose to apply comp-off balance against a specific leave application, not an automatic
+first-in-first-out draw-down alongside regular leave.
 
 ---
 
@@ -235,9 +301,9 @@ above.
 |---|---|---|
 | **L1 — DONE** | `leave_type`, `leave_policy`/`leave_policy_version` (identity+config, no evaluation), `PolicyAssignment` wired for `LEAVE_POLICY`, permission scaffolding | Nothing — pure reuse of existing patterns (LD-02 shape, LD-04, LD-08). Shipped: also required widening the DB-level `policy_assignment_policy_kind_check` CHECK constraint, not just the Pydantic allow-list — a real gap LD-04 didn't anticipate, found by manually testing the assignment endpoint end-to-end. |
 | **L2 — DONE** | `leave_ledger`, balance computation (`GET /leave-balances`), manual adjustment entries (`POST /leave-ledger/adjustments`, HR can view/adjust balances by hand), raw audit trail (`GET /leave-ledger`) | L1. Shipped: `LEAVE.BALANCE_VIEW`/`LEAVE.BALANCE_VIEW_ALL` read-gating uses the `cancel_regularization_request` combined-`DataScope` union shape (`attendance/router.py`) — the closest existing precedent for a route accepting either of two permission grants, confirmed via research before implementing rather than inventing a new pattern. |
-| **L3** | Accrual engine | L2 + LD-06's OPEN items answered |
+| **L3 — DONE** | Monthly accrual engine (`LeaveAccrualService.run_for_company`, `leave.run_monthly_accrual`/`leave.accrue_company` Celery tasks, Beat-scheduled) | L2 + LD-06's items answered. Shipped: found and fixed two real gaps along the way — LD-10 (`LeavePolicy` had no `LeaveType` binding) and LD-11 (`PolicyAssignment`'s exclusion constraint didn't allow multiple simultaneous `LEAVE_POLICY` assignments at one scope, which every leave type needs). Scoped to `MONTHLY` frequency only; `YEARLY` accrual and carry-forward-cap enforcement deferred — no fiscal-year anchor has been decided yet. |
 | **L4** | `leave_application` + approval workflow, writes `LeaveDayProjection` via the existing sync contract on approval | L2, LD-01, LD-05 |
-| **L5** | Comp-off redemption + expiry sweep | L2, LD-07's OPEN sub-question answered |
+| **L5** | Comp-off redemption + expiry sweep | L2, LD-07 (now LOCKED) |
 | **L6** | Frontend: balance display, application submission, approval review queue, policy config UI — mirrors existing Regularization/Attendance-Policy UI exactly | L4 |
 
 L1–L2 alone already give HR a working, auditable balance ledger before accrual automation exists
@@ -254,6 +320,9 @@ L1–L2 alone already give HR a working, auditable balance ledger before accrual
 
 ---
 
-**STOP.** L1 and L2 are done. L3 does not start until LD-06's five OPEN questions have real
-answers; L5 does not start until LD-07's one OPEN sub-question does — the same discipline that
-gated every WD entry in the Attendance log before its implementation began.
+**STOP.** L1, L2, and L3 are done. L4 (`leave_application` + approval workflow) is next and is
+unblocked — nothing outstanding gates it. L5 is unblocked on decisions (LD-07 is now LOCKED) but
+naturally follows L4, since comp-off redemption is redemption *against an application*. The one
+remaining genuinely open item is L3's own deferred scope: a fiscal-year anchor for `YEARLY`
+accrual and carry-forward-cap enforcement, needed whenever a client actually configures a
+`YEARLY`-frequency policy — not required for L4/L5/L6 to proceed.

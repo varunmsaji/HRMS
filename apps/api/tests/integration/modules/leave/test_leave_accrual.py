@@ -1,0 +1,277 @@
+"""Integration tests for Leave module L3 — the monthly accrual engine
+(`LeaveAccrualService.run_for_company`, LEAVE_DECISION_LOG.md LD-06).
+
+Tested at the service layer directly, not via HTTP — this is background-job business logic
+invoked from `leave/tasks.py`'s Celery task, not a request-scoped route (mirrors how the rest of
+this codebase has no precedent for testing Celery tasks through a worker; `run_for_company` is
+the same coroutine the task calls via `asyncio.run`, so exercising it directly is exercising the
+real code path minus the Celery/asyncio bridge itself).
+"""
+
+from datetime import date
+from typing import Any
+from uuid import UUID
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import text
+from tests.integration.modules.organisation.test_registration_flow import _cleanup, _register
+
+from hrms.core.db.session import get_session_factory, set_rls_company_id
+from hrms.modules.leave.service import LeaveAccrualService
+
+pytestmark = pytest.mark.asyncio
+
+
+async def _register_tenant(
+    client: AsyncClient, **overrides: Any
+) -> tuple[dict[str, str], UUID, UUID | None]:
+    response, company_id, user_id = await _register(client, **overrides)
+    assert response.status_code == 201, response.text
+    assert company_id is not None
+    data = response.json()["data"]
+    return (
+        {
+            "Authorization": f"Bearer {data['access_token']}",
+            "X-Company-Id": str(company_id),
+        },
+        company_id,
+        user_id,
+    )
+
+
+async def _create_employee(
+    client: AsyncClient, headers: dict[str, str], first_name: str = "Asha"
+) -> dict[str, Any]:
+    response = await client.post("/v1/employees", headers=headers, json={"first_name": first_name})
+    assert response.status_code == 201, response.text
+    return dict(response.json()["data"])
+
+
+async def _create_legal_entity(
+    client: AsyncClient, headers: dict[str, str], name: str = "Acme Legal Entity"
+) -> dict[str, Any]:
+    response = await client.post("/v1/legal-entities", headers=headers, json={"name": name})
+    assert response.status_code == 201, response.text
+    return dict(response.json()["data"])
+
+
+async def _create_employment(
+    client: AsyncClient,
+    headers: dict[str, str],
+    *,
+    employee_id: str,
+    legal_entity_id: str,
+    joining_date: str,
+) -> dict[str, Any]:
+    response = await client.post(
+        f"/v1/employees/{employee_id}/employments",
+        headers=headers,
+        json={"legal_entity_id": legal_entity_id, "joining_date": joining_date},
+    )
+    assert response.status_code == 201, response.text
+    return dict(response.json()["data"])
+
+
+async def _create_leave_type(
+    client: AsyncClient, headers: dict[str, str], **extra: Any
+) -> dict[str, Any]:
+    payload = {"code": "EL", "name": "Earned Leave", **extra}
+    response = await client.post("/v1/leave-types", headers=headers, json=payload)
+    assert response.status_code == 201, response.text
+    return dict(response.json()["data"])
+
+
+async def _create_published_monthly_policy(
+    client: AsyncClient,
+    headers: dict[str, str],
+    *,
+    leave_type_id: str,
+    accrual_rate_per_cycle: str = "1.50",
+    effective_from: str = "2025-01-01",
+) -> dict[str, Any]:
+    policy_resp = await client.post(
+        "/v1/leave-policies",
+        headers=headers,
+        json={"name": "Standard Earned Leave Policy", "leave_type_id": leave_type_id},
+    )
+    assert policy_resp.status_code == 201, policy_resp.text
+    policy = dict(policy_resp.json()["data"])
+
+    draft = await client.post(
+        f"/v1/leave-policies/{policy['id']}/versions",
+        headers=headers,
+        json={
+            "effective_from": effective_from,
+            "accrual_frequency": "MONTHLY",
+            "accrual_rate_per_cycle": accrual_rate_per_cycle,
+        },
+    )
+    assert draft.status_code == 201, draft.text
+    version_id = draft.json()["data"]["id"]
+
+    published = await client.post(
+        f"/v1/leave-policies/{policy['id']}/versions/{version_id}/publish",
+        headers={**headers, "If-Match": "1"},
+        json={},
+    )
+    assert published.status_code == 200, published.text
+
+    assignment = await client.post(
+        "/v1/policy-assignments",
+        headers=headers,
+        json={
+            "policy_kind": "LEAVE_POLICY",
+            "policy_id": policy["id"],
+            "leave_type_id": leave_type_id,
+            "scope_type": "COMPANY",
+            "effective_from": effective_from,
+        },
+    )
+    assert assignment.status_code == 201, assignment.text
+    return policy
+
+
+async def _teardown(*, company_id: UUID) -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        for table in (
+            "leave_ledger",
+            "policy_assignment",
+            "leave_policy_version",
+            "leave_policy",
+            "leave_type",
+            "employment",
+            "employee",
+            "legal_entity",
+            "number_series",
+        ):
+            await session.execute(
+                text(f"DELETE FROM {table} WHERE company_id = :cid"), {"cid": str(company_id)}
+            )
+        await session.commit()
+
+
+async def _run_accrual(company_id: UUID, *, as_of: date) -> int:
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        written = await LeaveAccrualService(session).run_for_company(company_id, as_of=as_of)
+        await session.commit()
+        return written
+
+
+async def _get_balance(client: AsyncClient, headers: dict[str, str], employee_id: str) -> str:
+    response = await client.get(
+        "/v1/leave-balances", headers=headers, params={"employee_id": employee_id}
+    )
+    assert response.status_code == 200, response.text
+    return str(response.json()["data"][0]["balance"])
+
+
+@pytest.mark.asyncio
+async def test_full_month_accrual(client: AsyncClient, seeded_plan_catalogue: None) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee = await _create_employee(client, headers)
+        legal_entity = await _create_legal_entity(client, headers)
+        await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2025-01-01",
+        )
+        leave_type = await _create_leave_type(client, headers)
+        await _create_published_monthly_policy(client, headers, leave_type_id=leave_type["id"])
+
+        # Runs on 2026-03-01 -> accrues for February 2026 (28 days), employee present the whole
+        # month -> full rate, no proration.
+        written = await _run_accrual(company_id, as_of=date(2026, 3, 1))
+        assert written == 1
+        assert await _get_balance(client, headers, employee["id"]) == "1.50"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_mid_month_joiner_prorated(client: AsyncClient, seeded_plan_catalogue: None) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee = await _create_employee(client, headers)
+        legal_entity = await _create_legal_entity(client, headers)
+        # Joins on day 15 of a 28-day February -> present 14 of 28 days -> half the rate.
+        await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2026-02-15",
+        )
+        leave_type = await _create_leave_type(client, headers)
+        await _create_published_monthly_policy(client, headers, leave_type_id=leave_type["id"])
+
+        written = await _run_accrual(company_id, as_of=date(2026, 3, 1))
+        assert written == 1
+        assert await _get_balance(client, headers, employee["id"]) == "0.75"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_accrual_is_idempotent_on_rerun(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee = await _create_employee(client, headers)
+        legal_entity = await _create_legal_entity(client, headers)
+        await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2025-01-01",
+        )
+        leave_type = await _create_leave_type(client, headers)
+        await _create_published_monthly_policy(client, headers, leave_type_id=leave_type["id"])
+
+        first_run = await _run_accrual(company_id, as_of=date(2026, 3, 1))
+        assert first_run == 1
+        second_run = await _run_accrual(company_id, as_of=date(2026, 3, 1))
+        assert second_run == 0
+
+        # Balance reflects exactly one accrual, not two.
+        assert await _get_balance(client, headers, employee["id"]) == "1.50"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_no_policy_assigned_skips_accrual(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee = await _create_employee(client, headers)
+        legal_entity = await _create_legal_entity(client, headers)
+        await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2025-01-01",
+        )
+        # Leave type exists, but no LeavePolicy/PolicyAssignment for it -> resolver finds
+        # nothing, accrual is skipped rather than guessing a rate.
+        await _create_leave_type(client, headers)
+
+        written = await _run_accrual(company_id, as_of=date(2026, 3, 1))
+        assert written == 0
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

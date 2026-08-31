@@ -1,10 +1,12 @@
 """Business logic for the Leave module — the public interface for other modules (Module
 Standard). L1: leave-type identity CRUD + leave-policy identity/version CRUD with the same
 draft/publish/discard lifecycle every other policy family in this codebase uses. L2: the
-append-only leave ledger (ADR-0004) and balance computation. No accrual (L3), application
-workflow (L4), or comp-off redemption (L5) yet — see LEAVE_DECISION_LOG.md LD-09."""
+append-only leave ledger (ADR-0004) and balance computation. L3: the monthly accrual engine
+(LEAVE_DECISION_LOG.md LD-06), invoked from `leave/tasks.py`. No application workflow (L4) or
+comp-off redemption (L5) yet — see LEAVE_DECISION_LOG.md LD-09."""
 
 from datetime import UTC, date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -767,3 +769,139 @@ class LeaveLedgerService:
             )
             for r in rows
         ]
+
+
+def _previous_month_bounds(as_of: date) -> tuple[date, date]:
+    """The calendar month immediately before `as_of` — e.g. `as_of=2026-09-01` gives
+    `(2026-08-01, 2026-08-31)`. Standard "accrual runs after month-end, for the month that just
+    ended" HR practice; not itself a client-given rule, just the obvious reading of "monthly
+    cron" (`docs/architecture/04_Background_Job_Architecture.md` §5)."""
+    first_of_this_month = as_of.replace(day=1)
+    period_end = first_of_this_month - timedelta(days=1)
+    period_start = period_end.replace(day=1)
+    return period_start, period_end
+
+
+def _prorate_accrual(
+    rate: Decimal, period_start: date, period_end: date, worked_start: date, worked_end: date
+) -> Decimal:
+    total_days = (period_end - period_start).days + 1
+    worked_days = (worked_end - worked_start).days + 1
+    if worked_days >= total_days:
+        return rate.quantize(Decimal("0.01"))
+    prorated = (rate * worked_days) / total_days
+    return prorated.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+class LeaveAccrualService:
+    """L3 — the monthly accrual engine (LEAVE_DECISION_LOG.md LD-06). Invoked by the
+    `leave.accrue_company` Celery task (`leave/tasks.py`), never from an HTTP route — this is
+    background-job business logic, not a request-scoped one, so it takes no `DataScope`/caller
+    and writes system-generated ledger rows (`created_by_user_id=None`).
+
+    **Scope of this slice:** only `accrual_frequency == "MONTHLY"` policies accrue. `YEARLY`
+    policies are resolved but skipped — LD-06 answered the client's rate/cap/encashment/
+    negative-balance/sandwich-rule questions, not a yearly cadence's anchor date (fiscal-year
+    start vs. joining-date anniversary), so nothing is guessed here (WD-21 fail-closed
+    precedent). Carry-forward cap enforcement (`max_carry_forward_days`) is likewise out of
+    scope — that's a year-end sweep, not a monthly accrual concern, and has no anchor to trigger
+    from yet either. Both are natural follow-up slices once a fiscal-year anchor is decided."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._ledger_repo = LeaveLedgerRepository()
+        self._type_repo = LeaveTypeRepository()
+        self._policy_repo = LeavePolicyRepository()
+
+    async def run_for_company(self, company_id: UUID, *, as_of: date) -> int:
+        """Accrue for the calendar month before `as_of`, for every employee whose employment
+        span overlaps it and every active, balance-backed leave type that resolves to a
+        `MONTHLY` published policy for them. Idempotent — safe to call more than once for the
+        same `as_of` (a re-run, a retried task): already-written cycles are skipped via
+        `LeaveLedgerRepository.exists_for_cycle`, never double-inserted (ADR-0004: corrections
+        are new rows, but duplicates are not corrections)."""
+        period_start, period_end = _previous_month_bounds(as_of)
+
+        from hrms.modules.employee.service import EmploymentService
+        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+
+        spans = await EmploymentService(self._session).list_spans_overlapping(
+            company_id, date_from=period_start, date_to=period_end
+        )
+        if not spans:
+            return 0
+
+        leave_types = await self._type_repo.list(self._session, company_id=company_id)
+        accrual_types = [t for t in leave_types if t.is_active and t.requires_balance]
+        if not accrual_types:
+            return 0
+
+        resolver = CalendarResolutionService(self._session)
+        written = 0
+        for employee_id, joining_date, last_working_day in spans:
+            worked_start = max(period_start, joining_date)
+            worked_end = min(period_end, last_working_day or period_end)
+            if worked_start > worked_end:
+                continue
+
+            for leave_type in accrual_types:
+                found = await resolver.resolve_policy_assignment(
+                    company_id,
+                    "LEAVE_POLICY",
+                    employee_id=employee_id,
+                    target_date=period_end,
+                    leave_type_id=leave_type.id,
+                )
+                if found is None:
+                    continue
+                assignment, _scope_type = found
+
+                version = await self._policy_repo.find_effective_as_of(
+                    self._session,
+                    company_id=company_id,
+                    policy_id=assignment.policy_id,
+                    as_of=period_end,
+                )
+                if version is None or version.accrual_frequency != "MONTHLY":
+                    continue
+                if not version.accrual_rate_per_cycle or version.accrual_rate_per_cycle <= 0:
+                    continue
+
+                already_written = await self._ledger_repo.exists_for_cycle(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    leave_type_id=leave_type.id,
+                    entry_type="ACCRUAL",
+                    effective_date=period_end,
+                )
+                if already_written:
+                    continue
+
+                amount = _prorate_accrual(
+                    version.accrual_rate_per_cycle,
+                    period_start,
+                    period_end,
+                    worked_start,
+                    worked_end,
+                )
+                if amount <= 0:
+                    continue
+
+                await self._ledger_repo.insert(
+                    self._session,
+                    data={
+                        "id": uuid4(),
+                        "company_id": company_id,
+                        "employee_id": employee_id,
+                        "leave_type_id": leave_type.id,
+                        "entry_type": "ACCRUAL",
+                        "amount": amount,
+                        "effective_date": period_end,
+                        "reference_id": version.id,
+                        "reason": f"Monthly accrual for {period_start:%B %Y}",
+                        "created_by_user_id": None,
+                    },
+                )
+                written += 1
+        return written
