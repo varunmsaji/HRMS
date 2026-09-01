@@ -37,6 +37,9 @@ interface NamedOption {
   id: string;
   name?: string;
   title?: string;
+  /** Only present on `/leave-policies` rows — used to filter the policy picker down to the
+   * selected leave type (LD-11: multiple `LeavePolicy` rows can share a scope, one per type). */
+  leave_type_id?: string;
 }
 
 function optionLabel(option: NamedOption): string {
@@ -55,6 +58,7 @@ const SCOPE_LIST_PATH: Partial<Record<ScopeType, string>> = {
 interface CreateFormState {
   policyKind: PolicyKind;
   policyId: string;
+  leaveTypeId: string;
   scopeType: ScopeType;
   scopeId: string;
   effectiveFrom: string;
@@ -64,6 +68,7 @@ interface CreateFormState {
 const EMPTY_FORM: CreateFormState = {
   policyKind: "ATTENDANCE_POLICY",
   policyId: "",
+  leaveTypeId: "",
   scopeType: "COMPANY",
   scopeId: "",
   effectiveFrom: "",
@@ -80,9 +85,15 @@ export default function PolicyAssignmentsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateFormState>(EMPTY_FORM);
   const [policyOptions, setPolicyOptions] = useState<NamedOption[]>([]);
+  const [leaveTypeOptions, setLeaveTypeOptions] = useState<NamedOption[]>([]);
   const [scopeOptions, setScopeOptions] = useState<NamedOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  const isLeavePolicy = form.policyKind === "LEAVE_POLICY";
+  const visiblePolicyOptions = isLeavePolicy
+    ? policyOptions.filter((option) => option.leave_type_id === form.leaveTypeId)
+    : policyOptions;
 
   const loadAssignments = useCallback(async (kind: PolicyKind | "") => {
     setLoading(true);
@@ -116,6 +127,14 @@ export default function PolicyAssignmentsPage() {
   }, [createOpen, form.policyKind]);
 
   useEffect(() => {
+    if (!createOpen || !isLeavePolicy) return;
+    void apiClient
+      .get<NamedOption[]>("/leave-types")
+      .then(setLeaveTypeOptions)
+      .catch(() => setLeaveTypeOptions([]));
+  }, [createOpen, isLeavePolicy]);
+
+  useEffect(() => {
     if (!createOpen) return;
     const path = SCOPE_LIST_PATH[form.scopeType];
     if (!path) {
@@ -135,6 +154,10 @@ export default function PolicyAssignmentsPage() {
   }
 
   async function handleCreate() {
+    if (isLeavePolicy && !form.leaveTypeId) {
+      setFormError("Choose which leave type this policy is for.");
+      return;
+    }
     if (!form.policyId) {
       setFormError("Choose which policy to assign.");
       return;
@@ -153,6 +176,7 @@ export default function PolicyAssignmentsPage() {
       await apiClient.post<PolicyAssignment>("/policy-assignments", {
         policy_kind: form.policyKind,
         policy_id: form.policyId,
+        leave_type_id: isLeavePolicy ? form.leaveTypeId : undefined,
         scope_type: form.scopeType,
         scope_id: form.scopeType === "COMPANY" ? null : form.scopeId,
         effective_from: form.effectiveFrom,
@@ -180,7 +204,7 @@ export default function PolicyAssignmentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Policy Assignments"
-        description="Assign a Work Calendar, Weekly-Off Pattern, Attendance/Overtime/Regularization Policy to a scope. Most specific wins: EMPLOYEE > SHIFT > DESIGNATION > GRADE > DEPARTMENT > BRANCH > LEGAL_ENTITY > COMPANY."
+        description="Assign a Work Calendar, Weekly-Off Pattern, Attendance/Overtime/Regularization/Leave Policy to a scope. Most specific wins: EMPLOYEE > SHIFT > DESIGNATION > GRADE > DEPARTMENT > BRANCH > LEGAL_ENTITY > COMPANY."
         actions={
           <Button type="button" onClick={openCreate}>
             New Assignment
@@ -241,7 +265,9 @@ export default function PolicyAssignmentsPage() {
                         {a.scope_id ? ` (${a.scope_id})` : ""}
                       </p>
                       <p className="mt-0.5 text-xs text-foreground-muted">
-                        Policy {a.policy_id} · {a.effective_from} – {a.effective_to ?? "open"}
+                        Policy {a.policy_id}
+                        {a.leave_type_id ? ` · Leave type ${a.leave_type_id}` : ""} ·{" "}
+                        {a.effective_from} – {a.effective_to ?? "open"}
                         {a.reason ? ` · ${a.reason}` : ""}
                       </p>
                     </div>
@@ -270,6 +296,7 @@ export default function PolicyAssignmentsPage() {
                     ...f,
                     policyKind: e.target.value as PolicyKind,
                     policyId: "",
+                    leaveTypeId: "",
                   }))
                 }
               >
@@ -281,13 +308,44 @@ export default function PolicyAssignmentsPage() {
               </NativeSelect>
             </FormField>
 
-            <FormField id="assign-policy" label="Policy" required>
+            {isLeavePolicy ? (
+              <FormField
+                id="assign-leave-type"
+                label="Leave type"
+                required
+                description="A company may assign a different leave policy per leave type at the same scope (LD-11)."
+              >
+                <NativeSelect
+                  value={form.leaveTypeId}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, leaveTypeId: e.target.value, policyId: "" }))
+                  }
+                >
+                  <option value="">Choose…</option>
+                  {leaveTypeOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {optionLabel(option)}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </FormField>
+            ) : null}
+
+            <FormField
+              id="assign-policy"
+              label="Policy"
+              required
+              description={
+                isLeavePolicy && !form.leaveTypeId ? "Choose a leave type first." : undefined
+              }
+            >
               <NativeSelect
                 value={form.policyId}
+                disabled={isLeavePolicy && !form.leaveTypeId}
                 onChange={(e) => setForm((f) => ({ ...f, policyId: e.target.value }))}
               >
                 <option value="">Choose…</option>
-                {policyOptions.map((option) => (
+                {visiblePolicyOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {optionLabel(option)}
                   </option>

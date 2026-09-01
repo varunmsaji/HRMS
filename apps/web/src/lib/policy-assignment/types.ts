@@ -1,5 +1,8 @@
 /** Mirrors `hrms.modules.organisation.schemas.PolicyAssignment*` — widened by W3 to also carry
- * `ATTENDANCE_POLICY`/`OVERTIME_POLICY`/`REGULARIZATION_POLICY` (WD-24). */
+ * `ATTENDANCE_POLICY`/`OVERTIME_POLICY`/`REGULARIZATION_POLICY` (WD-24), and by Leave L1/LD-11 to
+ * carry `LEAVE_POLICY`, which uniquely also needs `leave_type_id` — unlike every other kind,
+ * a company can have multiple simultaneous `LEAVE_POLICY` assignments at the same scope, one per
+ * leave type (LD-11). */
 
 export const POLICY_KINDS = [
   "WORK_CALENDAR",
@@ -7,6 +10,7 @@ export const POLICY_KINDS = [
   "ATTENDANCE_POLICY",
   "OVERTIME_POLICY",
   "REGULARIZATION_POLICY",
+  "LEAVE_POLICY",
 ] as const;
 export type PolicyKind = (typeof POLICY_KINDS)[number];
 
@@ -27,6 +31,7 @@ export interface PolicyAssignment {
   company_id: string;
   policy_kind: PolicyKind;
   policy_id: string;
+  leave_type_id: string | null;
   scope_type: ScopeType;
   scope_id: string | null;
   effective_from: string;
@@ -45,6 +50,7 @@ export const POLICY_KIND_LABELS: Record<PolicyKind, string> = {
   ATTENDANCE_POLICY: "Attendance Policy",
   OVERTIME_POLICY: "Overtime Policy",
   REGULARIZATION_POLICY: "Regularization Policy",
+  LEAVE_POLICY: "Leave Policy",
 };
 
 /** The API path each policy_kind's identity list lives at — used to populate the `policy_id`
@@ -55,4 +61,5 @@ export const POLICY_KIND_LIST_PATH: Record<PolicyKind, string> = {
   ATTENDANCE_POLICY: "/attendance-policies",
   OVERTIME_POLICY: "/overtime-policies",
   REGULARIZATION_POLICY: "/regularization-policies",
+  LEAVE_POLICY: "/leave-policies",
 };
