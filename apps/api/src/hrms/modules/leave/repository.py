@@ -11,7 +11,15 @@ from uuid import UUID
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.modules.leave.models import LeaveLedgerEntry, LeavePolicy, LeavePolicyVersion, LeaveType
+from hrms.modules.leave.models import (
+    LeaveApplication,
+    LeaveApplicationAction,
+    LeaveApplicationDay,
+    LeaveLedgerEntry,
+    LeavePolicy,
+    LeavePolicyVersion,
+    LeaveType,
+)
 
 
 class LeaveTypeRepository:
@@ -360,3 +368,167 @@ class LeaveLedgerRepository:
             )
             for r in rows
         ]
+
+
+# ---------------------------------------------------------------------------
+# Leave Application — L4, mirrors `AttendanceRegularizationRequestRepository`'s shape (LD-05)
+# ---------------------------------------------------------------------------
+
+
+class LeaveApplicationRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> LeaveApplication:
+        row = LeaveApplication(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, application_id: UUID
+    ) -> LeaveApplication | None:
+        stmt = select(LeaveApplication).where(
+            LeaveApplication.id == application_id,
+            LeaveApplication.company_id == company_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def count_since(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        since: datetime,
+        exclude_statuses: tuple[str, ...] = ("CANCELLED",),
+    ) -> int:
+        """Monthly-cap count (`LeavePolicyVersion.max_requests_per_month`) — mirrors
+        `AttendanceRegularizationRequestRepository.count_since` exactly: counts every
+        application submitted since `since` except `CANCELLED` ones (a self-withdrawn
+        application should not cost the employee a slot)."""
+        stmt = select(LeaveApplication).where(
+            LeaveApplication.company_id == company_id,
+            LeaveApplication.employee_id == employee_id,
+            LeaveApplication.submitted_at >= since,
+            LeaveApplication.status.notin_(exclude_statuses),
+        )
+        return len((await session.execute(stmt)).scalars().all())
+
+    async def list_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[LeaveApplication]:
+        conditions = [LeaveApplication.company_id == company_id]
+        if visible_employee_ids is not None:
+            if not visible_employee_ids:
+                return []
+            conditions.append(LeaveApplication.employee_id.in_(visible_employee_ids))
+        if employee_id is not None:
+            conditions.append(LeaveApplication.employee_id == employee_id)
+        if date_from is not None:
+            conditions.append(LeaveApplication.end_date >= date_from)
+        if date_to is not None:
+            conditions.append(LeaveApplication.start_date <= date_to)
+        if status is not None:
+            conditions.append(LeaveApplication.status == status)
+        stmt = (
+            select(LeaveApplication)
+            .where(*conditions)
+            .order_by(LeaveApplication.submitted_at.desc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        application_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> LeaveApplication | None:
+        stmt = (
+            update(LeaveApplication)
+            .where(
+                LeaveApplication.id == application_id,
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.version == expected_version,
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(LeaveApplication)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class LeaveApplicationDayRepository:
+    async def insert_many(
+        self, session: AsyncSession, *, rows: list[dict[str, Any]]
+    ) -> list[LeaveApplicationDay]:
+        created = [LeaveApplicationDay(**row) for row in rows]
+        session.add_all(created)
+        await session.flush()
+        return created
+
+    async def list_for_application(
+        self, session: AsyncSession, *, company_id: UUID, leave_application_id: UUID
+    ) -> list[LeaveApplicationDay]:
+        stmt = (
+            select(LeaveApplicationDay)
+            .where(
+                LeaveApplicationDay.company_id == company_id,
+                LeaveApplicationDay.leave_application_id == leave_application_id,
+            )
+            .order_by(LeaveApplicationDay.calendar_date)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def set_projection_id(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        day_id: UUID,
+        leave_day_projection_id: UUID,
+        now: datetime,
+    ) -> None:
+        """A plain follow-up write, not version-guarded — mirrors
+        `AttendanceRegularizationRequestRepository.mark_applied`'s exact rationale: by the time
+        this runs inside the same approval transaction, the day row's identity is already fixed
+        and nothing else concurrently writes to it."""
+        await session.execute(
+            update(LeaveApplicationDay)
+            .where(
+                LeaveApplicationDay.id == day_id,
+                LeaveApplicationDay.company_id == company_id,
+            )
+            .values(leave_day_projection_id=leave_day_projection_id, updated_at=now)
+        )
+
+
+class LeaveApplicationActionRepository:
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> LeaveApplicationAction:
+        row = LeaveApplicationAction(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_for_application(
+        self, session: AsyncSession, *, company_id: UUID, leave_application_id: UUID
+    ) -> list[LeaveApplicationAction]:
+        stmt = (
+            select(LeaveApplicationAction)
+            .where(
+                LeaveApplicationAction.company_id == company_id,
+                LeaveApplicationAction.leave_application_id == leave_application_id,
+            )
+            .order_by(LeaveApplicationAction.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())

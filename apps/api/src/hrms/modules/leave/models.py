@@ -12,7 +12,12 @@ L2 (LD-02/LD-03) — `LeaveLedgerEntry`: the append-only balance ledger (ADR-000
 for an (employee, leave_type) is always `SUM(amount)` over this table — no code path anywhere may
 write a mutable balance column.
 
-`leave_application` (LD-05) is explicitly NOT part of this slice — L4."""
+L4 (LD-02/LD-05/LD-12/LD-13) — `LeaveApplication`/`LeaveApplicationDay`/`LeaveApplicationAction`:
+the submission + approval workflow. `LeaveApplication` mirrors `AttendanceRegularizationRequest`'s
+state machine shape (status/approval_chain/approval_stage/resolved_approver_manager_id), mirrored
+not shared code (LD-05). `LeaveApplicationDay` has no Regularization precedent — one row per
+calendar date the application covers, since a leave spans a range with per-day fractions where a
+regularization request is always single-date."""
 
 from datetime import date, datetime
 from decimal import Decimal
@@ -182,15 +187,135 @@ class LeaveLedgerEntry(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     effective_date: Mapped[date] = mapped_column(Date)
 
-    # Opaque external reference (e.g. a future leave_application_id, or an OvertimeRecord.id for
-    # a COMP_OFF_CREDIT entry) — no FK, mirrors LeaveDayProjection.leave_application_id's own
-    # "not joinable yet" posture (L4/L5 not built).
+    # Opaque external reference (e.g. a leave_application_id for an APPLICATION/ADJUSTMENT entry
+    # written by L4's approval/cancel flow, or a future OvertimeRecord.id for a COMP_OFF_CREDIT
+    # entry) — no FK, polymorphic across entry_type, mirrors LeaveDayProjection's own
+    # leave_application_id "not joinable" posture.
     reference_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ---------------------------------------------------------------------------
+# Leave Application — L4, mirrors AttendanceRegularizationRequest's state machine (LD-05)
+# ---------------------------------------------------------------------------
+
+
+class LeaveApplication(Base, TimestampMixin):
+    """Employee's request for leave over a date range. `leave_policy_version_id` is snapshotted
+    at submit time (mirrors `AttendanceRegularizationRequest.regularization_policy_version_id`)
+    so a later policy edit cannot retroactively change how an in-flight application is reviewed.
+    `approval_stage` tracks whose turn it is next (`MANAGER`|`HR`|`NULL` once terminal or
+    `AUTO`) — identical state machine to Regularization's, mirrored not shared (LD-05)."""
+
+    __tablename__ = "leave_application"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    leave_type_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_type.id"), index=True
+    )
+    leave_policy_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_policy_version.id")
+    )
+
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    total_days: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attachment_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(20), default="SUBMITTED")
+    approval_chain: Mapped[str] = mapped_column(String(20))
+    approval_stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    resolved_approver_manager_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
+
+    submitted_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    reviewed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewer_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class LeaveApplicationDay(Base, TimestampMixin):
+    """One row per calendar date a `LeaveApplication` covers — new shape, no Regularization
+    precedent (a regularization request is always single-date). `is_sandwich_generated` marks a
+    weekend/holiday date included only because LD-06's sandwich rule bracketed it between two
+    leave-consuming days, not because the employee applied for it directly.
+
+    `leave_day_projection_id` is an opaque reference (no FK — `leave_day_projection` lives in
+    `attendance`, cross-module, mirrors `leave_ledger.reference_id`'s "not joinable" posture) to
+    the row `LeaveProjectionService.sync()` returns on approval, so `cancel()` (LD-13) can
+    address it directly instead of re-deriving it from the natural key."""
+
+    __tablename__ = "leave_application_day"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    leave_application_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_application.id"), index=True
+    )
+    calendar_date: Mapped[date] = mapped_column(Date)
+    fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2))
+    half: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    is_sandwich_generated: Mapped[bool] = mapped_column(Boolean, default=False)
+    leave_day_projection_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+
+
+class LeaveApplicationAction(Base):
+    """Append-only per-application timeline — mirrors `AttendanceRegularizationAction` exactly
+    (single `created_at`, no `updated_at`/`version`): a single `reviewed_by_user_id`/
+    `reviewed_at` pair on `LeaveApplication` cannot hold a `MANAGER_THEN_HR` chain's full
+    history."""
+
+    __tablename__ = "leave_application_action"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    leave_application_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_application.id"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(30))
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    actor_employee_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id", ondelete="SET NULL"), nullable=True
+    )
+    stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

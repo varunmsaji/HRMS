@@ -6,7 +6,12 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.session import get_session
-from hrms.modules.leave.service import LeaveLedgerService, LeavePolicyService, LeaveTypeService
+from hrms.modules.leave.service import (
+    LeaveApplicationService,
+    LeaveLedgerService,
+    LeavePolicyService,
+    LeaveTypeService,
+)
 
 
 def get_leave_type_service(
@@ -25,3 +30,9 @@ def get_leave_ledger_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> LeaveLedgerService:
     return LeaveLedgerService(session)
+
+
+def get_leave_application_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> LeaveApplicationService:
+    return LeaveApplicationService(session)

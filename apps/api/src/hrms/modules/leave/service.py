@@ -2,8 +2,9 @@
 Standard). L1: leave-type identity CRUD + leave-policy identity/version CRUD with the same
 draft/publish/discard lifecycle every other policy family in this codebase uses. L2: the
 append-only leave ledger (ADR-0004) and balance computation. L3: the monthly accrual engine
-(LEAVE_DECISION_LOG.md LD-06), invoked from `leave/tasks.py`. No application workflow (L4) or
-comp-off redemption (L5) yet — see LEAVE_DECISION_LOG.md LD-09."""
+(LEAVE_DECISION_LOG.md LD-06), invoked from `leave/tasks.py`. L4: application submission +
+approval workflow (LD-02/LD-05/LD-12/LD-13). No comp-off redemption (L5) yet — see
+LEAVE_DECISION_LOG.md LD-09."""
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -14,9 +15,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
-from hrms.core.errors.base import NotFoundError
-from hrms.core.rbac.types import DataScope
+from hrms.core.errors.base import NotFoundError, PermissionDeniedError
+from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.leave.exceptions import (
+    LeaveApplicationApproverMismatchError,
+    LeaveApplicationAttachmentRequiredError,
+    LeaveApplicationCalendarNotResolvedError,
+    LeaveApplicationDateRangeInvalidError,
+    LeaveApplicationHalfDayNotAllowedError,
+    LeaveApplicationInsufficientBalanceError,
+    LeaveApplicationInvalidTransitionError,
+    LeaveApplicationLimitExceededError,
+    LeaveApplicationNotFoundError,
+    LeaveApplicationNotPermittedError,
+    LeaveApplicationPolicyNotResolvedError,
+    LeaveApplicationReasonRequiredError,
+    LeaveApplicationSelfApprovalNotAllowedError,
+    LeaveApplicationWindowExceededError,
     LeavePolicyCodeAlreadyExistsError,
     LeavePolicyDraftAlreadyExistsError,
     LeavePolicyPublishIncompleteError,
@@ -27,11 +42,17 @@ from hrms.modules.leave.exceptions import (
     StaleLeaveResourceError,
 )
 from hrms.modules.leave.repository import (
+    LeaveApplicationActionRepository,
+    LeaveApplicationDayRepository,
+    LeaveApplicationRepository,
     LeaveLedgerRepository,
     LeavePolicyRepository,
     LeaveTypeRepository,
 )
 from hrms.modules.leave.schemas import (
+    LeaveApplicationCreate,
+    LeaveApplicationRead,
+    LeaveApplicationReviewInput,
     LeaveBalanceRead,
     LeaveLedgerAdjustmentCreate,
     LeaveLedgerEntryRead,
@@ -48,6 +69,8 @@ from hrms.modules.leave.schemas import (
     build_leave_policy_update_values,
     build_leave_policy_version_update_values,
     build_leave_type_update_values,
+    leave_application_to_audit_dict,
+    leave_application_to_read,
     leave_ledger_entry_to_audit_dict,
     leave_ledger_entry_to_read,
     leave_policy_to_audit_dict,
@@ -905,3 +928,867 @@ class LeaveAccrualService:
                 )
                 written += 1
         return written
+
+
+class LeaveApplicationService:
+    """L4 — submission + approval workflow (LEAVE_DECISION_LOG.md LD-02/LD-05/LD-12/LD-13).
+    Mirrors `AttendanceRegularizationRequestService`'s state machine and approval-chain
+    resolution (LD-05: mirrored, not shared code) — `submit`/`_get_reviewable`/`_approve_internal`
+    below map directly onto that service's `submit`/`_get_reviewable`/`_approve_internal`. Two
+    pieces have no Regularization precedent: the sandwich-rule day-breakdown computation (no
+    balance/downstream projection exists in Regularization) and post-approval cancellation
+    reversal (LD-13 — Regularization's `cancel` only permits cancelling a still-`SUBMITTED`
+    request)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._audit = AuditService()
+        self._repo = LeaveApplicationRepository()
+        self._day_repo = LeaveApplicationDayRepository()
+        self._action_repo = LeaveApplicationActionRepository()
+        self._type_repo = LeaveTypeRepository()
+        self._policy_repo = LeavePolicyRepository()
+        self._ledger_repo = LeaveLedgerRepository()
+
+    # -----------------------------------------------------------------
+    # Shared helpers
+    # -----------------------------------------------------------------
+
+    async def _resolve_visible_employee_ids(
+        self, company_id: UUID, scope: DataScope, caller_employee_id: UUID | None
+    ) -> frozenset[UUID] | None:
+        from hrms.modules.employee.service import EmployeeService
+
+        return await EmployeeService(self._session).resolve_visible_employee_ids(
+            company_id, scope, caller_employee_id
+        )
+
+    async def _ensure_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        visible_ids = await self._resolve_visible_employee_ids(
+            company_id, scope, caller_employee_id
+        )
+        if visible_ids is not None and employee_id not in visible_ids:
+            raise NotFoundError("Resource not found")
+
+    async def _record_action(
+        self,
+        *,
+        company_id: UUID,
+        leave_application_id: UUID,
+        action: str,
+        actor_user_id: UUID | None,
+        actor_employee_id: UUID | None,
+        stage: str | None,
+        comment: str | None,
+    ) -> None:
+        await self._action_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "leave_application_id": leave_application_id,
+                "action": action,
+                "actor_user_id": actor_user_id,
+                "actor_employee_id": actor_employee_id,
+                "stage": stage,
+                "comment": comment,
+            },
+        )
+
+    async def _read(self, row: Any, *, company_id: UUID) -> LeaveApplicationRead:
+        days = await self._day_repo.list_for_application(
+            self._session, company_id=company_id, leave_application_id=row.id
+        )
+        actions = await self._action_repo.list_for_application(
+            self._session, company_id=company_id, leave_application_id=row.id
+        )
+        return leave_application_to_read(row, days=days, actions=actions)
+
+    async def _stale_error(
+        self, company_id: UUID, application_id: UUID
+    ) -> LeaveApplicationNotFoundError | StaleLeaveResourceError:
+        current = await self._repo.get(
+            self._session, company_id=company_id, application_id=application_id
+        )
+        if current is None:
+            return LeaveApplicationNotFoundError()
+        current_read = await self._read(current, company_id=company_id)
+        return StaleLeaveResourceError(
+            "This application has been modified by another request",
+            current=leave_application_to_audit_dict(current_read),
+        )
+
+    # -----------------------------------------------------------------
+    # Submit
+    # -----------------------------------------------------------------
+
+    async def _compute_day_breakdown(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: LeaveApplicationCreate,
+        sandwich_rule_enabled: bool,
+    ) -> list[dict[str, Any]]:
+        """Per-day fractions for the application's date range, honoring LD-06's sandwich rule.
+        Fails closed (`LeaveApplicationCalendarNotResolvedError`) if any date's `WorkCalendar`
+        doesn't resolve — never silently assumes WORKING (mirrors
+        `CalendarResolutionService.resolve_for_employee`'s own `config_incomplete` posture).
+
+        WORKING/SPECIAL_WORKING days are leave-consuming by default; WEEKLY_OFF/HOLIDAY/SHUTDOWN
+        are not, unless the sandwich rule brackets one between two consuming days *within this
+        same application's range* (no cross-application look-back — a separate, earlier
+        application on an adjacent date is not consulted here)."""
+        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+
+        resolver = CalendarResolutionService(self._session)
+        span_days = (body.end_date - body.start_date).days + 1
+        dates = [body.start_date + timedelta(days=i) for i in range(span_days)]
+
+        day_types: dict[date, str] = {}
+        for one_date in dates:
+            resolved = await resolver.resolve_for_employee(company_id, employee_id, one_date)
+            if resolved.config_incomplete or resolved.day_type is None:
+                raise LeaveApplicationCalendarNotResolvedError()
+            day_types[one_date] = resolved.day_type.day_type
+
+        consuming: dict[date, bool] = {
+            d: day_types[d] in ("WORKING", "SPECIAL_WORKING") for d in dates
+        }
+
+        if sandwich_rule_enabled:
+            for i in range(1, len(dates) - 1):
+                d = dates[i]
+                if consuming[d]:
+                    continue
+                if consuming[dates[i - 1]] and consuming[dates[i + 1]]:
+                    consuming[d] = True
+
+        breakdown: list[dict[str, Any]] = []
+        for d in dates:
+            if not consuming[d]:
+                continue
+            is_sandwich = day_types[d] not in ("WORKING", "SPECIAL_WORKING")
+            fraction = Decimal("1.00")
+            half = None
+            if body.half_day is not None and d == body.start_date and d == body.end_date:
+                fraction = Decimal("0.50")
+                half = body.half_day
+            breakdown.append(
+                {
+                    "date": d,
+                    "fraction": fraction,
+                    "half": half,
+                    "is_sandwich_generated": is_sandwich,
+                }
+            )
+
+        if not breakdown:
+            raise LeaveApplicationDateRangeInvalidError(
+                "This date range has no leave-consuming days"
+            )
+        return breakdown
+
+    async def submit(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: LeaveApplicationCreate,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        on_behalf: bool,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveApplicationRead:
+        """Mirrors `AttendanceRegularizationRequestService.submit`'s exact validation order and
+        approval-chain resolution (LD-05). No future-date restriction — unlike Regularization,
+        a leave application is normally forward-dated (planned leave), so `start_date` in the
+        future is the expected case, not an error."""
+        await self._ensure_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+
+        leave_type = await self._type_repo.get(
+            self._session, company_id=company_id, leave_type_id=body.leave_type_id
+        )
+        if leave_type is None:
+            raise NotFoundError("Resource not found")
+
+        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+
+        resolver = CalendarResolutionService(self._session)
+        found = await resolver.resolve_policy_assignment(
+            company_id,
+            "LEAVE_POLICY",
+            employee_id=employee_id,
+            target_date=body.start_date,
+            leave_type_id=body.leave_type_id,
+        )
+        if found is None:
+            raise LeaveApplicationPolicyNotResolvedError()
+        assignment, _scope_type = found
+
+        policy_version = await self._policy_repo.find_effective_as_of(
+            self._session,
+            company_id=company_id,
+            policy_id=assignment.policy_id,
+            as_of=body.start_date,
+        )
+        if policy_version is None:
+            raise LeaveApplicationPolicyNotResolvedError()
+
+        if on_behalf:
+            if not (
+                policy_version.allow_manager_request_on_behalf
+                or policy_version.allow_hr_request_on_behalf
+            ):
+                raise LeaveApplicationNotPermittedError(
+                    "The applicable policy does not allow on-behalf requests"
+                )
+        elif not policy_version.allow_employee_request:
+            raise LeaveApplicationNotPermittedError(
+                "The applicable policy does not allow employee self-service requests"
+            )
+
+        if body.half_day is not None and not policy_version.half_day_allowed:
+            raise LeaveApplicationHalfDayNotAllowedError()
+
+        if policy_version.max_backdated_days is not None:
+            backdated_days = (date.today() - body.start_date).days
+            if backdated_days > policy_version.max_backdated_days:
+                raise LeaveApplicationWindowExceededError()
+
+        if policy_version.reason_required and not body.reason:
+            raise LeaveApplicationReasonRequiredError()
+        if policy_version.attachment_required and not body.attachment_reference:
+            raise LeaveApplicationAttachmentRequiredError()
+
+        now = datetime.now(UTC)
+        if policy_version.max_requests_per_month is not None:
+            month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+            count = await self._repo.count_since(
+                self._session, company_id=company_id, employee_id=employee_id, since=month_start
+            )
+            if count >= policy_version.max_requests_per_month:
+                raise LeaveApplicationLimitExceededError()
+
+        day_breakdown = await self._compute_day_breakdown(
+            company_id, employee_id, body, policy_version.sandwich_rule_enabled
+        )
+        total_days = sum((d["fraction"] for d in day_breakdown), Decimal("0.00"))
+
+        if leave_type.requires_balance:
+            balances = await self._ledger_repo.get_balances(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            current_balance = next(
+                (b.balance for b in balances if b.leave_type_id == leave_type.id), Decimal("0.00")
+            )
+            # LD-06: never negative — hard-capped at current balance, no exceptions.
+            if current_balance < total_days:
+                raise LeaveApplicationInsufficientBalanceError()
+
+        approval_chain = policy_version.approval_chain
+        resolved_manager_id: UUID | None = None
+        approval_stage: str | None
+        if approval_chain == "AUTO":
+            approval_stage = None
+        elif approval_chain == "HR":
+            approval_stage = "HR"
+        else:  # MANAGER or MANAGER_THEN_HR
+            from hrms.modules.employee.service import EmployeeAssignmentService
+
+            assignment_service = EmployeeAssignmentService(self._session)
+            employee_assignment = await assignment_service.get_assignment_as_of(
+                company_id, employee_id, body.start_date
+            )
+            resolved_manager_id = (
+                employee_assignment.reporting_manager_id if employee_assignment else None
+            )
+            # Mirrors Regularization/Overtime: resolution failure routes to HR, audited, never
+            # auto-approved on failure.
+            approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
+
+        application_id = uuid4()
+        data = {
+            "id": application_id,
+            "company_id": company_id,
+            "employee_id": employee_id,
+            "leave_type_id": body.leave_type_id,
+            "leave_policy_version_id": policy_version.id,
+            "start_date": body.start_date,
+            "end_date": body.end_date,
+            "total_days": total_days,
+            "reason": body.reason,
+            "attachment_reference": body.attachment_reference,
+            "status": "SUBMITTED",
+            "approval_chain": approval_chain,
+            "approval_stage": approval_stage,
+            "resolved_approver_manager_id": resolved_manager_id,
+            "submitted_by_user_id": actor_user_id,
+            "submitted_at": now,
+        }
+        row = await self._repo.insert(self._session, data=data)
+
+        await self._day_repo.insert_many(
+            self._session,
+            rows=[
+                {
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "leave_application_id": application_id,
+                    "calendar_date": d["date"],
+                    "fraction": d["fraction"],
+                    "half": d["half"],
+                    "is_sandwich_generated": d["is_sandwich_generated"],
+                }
+                for d in day_breakdown
+            ],
+        )
+
+        await self._record_action(
+            company_id=company_id,
+            leave_application_id=application_id,
+            action="SUBMITTED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=None,
+            comment=body.reason,
+        )
+        if approval_chain in ("MANAGER", "MANAGER_THEN_HR") and resolved_manager_id is None:
+            await self._record_action(
+                company_id=company_id,
+                leave_application_id=application_id,
+                action="APPROVER_UNRESOLVED",
+                actor_user_id=None,
+                actor_employee_id=None,
+                stage="MANAGER",
+                comment="No manager resolved as of the start date; routed to HR",
+            )
+
+        read = await self._read(row, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_APPLICATION_SUBMITTED",
+            entity_type="leave_application",
+            entity_id=application_id,
+            after=leave_application_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        if approval_chain == "AUTO":
+            read = await self._approve_internal(
+                company_id,
+                row,
+                actor_user_id=actor_user_id,
+                actor_employee_id=caller_employee_id,
+                reviewer_comment="Auto-approved per policy (approval_chain=AUTO)",
+                expected_version=row.version,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        return read
+
+    # -----------------------------------------------------------------
+    # Approve / reject
+    # -----------------------------------------------------------------
+
+    async def _get_reviewable(
+        self,
+        company_id: UUID,
+        application_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> Any:
+        row = await self._repo.get(
+            self._session, company_id=company_id, application_id=application_id
+        )
+        if row is None:
+            raise LeaveApplicationNotFoundError()
+        if row.status != "SUBMITTED" or row.approval_stage is None:
+            raise LeaveApplicationInvalidTransitionError()
+        # Self-approval is always blocked, no policy escape hatch — mirrors WD-28 decision 5.
+        if caller_employee_id is not None and row.employee_id == caller_employee_id:
+            raise LeaveApplicationSelfApprovalNotAllowedError()
+
+        if row.approval_stage == "MANAGER":
+            if caller_employee_id is None or caller_employee_id != row.resolved_approver_manager_id:
+                raise LeaveApplicationApproverMismatchError()
+        else:  # HR
+            if DataScopeLevel.COMPANY not in scope.levels:
+                raise LeaveApplicationApproverMismatchError(
+                    "HR-stage approval requires a company-wide LEAVE.APPLICATION_APPROVE grant"
+                )
+        return row
+
+    async def approve(
+        self,
+        company_id: UUID,
+        application_id: UUID,
+        body: LeaveApplicationReviewInput,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveApplicationRead:
+        row = await self._get_reviewable(
+            company_id, application_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        return await self._approve_internal(
+            company_id,
+            row,
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            reviewer_comment=body.reviewer_comment,
+            expected_version=expected_version,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def reject(
+        self,
+        company_id: UUID,
+        application_id: UUID,
+        body: LeaveApplicationReviewInput,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveApplicationRead:
+        row = await self._get_reviewable(
+            company_id, application_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        now = datetime.now(UTC)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            application_id=application_id,
+            values={
+                "status": "REJECTED",
+                "approval_stage": None,
+                "reviewed_by_user_id": actor_user_id,
+                "reviewed_at": now,
+                "reviewer_comment": body.reviewer_comment,
+                "rejection_reason": body.rejection_reason,
+            },
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, application_id)
+
+        await self._record_action(
+            company_id=company_id,
+            leave_application_id=application_id,
+            action="REJECTED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=row.approval_stage,
+            comment=body.rejection_reason or body.reviewer_comment,
+        )
+        read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_APPLICATION_REJECTED",
+            entity_type="leave_application",
+            entity_id=application_id,
+            before=leave_application_to_audit_dict(await self._read(row, company_id=company_id)),
+            after=leave_application_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def _approve_internal(
+        self,
+        company_id: UUID,
+        row: Any,
+        *,
+        actor_user_id: UUID | None,
+        actor_employee_id: UUID | None,
+        reviewer_comment: str | None,
+        expected_version: int,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> LeaveApplicationRead:
+        now = datetime.now(UTC)
+        is_final_stage = not (
+            row.approval_chain == "MANAGER_THEN_HR" and row.approval_stage == "MANAGER"
+        )
+        values: dict[str, Any] = (
+            {
+                "status": "APPROVED",
+                "approval_stage": None,
+                "reviewed_by_user_id": actor_user_id,
+                "reviewed_at": now,
+                "reviewer_comment": reviewer_comment,
+            }
+            if is_final_stage
+            else {"approval_stage": "HR"}
+        )
+
+        before_read = await self._read(row, company_id=company_id)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            application_id=row.id,
+            values=values,
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, row.id)
+
+        if not is_final_stage:
+            await self._record_action(
+                company_id=company_id,
+                leave_application_id=row.id,
+                action="STAGE_APPROVED",
+                actor_user_id=actor_user_id,
+                actor_employee_id=actor_employee_id,
+                stage="MANAGER",
+                comment=reviewer_comment,
+            )
+            read = await self._read(updated, company_id=company_id)
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="LEAVE_APPLICATION_STAGE_APPROVED",
+                entity_type="leave_application",
+                entity_id=row.id,
+                before=leave_application_to_audit_dict(before_read),
+                after=leave_application_to_audit_dict(read),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+            return read
+
+        await self._record_action(
+            company_id=company_id,
+            leave_application_id=row.id,
+            action="APPROVED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=actor_employee_id,
+            stage=row.approval_stage,
+            comment=reviewer_comment,
+        )
+        approved_read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_APPLICATION_APPROVED",
+            entity_type="leave_application",
+            entity_id=row.id,
+            before=leave_application_to_audit_dict(before_read),
+            after=leave_application_to_audit_dict(approved_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        return await self._apply_approval(
+            company_id,
+            updated,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def _apply_approval(
+        self,
+        company_id: UUID,
+        row: Any,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> LeaveApplicationRead:
+        """LD-12: runs inside the same transaction as the approval write that preceded it — if
+        `LeaveProjectionService.sync()` refuses any single day (its attendance period is
+        already closed), the whole transaction (including the `status='APPROVED'` write) rolls
+        back with the exception, mirroring
+        `AttendanceRegularizationRequestService._apply_correction`'s exact posture. Never a
+        partially-approved, partially-synced application."""
+        from hrms.modules.attendance.schemas import LeaveProjectionSync
+        from hrms.modules.attendance.service import LeaveProjectionService
+
+        # `leave_application_day.half` uses this module's own FIRST_HALF/SECOND_HALF vocabulary
+        # (LeaveApplicationCreate's `_HALF_DAY_VALUES`); `LeaveProjectionSync.half` uses
+        # Attendance's own FIRST/SECOND vocabulary — translated at the boundary, not unified,
+        # since each module owns its own field shape (LD-05's mirrored-not-shared posture).
+        half_to_projection_half = {"FIRST_HALF": "FIRST", "SECOND_HALF": "SECOND"}
+
+        leave_type = await self._type_repo.get(
+            self._session, company_id=company_id, leave_type_id=row.leave_type_id
+        )
+        days = await self._day_repo.list_for_application(
+            self._session, company_id=company_id, leave_application_id=row.id
+        )
+        # LEAVE.APPLICATION_APPROVE already gated this action — this cross-module call is not
+        # re-deriving Attendance's own RBAC, just satisfying `sync()`'s required scope param
+        # (mirrors L2's `create_adjustment` "the permission grant itself is the gate" posture).
+        full_scope = DataScope(levels=frozenset({DataScopeLevel.COMPANY}))
+        projection_service = LeaveProjectionService(self._session)
+
+        for day in days:
+            synced = await projection_service.sync(
+                company_id,
+                LeaveProjectionSync(
+                    employee_id=row.employee_id,
+                    attendance_date=day.calendar_date,
+                    leave_application_id=row.id,
+                    leave_type_id=row.leave_type_id,
+                    leave_type_code=leave_type.code if leave_type is not None else None,
+                    fraction=str(day.fraction),
+                    half=half_to_projection_half.get(day.half) if day.half else None,
+                    is_paid=leave_type.is_paid_default if leave_type is not None else True,
+                ),
+                scope=full_scope,
+                caller_employee_id=None,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            await self._day_repo.set_projection_id(
+                self._session,
+                company_id=company_id,
+                day_id=day.id,
+                leave_day_projection_id=synced.id,
+                now=datetime.now(UTC),
+            )
+
+        # The actual balance deduction — skipped entirely for a LOP-style type (LD-02).
+        if leave_type is not None and leave_type.requires_balance:
+            await self._ledger_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": row.employee_id,
+                    "leave_type_id": row.leave_type_id,
+                    "entry_type": "APPLICATION",
+                    "amount": -row.total_days,
+                    "effective_date": row.start_date,
+                    "reference_id": row.id,
+                    "reason": f"Leave application {row.start_date} to {row.end_date}",
+                    "created_by_user_id": actor_user_id,
+                },
+            )
+
+        return await self._read(row, company_id=company_id)
+
+    # -----------------------------------------------------------------
+    # Cancel
+    # -----------------------------------------------------------------
+
+    async def cancel(
+        self,
+        company_id: UUID,
+        application_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        expected_version: int,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveApplicationRead:
+        """`SUBMITTED` (pre-approval) mirrors `AttendanceRegularizationRequestService.cancel`
+        exactly — only the original submitter, no side effects. `APPROVED` (post-approval) is
+        new territory (LD-13, no Regularization precedent): same submitter-only rule, but also
+        reverses the ledger debit and every synced `LeaveDayProjection`."""
+        row = await self._repo.get(
+            self._session, company_id=company_id, application_id=application_id
+        )
+        if row is None:
+            raise LeaveApplicationNotFoundError()
+        await self._ensure_employee_visible(
+            company_id, row.employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        if row.submitted_by_user_id != actor_user_id:
+            raise PermissionDeniedError("Only the original submitter may cancel this application")
+        if row.status not in ("SUBMITTED", "APPROVED"):
+            raise LeaveApplicationInvalidTransitionError()
+
+        was_approved = row.status == "APPROVED"
+        now = datetime.now(UTC)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            application_id=application_id,
+            values={
+                "status": "CANCELLED",
+                "approval_stage": None,
+                "cancelled_at": now,
+                "cancelled_by_user_id": actor_user_id,
+            },
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise await self._stale_error(company_id, application_id)
+
+        await self._record_action(
+            company_id=company_id,
+            leave_application_id=application_id,
+            action="CANCELLED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=caller_employee_id,
+            stage=None,
+            comment=None,
+        )
+
+        if was_approved:
+            await self._reverse_approval(
+                company_id,
+                updated,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        read = await self._read(updated, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_APPLICATION_CANCELLED",
+            entity_type="leave_application",
+            entity_id=application_id,
+            before=leave_application_to_audit_dict(await self._read(row, company_id=company_id)),
+            after=leave_application_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def _reverse_approval(
+        self,
+        company_id: UUID,
+        row: Any,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """LD-13: an offsetting `ADJUSTMENT` ledger entry (never mutates the original
+        `APPLICATION` debit, ADR-0004) plus `LeaveProjectionService.cancel()` for every day that
+        was actually synced."""
+        from hrms.modules.attendance.schemas import LeaveProjectionCancelInput
+        from hrms.modules.attendance.service import LeaveProjectionService
+
+        leave_type = await self._type_repo.get(
+            self._session, company_id=company_id, leave_type_id=row.leave_type_id
+        )
+        if leave_type is not None and leave_type.requires_balance:
+            await self._ledger_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": row.employee_id,
+                    "leave_type_id": row.leave_type_id,
+                    "entry_type": "ADJUSTMENT",
+                    "amount": row.total_days,
+                    "effective_date": date.today(),
+                    "reference_id": row.id,
+                    "reason": "Reversal: leave application cancelled after approval",
+                    "created_by_user_id": actor_user_id,
+                },
+            )
+
+        days = await self._day_repo.list_for_application(
+            self._session, company_id=company_id, leave_application_id=row.id
+        )
+        full_scope = DataScope(levels=frozenset({DataScopeLevel.COMPANY}))
+        projection_service = LeaveProjectionService(self._session)
+        for day in days:
+            if day.leave_day_projection_id is None:
+                continue
+            projection = await projection_service.get_projection(
+                company_id,
+                day.leave_day_projection_id,
+                scope=full_scope,
+                caller_employee_id=None,
+            )
+            await projection_service.cancel(
+                company_id,
+                day.leave_day_projection_id,
+                LeaveProjectionCancelInput(reason="Leave application cancelled after approval"),
+                expected_version=projection.version,
+                scope=full_scope,
+                caller_employee_id=None,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+    # -----------------------------------------------------------------
+    # Read
+    # -----------------------------------------------------------------
+
+    async def list_applications(
+        self,
+        company_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[LeaveApplicationRead]:
+        visible_ids = await self._resolve_visible_employee_ids(
+            company_id, scope, caller_employee_id
+        )
+        rows = await self._repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+        return [await self._read(r, company_id=company_id) for r in rows]
+
+    async def get_application(
+        self,
+        company_id: UUID,
+        application_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> LeaveApplicationRead:
+        row = await self._repo.get(
+            self._session, company_id=company_id, application_id=application_id
+        )
+        if row is None:
+            raise LeaveApplicationNotFoundError()
+        visible_ids = await self._resolve_visible_employee_ids(
+            company_id, scope, caller_employee_id
+        )
+        if visible_ids is not None and row.employee_id not in visible_ids:
+            raise LeaveApplicationNotFoundError()
+        return await self._read(row, company_id=company_id)

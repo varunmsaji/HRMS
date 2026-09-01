@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
-from hrms.core.errors.base import PermissionDeniedError
+from hrms.core.errors.base import PermissionDeniedError, ValidationError
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
 from hrms.core.rbac.types import DataScope
@@ -29,11 +29,15 @@ from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.leave.dependencies import (
+    get_leave_application_service,
     get_leave_ledger_service,
     get_leave_policy_service,
     get_leave_type_service,
 )
 from hrms.modules.leave.permissions import (
+    LEAVE_APPLICATION_APPROVE,
+    LEAVE_APPLICATION_SUBMIT,
+    LEAVE_APPLICATION_SUBMIT_ON_BEHALF,
     LEAVE_BALANCE_ADJUST,
     LEAVE_BALANCE_VIEW,
     LEAVE_BALANCE_VIEW_ALL,
@@ -41,6 +45,9 @@ from hrms.modules.leave.permissions import (
     LEAVE_TYPE_MANAGE,
 )
 from hrms.modules.leave.schemas import (
+    LeaveApplicationCreate,
+    LeaveApplicationRead,
+    LeaveApplicationReviewInput,
     LeaveBalanceRead,
     LeaveLedgerAdjustmentCreate,
     LeaveLedgerEntryRead,
@@ -55,7 +62,12 @@ from hrms.modules.leave.schemas import (
     LeaveTypeRead,
     LeaveTypeUpdate,
 )
-from hrms.modules.leave.service import LeaveLedgerService, LeavePolicyService, LeaveTypeService
+from hrms.modules.leave.service import (
+    LeaveApplicationService,
+    LeaveLedgerService,
+    LeavePolicyService,
+    LeaveTypeService,
+)
 from hrms.shared.pagination import DataEnvelope, ListEnvelope
 
 router = APIRouter(tags=["leave"])
@@ -398,3 +410,184 @@ async def get_leave_balances(
         caller_employee_id=user.employee_id,
     )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Leave Applications — L4. Submit/approve/reject/cancel mirror
+# `attendance/router.py`'s regularization-request routes exactly (LD-05); reads reuse the same
+# combined `LEAVE.BALANCE_VIEW`/`_VIEW_ALL` scope as the ledger/balance routes above (LD-08: no
+# dedicated view code — reads reuse a `.VIEW`-style code).
+# ---------------------------------------------------------------------------
+
+
+@router.post("/leave-applications", status_code=status.HTTP_201_CREATED)
+async def create_leave_application(
+    body: LeaveApplicationCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+) -> DataEnvelope[LeaveApplicationRead]:
+    """Self-submit (`LEAVE.APPLICATION_SUBMIT`, SELF) when `employee_id` is omitted or matches
+    the caller's own; on-behalf (`LEAVE.APPLICATION_SUBMIT_ON_BEHALF`, COMPANY) when it names
+    someone else — mirrors `create_regularization_request`'s exact shape, since the gating
+    permission here also depends on the request body."""
+    target_employee_id = body.employee_id or user.employee_id
+    if target_employee_id is None:
+        raise ValidationError("employee_id is required — the caller has no linked employee record")
+
+    on_behalf = body.employee_id is not None and body.employee_id != user.employee_id
+    required_permission = (
+        LEAVE_APPLICATION_SUBMIT_ON_BEHALF if on_behalf else LEAVE_APPLICATION_SUBMIT
+    )
+    scope = await rbac.resolve_data_scope(user.user_id, user.company_id, required_permission)
+    if not scope.levels:
+        raise PermissionDeniedError(
+            f"Permission {required_permission} is required", code="PERMISSION_DENIED"
+        )
+
+    data = await service.submit(
+        tenant.company_id,
+        target_employee_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        on_behalf=on_behalf,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/leave-applications", status_code=status.HTTP_200_OK)
+async def list_leave_applications(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+    employee_id: Annotated[UUID | None, Query()] = None,
+    date_from: Annotated[date | None, Query()] = None,
+    date_to: Annotated[date | None, Query()] = None,
+    application_status: Annotated[str | None, Query()] = None,
+) -> ListEnvelope[LeaveApplicationRead]:
+    scope = await _combined_balance_scope(user, rbac)
+    data = await service.list_applications(
+        tenant.company_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        employee_id=employee_id,
+        date_from=date_from,
+        date_to=date_to,
+        status=application_status,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/leave-applications/{application_id}", status_code=status.HTTP_200_OK)
+async def get_leave_application(
+    application_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+) -> DataEnvelope[LeaveApplicationRead]:
+    scope = await _combined_balance_scope(user, rbac)
+    data = await service.get_application(
+        tenant.company_id, application_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/leave-applications/{application_id}/cancel", status_code=status.HTTP_200_OK)
+async def cancel_leave_application(
+    application_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+) -> DataEnvelope[LeaveApplicationRead]:
+    """Only the original submitter may cancel (enforced in the service), whether the
+    application is still `SUBMITTED` or already `APPROVED` (LD-13). This route accepts either
+    submission permission since a cancel is available to whichever kind of submitter created
+    the application — mirrors `cancel_regularization_request`'s combined-scope shape exactly."""
+    self_scope = await rbac.resolve_data_scope(
+        user.user_id, user.company_id, LEAVE_APPLICATION_SUBMIT
+    )
+    on_behalf_scope = await rbac.resolve_data_scope(
+        user.user_id, user.company_id, LEAVE_APPLICATION_SUBMIT_ON_BEHALF
+    )
+    combined_scope = DataScope(levels=self_scope.levels | on_behalf_scope.levels)
+    if not combined_scope.levels:
+        raise PermissionDeniedError(
+            f"Permission {LEAVE_APPLICATION_SUBMIT} is required", code="PERMISSION_DENIED"
+        )
+
+    data = await service.cancel(
+        tenant.company_id,
+        application_id,
+        scope=combined_scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/leave-applications/{application_id}/approve", status_code=status.HTTP_200_OK)
+async def approve_leave_application(
+    application_id: UUID,
+    body: LeaveApplicationReviewInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_APPLICATION_APPROVE))],
+    service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+) -> DataEnvelope[LeaveApplicationRead]:
+    """`MANAGER` stage requires the caller to *be* the snapshotted
+    `resolved_approver_manager_id`; `HR` stage requires a COMPANY-scoped grant — both checked in
+    the service (`LeaveApplicationService._get_reviewable`), not here, since the correct check
+    depends on the application's current stage."""
+    data = await service.approve(
+        tenant.company_id,
+        application_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/leave-applications/{application_id}/reject", status_code=status.HTTP_200_OK)
+async def reject_leave_application(
+    application_id: UUID,
+    body: LeaveApplicationReviewInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_APPLICATION_APPROVE))],
+    service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+) -> DataEnvelope[LeaveApplicationRead]:
+    data = await service.reject(
+        tenant.company_id,
+        application_id,
+        body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=int(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))

@@ -1,14 +1,17 @@
-"""Pydantic request/response shapes for the Leave module (L1/L2)."""
+"""Pydantic request/response shapes for the Leave module (L1/L2/L4)."""
 
 from datetime import date
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
     from hrms.modules.leave.models import (
+        LeaveApplication,
+        LeaveApplicationAction,
+        LeaveApplicationDay,
         LeaveLedgerEntry,
         LeavePolicy,
         LeavePolicyVersion,
@@ -25,6 +28,7 @@ _LEDGER_ENTRY_TYPES = (
     "CARRY_FORWARD",
     "COMP_OFF_CREDIT",
 )
+_HALF_DAY_VALUES = ("FIRST_HALF", "SECOND_HALF")
 
 
 def _format_timestamp(value: Any) -> str | None:
@@ -374,3 +378,172 @@ class LeaveBalanceRead(BaseModel):
     leave_type_code: str
     leave_type_name: str
     balance: Decimal
+
+
+# ---------------------------------------------------------------------------
+# Leave Application — L4
+# ---------------------------------------------------------------------------
+
+
+class LeaveApplicationCreate(BaseModel):
+    """Shared by self-submit and on-behalf-submit (router decides `employee_id`, mirrors
+    `RegularizationRequestCreate`'s convention). `half_day` is only valid for a single-day
+    application (`start_date == end_date`) — this first cut does not support a half-day
+    boundary on a multi-day range (e.g. half day at the start, full days between, half day at
+    the end); every day in a multi-day range is a full day or a sandwich-rule-generated day."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: UUID | None = None
+    leave_type_id: UUID
+    start_date: date
+    end_date: date
+    half_day: str | None = None
+    reason: str | None = None
+    attachment_reference: str | None = Field(default=None, max_length=500)
+
+    @field_validator("half_day")
+    @classmethod
+    def validate_half_day(cls, value: str | None) -> str | None:
+        if value is not None and value not in _HALF_DAY_VALUES:
+            raise ValueError(f"half_day must be one of {_HALF_DAY_VALUES}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> Self:
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must not be before start_date")
+        if self.half_day is not None and self.start_date != self.end_date:
+            raise ValueError("half_day is only valid for a single-day application")
+        return self
+
+
+class LeaveApplicationReviewInput(BaseModel):
+    """Body for approve/reject — mirrors `RegularizationReviewInput` exactly. `rejection_reason`
+    is only meaningful on reject; ignored (not an error) if supplied on approve."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer_comment: str | None = None
+    rejection_reason: str | None = None
+
+
+class LeaveApplicationDayRead(BaseModel):
+    id: UUID
+    calendar_date: date
+    fraction: Decimal
+    half: str | None
+    is_sandwich_generated: bool
+    leave_day_projection_id: UUID | None
+
+
+def leave_application_day_to_read(row: "LeaveApplicationDay") -> LeaveApplicationDayRead:
+    return LeaveApplicationDayRead(
+        id=row.id,
+        calendar_date=row.calendar_date,
+        fraction=row.fraction,
+        half=row.half,
+        is_sandwich_generated=row.is_sandwich_generated,
+        leave_day_projection_id=row.leave_day_projection_id,
+    )
+
+
+class LeaveApplicationActionRead(BaseModel):
+    id: UUID
+    action: str
+    actor_user_id: UUID | None
+    actor_employee_id: UUID | None
+    stage: str | None
+    comment: str | None
+    created_at: str
+
+
+def leave_application_action_to_read(row: "LeaveApplicationAction") -> LeaveApplicationActionRead:
+    return LeaveApplicationActionRead(
+        id=row.id,
+        action=row.action,
+        actor_user_id=row.actor_user_id,
+        actor_employee_id=row.actor_employee_id,
+        stage=row.stage,
+        comment=row.comment,
+        created_at=_format_timestamp(row.created_at) or "",
+    )
+
+
+class LeaveApplicationRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    leave_type_id: UUID
+    leave_policy_version_id: UUID
+
+    start_date: date
+    end_date: date
+    total_days: Decimal
+    reason: str | None
+    attachment_reference: str | None
+
+    status: str
+    approval_chain: str
+    approval_stage: str | None
+    resolved_approver_manager_id: UUID | None
+
+    submitted_by_user_id: UUID | None
+    submitted_at: str
+
+    reviewed_by_user_id: UUID | None
+    reviewed_at: str | None
+    reviewer_comment: str | None
+    rejection_reason: str | None
+
+    cancelled_at: str | None
+    cancelled_by_user_id: UUID | None
+
+    version: int
+
+    days: list[LeaveApplicationDayRead]
+    actions: list[LeaveApplicationActionRead]
+
+    created_at: str
+    updated_at: str
+
+
+def leave_application_to_read(
+    row: "LeaveApplication",
+    *,
+    days: list["LeaveApplicationDay"],
+    actions: list["LeaveApplicationAction"],
+) -> LeaveApplicationRead:
+    return LeaveApplicationRead(
+        id=row.id,
+        company_id=row.company_id,
+        employee_id=row.employee_id,
+        leave_type_id=row.leave_type_id,
+        leave_policy_version_id=row.leave_policy_version_id,
+        start_date=row.start_date,
+        end_date=row.end_date,
+        total_days=row.total_days,
+        reason=row.reason,
+        attachment_reference=row.attachment_reference,
+        status=row.status,
+        approval_chain=row.approval_chain,
+        approval_stage=row.approval_stage,
+        resolved_approver_manager_id=row.resolved_approver_manager_id,
+        submitted_by_user_id=row.submitted_by_user_id,
+        submitted_at=_format_timestamp(row.submitted_at) or "",
+        reviewed_by_user_id=row.reviewed_by_user_id,
+        reviewed_at=_format_timestamp(row.reviewed_at),
+        reviewer_comment=row.reviewer_comment,
+        rejection_reason=row.rejection_reason,
+        cancelled_at=_format_timestamp(row.cancelled_at),
+        cancelled_by_user_id=row.cancelled_by_user_id,
+        version=row.version,
+        days=[leave_application_day_to_read(d) for d in days],
+        actions=[leave_application_action_to_read(a) for a in actions],
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )
+
+
+def leave_application_to_audit_dict(read: LeaveApplicationRead) -> dict[str, Any]:
+    return read.model_dump(mode="json")

@@ -252,6 +252,51 @@ Leave assignment.
 
 ---
 
+## LD-12 — L4 approval: a closed attendance period fails the whole approval, not just that day
+
+**Status:** LOCKED.
+
+**Context:** `LeaveProjectionService.sync()` (`attendance/service.py:5210`, LD-01's existing
+contract) already refuses to publish a `LeaveDayProjection` for a date whose `AttendancePeriod`
+is closed, raising `AttendancePeriodClosedError`. A multi-day `leave_application` approval calls
+`sync()` once per `leave_application_day` row — Regularization has no precedent for this, since
+it never wrote a downstream projection at all.
+
+**Decision (client answer, 2026-08-31):** if any single day's sync fails because its period is
+closed, the entire approval is refused — no partial approval, no partially-synced application.
+The approver is told which date failed. Keeps `leave_application.status`, the `leave_ledger`
+`APPLICATION` entry, and every `LeaveDayProjection` row for that application in lockstep: either
+all exist or none do, never a subset.
+
+**Rejected:** partial sync (approve the application, silently skip locked days). Would leave an
+"APPROVED" application with some days invisible to Attendance's calculation — a worse, silent
+version of exactly the inconsistency ADR-0004/WD-11's "never guess, never partially apply"
+posture exists to prevent.
+
+---
+
+## LD-13 — Post-approval cancellation is a first-class action, not an HR-manual correction
+
+**Status:** LOCKED.
+
+**Context:** Regularization's `cancel` (`attendance/service.py:3703-3754`) only permits
+cancellation while `status == "SUBMITTED"` — it never needed a post-approval path, since
+Regularization touches no balance and publishes no downstream projection. Leave does both, so
+this is new design, not a mirror of anything.
+
+**Decision (client answer, 2026-08-31):** an `APPROVED` `leave_application` can still be
+cancelled. Doing so writes an offsetting `ADJUSTMENT` ledger entry (credits back `total_days` —
+the original `APPLICATION` debit is never mutated or deleted, per ADR-0004) and calls
+`LeaveProjectionService.cancel()` for every `leave_application_day` that was synced. Self-service,
+no HR intervention required to correct a leave that was approved and then no longer needed.
+
+**Rejected:** requiring HR to manually correct via L2's `POST /leave-ledger/adjustments` +
+manual projection cancellation. Workable but pushes routine corrections (employee's plans
+changed) onto HR for something the system can safely automate — same reversal shape either way,
+just gated behind a person instead of a button.
+
+---
+
 ## LD-07 — Comp-off redemption + expiry enforcement
 
 **Status:** LOCKED.
@@ -302,7 +347,7 @@ above.
 | **L1 — DONE** | `leave_type`, `leave_policy`/`leave_policy_version` (identity+config, no evaluation), `PolicyAssignment` wired for `LEAVE_POLICY`, permission scaffolding | Nothing — pure reuse of existing patterns (LD-02 shape, LD-04, LD-08). Shipped: also required widening the DB-level `policy_assignment_policy_kind_check` CHECK constraint, not just the Pydantic allow-list — a real gap LD-04 didn't anticipate, found by manually testing the assignment endpoint end-to-end. |
 | **L2 — DONE** | `leave_ledger`, balance computation (`GET /leave-balances`), manual adjustment entries (`POST /leave-ledger/adjustments`, HR can view/adjust balances by hand), raw audit trail (`GET /leave-ledger`) | L1. Shipped: `LEAVE.BALANCE_VIEW`/`LEAVE.BALANCE_VIEW_ALL` read-gating uses the `cancel_regularization_request` combined-`DataScope` union shape (`attendance/router.py`) — the closest existing precedent for a route accepting either of two permission grants, confirmed via research before implementing rather than inventing a new pattern. |
 | **L3 — DONE** | Monthly accrual engine (`LeaveAccrualService.run_for_company`, `leave.run_monthly_accrual`/`leave.accrue_company` Celery tasks, Beat-scheduled) | L2 + LD-06's items answered. Shipped: found and fixed two real gaps along the way — LD-10 (`LeavePolicy` had no `LeaveType` binding) and LD-11 (`PolicyAssignment`'s exclusion constraint didn't allow multiple simultaneous `LEAVE_POLICY` assignments at one scope, which every leave type needs). Scoped to `MONTHLY` frequency only; `YEARLY` accrual and carry-forward-cap enforcement deferred — no fiscal-year anchor has been decided yet. |
-| **L4** | `leave_application` + approval workflow, writes `LeaveDayProjection` via the existing sync contract on approval | L2, LD-01, LD-05 |
+| **L4 — DONE** | `leave_application`/`leave_application_day`/`leave_application_action` + approval workflow, writes `LeaveDayProjection` via the existing sync contract on approval | L2, LD-01, LD-05. Shipped: two new decisions along the way — LD-12 (closed-attendance-period fails the *whole* approval, not just that day) and LD-13 (post-approval cancellation is self-service, reversing both the ledger and every synced projection — no Regularization precedent, since Regularization touches no balance/projection). Also caught a real cross-module vocabulary mismatch in testing: `leave_application_day.half` (`FIRST_HALF`/`SECOND_HALF`) vs. `LeaveProjectionSync.half` (`FIRST`/`SECOND`) — translated at the module boundary, not unified. |
 | **L5** | Comp-off redemption + expiry sweep | L2, LD-07 (now LOCKED) |
 | **L6** | Frontend: balance display, application submission, approval review queue, policy config UI — mirrors existing Regularization/Attendance-Policy UI exactly | L4 |
 
@@ -320,9 +365,9 @@ L1–L2 alone already give HR a working, auditable balance ledger before accrual
 
 ---
 
-**STOP.** L1, L2, and L3 are done. L4 (`leave_application` + approval workflow) is next and is
-unblocked — nothing outstanding gates it. L5 is unblocked on decisions (LD-07 is now LOCKED) but
-naturally follows L4, since comp-off redemption is redemption *against an application*. The one
-remaining genuinely open item is L3's own deferred scope: a fiscal-year anchor for `YEARLY`
-accrual and carry-forward-cap enforcement, needed whenever a client actually configures a
-`YEARLY`-frequency policy — not required for L4/L5/L6 to proceed.
+**STOP.** L1, L2, L3, and L4 are done. L5 (comp-off redemption + expiry sweep) is next and is
+fully unblocked — LD-07 is LOCKED and L4's application/approval/ledger/projection machinery it
+redeems against already exists. L6 (frontend) is also unblocked, since it only needs L4's API
+surface, not L5. The one remaining genuinely open item is L3's own deferred scope: a fiscal-year
+anchor for `YEARLY` accrual and carry-forward-cap enforcement, needed whenever a client actually
+configures a `YEARLY`-frequency policy — not required for L5/L6 to proceed.
