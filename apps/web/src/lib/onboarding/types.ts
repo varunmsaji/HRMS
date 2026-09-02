@@ -1,0 +1,39 @@
+/** Mirrors `apps/api/src/hrms/modules/onboarding/schemas.py` — O1 (case create/list/detail)
+ * only. Every interface/value tuple here corresponds 1:1 to a Pydantic schema or tuple in that
+ * file — read it before changing this. */
+
+// `docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md` §6 — the full state machine. Not
+// client-writable; O1 only ever produces `DRAFT` (no send-invite/token flow yet, that's O2/O3).
+export const ONBOARDING_CASE_STATUS_VALUES = [
+  "DRAFT",
+  "INVITED",
+  "IN_PROGRESS",
+  "SUBMITTED",
+  "UNDER_REVIEW",
+  "CHANGES_REQUESTED",
+  "VERIFIED",
+  "ACTIVATED",
+  "EXPIRED",
+  "CANCELLED",
+] as const;
+export type OnboardingCaseStatus = (typeof ONBOARDING_CASE_STATUS_VALUES)[number];
+
+export interface OnboardingCase {
+  id: string;
+  company_id: string;
+  status: string;
+  candidate_first_name: string;
+  candidate_last_name: string | null;
+  personal_email: string;
+  personal_mobile: string | null;
+  designation_id: string | null;
+  department_id: string | null;
+  branch_id: string | null;
+  legal_entity_id: string | null;
+  proposed_joining_date: string;
+  created_by_user_id: string;
+  employee_id: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}

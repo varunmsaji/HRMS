@@ -420,6 +420,17 @@ class OrganisationService:
             for code, domain, description in LEAVE_PERMISSIONS
         ]
 
+        # Onboarding O1 — `ONBOARDING.*` (docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md
+        # §7.1/§11). Same live-registration-path rationale as `leave_permission_rows` above.
+        from hrms.modules.onboarding.permissions import ONBOARDING_PERMISSIONS
+
+        onboarding_permission_rows = [
+            await self._repo.get_or_create_permission(
+                self._session, code=code, domain=domain, description=description
+            )
+            for code, domain, description in ONBOARDING_PERMISSIONS
+        ]
+
         role = await self._repo.insert_role(
             self._session,
             company_id=company_id,
@@ -468,6 +479,10 @@ class OrganisationService:
                 self._session, role_id=role.id, permission_id=perm.id
             )
         for perm in leave_permission_rows:
+            await self._repo.insert_role_permission(
+                self._session, role_id=role.id, permission_id=perm.id
+            )
+        for perm in onboarding_permission_rows:
             await self._repo.insert_role_permission(
                 self._session, role_id=role.id, permission_id=perm.id
             )

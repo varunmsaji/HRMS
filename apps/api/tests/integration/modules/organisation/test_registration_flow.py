@@ -229,7 +229,8 @@ async def test_registration_success_full_row_graph(
             # ATTENDANCE.LEAVE_PROJECTION_SYNC added by the Leave Projection Adapter (W9)
             # slice, LEAVE.* added by the Leave module's L1 slice
             # (LEAVE_DECISION_LOG.md LD-08) — same "must grant at live registration, not
-            # just the demo seed" rule.
+            # just the demo seed" rule. ONBOARDING.* added by the Onboarding module's O1 slice
+            # (docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md §7.1/§11) — same rule again.
             assert codes == {
                 ORG_COMPANY_MANAGE,
                 DASHBOARD_COMPANY_VIEW,
@@ -276,6 +277,11 @@ async def test_registration_success_full_row_graph(
                 "LEAVE.APPLICATION_SUBMIT",
                 "LEAVE.APPLICATION_SUBMIT_ON_BEHALF",
                 "LEAVE.APPLICATION_APPROVE",
+                "ONBOARDING.CREATE",
+                "ONBOARDING.VIEW",
+                "ONBOARDING.REVIEW",
+                "ONBOARDING.ACTIVATE",
+                "ONBOARDING.CANCEL",
             }
 
             setup_progress = (
