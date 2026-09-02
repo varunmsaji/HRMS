@@ -1,7 +1,8 @@
 """Business logic for the onboarding module — O1 (case create/list/detail), O2 (token issuance +
 public section read/write), O3 (send-invite, backed by the minimal `EmailSender`), O4 (submit,
 the wizard's own completion step), O5 (document upload/review, backed by
-`DocumentStorageService`), and O6 (section review + changes-requested loop)."""
+`DocumentStorageService`), O6 (section review + changes-requested loop), and O7 (activation —
+the transaction that creates the real Employee/Employment/Assignment/Bank/Statutory rows)."""
 
 import hashlib
 import secrets
@@ -19,6 +20,7 @@ from hrms.core.errors.base import NotFoundError
 from hrms.modules.onboarding.document_storage import DocumentStorageService
 from hrms.modules.onboarding.email_sender import get_email_sender
 from hrms.modules.onboarding.email_templates import (
+    build_activated_email,
     build_changes_requested_email,
     build_invite_email,
 )
@@ -30,7 +32,9 @@ from hrms.modules.onboarding.exceptions import (
     InvalidLegalEntityReferenceError,
     InvalidOnboardingDocumentTypeError,
     InvalidOnboardingSectionError,
+    OnboardingCaseMissingLegalEntityError,
     OnboardingCaseNotInvitableError,
+    OnboardingCaseNotReadyForActivationError,
     OnboardingCaseNotReviewableError,
     OnboardingCaseNotSubmittableError,
     OnboardingDocumentTooLargeError,
@@ -835,6 +839,183 @@ class OnboardingReviewService:
             company_id=company_id,
             actor_user_id=actor_user_id,
             action="ONBOARDING_CHANGES_REQUESTED",
+            entity_type="onboarding_case",
+            entity_id=case_id,
+            after=onboarding_case_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+
+class OnboardingActivationService:
+    """O7 — the transaction that turns a fully-verified onboarding case into a real employee.
+    Composes the employee module's own already-validated services
+    (`EmployeeService`/`EmploymentService`/`EmployeeAssignmentService`/`EmployeeBankService`/
+    `EmployeeStatutoryService`) rather than writing to `hrms.modules.employee.repository`/
+    `.models` directly (Module Standard §2) — every field-level rule those services already
+    enforce (seat limits, employee codes, the assignment/employment/statutory/bank overlap
+    constraints, `AssignmentFieldsRequiredError` for a missing branch/department/designation) is
+    inherited for free, not re-implemented here (plan §8.6's own point).
+
+    No explicit transaction management — `hrms.core.db.session.get_session` already commits only
+    once the whole request succeeds and rolls back on any raised exception (every write below
+    shares that one request-scoped session), which is exactly the "single DB transaction" plan
+    §8.6 asks for."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._case_repo = OnboardingCaseRepository()
+        self._audit = AuditService()
+
+    async def activate_case(
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OnboardingCaseRead:
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status != "VERIFIED":
+            raise OnboardingCaseNotReadyForActivationError()
+        if case.legal_entity_id is None:
+            raise OnboardingCaseMissingLegalEntityError()
+
+        # Cross-module writes only through the employee module's own public service surface,
+        # imported lazily — same convention as every other cross-module call in this module
+        # (`_assert_*_ownership`, `send_invite`'s `OrganisationService` lookup).
+        from hrms.modules.employee.schemas import (
+            AssignmentCreate,
+            BankCreate,
+            EmployeeCreate,
+            EmploymentCreate,
+            StatutoryCreate,
+        )
+        from hrms.modules.employee.service import (
+            EmployeeAssignmentService,
+            EmployeeBankService,
+            EmployeeService,
+            EmployeeStatutoryService,
+            EmploymentService,
+        )
+
+        employee_service = EmployeeService(self._session, self._settings)
+        employment_service = EmploymentService(self._session, self._settings)
+        assignment_service = EmployeeAssignmentService(self._session, self._settings)
+        bank_service = EmployeeBankService(self._session, self._settings)
+        statutory_service = EmployeeStatutoryService(self._session, self._settings)
+
+        # `personal_info` never carries `personal_email`/`personal_mobile` — those are owned by
+        # the case record itself, set by HR at creation (schemas.py module docstring) — merged
+        # back in only now, at the one point that actually needs the complete `EmployeeCreate`.
+        employee = await employee_service.create_employee(
+            company_id,
+            EmployeeCreate(
+                **case.personal_info,
+                personal_email=case.personal_email,
+                personal_mobile=case.personal_mobile,
+            ),
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+        # `scope=None`/`caller_employee_id=None` throughout: activation is a system-initiated
+        # action with no acting employee's own visibility to narrow against — the same
+        # "pre-data-scope exists-only" mode every non-route caller of these services already
+        # uses (`EmployeeService._assert_employee_visible`'s own docstring).
+        await employment_service.create_employment(
+            company_id,
+            employee.id,
+            EmploymentCreate(
+                legal_entity_id=case.legal_entity_id, joining_date=case.proposed_joining_date
+            ),
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+        await assignment_service.create_assignment(
+            company_id,
+            employee.id,
+            AssignmentCreate(
+                effective_from=case.proposed_joining_date,
+                change_type="INITIAL",
+                branch_id=case.branch_id,
+                department_id=case.department_id,
+                designation_id=case.designation_id,
+            ),
+            expected_version=None,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+        # `effective_from` is computed here from `proposed_joining_date`, never carried in
+        # `bank_info`/`statutory_info` themselves (those sections deliberately exclude it,
+        # schemas.py). Both are optional — `submit_case` (O4) requires the section be non-empty,
+        # but never made collecting bank/statutory details itself mandatory at case level; an
+        # empty dict here just means the candidate's case had nothing to activate for that
+        # sub-resource, which matches `OnboardingIncompleteSectionsError`'s own long-standing
+        # "never made mandatory" stance.
+        if case.bank_info:
+            await bank_service.create_bank(
+                company_id,
+                employee.id,
+                BankCreate(effective_from=case.proposed_joining_date, **case.bank_info),
+                expected_version=None,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        if case.statutory_info:
+            await statutory_service.create_statutory(
+                company_id,
+                employee.id,
+                StatutoryCreate(
+                    effective_from=case.proposed_joining_date,
+                    revision_reason="Initial statutory profile captured during onboarding",
+                    **case.statutory_info,
+                ),
+                expected_version=None,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        now = datetime.now(UTC)
+        case.employee_id = employee.id
+        await self._case_repo.set_status(self._session, case=case, status="ACTIVATED", now=now)
+
+        # Cross-module read only, same lazy-import convention as `send_invite`.
+        from hrms.modules.organisation.service import OrganisationService
+
+        organisation = OrganisationService(self._session, self._settings)
+        company = await organisation.get_company_profile(company_id)
+        subject, html_body, text_body = build_activated_email(
+            candidate_first_name=case.candidate_first_name,
+            company_name=company.name,
+            employee_code=employee.employee_code,
+        )
+        try:
+            await get_email_sender(self._settings).send(
+                to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
+            )
+        except Exception:  # noqa: BLE001 — delivery failure must not undo the activation
+            pass
+
+        read = onboarding_case_to_read(case)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ONBOARDING_CASE_ACTIVATED",
             entity_type="onboarding_case",
             entity_id=case_id,
             after=onboarding_case_to_audit_dict(read),

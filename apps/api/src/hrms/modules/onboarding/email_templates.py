@@ -1,8 +1,8 @@
 """Email copy for the onboarding module — one function per template, returning
 `(subject, html_body, text_body)` so `EmailSender.send` never has to know about template
-rendering. `build_invite_email` (O3) and `build_changes_requested_email` (O6) exist —
-`activated` (O7) lands alongside the endpoint that first needs it (module docstring,
-`email_sender.py`)."""
+rendering. `build_invite_email` (O3), `build_changes_requested_email` (O6), and
+`build_activated_email` (O7) — the plan's own three templates, each landing alongside the
+endpoint that first needed it."""
 
 
 def build_invite_email(
@@ -52,5 +52,27 @@ def build_changes_requested_email(
         f"and requested a few updates before it can be approved:</p><ul>{item_lines_html}</ul>"
         "<p>Please use the onboarding link you were sent earlier to make these corrections and "
         "resubmit. If you can't find that email, contact HR directly.</p>"
+    )
+    return subject, html_body, text_body
+
+
+def build_activated_email(
+    *, candidate_first_name: str, company_name: str, employee_code: str
+) -> tuple[str, str, str]:
+    """Sent once activation (O7) has created the real `Employee` row. Login/account-creation
+    itself is out of scope for this slice (plan §14/§13 Q4) — this is a plain welcome notice,
+    not an invitation to sign in anywhere."""
+    subject = f"Welcome to {company_name}!"
+    text_body = (
+        f"Hi {candidate_first_name},\n\n"
+        f"Your onboarding at {company_name} is complete and your employee record has been "
+        f"created (employee code {employee_code}). Welcome aboard — HR will be in touch with "
+        "any next steps before your start date."
+    )
+    html_body = (
+        f"<p>Hi {candidate_first_name},</p>"
+        f"<p>Your onboarding at <strong>{company_name}</strong> is complete and your employee "
+        f"record has been created (employee code <strong>{employee_code}</strong>). Welcome "
+        "aboard — HR will be in touch with any next steps before your start date.</p>"
     )
     return subject, html_body, text_body

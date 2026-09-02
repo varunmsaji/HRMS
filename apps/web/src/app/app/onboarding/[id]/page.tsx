@@ -116,6 +116,7 @@ export default function OnboardingCaseDetailPage() {
   const [reviewingSection, setReviewingSection] = useState<OnboardingSectionName | null>(null);
   const [rejectSection, setRejectSection] = useState<OnboardingSectionName | null>(null);
   const [requestingChanges, setRequestingChanges] = useState(false);
+  const [activating, setActivating] = useState(false);
 
   const [documents, setDocuments] = useState<OnboardingDocumentWithUrl[] | null>(null);
   const [documentsError, setDocumentsError] = useState(false);
@@ -227,6 +228,29 @@ export default function OnboardingCaseDetailPage() {
     }
   }
 
+  async function handleActivate() {
+    setActivating(true);
+    try {
+      const updated = await apiClient.post<OnboardingCaseDetail>(
+        `/onboarding-cases/${params.id}/activate`,
+      );
+      toast({
+        title: "Employee activated",
+        description: `Employee record created (id ${updated.employee_id}).`,
+        variant: "success",
+      });
+      void load();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast({ title: "You don't have permission to activate this case", variant: "danger" });
+        return;
+      }
+      toast({ title: "Could not activate", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setActivating(false);
+    }
+  }
+
   async function handleSendInvite() {
     setSendingInvite(true);
     try {
@@ -287,6 +311,7 @@ export default function OnboardingCaseDetailPage() {
     .join(" ");
   const canInvite = can("ONBOARDING.CREATE");
   const canReview = can("ONBOARDING.REVIEW");
+  const canActivate = can("ONBOARDING.ACTIVATE");
   const isInvitable = ONBOARDING_CASE_INVITABLE_STATUSES.includes(onboardingCase.status);
   const isReviewable = REVIEWABLE_CASE_STATUSES.includes(onboardingCase.status);
   const inviteLabel = onboardingCase.status === "DRAFT" ? "Send Invite" : "Resend Invite";
@@ -298,7 +323,7 @@ export default function OnboardingCaseDetailPage() {
     <div className="space-y-6">
       <PageHeader
         title={candidateName || "Onboarding case"}
-        description="HR-started onboarding case — activation lands in a later phase."
+        description="HR-started onboarding case — review each section, then activate once everything is verified."
         actions={
           <Link href="/app/onboarding" className="text-sm text-foreground-secondary hover:underline">
             ← Back to onboarding
@@ -327,6 +352,19 @@ export default function OnboardingCaseDetailPage() {
                 >
                   {requestingChanges ? "Requesting…" : "Request Changes"}
                 </Button>
+              ) : null}
+              {canActivate && onboardingCase.status === "VERIFIED" ? (
+                <Button type="button" size="sm" onClick={() => void handleActivate()} disabled={activating}>
+                  {activating ? "Activating…" : "Activate"}
+                </Button>
+              ) : null}
+              {onboardingCase.status === "ACTIVATED" && onboardingCase.employee_id ? (
+                <Link
+                  href={`/app/employees/${onboardingCase.employee_id}`}
+                  className="text-sm text-foreground-secondary hover:underline"
+                >
+                  View employee record →
+                </Link>
               ) : null}
             </div>
           </div>

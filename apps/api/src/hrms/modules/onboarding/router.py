@@ -6,7 +6,9 @@ O1: `POST /onboarding-cases`, `GET /onboarding-cases`, `GET /onboarding-cases/{i
 since O1, unused until now). O6 adds `POST .../sections/{section}/review` and
 `POST .../request-changes`, and `GET /onboarding-cases/{id}` now returns the richer
 `OnboardingCaseDetailRead` (section data + review status) instead of the list-safe
-`OnboardingCaseRead`. No `DataScope` narrowing is applied on any of these —
+`OnboardingCaseRead`. O7 adds `POST .../activate` — the first real use of
+`ONBOARDING.ACTIVATE` (seeded/granted since O1, unused until now). No `DataScope` narrowing is
+applied on any of these —
 `require_permission`'s resolved scope is discarded, same posture as `EMPLOYEE.VIEW_STATUTORY`/
 `.VIEW_COMPENSATION` (module docstring, `hrms.modules.employee.router`): no source document
 proposes `SELF`/`REPORTEES`/`REPORTEE_TREE` visibility for onboarding cases, which have no
@@ -23,12 +25,14 @@ from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.onboarding.dependencies import (
+    get_onboarding_activation_service,
     get_onboarding_case_service,
     get_onboarding_document_service,
     get_onboarding_review_service,
     get_onboarding_token_service,
 )
 from hrms.modules.onboarding.permissions import (
+    ONBOARDING_ACTIVATE,
     ONBOARDING_CREATE,
     ONBOARDING_REVIEW,
     ONBOARDING_VIEW,
@@ -45,6 +49,7 @@ from hrms.modules.onboarding.schemas import (
     OnboardingSectionReviewRequest,
 )
 from hrms.modules.onboarding.service import (
+    OnboardingActivationService,
     OnboardingCaseService,
     OnboardingDocumentService,
     OnboardingReviewService,
@@ -189,6 +194,29 @@ async def request_onboarding_changes(
     service: Annotated[OnboardingReviewService, Depends(get_onboarding_review_service)],
 ) -> DataEnvelope[OnboardingCaseRead]:
     data = await service.request_changes(
+        tenant.company_id,
+        case_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/onboarding-cases/{case_id}/activate", status_code=status.HTTP_200_OK)
+async def activate_onboarding_case(
+    case_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_ACTIVATE))],
+    service: Annotated[OnboardingActivationService, Depends(get_onboarding_activation_service)],
+) -> DataEnvelope[OnboardingCaseRead]:
+    """The payoff of the whole module (plan §8.6) — creates the real Employee/Employment/
+    Assignment(/Bank/Statutory) row graph from a `VERIFIED` case. Gated by its own
+    `ONBOARDING.ACTIVATE` code, separate from `.REVIEW` — activation is irreversible, mirroring
+    why `EMPLOYEE.TERMINATE` got its own code rather than folding into `.UPDATE`
+    (permissions.py)."""
+    data = await service.activate_case(
         tenant.company_id,
         case_id,
         actor_user_id=tenant.user_id,

@@ -278,3 +278,53 @@ class OnboardingNothingToRequestChangesForError(ConflictError):
                 }
             ],
         )
+
+
+class OnboardingCaseNotReadyForActivationError(ConflictError):
+    """Raised by `activate` when the case is not `VERIFIED` — the only status activation may act
+    on. Reaching `VERIFIED` already proves every section and document was verified
+    (`_maybe_auto_verify_case`, O6), so activation trusts that invariant rather than
+    re-deriving it here."""
+
+    code = "ONBOARDING_CASE_NOT_READY_FOR_ACTIVATION"
+
+    def __init__(
+        self, message: str = "This onboarding case must be fully verified before activation"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "status",
+                    "code": "ONBOARDING_CASE_NOT_READY_FOR_ACTIVATION",
+                    "message": message,
+                }
+            ],
+        )
+
+
+class OnboardingCaseMissingLegalEntityError(ValidationError):
+    """Raised by `activate` when `legal_entity_id` was never set on the case — optional
+    throughout the rest of the flow (case creation, sections, submit), but `EmploymentCreate`
+    (`hrms.modules.employee.schemas`) requires a real legal entity, so activation cannot proceed
+    without one. `branch_id`/`department_id`/`designation_id` get no equivalent check here —
+    `EmployeeAssignmentService.create_assignment` already raises its own
+    `AssignmentFieldsRequiredError` for those, and duplicating that check in this module would
+    just be two sources of truth for the same rule."""
+
+    code = "ONBOARDING_CASE_MISSING_LEGAL_ENTITY"
+
+    def __init__(
+        self,
+        message: str = "A legal entity must be set on this case before it can be activated",
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "legal_entity_id",
+                    "code": "ONBOARDING_CASE_MISSING_LEGAL_ENTITY",
+                    "message": message,
+                }
+            ],
+        )
