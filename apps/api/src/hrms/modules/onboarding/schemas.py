@@ -233,6 +233,18 @@ class PublicOnboardingCaseRead(BaseModel):
     statutory_info: dict[str, object]
 
 
+class OnboardingInviteRead(BaseModel):
+    """`POST /onboarding-cases/{id}/send-invite` (O3) — returns the updated case plus the raw
+    `invite_url`, since this response is the *only* time the raw link is ever available (only
+    its token's SHA-256 hash is persisted, plan §8.1). This is also what backs the admin UI's
+    "Copy link" action (plan §9) independent of whether `email_sent` succeeded — a failed email
+    delivery must not block HR from getting the link some other way."""
+
+    case: OnboardingCaseRead
+    invite_url: str
+    email_sent: bool
+
+
 def onboarding_case_to_public_read(case: "OnboardingCase") -> PublicOnboardingCaseRead:
     return PublicOnboardingCaseRead(
         status=case.status,

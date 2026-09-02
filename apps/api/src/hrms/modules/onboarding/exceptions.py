@@ -111,6 +111,26 @@ class OnboardingSectionNotWritableError(ConflictError):
         )
 
 
+class OnboardingCaseNotInvitableError(ConflictError):
+    """Raised by `send-invite` when the case is not in a status that a link can meaningfully be
+    (re)sent for — once the candidate has submitted (`SUBMITTED`/`UNDER_REVIEW`/`VERIFIED`) a
+    fresh link would let them bypass HR's review, and a terminal case (`ACTIVATED`/`EXPIRED`/
+    `CANCELLED`) has nothing left to invite. `CHANGES_REQUESTED`'s own reopen-and-resend flow
+    belongs to O6, not this generic endpoint."""
+
+    code = "ONBOARDING_CASE_NOT_INVITABLE"
+
+    def __init__(
+        self, message: str = "This onboarding case cannot be (re)invited in its current status"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "status", "code": "ONBOARDING_CASE_NOT_INVITABLE", "message": message}
+            ],
+        )
+
+
 class InvalidOnboardingSectionError(ValidationError):
     """Raised for a `section` path parameter outside `ONBOARDING_SECTION_NAMES` — `documents`
     (O5) is a real section but has its own dedicated upload endpoints, not this generic

@@ -1,5 +1,5 @@
-"""Business logic for the onboarding module — O1 (case create/list/detail) and O2 (token
-issuance + public section read/write)."""
+"""Business logic for the onboarding module — O1 (case create/list/detail), O2 (token issuance +
+public section read/write), and O3 (send-invite, backed by the minimal `EmailSender`)."""
 
 import hashlib
 import secrets
@@ -14,12 +14,15 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
+from hrms.modules.onboarding.email_sender import get_email_sender
+from hrms.modules.onboarding.email_templates import build_invite_email
 from hrms.modules.onboarding.exceptions import (
     DuplicateActiveOnboardingCaseError,
     InvalidBranchReferenceError,
     InvalidDepartmentReferenceError,
     InvalidDesignationReferenceError,
     InvalidLegalEntityReferenceError,
+    OnboardingCaseNotInvitableError,
     OnboardingSectionNotWritableError,
     OnboardingTokenInvalidError,
 )
@@ -29,11 +32,20 @@ from hrms.modules.onboarding.schemas import (
     ONBOARDING_CASE_WRITABLE_STATUSES,
     OnboardingCaseCreate,
     OnboardingCaseRead,
+    OnboardingInviteRead,
     PublicOnboardingCaseRead,
     onboarding_case_to_audit_dict,
     onboarding_case_to_public_read,
     onboarding_case_to_read,
 )
+
+#: Statuses `send-invite` may act on (O3) — `DRAFT`/`EXPIRED` (first send / re-send after
+#: lapsing) and `INVITED`/`IN_PROGRESS` (plain resend, e.g. "candidate lost the email"; case
+#: status is unchanged in these last two — `issue_token` only transitions `DRAFT`/`EXPIRED`).
+#: Everything past `IN_PROGRESS` has either already submitted (a fresh link would let the
+#: candidate bypass review) or is terminal (nothing left to invite);
+#: `CHANGES_REQUESTED`'s own reopen-and-resend flow belongs to O6, not this endpoint.
+ONBOARDING_CASE_INVITABLE_STATUSES = ("DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS")
 
 #: Default public-link lifetime (plan §4.2: "default 7 days, HR-configurable per case at
 #: send/resend time" — the per-case override arrives with the O3 send-invite endpoint; this
@@ -224,6 +236,7 @@ class OnboardingTokenService:
         self._settings = settings or get_settings()
         self._token_repo = OnboardingTokenRepository()
         self._case_repo = OnboardingCaseRepository()
+        self._audit = AuditService()
 
     async def issue_token(
         self, company_id: UUID, case_id: UUID, *, ttl_days: int = DEFAULT_TOKEN_TTL_DAYS
@@ -304,3 +317,67 @@ class OnboardingTokenService:
             )
 
         return OnboardingTokenContext(case_id=case.id, company_id=token.company_id)
+
+    async def send_invite(
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OnboardingInviteRead:
+        """`POST /onboarding-cases/{id}/send-invite` (O3) — issues/reissues a token via
+        `issue_token` (module docstring: that method already does the full state-machine work,
+        this just wraps it with the email-sending step the plan's own phase split deferred to
+        O3) and emails the resulting link. A failed send never rolls back the token — the link
+        is already live and valid the moment it's issued, so HR can always fall back to "Copy
+        link" (plan §9) even if delivery failed."""
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status not in ONBOARDING_CASE_INVITABLE_STATUSES:
+            raise OnboardingCaseNotInvitableError()
+
+        raw_token = await self.issue_token(company_id, case_id)
+        # Re-fetch rather than reuse the `case` object above — `issue_token` may have just
+        # transitioned its status (DRAFT/EXPIRED -> INVITED) and the response/audit trail below
+        # must reflect that.
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        assert case is not None
+        invite_url = f"{self._settings.web_app_base_url}/onboarding/{raw_token}"
+
+        # Cross-module read only (`OrganisationService.get_company_profile`), never
+        # `.repository`/`.models` directly — same lazy-import convention as
+        # `OnboardingCaseService._assert_*_ownership` (Module Standard §2).
+        from hrms.modules.organisation.service import OrganisationService
+
+        organisation = OrganisationService(self._session, self._settings)
+        company = await organisation.get_company_profile(company_id)
+
+        subject, html_body, text_body = build_invite_email(
+            candidate_first_name=case.candidate_first_name,
+            company_name=company.name,
+            invite_url=invite_url,
+        )
+        email_sent = True
+        try:
+            await get_email_sender(self._settings).send(
+                to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
+            )
+        except Exception:  # noqa: BLE001 — delivery failure must not fail the request, see above
+            email_sent = False
+
+        read = onboarding_case_to_read(case)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ONBOARDING_INVITE_SENT",
+            entity_type="onboarding_case",
+            entity_id=case_id,
+            after={**onboarding_case_to_audit_dict(read), "email_sent": email_sent},
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return OnboardingInviteRead(case=read, invite_url=invite_url, email_sent=email_sent)

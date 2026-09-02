@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
 
+    # Onboarding O3 (docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md §8.4) — the minimal
+    # scoped EmailSender's own config. `email_sender_from_address` reuses the same
+    # `aws_access_key_id`/`aws_secret_access_key`/`aws_region` above to select SES when present,
+    # falling back to a logging-only sender otherwise (every local dev environment today).
+    email_sender_from_address: str = "onboarding@hrms.local"
+    web_app_base_url: str = "http://localhost:3000"
+
     rate_limit_window_ms: int = 60000
     rate_limit_max: int = 100
 

@@ -57,7 +57,7 @@ packages = ["hrms"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "jose.*"]
+module = ["celery.*", "jose.*", "aioboto3.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

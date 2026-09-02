@@ -7,15 +7,22 @@ import { useCallback, useEffect, useState } from "react";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { useToast } from "@/components/common/toast";
 import { OnboardingStatusBadge } from "@/components/onboarding/onboarding-status-badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
+import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import type { Designation } from "@/lib/designation/types";
 import type { LegalEntity } from "@/lib/legal-entity/types";
-import type { OnboardingCase } from "@/lib/onboarding/types";
+import {
+  ONBOARDING_CASE_INVITABLE_STATUSES,
+  type OnboardingCase,
+  type OnboardingInvite,
+} from "@/lib/onboarding/types";
 
 interface ReferenceData {
   branches: Branch[];
@@ -47,11 +54,15 @@ function nameIn<T extends { id: string; name?: string; title?: string }>(
 
 export default function OnboardingCaseDetailPage() {
   const params = useParams<{ id: string }>();
+  const { toast } = useToast();
+  const { can } = usePermissions();
 
   const [onboardingCase, setOnboardingCase] = useState<OnboardingCase | null>(null);
   const [refs, setRefs] = useState<ReferenceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
+  const [sendingInvite, setSendingInvite] = useState(false);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,6 +93,42 @@ export default function OnboardingCaseDetailPage() {
     void load();
   }, [load]);
 
+  async function handleSendInvite() {
+    setSendingInvite(true);
+    try {
+      const result = await apiClient.post<OnboardingInvite>(
+        `/onboarding-cases/${params.id}/send-invite`,
+      );
+      setOnboardingCase(result.case);
+      setInviteUrl(result.invite_url);
+      toast({
+        title: result.email_sent ? "Invite sent" : "Invite link created",
+        description: result.email_sent
+          ? `An email was sent to ${result.case.personal_email}.`
+          : "The link is ready to copy — email delivery isn't configured in this environment.",
+        variant: "success",
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast({ title: "You don't have permission to send this invite", variant: "danger" });
+        return;
+      }
+      toast({ title: "Could not send invite", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setSendingInvite(false);
+    }
+  }
+
+  async function handleCopyLink() {
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      toast({ title: "Link copied", variant: "success" });
+    } catch {
+      toast({ title: "Could not copy link", variant: "danger" });
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Loading onboarding case…" />;
   }
@@ -104,6 +151,9 @@ export default function OnboardingCaseDetailPage() {
   const candidateName = [onboardingCase.candidate_first_name, onboardingCase.candidate_last_name]
     .filter(Boolean)
     .join(" ");
+  const canInvite = can("ONBOARDING.CREATE");
+  const isInvitable = ONBOARDING_CASE_INVITABLE_STATUSES.includes(onboardingCase.status);
+  const inviteLabel = onboardingCase.status === "DRAFT" ? "Send Invite" : "Resend Invite";
 
   return (
     <div className="space-y-6">
@@ -121,8 +171,25 @@ export default function OnboardingCaseDetailPage() {
         <CardContent className="space-y-6 pt-6">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-foreground">Status</h3>
-            <OnboardingStatusBadge status={onboardingCase.status} />
+            <div className="flex items-center gap-3">
+              <OnboardingStatusBadge status={onboardingCase.status} />
+              {canInvite && isInvitable ? (
+                <Button type="button" size="sm" onClick={() => void handleSendInvite()} disabled={sendingInvite}>
+                  {sendingInvite ? "Sending…" : inviteLabel}
+                </Button>
+              ) : null}
+            </div>
           </div>
+
+          {inviteUrl ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-sm">
+              <span className="text-foreground-muted">Invite link:</span>
+              <code className="truncate text-foreground">{inviteUrl}</code>
+              <Button type="button" variant="outline" size="sm" onClick={() => void handleCopyLink()}>
+                Copy link
+              </Button>
+            </div>
+          ) : null}
 
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <DetailField label="Candidate first name" value={onboardingCase.candidate_first_name} />

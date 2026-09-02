@@ -37,3 +37,15 @@ export interface OnboardingCase {
   created_at: string;
   updated_at: string;
 }
+
+/** `POST /onboarding-cases/{id}/send-invite` response (O3). */
+export interface OnboardingInvite {
+  case: OnboardingCase;
+  invite_url: string;
+  email_sent: boolean;
+}
+
+/** Statuses `send-invite` may act on — mirrors `ONBOARDING_CASE_INVITABLE_STATUSES`
+ * (`hrms.modules.onboarding.service`). Used only to decide whether to show
+ * "Send invite" vs "Resend invite" as the button label. */
+export const ONBOARDING_CASE_INVITABLE_STATUSES = ["DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS"];
