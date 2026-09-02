@@ -1,0 +1,44 @@
+import { FormField } from "@/components/common/form-field";
+import { Input } from "@/components/ui/input";
+import type { PersonalInfoFormValues } from "@/lib/onboarding/public-wizard";
+
+interface PersonalInfoStepProps {
+  values: PersonalInfoFormValues;
+  errors: Partial<Record<keyof PersonalInfoFormValues, string>>;
+  onChange: (values: PersonalInfoFormValues) => void;
+}
+
+export function PersonalInfoStep({ values, errors, onChange }: PersonalInfoStepProps) {
+  function update<K extends keyof PersonalInfoFormValues>(key: K, value: PersonalInfoFormValues[K]) {
+    onChange({ ...values, [key]: value });
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <FormField id="firstName" label="First name" required error={errors.firstName}>
+        <Input value={values.firstName} onChange={(e) => update("firstName", e.target.value)} />
+      </FormField>
+      <FormField id="middleName" label="Middle name" error={errors.middleName}>
+        <Input value={values.middleName} onChange={(e) => update("middleName", e.target.value)} />
+      </FormField>
+      <FormField id="lastName" label="Last name" error={errors.lastName}>
+        <Input value={values.lastName} onChange={(e) => update("lastName", e.target.value)} />
+      </FormField>
+      <FormField id="dateOfBirth" label="Date of birth" error={errors.dateOfBirth}>
+        <Input type="date" value={values.dateOfBirth} onChange={(e) => update("dateOfBirth", e.target.value)} />
+      </FormField>
+      <FormField id="gender" label="Gender" error={errors.gender}>
+        <Input value={values.gender} onChange={(e) => update("gender", e.target.value)} />
+      </FormField>
+      <FormField id="bloodGroup" label="Blood group" error={errors.bloodGroup}>
+        <Input value={values.bloodGroup} onChange={(e) => update("bloodGroup", e.target.value)} />
+      </FormField>
+      <FormField id="maritalStatus" label="Marital status" error={errors.maritalStatus}>
+        <Input value={values.maritalStatus} onChange={(e) => update("maritalStatus", e.target.value)} />
+      </FormField>
+      <FormField id="nationality" label="Nationality" error={errors.nationality}>
+        <Input value={values.nationality} onChange={(e) => update("nationality", e.target.value)} />
+      </FormField>
+    </div>
+  );
+}

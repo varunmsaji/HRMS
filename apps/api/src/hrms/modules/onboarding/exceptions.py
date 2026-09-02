@@ -143,3 +143,43 @@ class InvalidOnboardingSectionError(ValidationError):
         super().__init__(
             message, details=[{"field": "section", "code": "INVALID_SECTION", "message": message}]
         )
+
+
+class OnboardingCaseNotSubmittableError(ConflictError):
+    """Raised by `submit` when the case is not in a status a submission can come from
+    (`ONBOARDING_CASE_WRITABLE_STATUSES` — the same set `PATCH .../sections/*` already checks;
+    submitting is itself just another write against the case, gated identically)."""
+
+    code = "ONBOARDING_CASE_NOT_SUBMITTABLE"
+
+    def __init__(
+        self, message: str = "This onboarding case cannot be submitted in its current status"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "status", "code": "ONBOARDING_CASE_NOT_SUBMITTABLE", "message": message}
+            ],
+        )
+
+
+class OnboardingIncompleteSectionsError(ValidationError):
+    """Raised by `submit` when one or more of the five sections is still empty. Document
+    completeness (plan §7.2: "validates all required sections+documents present") is not checked
+    here — `onboarding_document` has no write path until O5, so there is nothing yet to require."""
+
+    code = "ONBOARDING_INCOMPLETE_SECTIONS"
+
+    def __init__(self, missing_sections: list[str]) -> None:
+        message = f"{', '.join(missing_sections)} must be filled in before submitting"
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": section,
+                    "code": "ONBOARDING_INCOMPLETE_SECTIONS",
+                    "message": message,
+                }
+                for section in missing_sections
+            ],
+        )

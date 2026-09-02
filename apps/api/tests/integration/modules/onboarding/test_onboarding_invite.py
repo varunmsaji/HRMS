@@ -102,8 +102,9 @@ async def test_resend_invite_revokes_previous_token(
     try:
         case = await _create_case(client, headers)
 
-        first = await client.post(f"/v1/onboarding-cases/{case['id']}/send-invite", headers=headers)
-        second = await client.post(f"/v1/onboarding-cases/{case['id']}/send-invite", headers=headers)
+        send_invite_url = f"/v1/onboarding-cases/{case['id']}/send-invite"
+        first = await client.post(send_invite_url, headers=headers)
+        second = await client.post(send_invite_url, headers=headers)
         assert first.status_code == 200
         assert second.status_code == 200
 

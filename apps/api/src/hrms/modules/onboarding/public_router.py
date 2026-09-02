@@ -1,6 +1,6 @@
 """Public, unauthenticated HTTP routes for the onboarding module — O2 (token-authenticated case
-read + section write only; document upload is O5, submit/accept-policies land with the wizard
-UI in O4).
+read + section write), plus O4's own `submit` (the wizard's completion step). Document upload
+(O5) and `accept-policies` are not built — no wizard step consumes them yet.
 
 No JWT, no `X-Company-Id` header, no `require_permission` — the single security boundary for
 this entire router is `get_onboarding_case_from_token` (plan §5,
@@ -61,4 +61,13 @@ async def update_onboarding_section(
     data = await service.update_section(
         ctx.company_id, ctx.case_id, section, validated.model_dump(mode="json")
     )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/{token}/submit", status_code=status.HTTP_200_OK)
+async def submit_onboarding_case(
+    ctx: Annotated[OnboardingTokenContext, Depends(get_onboarding_case_from_token)],
+    service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
+) -> DataEnvelope[PublicOnboardingCaseRead]:
+    data = await service.submit_case(ctx.company_id, ctx.case_id)
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))

@@ -1,5 +1,6 @@
 """Business logic for the onboarding module — O1 (case create/list/detail), O2 (token issuance +
-public section read/write), and O3 (send-invite, backed by the minimal `EmailSender`)."""
+public section read/write), O3 (send-invite, backed by the minimal `EmailSender`), and O4
+(submit, the wizard's own completion step)."""
 
 import hashlib
 import secrets
@@ -23,6 +24,8 @@ from hrms.modules.onboarding.exceptions import (
     InvalidDesignationReferenceError,
     InvalidLegalEntityReferenceError,
     OnboardingCaseNotInvitableError,
+    OnboardingCaseNotSubmittableError,
+    OnboardingIncompleteSectionsError,
     OnboardingSectionNotWritableError,
     OnboardingTokenInvalidError,
 )
@@ -30,6 +33,7 @@ from hrms.modules.onboarding.repository import OnboardingCaseRepository, Onboard
 from hrms.modules.onboarding.schemas import (
     ONBOARDING_CASE_TERMINAL_STATUSES,
     ONBOARDING_CASE_WRITABLE_STATUSES,
+    ONBOARDING_SECTION_NAMES,
     OnboardingCaseCreate,
     OnboardingCaseRead,
     OnboardingInviteRead,
@@ -218,6 +222,34 @@ class OnboardingCaseService:
         )
         assert updated is not None
         return onboarding_case_to_public_read(updated)
+
+    async def submit_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
+        """`POST /public/onboarding/{token}/submit` (O4) — `IN_PROGRESS`/`CHANGES_REQUESTED` ->
+        `SUBMITTED`. No `actor_user_id` to record (this is the candidate's own action, and the
+        candidate has no `User`/employee row yet — there is nothing to attribute the audit entry
+        to besides the case itself). Document completeness is not checked (exception docstring)
+        — only that all five section columns are non-empty."""
+        case = await self._repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status not in ONBOARDING_CASE_WRITABLE_STATUSES:
+            raise OnboardingCaseNotSubmittableError()
+
+        missing = [name for name in ONBOARDING_SECTION_NAMES if not getattr(case, name)]
+        if missing:
+            raise OnboardingIncompleteSectionsError(missing)
+
+        now = datetime.now(UTC)
+        await self._repo.set_status(self._session, case=case, status="SUBMITTED", now=now)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=None,
+            action="ONBOARDING_CASE_SUBMITTED",
+            entity_type="onboarding_case",
+            entity_id=case_id,
+        )
+        return onboarding_case_to_public_read(case)
 
 
 @dataclass(frozen=True)

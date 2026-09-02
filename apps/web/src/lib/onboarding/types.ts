@@ -49,3 +49,19 @@ export interface OnboardingInvite {
  * (`hrms.modules.onboarding.service`). Used only to decide whether to show
  * "Send invite" vs "Resend invite" as the button label. */
 export const ONBOARDING_CASE_INVITABLE_STATUSES = ["DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS"];
+
+/** `GET /public/onboarding/{token}` response (O2/O4) — mirrors `PublicOnboardingCaseRead`.
+ * Deliberately narrower than `OnboardingCase`: no internal IDs, the candidate has no session to
+ * look anything else up with. */
+export interface PublicOnboardingCase {
+  status: string;
+  candidate_first_name: string;
+  candidate_last_name: string | null;
+  proposed_joining_date: string;
+  writable: boolean;
+  personal_info: Record<string, unknown>;
+  address_info: Record<string, unknown>;
+  emergency_contact: Record<string, unknown>;
+  bank_info: Record<string, unknown>;
+  statutory_info: Record<string, unknown>;
+}
