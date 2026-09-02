@@ -74,6 +74,24 @@ function WizardHeader() {
   );
 }
 
+function SectionReviewBanner({ status, reason }: { status: string | undefined; reason: string | null | undefined }) {
+  if (status === "VERIFIED") {
+    return (
+      <div className="rounded-md border border-success bg-success-subtle px-3 py-2 text-sm text-foreground">
+        This section has been verified by HR — no changes needed.
+      </div>
+    );
+  }
+  if (status === "REJECTED") {
+    return (
+      <div className="rounded-md border border-danger bg-danger-subtle px-3 py-2 text-sm text-foreground">
+        HR requested changes to this section{reason ? `: ${reason}` : "."}
+      </div>
+    );
+  }
+  return null;
+}
+
 function StepIndicator({ step }: { step: Step }) {
   const currentIndex = STEPS.indexOf(step);
   return (
@@ -176,6 +194,10 @@ export default function OnboardingWizardPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function sectionReviewFor(name: string) {
+    return onboardingCase?.section_reviews.find((r) => r.section === name);
+  }
+
   async function handleSubmit() {
     setSaving(true);
     try {
@@ -275,6 +297,10 @@ export default function OnboardingWizardPage() {
 
             {step === "personal" ? (
               <div className="space-y-6">
+                <SectionReviewBanner
+                  status={sectionReviewFor("personal_info")?.status}
+                  reason={sectionReviewFor("personal_info")?.rejection_reason}
+                />
                 <PersonalInfoStep values={personalInfo} errors={{}} onChange={setPersonalInfo} />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("welcome")}>
@@ -284,6 +310,10 @@ export default function OnboardingWizardPage() {
                     type="button"
                     disabled={saving}
                     onClick={async () => {
+                      if (sectionReviewFor("personal_info")?.status === "VERIFIED") {
+                        goTo("address");
+                        return;
+                      }
                       const errors = validatePersonalInfo(personalInfo);
                       if (Object.keys(errors).length > 0) {
                         toast({ title: "First name is required", variant: "danger" });
@@ -293,7 +323,11 @@ export default function OnboardingWizardPage() {
                       if (ok) goTo("address");
                     }}
                   >
-                    {saving ? "Saving…" : "Save & Continue"}
+                    {sectionReviewFor("personal_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
                   </Button>
                 </div>
               </div>
@@ -301,6 +335,10 @@ export default function OnboardingWizardPage() {
 
             {step === "address" ? (
               <div className="space-y-6">
+                <SectionReviewBanner
+                  status={sectionReviewFor("address_info")?.status}
+                  reason={sectionReviewFor("address_info")?.rejection_reason}
+                />
                 <AddressInfoStep values={addressInfo} errors={{}} onChange={setAddressInfo} />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("personal")}>
@@ -310,11 +348,19 @@ export default function OnboardingWizardPage() {
                     type="button"
                     disabled={saving}
                     onClick={async () => {
+                      if (sectionReviewFor("address_info")?.status === "VERIFIED") {
+                        goTo("emergency");
+                        return;
+                      }
                       const ok = await saveSection("address_info", addressInfoToPayload(addressInfo));
                       if (ok) goTo("emergency");
                     }}
                   >
-                    {saving ? "Saving…" : "Save & Continue"}
+                    {sectionReviewFor("address_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
                   </Button>
                 </div>
               </div>
@@ -322,6 +368,10 @@ export default function OnboardingWizardPage() {
 
             {step === "emergency" ? (
               <div className="space-y-6">
+                <SectionReviewBanner
+                  status={sectionReviewFor("emergency_contact")?.status}
+                  reason={sectionReviewFor("emergency_contact")?.rejection_reason}
+                />
                 <EmergencyContactStep values={emergencyContact} errors={{}} onChange={setEmergencyContact} />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("address")}>
@@ -331,6 +381,10 @@ export default function OnboardingWizardPage() {
                     type="button"
                     disabled={saving}
                     onClick={async () => {
+                      if (sectionReviewFor("emergency_contact")?.status === "VERIFIED") {
+                        goTo("bank");
+                        return;
+                      }
                       const errors = validateEmergencyContact(emergencyContact);
                       if (Object.keys(errors).length > 0) {
                         toast({ title: "Contact name and phone are required", variant: "danger" });
@@ -343,7 +397,11 @@ export default function OnboardingWizardPage() {
                       if (ok) goTo("bank");
                     }}
                   >
-                    {saving ? "Saving…" : "Save & Continue"}
+                    {sectionReviewFor("emergency_contact")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
                   </Button>
                 </div>
               </div>
@@ -351,6 +409,10 @@ export default function OnboardingWizardPage() {
 
             {step === "bank" ? (
               <div className="space-y-6">
+                <SectionReviewBanner
+                  status={sectionReviewFor("bank_info")?.status}
+                  reason={sectionReviewFor("bank_info")?.rejection_reason}
+                />
                 <BankInfoStep values={bankInfo} errors={{}} onChange={setBankInfo} />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("emergency")}>
@@ -360,6 +422,10 @@ export default function OnboardingWizardPage() {
                     type="button"
                     disabled={saving}
                     onClick={async () => {
+                      if (sectionReviewFor("bank_info")?.status === "VERIFIED") {
+                        goTo("statutory");
+                        return;
+                      }
                       const errors = validateBankInfo(bankInfo);
                       if (Object.keys(errors).length > 0) {
                         toast({ title: "Payment mode is required", variant: "danger" });
@@ -369,7 +435,11 @@ export default function OnboardingWizardPage() {
                       if (ok) goTo("statutory");
                     }}
                   >
-                    {saving ? "Saving…" : "Save & Continue"}
+                    {sectionReviewFor("bank_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
                   </Button>
                 </div>
               </div>
@@ -377,6 +447,10 @@ export default function OnboardingWizardPage() {
 
             {step === "statutory" ? (
               <div className="space-y-6">
+                <SectionReviewBanner
+                  status={sectionReviewFor("statutory_info")?.status}
+                  reason={sectionReviewFor("statutory_info")?.rejection_reason}
+                />
                 <StatutoryInfoStep values={statutoryInfo} errors={{}} onChange={setStatutoryInfo} />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("bank")}>
@@ -386,6 +460,10 @@ export default function OnboardingWizardPage() {
                     type="button"
                     disabled={saving}
                     onClick={async () => {
+                      if (sectionReviewFor("statutory_info")?.status === "VERIFIED") {
+                        goTo("documents");
+                        return;
+                      }
                       const errors = validateStatutoryInfo(statutoryInfo);
                       if (Object.keys(errors).length > 0) {
                         toast({ title: "Tax regime is required", variant: "danger" });
@@ -398,7 +476,11 @@ export default function OnboardingWizardPage() {
                       if (ok) goTo("documents");
                     }}
                   >
-                    {saving ? "Saving…" : "Save & Continue"}
+                    {sectionReviewFor("statutory_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
                   </Button>
                 </div>
               </div>

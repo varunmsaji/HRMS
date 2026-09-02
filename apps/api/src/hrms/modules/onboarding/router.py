@@ -3,7 +3,10 @@
 O1: `POST /onboarding-cases`, `GET /onboarding-cases`, `GET /onboarding-cases/{id}`. O3 adds
 `POST /onboarding-cases/{id}/send-invite`. O5 adds `GET .../documents` and
 `POST .../documents/{id}/review` — the first real use of `ONBOARDING.REVIEW` (seeded/granted
-since O1, unused until now). No `DataScope` narrowing is applied on any of these —
+since O1, unused until now). O6 adds `POST .../sections/{section}/review` and
+`POST .../request-changes`, and `GET /onboarding-cases/{id}` now returns the richer
+`OnboardingCaseDetailRead` (section data + review status) instead of the list-safe
+`OnboardingCaseRead`. No `DataScope` narrowing is applied on any of these —
 `require_permission`'s resolved scope is discarded, same posture as `EMPLOYEE.VIEW_STATUTORY`/
 `.VIEW_COMPENSATION` (module docstring, `hrms.modules.employee.router`): no source document
 proposes `SELF`/`REPORTEES`/`REPORTEE_TREE` visibility for onboarding cases, which have no
@@ -22,6 +25,7 @@ from hrms.modules.identity.schemas import build_meta
 from hrms.modules.onboarding.dependencies import (
     get_onboarding_case_service,
     get_onboarding_document_service,
+    get_onboarding_review_service,
     get_onboarding_token_service,
 )
 from hrms.modules.onboarding.permissions import (
@@ -31,15 +35,19 @@ from hrms.modules.onboarding.permissions import (
 )
 from hrms.modules.onboarding.schemas import (
     OnboardingCaseCreate,
+    OnboardingCaseDetailRead,
     OnboardingCaseRead,
     OnboardingDocumentRead,
     OnboardingDocumentReviewRequest,
     OnboardingDocumentWithUrlRead,
     OnboardingInviteRead,
+    OnboardingSectionReviewRead,
+    OnboardingSectionReviewRequest,
 )
 from hrms.modules.onboarding.service import (
     OnboardingCaseService,
     OnboardingDocumentService,
+    OnboardingReviewService,
     OnboardingTokenService,
 )
 from hrms.shared.pagination import DataEnvelope, ListEnvelope
@@ -82,8 +90,8 @@ async def get_onboarding_case(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
-) -> DataEnvelope[OnboardingCaseRead]:
-    data = await service.get_case(tenant.company_id, case_id)
+) -> DataEnvelope[OnboardingCaseDetailRead]:
+    data = await service.get_case_detail(tenant.company_id, case_id)
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -137,6 +145,52 @@ async def review_onboarding_document(
         document_id,
         status=body.status,
         rejection_reason=body.rejection_reason,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/onboarding-cases/{case_id}/sections/{section}/review", status_code=status.HTTP_200_OK
+)
+async def review_onboarding_section(
+    case_id: UUID,
+    section: str,
+    body: OnboardingSectionReviewRequest,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_REVIEW))],
+    service: Annotated[OnboardingReviewService, Depends(get_onboarding_review_service)],
+) -> DataEnvelope[OnboardingSectionReviewRead]:
+    """Records HR's verdict on one section — does not itself move the case to
+    `CHANGES_REQUESTED`; that's a separate, explicit `request-changes` call once every section/
+    document has been reviewed (plan §7.1)."""
+    data = await service.review_section(
+        tenant.company_id,
+        case_id,
+        section,
+        status=body.status,
+        rejection_reason=body.rejection_reason,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/onboarding-cases/{case_id}/request-changes", status_code=status.HTTP_200_OK)
+async def request_onboarding_changes(
+    case_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_REVIEW))],
+    service: Annotated[OnboardingReviewService, Depends(get_onboarding_review_service)],
+) -> DataEnvelope[OnboardingCaseRead]:
+    data = await service.request_changes(
+        tenant.company_id,
+        case_id,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),

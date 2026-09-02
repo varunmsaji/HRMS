@@ -1,5 +1,6 @@
-"""Pydantic request/response schemas for the onboarding module — O1 (case create/list/detail)
-and O2 (token issuance + public section read/write).
+"""Pydantic request/response schemas for the onboarding module — O1 (case create/list/detail),
+O2 (token issuance + public section read/write), O5 (documents), and O6 (section review +
+changes-requested loop).
 
 O2 section schemas (`PersonalInfoSection`/`BankInfoSection`/`StatutoryInfoSection`) are each a
 strict field subset of the matching `EmployeeCreate`/`BankCreate`/`StatutoryCreate`
@@ -22,7 +23,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 if TYPE_CHECKING:
-    from hrms.modules.onboarding.models import OnboardingCase, OnboardingDocument
+    from hrms.modules.onboarding.models import (
+        OnboardingCase,
+        OnboardingDocument,
+        OnboardingSectionReview,
+    )
 
 # `docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md` §6 — the full state machine. Not
 # client-writable; exposed here only so `OnboardingCaseRead.status` and tests have one source of
@@ -55,6 +60,29 @@ ONBOARDING_SECTION_NAMES = (
     "bank_info",
     "statutory_info",
 )
+
+# Human-readable labels for the five reviewable sections — used in the "changes requested" email
+# (O6) and available for any admin-UI rendering that wants one canonical mapping. Plan §4.4's own
+# `onboarding_section_review.section` enum also names a sixth value, `DOCUMENTS` — deliberately
+# not included here: document review already has its own per-row status (`OnboardingDocument
+# .status`, O5), so a redundant case-level "DOCUMENTS section" row would just be a second,
+# possibly-contradictory source of truth for the same fact. "All documents verified" is computed
+# directly from `onboarding_document` rows wherever it matters (e.g. the auto-verify check below),
+# not from a row in this table.
+ONBOARDING_SECTION_LABELS = {
+    "personal_info": "Personal Info",
+    "address_info": "Address",
+    "emergency_contact": "Emergency Contact",
+    "bank_info": "Bank Details",
+    "statutory_info": "Statutory Details",
+}
+
+ONBOARDING_SECTION_REVIEW_STATUS_VALUES = ("PENDING", "VERIFIED", "REJECTED")
+
+# Case statuses in which a section/document review action is meaningful (O6) — `SUBMITTED` (the
+# first review action on a freshly-submitted case moves it to `UNDER_REVIEW`, plan §6) and
+# `UNDER_REVIEW` itself (subsequent review actions).
+ONBOARDING_CASE_REVIEWABLE_STATUSES = ("SUBMITTED", "UNDER_REVIEW")
 
 # Plan §4.3's own enumeration. Not client-extensible — `OTHER` is the deliberate escape hatch for
 # anything not covered by the named seven.
@@ -234,12 +262,21 @@ SECTION_SCHEMAS: dict[str, type[BaseModel]] = {
 }
 
 
+class OnboardingSectionReviewRead(BaseModel):
+    section: str
+    status: str
+    rejection_reason: str | None
+
+
 class PublicOnboardingCaseRead(BaseModel):
     """`GET /public/onboarding/{token}` — deliberately narrower than `OnboardingCaseRead`: no
     `id`/`company_id`/`created_by_user_id`/`employee_id` (the candidate has no use for internal
     IDs and no session to authorize looking anything else up with), and `writable` tells the
     wizard which sections it may currently `PATCH` (module docstring,
-    `ONBOARDING_CASE_WRITABLE_STATUSES`)."""
+    `ONBOARDING_CASE_WRITABLE_STATUSES`). `section_reviews` (O6) lets the wizard show which
+    sections HR has already verified (lock the fields, nothing left to fix) versus rejected (show
+    the reason) — deliberately just `section`/`status`/`rejection_reason`, no reviewer identity or
+    timestamp, which the candidate has no use for."""
 
     status: str
     candidate_first_name: str
@@ -251,6 +288,7 @@ class PublicOnboardingCaseRead(BaseModel):
     emergency_contact: dict[str, object]
     bank_info: dict[str, object]
     statutory_info: dict[str, object]
+    section_reviews: list[OnboardingSectionReviewRead]
 
 
 class OnboardingInviteRead(BaseModel):
@@ -265,7 +303,19 @@ class OnboardingInviteRead(BaseModel):
     email_sent: bool
 
 
-def onboarding_case_to_public_read(case: "OnboardingCase") -> PublicOnboardingCaseRead:
+def onboarding_section_review_to_read(
+    review: "OnboardingSectionReview",
+) -> OnboardingSectionReviewRead:
+    return OnboardingSectionReviewRead(
+        section=review.section,
+        status=review.status,
+        rejection_reason=review.rejection_reason,
+    )
+
+
+def onboarding_case_to_public_read(
+    case: "OnboardingCase", section_reviews: "list[OnboardingSectionReview]"
+) -> PublicOnboardingCaseRead:
     return PublicOnboardingCaseRead(
         status=case.status,
         candidate_first_name=case.candidate_first_name,
@@ -277,6 +327,7 @@ def onboarding_case_to_public_read(case: "OnboardingCase") -> PublicOnboardingCa
         emergency_contact=case.emergency_contact,
         bank_info=case.bank_info,
         statutory_info=case.statutory_info,
+        section_reviews=[onboarding_section_review_to_read(r) for r in section_reviews],
     )
 
 
@@ -340,3 +391,50 @@ def onboarding_document_to_read_with_url(
 ) -> OnboardingDocumentWithUrlRead:
     base = onboarding_document_to_read(document)
     return OnboardingDocumentWithUrlRead(**base.model_dump(), download_url=download_url)
+
+
+# --- O6: section review + changes-requested loop ---------------------------------------------
+
+
+class OnboardingSectionReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["VERIFIED", "REJECTED"]
+    rejection_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _require_reason_when_rejected(self) -> "OnboardingSectionReviewRequest":
+        if self.status == "REJECTED" and not (self.rejection_reason or "").strip():
+            raise ValueError("rejection_reason is required when status is REJECTED")
+        return self
+
+
+class OnboardingCaseDetailRead(OnboardingCaseRead):
+    """`GET /onboarding-cases/{id}` (admin) — extends the list-safe `OnboardingCaseRead` with the
+    five section JSON blobs and their review status, so HR can actually see what the candidate
+    submitted, not just verify/reject blind (plan §9: "per-section review cards"). Deliberately
+    not folded into `OnboardingCaseRead` itself — that shape is also used by `GET
+    /onboarding-cases` (the list view), which has no business returning bank-account/statutory
+    detail for every row on a list screen."""
+
+    personal_info: dict[str, object]
+    address_info: dict[str, object]
+    emergency_contact: dict[str, object]
+    bank_info: dict[str, object]
+    statutory_info: dict[str, object]
+    section_reviews: list[OnboardingSectionReviewRead]
+
+
+def onboarding_case_to_detail_read(
+    case: "OnboardingCase", section_reviews: "list[OnboardingSectionReview]"
+) -> OnboardingCaseDetailRead:
+    base = onboarding_case_to_read(case)
+    return OnboardingCaseDetailRead(
+        **base.model_dump(),
+        personal_info=case.personal_info,
+        address_info=case.address_info,
+        emergency_contact=case.emergency_contact,
+        bank_info=case.bank_info,
+        statutory_info=case.statutory_info,
+        section_reviews=[onboarding_section_review_to_read(r) for r in section_reviews],
+    )

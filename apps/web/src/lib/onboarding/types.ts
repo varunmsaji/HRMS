@@ -50,9 +50,34 @@ export interface OnboardingInvite {
  * "Send invite" vs "Resend invite" as the button label. */
 export const ONBOARDING_CASE_INVITABLE_STATUSES = ["DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS"];
 
-/** `GET /public/onboarding/{token}` response (O2/O4) — mirrors `PublicOnboardingCaseRead`.
+/** Mirrors `OnboardingSectionReviewRead` (O6) — `section` is one of `ONBOARDING_SECTION_NAMES`. */
+export interface OnboardingSectionReview {
+  section: string;
+  status: string;
+  rejection_reason: string | null;
+}
+
+export const ONBOARDING_SECTION_NAMES = [
+  "personal_info",
+  "address_info",
+  "emergency_contact",
+  "bank_info",
+  "statutory_info",
+] as const;
+export type OnboardingSectionName = (typeof ONBOARDING_SECTION_NAMES)[number];
+
+export const ONBOARDING_SECTION_LABELS: Record<OnboardingSectionName, string> = {
+  personal_info: "Personal Info",
+  address_info: "Address",
+  emergency_contact: "Emergency Contact",
+  bank_info: "Bank Details",
+  statutory_info: "Statutory Details",
+};
+
+/** `GET /public/onboarding/{token}` response (O2/O4/O6) — mirrors `PublicOnboardingCaseRead`.
  * Deliberately narrower than `OnboardingCase`: no internal IDs, the candidate has no session to
- * look anything else up with. */
+ * look anything else up with. `section_reviews` (O6) lets the wizard show which sections are
+ * locked (verified) versus need fixing (rejected, with a reason). */
 export interface PublicOnboardingCase {
   status: string;
   candidate_first_name: string;
@@ -64,6 +89,18 @@ export interface PublicOnboardingCase {
   emergency_contact: Record<string, unknown>;
   bank_info: Record<string, unknown>;
   statutory_info: Record<string, unknown>;
+  section_reviews: OnboardingSectionReview[];
+}
+
+/** `GET /onboarding-cases/{id}` (admin, O6) — mirrors `OnboardingCaseDetailRead`: the case
+ * fields plus the five section JSON blobs and their review status. */
+export interface OnboardingCaseDetail extends OnboardingCase {
+  personal_info: Record<string, unknown>;
+  address_info: Record<string, unknown>;
+  emergency_contact: Record<string, unknown>;
+  bank_info: Record<string, unknown>;
+  statutory_info: Record<string, unknown>;
+  section_reviews: OnboardingSectionReview[];
 }
 
 // --- O5: documents ---------------------------------------------------------------------------

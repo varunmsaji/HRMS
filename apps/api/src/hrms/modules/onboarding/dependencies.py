@@ -10,6 +10,7 @@ from hrms.core.db.session import get_session
 from hrms.modules.onboarding.service import (
     OnboardingCaseService,
     OnboardingDocumentService,
+    OnboardingReviewService,
     OnboardingTokenContext,
     OnboardingTokenService,
 )
@@ -25,6 +26,12 @@ def get_onboarding_document_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OnboardingDocumentService:
     return OnboardingDocumentService(session, get_settings())
+
+
+def get_onboarding_review_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OnboardingReviewService:
+    return OnboardingReviewService(session, get_settings())
 
 
 def get_onboarding_token_service(

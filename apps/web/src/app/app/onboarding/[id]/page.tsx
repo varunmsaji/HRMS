@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { DocumentRejectDialog } from "@/components/onboarding/document-review-dialog";
 import { OnboardingStatusBadge } from "@/components/onboarding/onboarding-status-badge";
+import { SectionRejectDialog } from "@/components/onboarding/section-review-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,12 +24,15 @@ import type { LegalEntity } from "@/lib/legal-entity/types";
 import {
   ONBOARDING_CASE_INVITABLE_STATUSES,
   ONBOARDING_DOCUMENT_TYPE_LABELS,
-  type OnboardingCase,
+  ONBOARDING_SECTION_LABELS,
+  ONBOARDING_SECTION_NAMES,
+  type OnboardingCaseDetail,
   type OnboardingDocumentWithUrl,
   type OnboardingInvite,
+  type OnboardingSectionName,
 } from "@/lib/onboarding/types";
 
-function DocumentStatusBadge({ status }: { status: string }) {
+function ReviewStatusBadge({ status }: { status: string }) {
   if (status === "VERIFIED") return <Badge variant="success">Verified</Badge>;
   if (status === "REJECTED") return <Badge variant="danger">Rejected</Badge>;
   return <Badge variant="outline">Pending</Badge>;
@@ -38,6 +42,34 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fieldLabel(key: string): string {
+  return key
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function SectionFields({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data).filter(([, value]) => value !== null && value !== "");
+  if (entries.length === 0) {
+    return <p className="text-sm text-foreground-muted">Not filled in yet.</p>;
+  }
+  return (
+    <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+      {entries.map(([key, value]) => (
+        <div key={key}>
+          <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+            {fieldLabel(key)}
+          </dt>
+          <dd className="mt-0.5 text-foreground">
+            {typeof value === "boolean" ? (value ? "Yes" : "No") : String(value)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 interface ReferenceData {
@@ -68,22 +100,27 @@ function nameIn<T extends { id: string; name?: string; title?: string }>(
   return item?.name ?? item?.title ?? "Unknown";
 }
 
+const REVIEWABLE_CASE_STATUSES = ["SUBMITTED", "UNDER_REVIEW"];
+
 export default function OnboardingCaseDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can } = usePermissions();
 
-  const [onboardingCase, setOnboardingCase] = useState<OnboardingCase | null>(null);
+  const [onboardingCase, setOnboardingCase] = useState<OnboardingCaseDetail | null>(null);
   const [refs, setRefs] = useState<ReferenceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [sendingInvite, setSendingInvite] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [reviewingSection, setReviewingSection] = useState<OnboardingSectionName | null>(null);
+  const [rejectSection, setRejectSection] = useState<OnboardingSectionName | null>(null);
+  const [requestingChanges, setRequestingChanges] = useState(false);
 
   const [documents, setDocuments] = useState<OnboardingDocumentWithUrl[] | null>(null);
   const [documentsError, setDocumentsError] = useState(false);
-  const [reviewingId, setReviewingId] = useState<string | null>(null);
-  const [rejectTarget, setRejectTarget] = useState<OnboardingDocumentWithUrl | null>(null);
+  const [reviewingDocumentId, setReviewingDocumentId] = useState<string | null>(null);
+  const [rejectDocument, setRejectDocument] = useState<OnboardingDocumentWithUrl | null>(null);
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -103,7 +140,7 @@ export default function OnboardingCaseDetailPage() {
     setError(null);
     try {
       const [data, branches, departments, designations, legalEntities] = await Promise.all([
-        apiClient.get<OnboardingCase>(`/onboarding-cases/${params.id}`),
+        apiClient.get<OnboardingCaseDetail>(`/onboarding-cases/${params.id}`),
         apiClient.get<Branch[]>("/branches").catch(() => []),
         apiClient.get<Department[]>("/departments").catch(() => []),
         apiClient.get<Designation[]>("/designations").catch(() => []),
@@ -128,8 +165,8 @@ export default function OnboardingCaseDetailPage() {
     void loadDocuments();
   }, [load, loadDocuments]);
 
-  async function handleVerify(document: OnboardingDocumentWithUrl) {
-    setReviewingId(document.id);
+  async function handleVerifyDocument(document: OnboardingDocumentWithUrl) {
+    setReviewingDocumentId(document.id);
     try {
       const updated = await apiClient.post<OnboardingDocumentWithUrl>(
         `/onboarding-cases/${params.id}/documents/${document.id}/review`,
@@ -139,6 +176,7 @@ export default function OnboardingCaseDetailPage() {
         (prev ?? []).map((d) => (d.id === document.id ? { ...updated, download_url: d.download_url } : d)),
       );
       toast({ title: "Document verified", variant: "success" });
+      void load();
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         toast({ title: "You don't have permission to review this document", variant: "danger" });
@@ -146,7 +184,46 @@ export default function OnboardingCaseDetailPage() {
       }
       toast({ title: "Could not verify document", description: describeApiError(err), variant: "danger" });
     } finally {
-      setReviewingId(null);
+      setReviewingDocumentId(null);
+    }
+  }
+
+  async function handleVerifySection(section: OnboardingSectionName) {
+    setReviewingSection(section);
+    try {
+      await apiClient.post(`/onboarding-cases/${params.id}/sections/${section}/review`, {
+        status: "VERIFIED",
+      });
+      toast({ title: "Section verified", variant: "success" });
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast({ title: "You don't have permission to review this section", variant: "danger" });
+        return;
+      }
+      toast({ title: "Could not verify section", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setReviewingSection(null);
+    }
+  }
+
+  async function handleRequestChanges() {
+    setRequestingChanges(true);
+    try {
+      const updated = await apiClient.post<OnboardingCaseDetail>(
+        `/onboarding-cases/${params.id}/request-changes`,
+      );
+      setOnboardingCase((prev) => (prev ? { ...prev, status: updated.status, version: updated.version } : prev));
+      toast({ title: "Changes requested", description: "The candidate has been notified.", variant: "success" });
+      void load();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        toast({ title: "Nothing to request changes for", description: describeApiError(err), variant: "danger" });
+        return;
+      }
+      toast({ title: "Could not request changes", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setRequestingChanges(false);
     }
   }
 
@@ -156,7 +233,6 @@ export default function OnboardingCaseDetailPage() {
       const result = await apiClient.post<OnboardingInvite>(
         `/onboarding-cases/${params.id}/send-invite`,
       );
-      setOnboardingCase(result.case);
       setInviteUrl(result.invite_url);
       toast({
         title: result.email_sent ? "Invite sent" : "Invite link created",
@@ -165,6 +241,7 @@ export default function OnboardingCaseDetailPage() {
           : "The link is ready to copy — email delivery isn't configured in this environment.",
         variant: "success",
       });
+      void load();
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         toast({ title: "You don't have permission to send this invite", variant: "danger" });
@@ -209,14 +286,19 @@ export default function OnboardingCaseDetailPage() {
     .filter(Boolean)
     .join(" ");
   const canInvite = can("ONBOARDING.CREATE");
+  const canReview = can("ONBOARDING.REVIEW");
   const isInvitable = ONBOARDING_CASE_INVITABLE_STATUSES.includes(onboardingCase.status);
+  const isReviewable = REVIEWABLE_CASE_STATUSES.includes(onboardingCase.status);
   const inviteLabel = onboardingCase.status === "DRAFT" ? "Send Invite" : "Resend Invite";
+  const hasAnyRejection =
+    onboardingCase.section_reviews.some((r) => r.status === "REJECTED") ||
+    (documents ?? []).some((d) => d.status === "REJECTED");
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={candidateName || "Onboarding case"}
-        description="HR-started onboarding case — sending the candidate link, section review, and activation land in later phases."
+        description="HR-started onboarding case — activation lands in a later phase."
         actions={
           <Link href="/app/onboarding" className="text-sm text-foreground-secondary hover:underline">
             ← Back to onboarding
@@ -233,6 +315,17 @@ export default function OnboardingCaseDetailPage() {
               {canInvite && isInvitable ? (
                 <Button type="button" size="sm" onClick={() => void handleSendInvite()} disabled={sendingInvite}>
                   {sendingInvite ? "Sending…" : inviteLabel}
+                </Button>
+              ) : null}
+              {canReview && onboardingCase.status === "UNDER_REVIEW" && hasAnyRejection ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => void handleRequestChanges()}
+                  disabled={requestingChanges}
+                >
+                  {requestingChanges ? "Requesting…" : "Request Changes"}
                 </Button>
               ) : null}
             </div>
@@ -261,6 +354,49 @@ export default function OnboardingCaseDetailPage() {
           </dl>
         </CardContent>
       </Card>
+
+      {ONBOARDING_SECTION_NAMES.map((section) => {
+        const review = onboardingCase.section_reviews.find((r) => r.section === section);
+        const status = review?.status ?? "PENDING";
+        return (
+          <Card key={section}>
+            <CardContent className="space-y-4 pt-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-foreground">{ONBOARDING_SECTION_LABELS[section]}</h3>
+                <div className="flex items-center gap-3">
+                  <ReviewStatusBadge status={status} />
+                  {canReview && isReviewable && status !== "VERIFIED" ? (
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={reviewingSection === section}
+                        onClick={() => void handleVerifySection(section)}
+                      >
+                        Verify
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={reviewingSection === section}
+                        onClick={() => setRejectSection(section)}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+              {status === "REJECTED" && review?.rejection_reason ? (
+                <p className="text-sm text-danger">Rejected: {review.rejection_reason}</p>
+              ) : null}
+              <SectionFields data={onboardingCase[section]} />
+            </CardContent>
+          </Card>
+        );
+      })}
 
       <Card>
         <CardContent className="space-y-4 pt-6">
@@ -308,20 +444,20 @@ export default function OnboardingCaseDetailPage() {
                       </td>
                       <td className="py-3 pr-4 text-foreground-secondary">{formatBytes(document.size_bytes)}</td>
                       <td className="py-3 pr-4">
-                        <DocumentStatusBadge status={document.status} />
+                        <ReviewStatusBadge status={document.status} />
                         {document.status === "REJECTED" && document.rejection_reason ? (
                           <p className="mt-1 text-xs text-foreground-muted">{document.rejection_reason}</p>
                         ) : null}
                       </td>
                       <td className="py-3 pr-0">
-                        {can("ONBOARDING.REVIEW") ? (
+                        {canReview ? (
                           <div className="flex gap-2">
                             <Button
                               type="button"
                               size="sm"
                               variant="outline"
-                              disabled={reviewingId === document.id}
-                              onClick={() => void handleVerify(document)}
+                              disabled={reviewingDocumentId === document.id}
+                              onClick={() => void handleVerifyDocument(document)}
                             >
                               Verify
                             </Button>
@@ -329,8 +465,8 @@ export default function OnboardingCaseDetailPage() {
                               type="button"
                               size="sm"
                               variant="outline"
-                              disabled={reviewingId === document.id}
-                              onClick={() => setRejectTarget(document)}
+                              disabled={reviewingDocumentId === document.id}
+                              onClick={() => setRejectDocument(document)}
                             >
                               Reject
                             </Button>
@@ -347,13 +483,25 @@ export default function OnboardingCaseDetailPage() {
       </Card>
 
       <DocumentRejectDialog
-        open={rejectTarget !== null}
-        onOpenChange={(open) => (!open ? setRejectTarget(null) : null)}
+        open={rejectDocument !== null}
+        onOpenChange={(open) => (!open ? setRejectDocument(null) : null)}
         caseId={params.id}
-        document={rejectTarget}
+        document={rejectDocument}
         onDone={(updated) => {
           setDocuments((prev) => (prev ?? []).map((d) => (d.id === updated.id ? updated : d)));
-          setRejectTarget(null);
+          setRejectDocument(null);
+          void load();
+        }}
+      />
+
+      <SectionRejectDialog
+        open={rejectSection !== null}
+        onOpenChange={(open) => (!open ? setRejectSection(null) : null)}
+        caseId={params.id}
+        section={rejectSection}
+        onDone={(updatedCase) => {
+          setOnboardingCase(updatedCase);
+          setRejectSection(null);
         }}
       />
     </div>

@@ -1,13 +1,13 @@
 """Business logic for the onboarding module — O1 (case create/list/detail), O2 (token issuance +
 public section read/write), O3 (send-invite, backed by the minimal `EmailSender`), O4 (submit,
-the wizard's own completion step), and O5 (document upload/review, backed by
-`DocumentStorageService`)."""
+the wizard's own completion step), O5 (document upload/review, backed by
+`DocumentStorageService`), and O6 (section review + changes-requested loop)."""
 
 import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,10 @@ from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
 from hrms.modules.onboarding.document_storage import DocumentStorageService
 from hrms.modules.onboarding.email_sender import get_email_sender
-from hrms.modules.onboarding.email_templates import build_invite_email
+from hrms.modules.onboarding.email_templates import (
+    build_changes_requested_email,
+    build_invite_email,
+)
 from hrms.modules.onboarding.exceptions import (
     DuplicateActiveOnboardingCaseError,
     InvalidBranchReferenceError,
@@ -26,36 +29,50 @@ from hrms.modules.onboarding.exceptions import (
     InvalidDesignationReferenceError,
     InvalidLegalEntityReferenceError,
     InvalidOnboardingDocumentTypeError,
+    InvalidOnboardingSectionError,
     OnboardingCaseNotInvitableError,
+    OnboardingCaseNotReviewableError,
     OnboardingCaseNotSubmittableError,
     OnboardingDocumentTooLargeError,
     OnboardingIncompleteSectionsError,
+    OnboardingNothingToRequestChangesForError,
+    OnboardingSectionAlreadyVerifiedError,
     OnboardingSectionNotWritableError,
     OnboardingTokenInvalidError,
 )
 from hrms.modules.onboarding.repository import (
     OnboardingCaseRepository,
     OnboardingDocumentRepository,
+    OnboardingSectionReviewRepository,
     OnboardingTokenRepository,
 )
 from hrms.modules.onboarding.schemas import (
+    ONBOARDING_CASE_REVIEWABLE_STATUSES,
     ONBOARDING_CASE_TERMINAL_STATUSES,
     ONBOARDING_CASE_WRITABLE_STATUSES,
     ONBOARDING_DOCUMENT_MAX_SIZE_BYTES,
     ONBOARDING_DOCUMENT_TYPES,
+    ONBOARDING_SECTION_LABELS,
     ONBOARDING_SECTION_NAMES,
     OnboardingCaseCreate,
+    OnboardingCaseDetailRead,
     OnboardingCaseRead,
     OnboardingDocumentRead,
     OnboardingDocumentWithUrlRead,
     OnboardingInviteRead,
+    OnboardingSectionReviewRead,
     PublicOnboardingCaseRead,
     onboarding_case_to_audit_dict,
+    onboarding_case_to_detail_read,
     onboarding_case_to_public_read,
     onboarding_case_to_read,
     onboarding_document_to_read,
     onboarding_document_to_read_with_url,
+    onboarding_section_review_to_read,
 )
+
+if TYPE_CHECKING:
+    from hrms.modules.onboarding.models import OnboardingCase
 
 #: Statuses `send-invite` may act on (O3) — `DRAFT`/`EXPIRED` (first send / re-send after
 #: lapsing) and `INVITED`/`IN_PROGRESS` (plain resend, e.g. "candidate lost the email"; case
@@ -72,11 +89,62 @@ ONBOARDING_CASE_INVITABLE_STATUSES = ("DRAFT", "EXPIRED", "INVITED", "IN_PROGRES
 DEFAULT_TOKEN_TTL_DAYS = 7
 
 
+async def _ensure_case_under_review(
+    case_repo: OnboardingCaseRepository,
+    session: AsyncSession,
+    case: "OnboardingCase",
+    now: datetime,
+) -> None:
+    """Shared by section review and document review (O6) — the first review action on a freshly
+    `SUBMITTED` case moves it to `UNDER_REVIEW` (state machine, plan §6). A no-op once already
+    `UNDER_REVIEW`, and — deliberately — also a no-op for every other status (e.g. `IN_PROGRESS`):
+    document review has no case-status gate of its own (module docstring,
+    `OnboardingDocumentService.review_document`), so calling this unconditionally from there must
+    never have a side effect on a case the candidate hasn't submitted yet."""
+    if case.status == "SUBMITTED":
+        await case_repo.set_status(session, case=case, status="UNDER_REVIEW", now=now)
+
+
+async def _maybe_auto_verify_case(
+    session: AsyncSession,
+    *,
+    case_repo: OnboardingCaseRepository,
+    section_review_repo: OnboardingSectionReviewRepository,
+    document_repo: OnboardingDocumentRepository,
+    company_id: UUID,
+    case: "OnboardingCase",
+    now: datetime,
+) -> None:
+    """Shared by section review and document review (O6) — plan §6's "(all verified) -> VERIFIED"
+    transition, computed rather than a manual HR action: fires the moment the last outstanding
+    section or document turns `VERIFIED`. Zero uploaded documents counts as vacuously "all
+    verified" — this module has never made document upload mandatory
+    (`OnboardingIncompleteSectionsError`'s own docstring), so a case with all five sections
+    verified and no documents at all should not be stuck waiting on something that was never
+    required."""
+    if case.status != "UNDER_REVIEW":
+        return
+
+    reviews = await section_review_repo.list_for_case(
+        session, company_id=company_id, case_id=case.id
+    )
+    review_status_by_section = {r.section: r.status for r in reviews}
+    if any(review_status_by_section.get(name) != "VERIFIED" for name in ONBOARDING_SECTION_NAMES):
+        return
+
+    documents = await document_repo.list_documents(session, company_id=company_id, case_id=case.id)
+    if any(document.status != "VERIFIED" for document in documents):
+        return
+
+    await case_repo.set_status(session, case=case, status="VERIFIED", now=now)
+
+
 class OnboardingCaseService:
     def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
         self._settings = settings or get_settings()
         self._repo = OnboardingCaseRepository()
+        self._section_review_repo = OnboardingSectionReviewRepository()
         self._audit = AuditService()
 
     async def _assert_designation_ownership(self, company_id: UUID, designation_id: UUID) -> None:
@@ -202,6 +270,18 @@ class OnboardingCaseService:
             raise NotFoundError("Resource not found")
         return onboarding_case_to_read(case)
 
+    async def get_case_detail(self, company_id: UUID, case_id: UUID) -> OnboardingCaseDetailRead:
+        """`GET /onboarding-cases/{id}` (admin) — the O6 richer detail read: the five section
+        JSON blobs plus their review status, so HR can see what the candidate actually submitted
+        instead of verifying/rejecting blind (plan §9)."""
+        case = await self._repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        reviews = await self._section_review_repo.list_for_case(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        return onboarding_case_to_detail_read(case, reviews)
+
     async def get_public_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
         """Called only after `OnboardingTokenService.resolve_and_touch` has already proven the
         token is live and set the RLS `company_id` GUC from it — `company_id`/`case_id` here
@@ -210,7 +290,10 @@ class OnboardingCaseService:
         case = await self._repo.get_case(self._session, company_id=company_id, case_id=case_id)
         if case is None:
             raise NotFoundError("Resource not found")
-        return onboarding_case_to_public_read(case)
+        reviews = await self._section_review_repo.list_for_case(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        return onboarding_case_to_public_read(case, reviews)
 
     async def update_section(
         self, company_id: UUID, case_id: UUID, section: str, data: dict[str, Any]
@@ -225,6 +308,15 @@ class OnboardingCaseService:
         if case.status not in ONBOARDING_CASE_WRITABLE_STATUSES:
             raise OnboardingSectionNotWritableError()
 
+        # O6: a section HR has already verified is locked even if the case's own status
+        # (`CHANGES_REQUESTED`) still allows writes to *other* sections (plan §7.2) — checked
+        # before writing anything.
+        existing_review = await self._section_review_repo.get_by_section(
+            self._session, company_id=company_id, case_id=case_id, section=section
+        )
+        if existing_review is not None and existing_review.status == "VERIFIED":
+            raise OnboardingSectionAlreadyVerifiedError()
+
         now = datetime.now(UTC)
         updated = await self._repo.update_section(
             self._session,
@@ -235,7 +327,17 @@ class OnboardingCaseService:
             now=now,
         )
         assert updated is not None
-        return onboarding_case_to_public_read(updated)
+
+        # O6: editing a section HR had `REJECTED` puts it back in HR's queue as `PENDING`,
+        # clearing the stale reason — a no-op if it was never reviewed or is (impossible, per the
+        # check above) `VERIFIED`.
+        await self._section_review_repo.reset_to_pending(
+            self._session, company_id=company_id, case_id=case_id, section=section, now=now
+        )
+        reviews = await self._section_review_repo.list_for_case(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        return onboarding_case_to_public_read(updated, reviews)
 
     async def submit_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
         """`POST /public/onboarding/{token}/submit` (O4) — `IN_PROGRESS`/`CHANGES_REQUESTED` ->
@@ -263,7 +365,10 @@ class OnboardingCaseService:
             entity_type="onboarding_case",
             entity_id=case_id,
         )
-        return onboarding_case_to_public_read(case)
+        reviews = await self._section_review_repo.list_for_case(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        return onboarding_case_to_public_read(case, reviews)
 
 
 @dataclass(frozen=True)
@@ -435,6 +540,7 @@ class OnboardingDocumentService:
         self._settings = settings or get_settings()
         self._repo = OnboardingDocumentRepository()
         self._case_repo = OnboardingCaseRepository()
+        self._section_review_repo = OnboardingSectionReviewRepository()
         self._storage = DocumentStorageService(self._settings)
         self._audit = AuditService()
 
@@ -541,6 +647,15 @@ class OnboardingDocumentService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> OnboardingDocumentRead:
+        """No case-status gate of its own — unlike section review (`OnboardingReviewService.
+        review_section`), HR may spot-check a document the moment it's uploaded, before the
+        candidate has even finished the rest of the wizard (module docstring). `_ensure_case_
+        under_review`/`_maybe_auto_verify_case` (O6) are both safe to call unconditionally: they
+        only ever act when the case is actually `SUBMITTED`/`UNDER_REVIEW`, a no-op otherwise."""
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+
         document = await self._repo.get_document(
             self._session, company_id=company_id, case_id=case_id, document_id=document_id
         )
@@ -548,6 +663,8 @@ class OnboardingDocumentService:
             raise NotFoundError("Resource not found")
 
         now = datetime.now(UTC)
+        await _ensure_case_under_review(self._case_repo, self._session, case, now)
+
         updated = await self._repo.update_review(
             self._session,
             document=document,
@@ -565,6 +682,162 @@ class OnboardingDocumentService:
             entity_type="onboarding_document",
             entity_id=document_id,
             after=read.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        await _maybe_auto_verify_case(
+            self._session,
+            case_repo=self._case_repo,
+            section_review_repo=self._section_review_repo,
+            document_repo=self._repo,
+            company_id=company_id,
+            case=case,
+            now=now,
+        )
+        return read
+
+
+class OnboardingReviewService:
+    """O6 — section review and the changes-requested loop. Kept separate from
+    `OnboardingCaseService` (which owns the case's own CRUD/section-write surface) the same way
+    `OnboardingTokenService`/`OnboardingDocumentService` are each their own class — one service
+    per distinct write surface, per this module's own established convention."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._case_repo = OnboardingCaseRepository()
+        self._section_review_repo = OnboardingSectionReviewRepository()
+        self._document_repo = OnboardingDocumentRepository()
+        self._audit = AuditService()
+
+    async def review_section(
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        section: str,
+        *,
+        status: str,
+        rejection_reason: str | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OnboardingSectionReviewRead:
+        if section not in ONBOARDING_SECTION_NAMES:
+            raise InvalidOnboardingSectionError(section)
+
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status not in ONBOARDING_CASE_REVIEWABLE_STATUSES:
+            raise OnboardingCaseNotReviewableError()
+
+        now = datetime.now(UTC)
+        await _ensure_case_under_review(self._case_repo, self._session, case, now)
+
+        review = await self._section_review_repo.upsert_review(
+            self._session,
+            company_id=company_id,
+            case_id=case_id,
+            section=section,
+            status=status,
+            rejection_reason=rejection_reason,
+            reviewed_by_user_id=actor_user_id,
+            now=now,
+        )
+        read = onboarding_section_review_to_read(review)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ONBOARDING_SECTION_REVIEWED",
+            entity_type="onboarding_section_review",
+            entity_id=review.id,
+            after=read.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+        await _maybe_auto_verify_case(
+            self._session,
+            case_repo=self._case_repo,
+            section_review_repo=self._section_review_repo,
+            document_repo=self._document_repo,
+            company_id=company_id,
+            case=case,
+            now=now,
+        )
+        return read
+
+    async def request_changes(
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OnboardingCaseRead:
+        """`POST /onboarding-cases/{id}/request-changes` (plan §7.1) — HR reviews every section/
+        document first (`review_section`/`OnboardingDocumentService.review_document`, each just
+        recording a verdict), then calls this once to finalize the batch: `UNDER_REVIEW` ->
+        `CHANGES_REQUESTED` and the candidate is notified in a single email, rather than once per
+        individual rejection."""
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status != "UNDER_REVIEW":
+            raise OnboardingNothingToRequestChangesForError()
+
+        sections = await self._section_review_repo.list_for_case(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        documents = await self._document_repo.list_documents(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        rejected_sections = [s for s in sections if s.status == "REJECTED"]
+        rejected_documents = [d for d in documents if d.status == "REJECTED"]
+        if not rejected_sections and not rejected_documents:
+            raise OnboardingNothingToRequestChangesForError()
+
+        now = datetime.now(UTC)
+        await self._case_repo.set_status(
+            self._session, case=case, status="CHANGES_REQUESTED", now=now
+        )
+
+        rejected_items = [
+            (ONBOARDING_SECTION_LABELS[s.section], s.rejection_reason or "")
+            for s in rejected_sections
+        ] + [(f"Document: {d.document_type}", d.rejection_reason or "") for d in rejected_documents]
+
+        # Cross-module read only (`OrganisationService.get_company_profile`), same lazy-import
+        # convention as `OnboardingTokenService.send_invite`.
+        from hrms.modules.organisation.service import OrganisationService
+
+        organisation = OrganisationService(self._session, self._settings)
+        company = await organisation.get_company_profile(company_id)
+        subject, html_body, text_body = build_changes_requested_email(
+            candidate_first_name=case.candidate_first_name,
+            company_name=company.name,
+            rejected_items=rejected_items,
+        )
+        try:
+            await get_email_sender(self._settings).send(
+                to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
+            )
+        except Exception:  # noqa: BLE001 — delivery failure must not block the status transition
+            pass
+
+        read = onboarding_case_to_read(case)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ONBOARDING_CHANGES_REQUESTED",
+            entity_type="onboarding_case",
+            entity_id=case_id,
+            after=onboarding_case_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
         )

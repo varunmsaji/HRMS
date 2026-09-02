@@ -3,12 +3,17 @@ mirroring `employee/repository.py`'s own convention exactly."""
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.modules.onboarding.models import OnboardingCase, OnboardingDocument, OnboardingToken
+from hrms.modules.onboarding.models import (
+    OnboardingCase,
+    OnboardingDocument,
+    OnboardingSectionReview,
+    OnboardingToken,
+)
 from hrms.modules.onboarding.schemas import ONBOARDING_CASE_TERMINAL_STATUSES
 
 
@@ -176,3 +181,82 @@ class OnboardingDocumentRepository:
         document.updated_at = now
         await session.flush()
         return document
+
+
+class OnboardingSectionReviewRepository:
+    """No unique DB constraint on `(onboarding_case_id, section)` — `get_by_section`/`upsert`
+    enforce "at most one row per section per case" at the application layer instead, mirroring
+    `OnboardingCaseRepository.update_section`'s own "no DB constraint, service-enforced"
+    convention for this module."""
+
+    async def get_by_section(
+        self, session: AsyncSession, *, company_id: UUID, case_id: UUID, section: str
+    ) -> OnboardingSectionReview | None:
+        stmt = select(OnboardingSectionReview).where(
+            OnboardingSectionReview.company_id == company_id,
+            OnboardingSectionReview.onboarding_case_id == case_id,
+            OnboardingSectionReview.section == section,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_for_case(
+        self, session: AsyncSession, *, company_id: UUID, case_id: UUID
+    ) -> list[OnboardingSectionReview]:
+        stmt = select(OnboardingSectionReview).where(
+            OnboardingSectionReview.company_id == company_id,
+            OnboardingSectionReview.onboarding_case_id == case_id,
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def upsert_review(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        case_id: UUID,
+        section: str,
+        status: str,
+        rejection_reason: str | None,
+        reviewed_by_user_id: UUID | None,
+        now: datetime,
+    ) -> OnboardingSectionReview:
+        row = await self.get_by_section(
+            session, company_id=company_id, case_id=case_id, section=section
+        )
+        if row is None:
+            row = OnboardingSectionReview(
+                id=uuid4(),
+                company_id=company_id,
+                onboarding_case_id=case_id,
+                section=section,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+        row.status = status
+        row.rejection_reason = rejection_reason
+        row.reviewed_by_user_id = reviewed_by_user_id
+        row.reviewed_at = now
+        row.updated_at = now
+        await session.flush()
+        return row
+
+    async def reset_to_pending(
+        self, session: AsyncSession, *, company_id: UUID, case_id: UUID, section: str, now: datetime
+    ) -> None:
+        """Called when the candidate edits a section HR had `REJECTED` (`OnboardingCaseService.
+        update_section`) — clears the stale rejection reason and puts it back in HR's review
+        queue. A no-op if the section has never been reviewed (`PENDING`) or is currently
+        `VERIFIED` — `update_section` already rejects a write against a `VERIFIED` section before
+        this could ever be called for one."""
+        row = await self.get_by_section(
+            session, company_id=company_id, case_id=case_id, section=section
+        )
+        if row is None or row.status != "REJECTED":
+            return
+        row.status = "PENDING"
+        row.rejection_reason = None
+        row.reviewed_by_user_id = None
+        row.reviewed_at = None
+        row.updated_at = now
+        await session.flush()

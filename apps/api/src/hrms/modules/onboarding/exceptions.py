@@ -210,3 +210,71 @@ class OnboardingDocumentTooLargeError(ValidationError):
             message,
             details=[{"field": "file", "code": "DOCUMENT_TOO_LARGE", "message": message}],
         )
+
+
+class OnboardingCaseNotReviewableError(ConflictError):
+    """Raised by section/document review when the case isn't in a status a review action makes
+    sense for (`ONBOARDING_CASE_REVIEWABLE_STATUSES` — `SUBMITTED`/`UNDER_REVIEW`). Reviewing
+    something the candidate hasn't submitted yet, or that HR has already finished with
+    (`VERIFIED`/`CHANGES_REQUESTED`/terminal), is not a supported action."""
+
+    code = "ONBOARDING_CASE_NOT_REVIEWABLE"
+
+    def __init__(
+        self, message: str = "This onboarding case is not currently open for review"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "status", "code": "ONBOARDING_CASE_NOT_REVIEWABLE", "message": message}
+            ],
+        )
+
+
+class OnboardingSectionAlreadyVerifiedError(ConflictError):
+    """Raised when a candidate `PATCH`es a section HR has already verified — once verified, a
+    section is locked even if the case's own status (`CHANGES_REQUESTED`) would otherwise allow
+    writes to *other*, still-`PENDING`/`REJECTED` sections (plan §7.2: "Only sections currently
+    in PENDING/reopened-by-rejection state are writable")."""
+
+    code = "ONBOARDING_SECTION_ALREADY_VERIFIED"
+
+    def __init__(
+        self, message: str = "This section has already been verified and can no longer be edited"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "status",
+                    "code": "ONBOARDING_SECTION_ALREADY_VERIFIED",
+                    "message": message,
+                }
+            ],
+        )
+
+
+class OnboardingNothingToRequestChangesForError(ConflictError):
+    """Raised by `request-changes` when the case isn't `UNDER_REVIEW`, or is but nothing has
+    actually been rejected yet — requesting changes for a fully-verified (or not-yet-reviewed)
+    case is not a meaningful action."""
+
+    code = "ONBOARDING_NOTHING_TO_REQUEST_CHANGES_FOR"
+
+    def __init__(
+        self,
+        message: str = (
+            "This case is not under review, or nothing has been rejected yet — "
+            "there is nothing to request changes for"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "status",
+                    "code": "ONBOARDING_NOTHING_TO_REQUEST_CHANGES_FOR",
+                    "message": message,
+                }
+            ],
+        )
