@@ -87,7 +87,18 @@ class OnboardingToken(Base, TimestampMixin):
     """The public-link credential (O2) — `token_hash` is a SHA-256 hex digest, the raw token is
     never persisted (plan §4.2/§8.1). Only one live (non-revoked, non-expired) row per case is
     ever meant to exist at a time; a resend revokes the previous row rather than deleting it
-    (plan §4.2), enforced in the service layer, not a DB constraint."""
+    (plan §4.2), enforced in the service layer, not a DB constraint.
+
+    Unlike every other table in this module, this one carries **no RLS policy** — a corrective
+    migration (`20260906090000_onboarding_o2`) disables the `tenant_isolation` policy the O1
+    migration mistakenly gave it. A public, unauthenticated caller has no tenant context yet; the
+    only thing that can look up a row here is the token hash itself, before any `company_id` GUC
+    can be set — the same pre-tenant-context shape `refresh_token` already has
+    (`scripts/sql/001_init_schema.sql`). `company_id` is kept as a plain, unenforced column so the
+    resolved value can seed the RLS GUC for every subsequent query in the same request (plan §5) —
+    it is still re-validated by that subsequent, RLS-protected `onboarding_case` lookup, so a
+    tampered/forged `company_id` on this row (not possible from any client input; this column is
+    only ever server-written) still could not leak another tenant's data."""
 
     __tablename__ = "onboarding_token"
 

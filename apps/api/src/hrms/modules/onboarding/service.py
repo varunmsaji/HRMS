@@ -1,12 +1,18 @@
-"""Business logic for the onboarding module — O1 (case create/list/detail) only."""
+"""Business logic for the onboarding module — O1 (case create/list/detail) and O2 (token
+issuance + public section read/write)."""
 
-from datetime import UTC, datetime
+import hashlib
+import secrets
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
+from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
 from hrms.modules.onboarding.exceptions import (
     DuplicateActiveOnboardingCaseError,
@@ -14,14 +20,26 @@ from hrms.modules.onboarding.exceptions import (
     InvalidDepartmentReferenceError,
     InvalidDesignationReferenceError,
     InvalidLegalEntityReferenceError,
+    OnboardingSectionNotWritableError,
+    OnboardingTokenInvalidError,
 )
-from hrms.modules.onboarding.repository import OnboardingCaseRepository
+from hrms.modules.onboarding.repository import OnboardingCaseRepository, OnboardingTokenRepository
 from hrms.modules.onboarding.schemas import (
+    ONBOARDING_CASE_TERMINAL_STATUSES,
+    ONBOARDING_CASE_WRITABLE_STATUSES,
     OnboardingCaseCreate,
     OnboardingCaseRead,
+    PublicOnboardingCaseRead,
     onboarding_case_to_audit_dict,
+    onboarding_case_to_public_read,
     onboarding_case_to_read,
 )
+
+#: Default public-link lifetime (plan §4.2: "default 7 days, HR-configurable per case at
+#: send/resend time" — the per-case override arrives with the O3 send-invite endpoint; this
+#: constant is O2's own default, used directly since nothing yet calls `issue_token` with a
+#: caller-supplied override).
+DEFAULT_TOKEN_TTL_DAYS = 7
 
 
 class OnboardingCaseService:
@@ -153,3 +171,136 @@ class OnboardingCaseService:
         if case is None:
             raise NotFoundError("Resource not found")
         return onboarding_case_to_read(case)
+
+    async def get_public_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
+        """Called only after `OnboardingTokenService.resolve_and_touch` has already proven the
+        token is live and set the RLS `company_id` GUC from it — `company_id`/`case_id` here
+        come from that resolved, server-side context, never from client input (module docstring,
+        `hrms.modules.onboarding.public_router`)."""
+        case = await self._repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        return onboarding_case_to_public_read(case)
+
+    async def update_section(
+        self, company_id: UUID, case_id: UUID, section: str, data: dict[str, Any]
+    ) -> PublicOnboardingCaseRead:
+        """`section` is always one of `SECTION_SCHEMAS`' keys by the time this is called — the
+        public router rejects anything else before this point (`InvalidOnboardingSectionError`)
+        — and `data` is always the already-`model_validate`d, `extra="forbid"` section schema's
+        own dump, never raw client JSON."""
+        case = await self._repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status not in ONBOARDING_CASE_WRITABLE_STATUSES:
+            raise OnboardingSectionNotWritableError()
+
+        now = datetime.now(UTC)
+        updated = await self._repo.update_section(
+            self._session,
+            company_id=company_id,
+            case_id=case_id,
+            column=section,
+            value=data,
+            now=now,
+        )
+        assert updated is not None
+        return onboarding_case_to_public_read(updated)
+
+
+@dataclass(frozen=True)
+class OnboardingTokenContext:
+    """What a resolved, validated public token proves — deliberately just two IDs (mirrors
+    `core.tenancy.context.TenantContext`'s own shape), never a full ORM object, so a route can't
+    accidentally read stale case data instead of re-fetching it through the service layer."""
+
+    case_id: UUID
+    company_id: UUID
+
+
+class OnboardingTokenService:
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._token_repo = OnboardingTokenRepository()
+        self._case_repo = OnboardingCaseRepository()
+
+    async def issue_token(
+        self, company_id: UUID, case_id: UUID, *, ttl_days: int = DEFAULT_TOKEN_TTL_DAYS
+    ) -> str:
+        """Mints a new public-link token for the case, revoking any previous live one first
+        (plan §4.2), and moves `DRAFT`/`EXPIRED` → `INVITED` (state machine, plan §6) — the same
+        transition the O3 send-invite endpoint will trigger; this method already does the full
+        state-machine work so O3 only has to add the email-sending wrapper around it, per the
+        plan's own phase split (§12: token issuance is O2, the email itself is O3).
+
+        Returns the raw token — the only place it is ever available. Only its SHA-256 hash is
+        persisted (plan §8.1); losing this return value means the link must be reissued."""
+        case = await self._case_repo.get_case(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        if case is None:
+            raise NotFoundError("Resource not found")
+
+        now = datetime.now(UTC)
+        await self._token_repo.revoke_live_tokens_for_case(
+            self._session, case_id=case_id, now=now
+        )
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        await self._token_repo.insert_token(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "onboarding_case_id": case_id,
+                "token_hash": token_hash,
+                "expires_at": now + timedelta(days=ttl_days),
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        if case.status in ("DRAFT", "EXPIRED"):
+            await self._case_repo.set_status(
+                self._session, case=case, status="INVITED", now=now
+            )
+
+        return raw_token
+
+    async def resolve_and_touch(self, raw_token: str) -> OnboardingTokenContext:
+        """The single security boundary for the entire public surface (plan §5) — every public
+        route depends on this. Deliberately raises the same `OnboardingTokenInvalidError` (a
+        `404`) for every failure mode (unknown hash, revoked, expired, terminal case status) so a
+        response can never let a caller distinguish "this token never existed" from "this token
+        existed but is no longer valid", which would otherwise leak information to anyone
+        systematically guessing tokens."""
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        token = await self._token_repo.get_by_hash(self._session, token_hash=token_hash)
+        if token is None:
+            raise OnboardingTokenInvalidError()
+
+        now = datetime.now(UTC)
+        if token.revoked_at is not None or token.expires_at <= now:
+            raise OnboardingTokenInvalidError()
+
+        # Establishes RLS scope from the token's own server-authored `company_id` (plan §5) —
+        # every RLS-protected query from this point on, starting with the very next line, is
+        # what actually re-validates that this is a real, correctly-scoped case; a token can
+        # never carry a `company_id` that wasn't already true when `issue_token` created it,
+        # since that column is never client-writable.
+        await set_rls_company_id(self._session, str(token.company_id))
+        case = await self._case_repo.get_case(
+            self._session, company_id=token.company_id, case_id=token.onboarding_case_id
+        )
+        if case is None or case.status in ONBOARDING_CASE_TERMINAL_STATUSES:
+            raise OnboardingTokenInvalidError()
+
+        await self._token_repo.mark_used_first_at(self._session, token=token, now=now)
+        if case.status == "INVITED":
+            await self._case_repo.set_status(
+                self._session, case=case, status="IN_PROGRESS", now=now
+            )
+
+        return OnboardingTokenContext(case_id=case.id, company_id=token.company_id)
