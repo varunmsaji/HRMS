@@ -35,8 +35,13 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     throw new ApiError({ status: 401, code: "UNAUTHORIZED", message: "Authentication required" });
   }
 
+  // FormData (multipart uploads, e.g. onboarding documents) must not be JSON-stringified, and
+  // the browser needs to set its own multipart boundary in Content-Type — never force
+  // "application/json" on it.
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     "X-Request-Id": requestId(),
     ...options.headers,
   };
@@ -51,7 +56,12 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     response = await fetch(`${API_BASE_URL}/v1${path}`, {
       method: options.method ?? "GET",
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body:
+        options.body === undefined
+          ? undefined
+          : isFormData
+            ? (options.body as FormData)
+            : JSON.stringify(options.body),
     });
   } catch {
     throw new NetworkError();

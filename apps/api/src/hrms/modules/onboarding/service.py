@@ -1,6 +1,7 @@
 """Business logic for the onboarding module — O1 (case create/list/detail), O2 (token issuance +
-public section read/write), O3 (send-invite, backed by the minimal `EmailSender`), and O4
-(submit, the wizard's own completion step)."""
+public section read/write), O3 (send-invite, backed by the minimal `EmailSender`), O4 (submit,
+the wizard's own completion step), and O5 (document upload/review, backed by
+`DocumentStorageService`)."""
 
 import hashlib
 import secrets
@@ -15,6 +16,7 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
+from hrms.modules.onboarding.document_storage import DocumentStorageService
 from hrms.modules.onboarding.email_sender import get_email_sender
 from hrms.modules.onboarding.email_templates import build_invite_email
 from hrms.modules.onboarding.exceptions import (
@@ -23,24 +25,36 @@ from hrms.modules.onboarding.exceptions import (
     InvalidDepartmentReferenceError,
     InvalidDesignationReferenceError,
     InvalidLegalEntityReferenceError,
+    InvalidOnboardingDocumentTypeError,
     OnboardingCaseNotInvitableError,
     OnboardingCaseNotSubmittableError,
+    OnboardingDocumentTooLargeError,
     OnboardingIncompleteSectionsError,
     OnboardingSectionNotWritableError,
     OnboardingTokenInvalidError,
 )
-from hrms.modules.onboarding.repository import OnboardingCaseRepository, OnboardingTokenRepository
+from hrms.modules.onboarding.repository import (
+    OnboardingCaseRepository,
+    OnboardingDocumentRepository,
+    OnboardingTokenRepository,
+)
 from hrms.modules.onboarding.schemas import (
     ONBOARDING_CASE_TERMINAL_STATUSES,
     ONBOARDING_CASE_WRITABLE_STATUSES,
+    ONBOARDING_DOCUMENT_MAX_SIZE_BYTES,
+    ONBOARDING_DOCUMENT_TYPES,
     ONBOARDING_SECTION_NAMES,
     OnboardingCaseCreate,
     OnboardingCaseRead,
+    OnboardingDocumentRead,
+    OnboardingDocumentWithUrlRead,
     OnboardingInviteRead,
     PublicOnboardingCaseRead,
     onboarding_case_to_audit_dict,
     onboarding_case_to_public_read,
     onboarding_case_to_read,
+    onboarding_document_to_read,
+    onboarding_document_to_read_with_url,
 )
 
 #: Statuses `send-invite` may act on (O3) — `DRAFT`/`EXPIRED` (first send / re-send after
@@ -413,3 +427,145 @@ class OnboardingTokenService:
             user_agent=user_agent,
         )
         return OnboardingInviteRead(case=read, invite_url=invite_url, email_sent=email_sent)
+
+
+class OnboardingDocumentService:
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = OnboardingDocumentRepository()
+        self._case_repo = OnboardingCaseRepository()
+        self._storage = DocumentStorageService(self._settings)
+        self._audit = AuditService()
+
+    async def upload_document(
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        *,
+        document_type: str,
+        filename: str,
+        content_type: str,
+        data: bytes,
+    ) -> OnboardingDocumentRead:
+        """`PENDING` on insert, always — verification is an admin-only action
+        (`review_document`). The case must be in a writable status, same gate as
+        `OnboardingCaseService.update_section` — uploading a document is just another kind of
+        write against the case."""
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status not in ONBOARDING_CASE_WRITABLE_STATUSES:
+            raise OnboardingSectionNotWritableError()
+        if document_type not in ONBOARDING_DOCUMENT_TYPES:
+            raise InvalidOnboardingDocumentTypeError(document_type)
+        if len(data) > ONBOARDING_DOCUMENT_MAX_SIZE_BYTES:
+            raise OnboardingDocumentTooLargeError(ONBOARDING_DOCUMENT_MAX_SIZE_BYTES)
+
+        now = datetime.now(UTC)
+        document_id = uuid4()
+        s3_key = f"onboarding/{company_id}/{case_id}/{document_id}/{filename}"
+        await self._storage.put_object(key=s3_key, body=data, content_type=content_type)
+
+        document = await self._repo.insert_document(
+            self._session,
+            data={
+                "id": document_id,
+                "company_id": company_id,
+                "onboarding_case_id": case_id,
+                "document_type": document_type,
+                "s3_key": s3_key,
+                "original_filename": filename,
+                "content_type": content_type,
+                "size_bytes": len(data),
+                "status": "PENDING",
+                "uploaded_at": now,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        return onboarding_document_to_read(document)
+
+    async def list_documents(
+        self, company_id: UUID, case_id: UUID
+    ) -> list[OnboardingDocumentRead]:
+        """The candidate-facing list (no presigned URL — the candidate already has the file;
+        they only need to see what's already uploaded, e.g. to decide whether to replace it)."""
+        documents = await self._repo.list_documents(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        return [onboarding_document_to_read(document) for document in documents]
+
+    async def list_documents_with_urls(
+        self, company_id: UUID, case_id: UUID
+    ) -> list[OnboardingDocumentWithUrlRead]:
+        """The admin-facing list — a presigned GET URL per document so bytes never round-trip
+        through the API server (plan §8.3)."""
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        documents = await self._repo.list_documents(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        result = []
+        for document in documents:
+            url = await self._storage.presigned_get_url(key=document.s3_key)
+            result.append(onboarding_document_to_read_with_url(document, url))
+        return result
+
+    async def delete_document(self, company_id: UUID, case_id: UUID, document_id: UUID) -> None:
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status not in ONBOARDING_CASE_WRITABLE_STATUSES:
+            raise OnboardingSectionNotWritableError()
+
+        document = await self._repo.get_document(
+            self._session, company_id=company_id, case_id=case_id, document_id=document_id
+        )
+        if document is None:
+            raise NotFoundError("Resource not found")
+
+        await self._storage.delete_object(key=document.s3_key)
+        await self._repo.delete_document(self._session, document=document)
+
+    async def review_document(
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        document_id: UUID,
+        *,
+        status: str,
+        rejection_reason: str | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OnboardingDocumentRead:
+        document = await self._repo.get_document(
+            self._session, company_id=company_id, case_id=case_id, document_id=document_id
+        )
+        if document is None:
+            raise NotFoundError("Resource not found")
+
+        now = datetime.now(UTC)
+        updated = await self._repo.update_review(
+            self._session,
+            document=document,
+            status=status,
+            rejection_reason=rejection_reason,
+            verified_by_user_id=actor_user_id,
+            now=now,
+        )
+        read = onboarding_document_to_read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ONBOARDING_DOCUMENT_REVIEWED",
+            entity_type="onboarding_document",
+            entity_id=document_id,
+            after=read.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read

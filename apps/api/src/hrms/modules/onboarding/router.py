@@ -1,7 +1,9 @@
 """HTTP routes for the onboarding module — thin layer only, per Module Standard §2.
 
 O1: `POST /onboarding-cases`, `GET /onboarding-cases`, `GET /onboarding-cases/{id}`. O3 adds
-`POST /onboarding-cases/{id}/send-invite`. No `DataScope` narrowing is applied on any of these —
+`POST /onboarding-cases/{id}/send-invite`. O5 adds `GET .../documents` and
+`POST .../documents/{id}/review` — the first real use of `ONBOARDING.REVIEW` (seeded/granted
+since O1, unused until now). No `DataScope` narrowing is applied on any of these —
 `require_permission`'s resolved scope is discarded, same posture as `EMPLOYEE.VIEW_STATUTORY`/
 `.VIEW_COMPENSATION` (module docstring, `hrms.modules.employee.router`): no source document
 proposes `SELF`/`REPORTEES`/`REPORTEE_TREE` visibility for onboarding cases, which have no
@@ -19,15 +21,27 @@ from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.onboarding.dependencies import (
     get_onboarding_case_service,
+    get_onboarding_document_service,
     get_onboarding_token_service,
 )
-from hrms.modules.onboarding.permissions import ONBOARDING_CREATE, ONBOARDING_VIEW
+from hrms.modules.onboarding.permissions import (
+    ONBOARDING_CREATE,
+    ONBOARDING_REVIEW,
+    ONBOARDING_VIEW,
+)
 from hrms.modules.onboarding.schemas import (
     OnboardingCaseCreate,
     OnboardingCaseRead,
+    OnboardingDocumentRead,
+    OnboardingDocumentReviewRequest,
+    OnboardingDocumentWithUrlRead,
     OnboardingInviteRead,
 )
-from hrms.modules.onboarding.service import OnboardingCaseService, OnboardingTokenService
+from hrms.modules.onboarding.service import (
+    OnboardingCaseService,
+    OnboardingDocumentService,
+    OnboardingTokenService,
+)
 from hrms.shared.pagination import DataEnvelope, ListEnvelope
 
 router = APIRouter(tags=["onboarding"])
@@ -87,6 +101,42 @@ async def send_onboarding_invite(
     data = await service.send_invite(
         tenant.company_id,
         case_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/onboarding-cases/{case_id}/documents", status_code=status.HTTP_200_OK)
+async def list_onboarding_case_documents(
+    case_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    service: Annotated[OnboardingDocumentService, Depends(get_onboarding_document_service)],
+) -> ListEnvelope[OnboardingDocumentWithUrlRead]:
+    data = await service.list_documents_with_urls(tenant.company_id, case_id)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/onboarding-cases/{case_id}/documents/{document_id}/review", status_code=status.HTTP_200_OK
+)
+async def review_onboarding_document(
+    case_id: UUID,
+    document_id: UUID,
+    body: OnboardingDocumentReviewRequest,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_REVIEW))],
+    service: Annotated[OnboardingDocumentService, Depends(get_onboarding_document_service)],
+) -> DataEnvelope[OnboardingDocumentRead]:
+    data = await service.review_document(
+        tenant.company_id,
+        case_id,
+        document_id,
+        status=body.status,
+        rejection_reason=body.rejection_reason,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),

@@ -183,3 +183,30 @@ class OnboardingIncompleteSectionsError(ValidationError):
                 for section in missing_sections
             ],
         )
+
+
+class InvalidOnboardingDocumentTypeError(ValidationError):
+    code = "INVALID_DOCUMENT_TYPE"
+
+    def __init__(self, document_type: str) -> None:
+        message = f"{document_type} is not a valid document type"
+        super().__init__(
+            message,
+            details=[
+                {"field": "document_type", "code": "INVALID_DOCUMENT_TYPE", "message": message}
+            ],
+        )
+
+
+class OnboardingDocumentTooLargeError(ValidationError):
+    """Raised when an uploaded file exceeds `ONBOARDING_DOCUMENT_MAX_SIZE_BYTES` — this task's
+    own cap (plan §8.3 flags virus scanning as deferred but names no size limit)."""
+
+    code = "DOCUMENT_TOO_LARGE"
+
+    def __init__(self, max_size_bytes: int) -> None:
+        message = f"File exceeds the {max_size_bytes // (1024 * 1024)}MB upload limit"
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "DOCUMENT_TOO_LARGE", "message": message}],
+        )

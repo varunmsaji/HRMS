@@ -8,7 +8,9 @@ import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
+import { DocumentRejectDialog } from "@/components/onboarding/document-review-dialog";
 import { OnboardingStatusBadge } from "@/components/onboarding/onboarding-status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
@@ -20,9 +22,23 @@ import type { Designation } from "@/lib/designation/types";
 import type { LegalEntity } from "@/lib/legal-entity/types";
 import {
   ONBOARDING_CASE_INVITABLE_STATUSES,
+  ONBOARDING_DOCUMENT_TYPE_LABELS,
   type OnboardingCase,
+  type OnboardingDocumentWithUrl,
   type OnboardingInvite,
 } from "@/lib/onboarding/types";
+
+function DocumentStatusBadge({ status }: { status: string }) {
+  if (status === "VERIFIED") return <Badge variant="success">Verified</Badge>;
+  if (status === "REJECTED") return <Badge variant="danger">Rejected</Badge>;
+  return <Badge variant="outline">Pending</Badge>;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 interface ReferenceData {
   branches: Branch[];
@@ -64,6 +80,24 @@ export default function OnboardingCaseDetailPage() {
   const [sendingInvite, setSendingInvite] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
 
+  const [documents, setDocuments] = useState<OnboardingDocumentWithUrl[] | null>(null);
+  const [documentsError, setDocumentsError] = useState(false);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<OnboardingDocumentWithUrl | null>(null);
+
+  const loadDocuments = useCallback(async () => {
+    try {
+      const data = await apiClient.get<OnboardingDocumentWithUrl[]>(
+        `/onboarding-cases/${params.id}/documents`,
+      );
+      setDocuments(data);
+      setDocumentsError(false);
+    } catch {
+      setDocuments(null);
+      setDocumentsError(true);
+    }
+  }, [params.id]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -91,7 +125,30 @@ export default function OnboardingCaseDetailPage() {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadDocuments();
+  }, [load, loadDocuments]);
+
+  async function handleVerify(document: OnboardingDocumentWithUrl) {
+    setReviewingId(document.id);
+    try {
+      const updated = await apiClient.post<OnboardingDocumentWithUrl>(
+        `/onboarding-cases/${params.id}/documents/${document.id}/review`,
+        { status: "VERIFIED" },
+      );
+      setDocuments((prev) =>
+        (prev ?? []).map((d) => (d.id === document.id ? { ...updated, download_url: d.download_url } : d)),
+      );
+      toast({ title: "Document verified", variant: "success" });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast({ title: "You don't have permission to review this document", variant: "danger" });
+        return;
+      }
+      toast({ title: "Could not verify document", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setReviewingId(null);
+    }
+  }
 
   async function handleSendInvite() {
     setSendingInvite(true);
@@ -204,6 +261,101 @@ export default function OnboardingCaseDetailPage() {
           </dl>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <h3 className="text-sm font-medium text-foreground">Documents</h3>
+
+          {documentsError ? (
+            <p className="text-sm text-foreground-muted">
+              You do not have permission to view documents, or none have been uploaded yet.
+            </p>
+          ) : null}
+
+          {!documentsError && documents && documents.length === 0 ? (
+            <p className="text-sm text-foreground-muted">No documents uploaded yet.</p>
+          ) : null}
+
+          {!documentsError && documents && documents.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px] border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                    <th className="py-2 pr-4">Type</th>
+                    <th className="py-2 pr-4">File</th>
+                    <th className="py-2 pr-4">Size</th>
+                    <th className="py-2 pr-4">Status</th>
+                    <th className="py-2 pr-0">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {documents.map((document) => (
+                    <tr key={document.id} className="border-b border-border last:border-0">
+                      <td className="py-3 pr-4 text-foreground-secondary">
+                        {ONBOARDING_DOCUMENT_TYPE_LABELS[
+                          document.document_type as keyof typeof ONBOARDING_DOCUMENT_TYPE_LABELS
+                        ] ?? document.document_type}
+                      </td>
+                      <td className="py-3 pr-4">
+                        <a
+                          href={document.download_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-foreground underline"
+                        >
+                          {document.original_filename}
+                        </a>
+                      </td>
+                      <td className="py-3 pr-4 text-foreground-secondary">{formatBytes(document.size_bytes)}</td>
+                      <td className="py-3 pr-4">
+                        <DocumentStatusBadge status={document.status} />
+                        {document.status === "REJECTED" && document.rejection_reason ? (
+                          <p className="mt-1 text-xs text-foreground-muted">{document.rejection_reason}</p>
+                        ) : null}
+                      </td>
+                      <td className="py-3 pr-0">
+                        {can("ONBOARDING.REVIEW") ? (
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={reviewingId === document.id}
+                              onClick={() => void handleVerify(document)}
+                            >
+                              Verify
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={reviewingId === document.id}
+                              onClick={() => setRejectTarget(document)}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <DocumentRejectDialog
+        open={rejectTarget !== null}
+        onOpenChange={(open) => (!open ? setRejectTarget(null) : null)}
+        caseId={params.id}
+        document={rejectTarget}
+        onDone={(updated) => {
+          setDocuments((prev) => (prev ?? []).map((d) => (d.id === updated.id ? updated : d)));
+          setRejectTarget(null);
+        }}
+      />
     </div>
   );
 }

@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.modules.onboarding.models import OnboardingCase, OnboardingToken
+from hrms.modules.onboarding.models import OnboardingCase, OnboardingDocument, OnboardingToken
 from hrms.modules.onboarding.schemas import ONBOARDING_CASE_TERMINAL_STATUSES
 
 
@@ -121,3 +121,58 @@ class OnboardingTokenRepository:
         if token.used_first_at is None:
             token.used_first_at = now
             await session.flush()
+
+
+class OnboardingDocumentRepository:
+    async def insert_document(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> OnboardingDocument:
+        row = OnboardingDocument(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_document(
+        self, session: AsyncSession, *, company_id: UUID, case_id: UUID, document_id: UUID
+    ) -> OnboardingDocument | None:
+        stmt = select(OnboardingDocument).where(
+            OnboardingDocument.id == document_id,
+            OnboardingDocument.onboarding_case_id == case_id,
+            OnboardingDocument.company_id == company_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_documents(
+        self, session: AsyncSession, *, company_id: UUID, case_id: UUID
+    ) -> list[OnboardingDocument]:
+        stmt = (
+            select(OnboardingDocument)
+            .where(
+                OnboardingDocument.company_id == company_id,
+                OnboardingDocument.onboarding_case_id == case_id,
+            )
+            .order_by(OnboardingDocument.uploaded_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def delete_document(self, session: AsyncSession, *, document: OnboardingDocument) -> None:
+        await session.delete(document)
+        await session.flush()
+
+    async def update_review(
+        self,
+        session: AsyncSession,
+        *,
+        document: OnboardingDocument,
+        status: str,
+        rejection_reason: str | None,
+        verified_by_user_id: UUID | None,
+        now: datetime,
+    ) -> OnboardingDocument:
+        document.status = status
+        document.rejection_reason = rejection_reason
+        document.verified_by_user_id = verified_by_user_id
+        document.verified_at = now
+        document.updated_at = now
+        await session.flush()
+        return document

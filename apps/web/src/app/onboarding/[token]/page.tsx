@@ -8,13 +8,14 @@ import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { AddressInfoStep } from "@/components/onboarding/wizard/address-info-step";
 import { BankInfoStep } from "@/components/onboarding/wizard/bank-info-step";
+import { DocumentUploadStep } from "@/components/onboarding/wizard/document-upload-step";
 import { EmergencyContactStep } from "@/components/onboarding/wizard/emergency-contact-step";
 import { PersonalInfoStep } from "@/components/onboarding/wizard/personal-info-step";
 import { StatutoryInfoStep } from "@/components/onboarding/wizard/statutory-info-step";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
-import type { PublicOnboardingCase } from "@/lib/onboarding/types";
+import type { OnboardingDocument, PublicOnboardingCase } from "@/lib/onboarding/types";
 import {
   EMPTY_ADDRESS_INFO,
   EMPTY_BANK_INFO,
@@ -49,6 +50,7 @@ const STEPS = [
   "emergency",
   "bank",
   "statutory",
+  "documents",
   "review",
 ] as const;
 type Step = (typeof STEPS)[number];
@@ -60,6 +62,7 @@ const STEP_LABELS: Record<Step, string> = {
   emergency: "Emergency Contact",
   bank: "Bank Details",
   statutory: "Statutory Details",
+  documents: "Document Upload",
   review: "Review & Submit",
 };
 
@@ -111,20 +114,29 @@ export default function OnboardingWizardPage() {
     useState<EmergencyContactFormValues>(EMPTY_EMERGENCY_CONTACT);
   const [bankInfo, setBankInfo] = useState<BankInfoFormValues>(EMPTY_BANK_INFO);
   const [statutoryInfo, setStatutoryInfo] = useState<StatutoryInfoFormValues>(EMPTY_STATUTORY_INFO);
+  const [documents, setDocuments] = useState<OnboardingDocument[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiClient.get<PublicOnboardingCase>(`/public/onboarding/${token}`, {
-        authenticated: false,
-      });
+      const [data, existingDocuments] = await Promise.all([
+        apiClient.get<PublicOnboardingCase>(`/public/onboarding/${token}`, {
+          authenticated: false,
+        }),
+        apiClient
+          .get<OnboardingDocument[]>(`/public/onboarding/${token}/documents`, {
+            authenticated: false,
+          })
+          .catch(() => []),
+      ]);
       setOnboardingCase(data);
       setPersonalInfo(personalInfoFromSection(data.personal_info));
       setAddressInfo(addressInfoFromSection(data.address_info));
       setEmergencyContact(emergencyContactFromSection(data.emergency_contact));
       setBankInfo(bankInfoFromSection(data.bank_info));
       setStatutoryInfo(statutoryInfoFromSection(data.statutory_info));
+      setDocuments(existingDocuments);
     } catch (err) {
       setOnboardingCase(null);
       setError(
@@ -383,10 +395,24 @@ export default function OnboardingWizardPage() {
                         "statutory_info",
                         statutoryInfoToPayload(statutoryInfo),
                       );
-                      if (ok) goTo("review");
+                      if (ok) goTo("documents");
                     }}
                   >
                     {saving ? "Saving…" : "Save & Continue"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {step === "documents" ? (
+              <div className="space-y-6">
+                <DocumentUploadStep token={token} documents={documents} onDocumentsChange={setDocuments} />
+                <div className="flex justify-between">
+                  <Button type="button" variant="outline" onClick={() => goTo("statutory")}>
+                    Back
+                  </Button>
+                  <Button type="button" onClick={() => goTo("review")}>
+                    Continue
                   </Button>
                 </div>
               </div>
@@ -427,9 +453,15 @@ export default function OnboardingWizardPage() {
                     </dt>
                     <dd className="text-foreground">{statutoryInfo.taxRegime || "—"}</dd>
                   </div>
+                  <div>
+                    <dt className="text-xs font-medium uppercase text-foreground-muted">
+                      Documents uploaded
+                    </dt>
+                    <dd className="text-foreground">{documents.length}</dd>
+                  </div>
                 </dl>
                 <div className="flex justify-between">
-                  <Button type="button" variant="outline" onClick={() => goTo("statutory")}>
+                  <Button type="button" variant="outline" onClick={() => goTo("documents")}>
                     Back
                   </Button>
                   <Button type="button" disabled={saving} onClick={() => void handleSubmit()}>

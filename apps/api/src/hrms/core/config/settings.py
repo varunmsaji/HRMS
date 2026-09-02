@@ -38,9 +38,13 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
 
     # Onboarding O3 (docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md §8.4) — the minimal
-    # scoped EmailSender's own config. `email_sender_from_address` reuses the same
-    # `aws_access_key_id`/`aws_secret_access_key`/`aws_region` above to select SES when present,
-    # falling back to a logging-only sender otherwise (every local dev environment today).
+    # scoped EmailSender's own config. `email_provider` is deliberately its own explicit flag,
+    # not inferred from `aws_access_key_id`/`aws_secret_access_key` above — those credentials are
+    # also used for the MinIO-backed S3 client (O5), which is configured in every local dev
+    # environment today, so "AWS credentials present" is no longer a safe proxy for "real SES is
+    # reachable with them." Defaults to the logging-only sender everywhere until explicitly
+    # switched to "ses".
+    email_provider: Literal["logging", "ses"] = "logging"
     email_sender_from_address: str = "onboarding@hrms.local"
     web_app_base_url: str = "http://localhost:3000"
 

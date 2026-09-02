@@ -65,3 +65,46 @@ export interface PublicOnboardingCase {
   bank_info: Record<string, unknown>;
   statutory_info: Record<string, unknown>;
 }
+
+// --- O5: documents ---------------------------------------------------------------------------
+
+export const ONBOARDING_DOCUMENT_TYPES = [
+  "PHOTO",
+  "PAN",
+  "AADHAAR",
+  "ADDRESS_PROOF",
+  "EDUCATION_CERTIFICATE",
+  "PREVIOUS_EMPLOYMENT_PROOF",
+  "BANK_PROOF",
+  "OTHER",
+] as const;
+export type OnboardingDocumentType = (typeof ONBOARDING_DOCUMENT_TYPES)[number];
+
+export const ONBOARDING_DOCUMENT_TYPE_LABELS: Record<OnboardingDocumentType, string> = {
+  PHOTO: "Photo",
+  PAN: "PAN card",
+  AADHAAR: "Aadhaar card",
+  ADDRESS_PROOF: "Address proof",
+  EDUCATION_CERTIFICATE: "Education certificate",
+  PREVIOUS_EMPLOYMENT_PROOF: "Previous employment proof",
+  BANK_PROOF: "Bank proof",
+  OTHER: "Other",
+};
+
+/** Mirrors `OnboardingDocumentRead` — used by both the candidate wizard (no download URL, they
+ * already have the file) and as the base shape for the admin list. */
+export interface OnboardingDocument {
+  id: string;
+  document_type: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: string;
+  rejection_reason: string | null;
+  uploaded_at: string;
+}
+
+/** `GET /onboarding-cases/{id}/documents` (admin, O5) — mirrors `OnboardingDocumentWithUrlRead`. */
+export interface OnboardingDocumentWithUrl extends OnboardingDocument {
+  download_url: string;
+}

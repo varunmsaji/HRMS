@@ -9,6 +9,7 @@ from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
 from hrms.modules.onboarding.service import (
     OnboardingCaseService,
+    OnboardingDocumentService,
     OnboardingTokenContext,
     OnboardingTokenService,
 )
@@ -18,6 +19,12 @@ def get_onboarding_case_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> OnboardingCaseService:
     return OnboardingCaseService(session, get_settings())
+
+
+def get_onboarding_document_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OnboardingDocumentService:
+    return OnboardingDocumentService(session, get_settings())
 
 
 def get_onboarding_token_service(

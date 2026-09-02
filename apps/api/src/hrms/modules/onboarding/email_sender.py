@@ -23,16 +23,15 @@ class EmailSender(Protocol):
 
 
 class LoggingEmailSender:
-    """Selected whenever AWS credentials aren't configured (`Settings.aws_access_key_id`/
-    `aws_secret_access_key` blank) — every local dev environment and this module's own test
-    suite today. Logs the email instead of sending it, so onboarding is fully exercisable
-    end-to-end (including reading the invite URL back out of the admin API response) without a
-    real AWS account or a verified SES sender identity."""
+    """Selected whenever `Settings.email_provider != "ses"` — every local dev environment and
+    this module's own test suite today (default `"logging"`). Logs the email instead of sending
+    it, so onboarding is fully exercisable end-to-end (including reading the invite URL back out
+    of the admin API response) without a real AWS account or a verified SES sender identity."""
 
     async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
         del html_body  # not useful in a log line; the text body is
         logger.info(
-            "onboarding_email_not_sent_no_ses_configured",
+            "onboarding_email_not_sent_ses_not_configured",
             to=to,
             subject=subject,
             text_body=text_body,
@@ -67,6 +66,6 @@ class SesEmailSender:
 
 
 def get_email_sender(settings: Settings) -> EmailSender:
-    if settings.aws_access_key_id and settings.aws_secret_access_key:
+    if settings.email_provider == "ses":
         return SesEmailSender(settings)
     return LoggingEmailSender()

@@ -19,10 +19,10 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 if TYPE_CHECKING:
-    from hrms.modules.onboarding.models import OnboardingCase
+    from hrms.modules.onboarding.models import OnboardingCase, OnboardingDocument
 
 # `docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md` §6 — the full state machine. Not
 # client-writable; exposed here only so `OnboardingCaseRead.status` and tests have one source of
@@ -55,6 +55,26 @@ ONBOARDING_SECTION_NAMES = (
     "bank_info",
     "statutory_info",
 )
+
+# Plan §4.3's own enumeration. Not client-extensible — `OTHER` is the deliberate escape hatch for
+# anything not covered by the named seven.
+ONBOARDING_DOCUMENT_TYPES = (
+    "PHOTO",
+    "PAN",
+    "AADHAAR",
+    "ADDRESS_PROOF",
+    "EDUCATION_CERTIFICATE",
+    "PREVIOUS_EMPLOYMENT_PROOF",
+    "BANK_PROOF",
+    "OTHER",
+)
+
+# Plan §8.3 flags virus scanning as explicitly out of scope for this first cut — this cap is
+# this task's own engineering decision (no source document names a number), sized to comfortably
+# fit a phone-camera photo of an ID document without allowing arbitrary large uploads.
+ONBOARDING_DOCUMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024
+
+ONBOARDING_DOCUMENT_STATUS_VALUES = ("PENDING", "VERIFIED", "REJECTED")
 
 
 class OnboardingCaseCreate(BaseModel):
@@ -258,3 +278,65 @@ def onboarding_case_to_public_read(case: "OnboardingCase") -> PublicOnboardingCa
         bank_info=case.bank_info,
         statutory_info=case.statutory_info,
     )
+
+
+# --- O5: documents ---------------------------------------------------------------------------
+
+
+class OnboardingDocumentRead(BaseModel):
+    """Deliberately excludes `s3_key` — an internal storage detail, never returned to either the
+    candidate or the admin UI (which gets a presigned URL instead, `OnboardingDocumentWithUrlRead`
+    below)."""
+
+    id: UUID
+    document_type: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    status: str
+    rejection_reason: str | None
+    uploaded_at: str
+
+
+class OnboardingDocumentWithUrlRead(OnboardingDocumentRead):
+    """The admin-only shape (`GET /onboarding-cases/{id}/documents`) — adds the short-lived
+    presigned GET URL so document bytes never round-trip through the API server (plan §8.3)."""
+
+    download_url: str
+
+
+class OnboardingDocumentReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["VERIFIED", "REJECTED"]
+    rejection_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _require_reason_when_rejected(self) -> "OnboardingDocumentReviewRequest":
+        if self.status == "REJECTED" and not (self.rejection_reason or "").strip():
+            raise ValueError("rejection_reason is required when status is REJECTED")
+        return self
+
+
+def _format_timestamp_required(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def onboarding_document_to_read(document: "OnboardingDocument") -> OnboardingDocumentRead:
+    return OnboardingDocumentRead(
+        id=document.id,
+        document_type=document.document_type,
+        original_filename=document.original_filename,
+        content_type=document.content_type,
+        size_bytes=document.size_bytes,
+        status=document.status,
+        rejection_reason=document.rejection_reason,
+        uploaded_at=_format_timestamp_required(document.uploaded_at),
+    )
+
+
+def onboarding_document_to_read_with_url(
+    document: "OnboardingDocument", download_url: str
+) -> OnboardingDocumentWithUrlRead:
+    base = onboarding_document_to_read(document)
+    return OnboardingDocumentWithUrlRead(**base.model_dump(), download_url=download_url)

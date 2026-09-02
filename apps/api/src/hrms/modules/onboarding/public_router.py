@@ -1,6 +1,7 @@
 """Public, unauthenticated HTTP routes for the onboarding module — O2 (token-authenticated case
-read + section write), plus O4's own `submit` (the wizard's completion step). Document upload
-(O5) and `accept-policies` are not built — no wizard step consumes them yet.
+read + section write), O4's own `submit` (the wizard's completion step), and O5 (document
+upload/list/delete — review is admin-only, `hrms.modules.onboarding.router`). `accept-policies`
+is not built — no wizard step consumes it yet.
 
 No JWT, no `X-Company-Id` header, no `require_permission` — the single security boundary for
 this entire router is `get_onboarding_case_from_token` (plan §5,
@@ -9,8 +10,9 @@ No route accepts a `company_id` or `case_id` as a client-supplied parameter — 
 from the resolved `OnboardingTokenContext`, never from the request."""
 
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError as PydanticValidationError
 
@@ -19,11 +21,20 @@ from hrms.modules.identity.schemas import build_meta
 from hrms.modules.onboarding.dependencies import (
     get_onboarding_case_from_token,
     get_onboarding_case_service,
+    get_onboarding_document_service,
 )
 from hrms.modules.onboarding.exceptions import InvalidOnboardingSectionError
-from hrms.modules.onboarding.schemas import SECTION_SCHEMAS, PublicOnboardingCaseRead
-from hrms.modules.onboarding.service import OnboardingCaseService, OnboardingTokenContext
-from hrms.shared.pagination import DataEnvelope
+from hrms.modules.onboarding.schemas import (
+    SECTION_SCHEMAS,
+    OnboardingDocumentRead,
+    PublicOnboardingCaseRead,
+)
+from hrms.modules.onboarding.service import (
+    OnboardingCaseService,
+    OnboardingDocumentService,
+    OnboardingTokenContext,
+)
+from hrms.shared.pagination import DataEnvelope, ListEnvelope
 
 router = APIRouter(prefix="/public/onboarding", tags=["onboarding-public"])
 
@@ -71,3 +82,41 @@ async def submit_onboarding_case(
 ) -> DataEnvelope[PublicOnboardingCaseRead]:
     data = await service.submit_case(ctx.company_id, ctx.case_id)
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/{token}/documents", status_code=status.HTTP_201_CREATED)
+async def upload_onboarding_document(
+    ctx: Annotated[OnboardingTokenContext, Depends(get_onboarding_case_from_token)],
+    service: Annotated[OnboardingDocumentService, Depends(get_onboarding_document_service)],
+    document_type: Annotated[str, Form()],
+    file: Annotated[UploadFile, File()],
+) -> DataEnvelope[OnboardingDocumentRead]:
+    body = await file.read()
+    data = await service.upload_document(
+        ctx.company_id,
+        ctx.case_id,
+        document_type=document_type,
+        filename=file.filename or "upload",
+        content_type=file.content_type or "application/octet-stream",
+        data=body,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/{token}/documents", status_code=status.HTTP_200_OK)
+async def list_onboarding_documents(
+    ctx: Annotated[OnboardingTokenContext, Depends(get_onboarding_case_from_token)],
+    service: Annotated[OnboardingDocumentService, Depends(get_onboarding_document_service)],
+) -> ListEnvelope[OnboardingDocumentRead]:
+    data = await service.list_documents(ctx.company_id, ctx.case_id)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete("/{token}/documents/{document_id}", status_code=status.HTTP_200_OK)
+async def delete_onboarding_document(
+    document_id: UUID,
+    ctx: Annotated[OnboardingTokenContext, Depends(get_onboarding_case_from_token)],
+    service: Annotated[OnboardingDocumentService, Depends(get_onboarding_document_service)],
+) -> DataEnvelope[dict[str, bool]]:
+    await service.delete_document(ctx.company_id, ctx.case_id, document_id)
+    return DataEnvelope(data={"deleted": True}, meta=build_meta(current_request_id() or "unknown"))
