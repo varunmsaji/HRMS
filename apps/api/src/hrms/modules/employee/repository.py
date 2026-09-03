@@ -107,6 +107,30 @@ class EmployeeRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_code_or_email(
+        self, session: AsyncSession, *, company_id: UUID, value: str
+    ) -> Employee | None:
+        """Resolves a single employee by exact `employee_code` match, falling back to
+        `personal_email` (case-insensitive) — built for `modules/employee_import`'s
+        `reporting_manager` column, which accepts either. `employee_code` is unique per
+        company; `personal_email` is not (no DB constraint, per `models.py`), so an ambiguous
+        email match takes the earliest-created row, same determinism convention as
+        `get_employee_by_user_id`."""
+        stmt = (
+            select(Employee)
+            .where(
+                Employee.company_id == company_id,
+                Employee.deleted_at.is_(None),
+                or_(
+                    Employee.employee_code == value,
+                    func.lower(Employee.personal_email) == value.lower(),
+                ),
+            )
+            .order_by(Employee.created_at)
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def update_employee(
         self,
         session: AsyncSession,

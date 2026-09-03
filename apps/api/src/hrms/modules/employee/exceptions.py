@@ -469,6 +469,29 @@ class BankVersionRequiredError(ValidationError):
         )
 
 
+class DuplicateEmployeeCodeError(ConflictError):
+    """Raised by `EmployeeService.create_employee` when a caller-supplied `employee_code`
+    override (bulk import only — the interactive `EmployeeCreate` schema never exposes this
+    field, per this module's own documented decision) collides with the `UNIQUE (company_id,
+    employee_code)` constraint. The interactive path never hits this today, since it always
+    goes through the `number_series` allocator instead."""
+
+    code = "DUPLICATE_EMPLOYEE_CODE"
+
+    def __init__(self, *, employee_code: str) -> None:
+        message = f"employee_code '{employee_code}' is already in use"
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "employee_code",
+                    "code": "DUPLICATE_EMPLOYEE_CODE",
+                    "message": message,
+                }
+            ],
+        )
+
+
 class InvalidReportingManagerError(ValidationError):
     """Covers both `reporting_manager_id` and `dotted_line_manager_id` — raised when the
     referenced id does not resolve to an existing, same-tenant, non-deleted `Employee`, or

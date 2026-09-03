@@ -1,0 +1,54 @@
+"""Module-specific AppError subclasses for employee_import."""
+
+from hrms.core.errors.base import NotFoundError, ValidationError
+
+
+class ImportBatchNotFoundError(NotFoundError):
+    code = "IMPORT_BATCH_NOT_FOUND"
+
+    def __init__(self, message: str = "Import batch not found") -> None:
+        super().__init__(message)
+
+
+class ImportRowLimitExceededError(ValidationError):
+    """Raised when an upload has more than `MAX_IMPORT_ROWS` data rows — enforced synchronously
+    at upload time, before the file ever reaches S3/Celery, so the client gets an immediate,
+    actionable error instead of waiting for an async batch to fail."""
+
+    code = "IMPORT_ROW_LIMIT_EXCEEDED"
+
+    def __init__(self, *, row_count: int, limit: int) -> None:
+        message = f"File has {row_count} rows; the limit per import is {limit}"
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "IMPORT_ROW_LIMIT_EXCEEDED", "message": message}],
+        )
+
+
+class ImportHeaderInvalidError(ValidationError):
+    """Raised when the CSV header row is missing required columns or contains unrecognized
+    ones — checked once, up front, so a mistyped header produces one clear error instead of a
+    confusing per-row failure for every single row in the file."""
+
+    code = "IMPORT_HEADER_INVALID"
+
+    def __init__(self, *, missing: list[str], unexpected: list[str]) -> None:
+        parts = []
+        if missing:
+            parts.append(f"missing required columns: {', '.join(missing)}")
+        if unexpected:
+            parts.append(f"unrecognized columns: {', '.join(unexpected)}")
+        message = "Invalid CSV header — " + "; ".join(parts)
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "IMPORT_HEADER_INVALID", "message": message}],
+        )
+
+
+class ImportFileEmptyError(ValidationError):
+    code = "IMPORT_FILE_EMPTY"
+
+    def __init__(self, message: str = "File has no data rows") -> None:
+        super().__init__(
+            message, details=[{"field": "file", "code": "IMPORT_FILE_EMPTY", "message": message}]
+        )

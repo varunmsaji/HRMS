@@ -1,11 +1,16 @@
-"""Thin S3 wrapper for onboarding document upload (O5, plan §8.3) — first real consumer of
+"""Thin S3 wrapper — first built for onboarding document upload (O5, plan §8.3) as
+`modules/onboarding/document_storage.py`, moved here once a second consumer
+(`modules/employee_import`, bulk employee CSV import) needed the same S3 client wiring —
+`hrms.core` may be depended on by every module (`apps/api/.importlinter`), a domain module may
+not depend on another domain module's internals. Uses `aioboto3` (already a pinned dependency,
+already used by `email_sender.SesEmailSender`), against
 `Settings.s3_bucket_documents`/`aws_region`/`aws_access_key_id`/`aws_secret_access_key`/
-`s3_endpoint_url`, all of which existed but were unused before this slice. Uses `aioboto3`
-(already a pinned dependency, and already used by `email_sender.SesEmailSender`).
+`s3_endpoint_url`.
 
-Document bytes never round-trip through the API server for the admin review UI — only a
-short-lived presigned GET URL does (plan §8.3) — so `DocumentStorageService` never exposes a
-"read the file back through this service" method; only `put`/`delete`/`presigned_get_url`."""
+Onboarding document bytes never round-trip through the API server for the admin review UI — only
+a short-lived presigned GET URL does (plan §8.3), so `presigned_get_url` remains the only
+onboarding-facing read path. `get_object` was added for employee_import's Celery task, which has
+no browser to hand a presigned URL to and needs the raw CSV bytes server-side to parse."""
 
 import aioboto3
 
@@ -33,6 +38,13 @@ class DocumentStorageService:
                 Body=body,
                 ContentType=content_type,
             )
+
+    async def get_object(self, *, key: str) -> bytes:
+        session = aioboto3.Session()
+        async with session.client("s3", **self._client_kwargs()) as s3:
+            response = await s3.get_object(Bucket=self._settings.s3_bucket_documents, Key=key)
+            body: bytes = await response["Body"].read()
+            return body
 
     async def delete_object(self, *, key: str) -> None:
         session = aioboto3.Session()

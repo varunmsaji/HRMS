@@ -20,6 +20,7 @@ from hrms.modules.employee.exceptions import (
     BankVersionRequiredError,
     CompensationDatesOverlapError,
     CompensationVersionRequiredError,
+    DuplicateEmployeeCodeError,
     EmployeeSeatLimitExceededError,
     EmploymentDatesOverlapError,
     EmploymentNotActiveError,
@@ -148,6 +149,18 @@ class EmployeeService:
         )
         return employee.id if employee is not None else None
 
+    async def find_employee_by_code_or_email(
+        self, company_id: UUID, value: str
+    ) -> EmployeeRead | None:
+        """Public lookup for `modules/employee_import`'s `reporting_manager` column resolution
+        — matches by `employee_code` first, `personal_email` (case-insensitive) otherwise. Not
+        exposed via a route: internal cross-module use only, same convention as this module's
+        other `service.py`-only public methods."""
+        employee = await self._repo.get_by_code_or_email(
+            self._session, company_id=company_id, value=value
+        )
+        return employee_to_read(employee) if employee is not None else None
+
     async def _check_seat_limit(self, company_id: UUID) -> None:
         """`EMPLOYEE_SEATS` enforcement (`docs/modules/employee/
         05_EMPLOYEE_ARCHITECTURE_DECISIONS.md` Part A6) — reads the plan's resolved seat limit
@@ -180,41 +193,54 @@ class EmployeeService:
         body: EmployeeCreate,
         *,
         actor_user_id: UUID | None,
+        employee_code_override: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> EmployeeRead:
+        """`employee_code_override` exists only for internal callers (bulk import,
+        `modules/employee_import/service.py`) migrating a client's existing employee IDs — it is
+        deliberately not a field on `EmployeeCreate` itself (see module docstring: `employee_code`
+        is "system-generated ... never client-settable" for the interactive API). When omitted,
+        behavior is unchanged: the `number_series` allocator assigns the next code."""
         await self._check_seat_limit(company_id)
 
-        employee_code = await self._repo.allocate_employee_code(
-            self._session, company_id=company_id
-        )
+        if employee_code_override is not None:
+            employee_code = employee_code_override
+        else:
+            employee_code = await self._repo.allocate_employee_code(
+                self._session, company_id=company_id
+            )
 
         now = datetime.now(UTC)
         employee_id = uuid4()
-        employee = await self._repo.insert_employee(
-            self._session,
-            data={
-                "id": employee_id,
-                "company_id": company_id,
-                "employee_code": employee_code,
-                "first_name": body.first_name,
-                "middle_name": body.middle_name,
-                "last_name": body.last_name,
-                "date_of_birth": body.date_of_birth,
-                "gender": body.gender,
-                "blood_group": body.blood_group,
-                "marital_status": body.marital_status,
-                "nationality": body.nationality,
-                "personal_email": body.personal_email,
-                "personal_mobile": body.personal_mobile,
-                "photo_url": body.photo_url,
-                "custom_fields": body.custom_fields,
-                "status": "PRE_JOINING",
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+        try:
+            employee = await self._repo.insert_employee(
+                self._session,
+                data={
+                    "id": employee_id,
+                    "company_id": company_id,
+                    "employee_code": employee_code,
+                    "first_name": body.first_name,
+                    "middle_name": body.middle_name,
+                    "last_name": body.last_name,
+                    "date_of_birth": body.date_of_birth,
+                    "gender": body.gender,
+                    "blood_group": body.blood_group,
+                    "marital_status": body.marital_status,
+                    "nationality": body.nationality,
+                    "personal_email": body.personal_email,
+                    "personal_mobile": body.personal_mobile,
+                    "photo_url": body.photo_url,
+                    "custom_fields": body.custom_fields,
+                    "status": "PRE_JOINING",
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            # Only reachable via `employee_code_override` — the allocator path never collides.
+            raise DuplicateEmployeeCodeError(employee_code=employee_code) from exc
 
         read = employee_to_read(employee)
         await self._audit.record(

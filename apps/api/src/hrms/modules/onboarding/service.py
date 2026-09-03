@@ -17,7 +17,7 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
-from hrms.modules.onboarding.document_storage import DocumentStorageService
+from hrms.core.storage import DocumentStorageService
 from hrms.modules.onboarding.email_sender import get_email_sender
 from hrms.modules.onboarding.email_templates import (
     build_activated_email,
@@ -404,16 +404,12 @@ class OnboardingTokenService:
 
         Returns the raw token — the only place it is ever available. Only its SHA-256 hash is
         persisted (plan §8.1); losing this return value means the link must be reissued."""
-        case = await self._case_repo.get_case(
-            self._session, company_id=company_id, case_id=case_id
-        )
+        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
         if case is None:
             raise NotFoundError("Resource not found")
 
         now = datetime.now(UTC)
-        await self._token_repo.revoke_live_tokens_for_case(
-            self._session, case_id=case_id, now=now
-        )
+        await self._token_repo.revoke_live_tokens_for_case(self._session, case_id=case_id, now=now)
 
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -431,9 +427,7 @@ class OnboardingTokenService:
         )
 
         if case.status in ("DRAFT", "EXPIRED"):
-            await self._case_repo.set_status(
-                self._session, case=case, status="INVITED", now=now
-            )
+            await self._case_repo.set_status(self._session, case=case, status="INVITED", now=now)
 
         return raw_token
 
@@ -596,9 +590,7 @@ class OnboardingDocumentService:
         )
         return onboarding_document_to_read(document)
 
-    async def list_documents(
-        self, company_id: UUID, case_id: UUID
-    ) -> list[OnboardingDocumentRead]:
+    async def list_documents(self, company_id: UUID, case_id: UUID) -> list[OnboardingDocumentRead]:
         """The candidate-facing list (no presigned URL — the candidate already has the file;
         they only need to see what's already uploaded, e.g. to decide whether to replace it)."""
         documents = await self._repo.list_documents(
