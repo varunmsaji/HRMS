@@ -185,6 +185,17 @@ export function OvertimePolicyVersionForm({
               onChange={(e) => update("compOffExpiryDays", e.target.value)}
             />
           </FormField>
+          <FormField
+            id="ot-comp-off-day-length"
+            label="Comp-off day length (minutes)"
+            description="Minutes of comp-off that equal one full day on the leave balance, e.g. 480 for an 8-hour day. Leave blank to skip crediting until set."
+          >
+            <Input
+              type="number"
+              value={values.compOffDayLengthMinutes}
+              onChange={(e) => update("compOffDayLengthMinutes", e.target.value)}
+            />
+          </FormField>
           <FormField id="ot-night-mode" label="Night OT mode">
             <NativeSelect
               value={values.nightOtMode}

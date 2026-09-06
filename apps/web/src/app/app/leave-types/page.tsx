@@ -96,6 +96,14 @@ export default function LeaveTypesPage() {
       toast({ title: "Leave type added", variant: "success" });
       await load();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "LEAVE_TYPE_COMP_OFF_ALREADY_EXISTS") {
+        toast({
+          title: "Another leave type is already marked as the comp-off type",
+          description: "Only one leave type per company may be marked this way.",
+          variant: "danger",
+        });
+        return;
+      }
       if (err instanceof ApiError && err.status === 409) {
         setCreateErrors({ code: "A leave type with this code already exists." });
         return;
@@ -151,6 +159,14 @@ export default function LeaveTypesPage() {
         toast({
           title: "This leave type was changed by someone else",
           description: "Reload the page and try again.",
+          variant: "danger",
+        });
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409 && err.code === "LEAVE_TYPE_COMP_OFF_ALREADY_EXISTS") {
+        toast({
+          title: "Another leave type is already marked as the comp-off type",
+          description: "Only one leave type per company may be marked this way.",
           variant: "danger",
         });
         return;
@@ -242,9 +258,11 @@ export default function LeaveTypesPage() {
                     <p className="mt-0.5 text-xs text-foreground-muted">
                       {leaveType.is_paid_default ? "Paid" : "Unpaid"} ·{" "}
                       {leaveType.requires_balance ? "Balance-backed" : "No balance (LOP-style)"}
+                      {leaveType.is_comp_off ? " · Comp-off type" : ""}
                     </p>
                   </button>
                   <div className="flex items-center gap-2">
+                    {leaveType.is_comp_off ? <Badge variant="outline">Comp-off</Badge> : null}
                     <Badge variant={leaveType.is_active ? "secondary" : "outline"}>
                       {leaveType.is_active ? "Active" : "Inactive"}
                     </Badge>

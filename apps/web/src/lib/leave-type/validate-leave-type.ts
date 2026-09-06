@@ -1,10 +1,16 @@
-import type { LeaveType, LeaveTypeUpdatePayload } from "@/lib/leave-type/types";
+import type {
+  LeaveType,
+  LeaveTypeUpdatePayload,
+  StatutoryLeaveCategory,
+} from "@/lib/leave-type/types";
 
 export interface LeaveTypeFormValues {
   code: string;
   name: string;
   isPaidDefault: boolean;
   requiresBalance: boolean;
+  isCompOff: boolean;
+  statutoryCategory: StatutoryLeaveCategory | "";
 }
 
 export const EMPTY_LEAVE_TYPE_FORM_VALUES: LeaveTypeFormValues = {
@@ -12,6 +18,8 @@ export const EMPTY_LEAVE_TYPE_FORM_VALUES: LeaveTypeFormValues = {
   name: "",
   isPaidDefault: true,
   requiresBalance: true,
+  isCompOff: false,
+  statutoryCategory: "",
 };
 
 export interface LeaveTypeFormErrors {
@@ -32,6 +40,8 @@ export function buildLeaveTypeCreatePayload(values: LeaveTypeFormValues): Record
     name: values.name.trim(),
     is_paid_default: values.isPaidDefault,
     requires_balance: values.requiresBalance,
+    is_comp_off: values.isCompOff,
+    statutory_category: values.statutoryCategory === "" ? null : values.statutoryCategory,
   };
 }
 
@@ -41,11 +51,13 @@ export function leaveTypeToFormValues(leaveType: LeaveType): LeaveTypeFormValues
     name: leaveType.name,
     isPaidDefault: leaveType.is_paid_default,
     requiresBalance: leaveType.requires_balance,
+    isCompOff: leaveType.is_comp_off,
+    statutoryCategory: leaveType.statutory_category ?? "",
   };
 }
 
 /** `code` is immutable after creation (no field for it in `LeaveTypeUpdate`) — only name and the
- * two boolean flags can change. */
+ * remaining flags/category can change. */
 export function buildLeaveTypeUpdatePatch(
   values: LeaveTypeFormValues,
   current: LeaveType,
@@ -55,6 +67,11 @@ export function buildLeaveTypeUpdatePatch(
   if (values.isPaidDefault !== current.is_paid_default) patch.is_paid_default = values.isPaidDefault;
   if (values.requiresBalance !== current.requires_balance) {
     patch.requires_balance = values.requiresBalance;
+  }
+  if (values.isCompOff !== current.is_comp_off) patch.is_comp_off = values.isCompOff;
+  const statutoryCategory = values.statutoryCategory === "" ? null : values.statutoryCategory;
+  if (statutoryCategory !== current.statutory_category) {
+    patch.statutory_category = statutoryCategory;
   }
   return patch;
 }

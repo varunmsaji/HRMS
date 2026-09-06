@@ -8,15 +8,34 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { useToast } from "@/components/common/toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
-import { ApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError } from "@/lib/api/errors";
 import { formatDateTime } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LeaveBalance, LeaveLedgerEntry } from "@/lib/leave-ledger/types";
+
+interface EncashmentFormValues {
+  days: string;
+  effectiveDate: string;
+  reason: string;
+}
+
+function emptyEncashmentFormValues(): EncashmentFormValues {
+  return { days: "", effectiveDate: new Date().toISOString().slice(0, 10), reason: "" };
+}
 
 interface EmployeeOption {
   id: string;
@@ -37,6 +56,7 @@ type ViewMode = "MINE" | "TEAM";
  * the caller's own linked employee; "Team" needs an explicit picker. */
 export default function LeaveBalancesPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
   const { can } = usePermissions();
   const canViewAll = can("LEAVE.BALANCE_VIEW_ALL");
   const canAdjust = can("LEAVE.BALANCE_ADJUST");
@@ -49,6 +69,13 @@ export default function LeaveBalancesPage() {
   const [ledger, setLedger] = useState<LeaveLedgerEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+
+  const [encashingType, setEncashingType] = useState<LeaveBalance | null>(null);
+  const [encashmentValues, setEncashmentValues] = useState<EncashmentFormValues>(
+    emptyEncashmentFormValues(),
+  );
+  const [encashmentError, setEncashmentError] = useState<string | null>(null);
+  const [encashmentSaving, setEncashmentSaving] = useState(false);
 
   const targetEmployeeId = view === "MINE" ? user?.employee_id ?? "" : selectedEmployeeId;
 
@@ -97,6 +124,38 @@ export default function LeaveBalancesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  function openEncash(balance: LeaveBalance) {
+    setEncashingType(balance);
+    setEncashmentValues(emptyEncashmentFormValues());
+    setEncashmentError(null);
+  }
+
+  async function handleEncash() {
+    if (!encashingType || !targetEmployeeId) return;
+    if (!encashmentValues.days.trim()) {
+      setEncashmentError("Enter the number of days to encash.");
+      return;
+    }
+    setEncashmentSaving(true);
+    setEncashmentError(null);
+    try {
+      await apiClient.post("/leave-ledger/encashments", {
+        employee_id: targetEmployeeId,
+        leave_type_id: encashingType.leave_type_id,
+        days: encashmentValues.days.trim(),
+        effective_date: encashmentValues.effectiveDate,
+        reason: encashmentValues.reason.trim() || "Encashment",
+      });
+      setEncashingType(null);
+      toast({ title: "Encashment recorded", variant: "success" });
+      await load();
+    } catch (err) {
+      setEncashmentError(describeApiError(err));
+    } finally {
+      setEncashmentSaving(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -190,7 +249,9 @@ export default function LeaveBalancesPage() {
                     <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                       <tr>
                         <th className="px-3 py-2 text-left font-medium">Leave type</th>
-                        <th className="px-3 py-2 text-right font-medium">Balance</th>
+                        <th className="px-3 py-2 text-right font-medium">Available balance</th>
+                        <th className="px-3 py-2 text-right font-medium">Reserved / pending</th>
+                        {canAdjust ? <th className="px-3 py-2 text-right font-medium">Encashment</th> : null}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -201,6 +262,21 @@ export default function LeaveBalancesPage() {
                             <span className="text-foreground-muted">({balance.leave_type_code})</span>
                           </td>
                           <td className="px-3 py-2 text-right text-foreground">{balance.balance}</td>
+                          <td className="px-3 py-2 text-right text-foreground-secondary">
+                            {balance.reserved_balance}
+                          </td>
+                          {canAdjust ? (
+                            <td className="px-3 py-2 text-right">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openEncash(balance)}
+                              >
+                                Encash
+                              </Button>
+                            </td>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
@@ -250,6 +326,65 @@ export default function LeaveBalancesPage() {
           </Card>
         </>
       ) : null}
+
+      <Dialog
+        open={encashingType !== null}
+        onOpenChange={(open) => (!encashmentSaving && !open ? setEncashingType(null) : null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Encash {encashingType?.leave_type_name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-foreground-muted">
+              Available balance: {encashingType?.balance}
+            </p>
+            <FormField id="encashment-days" label="Days to encash" required>
+              <Input
+                value={encashmentValues.days}
+                onChange={(e) =>
+                  setEncashmentValues((c) => ({ ...c, days: e.target.value }))
+                }
+                placeholder="5"
+              />
+            </FormField>
+            <FormField id="encashment-effective-date" label="Effective date" required>
+              <Input
+                type="date"
+                value={encashmentValues.effectiveDate}
+                onChange={(e) =>
+                  setEncashmentValues((c) => ({ ...c, effectiveDate: e.target.value }))
+                }
+              />
+            </FormField>
+            <FormField id="encashment-reason" label="Reason">
+              <Input
+                value={encashmentValues.reason}
+                onChange={(e) => setEncashmentValues((c) => ({ ...c, reason: e.target.value }))}
+                maxLength={2000}
+              />
+            </FormField>
+            {encashmentError ? (
+              <p role="alert" className="text-sm text-danger">
+                {encashmentError}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEncashingType(null)}
+              disabled={encashmentSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleEncash()} disabled={encashmentSaving}>
+              {encashmentSaving ? "Recording…" : "Record encashment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

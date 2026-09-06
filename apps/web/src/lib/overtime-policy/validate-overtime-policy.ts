@@ -63,6 +63,7 @@ export interface OvertimePolicyVersionFormValues {
   monthlyCapMinutes: string;
   compOffInsteadOfPay: boolean;
   compOffExpiryDays: string;
+  compOffDayLengthMinutes: string;
   nightOtMode: string;
   nightWindowStart: string;
   nightWindowEnd: string;
@@ -83,6 +84,7 @@ export const EMPTY_OVERTIME_POLICY_VERSION_FORM_VALUES: OvertimePolicyVersionFor
   monthlyCapMinutes: "",
   compOffInsteadOfPay: false,
   compOffExpiryDays: "",
+  compOffDayLengthMinutes: "",
   nightOtMode: "SHIFT_FLAG",
   nightWindowStart: "",
   nightWindowEnd: "",
@@ -122,6 +124,10 @@ export function overtimePolicyVersionToFormValues(
     compOffInsteadOfPay: version.comp_off_instead_of_pay,
     compOffExpiryDays:
       version.comp_off_expiry_days === null ? "" : String(version.comp_off_expiry_days),
+    compOffDayLengthMinutes:
+      version.comp_off_day_length_minutes === null
+        ? ""
+        : String(version.comp_off_day_length_minutes),
     nightOtMode: version.night_ot_mode,
     nightWindowStart: version.night_window_start ?? "",
     nightWindowEnd: version.night_window_end ?? "",
@@ -153,6 +159,7 @@ export function buildOvertimePolicyVersionPayload(
     monthly_cap_minutes: intOrNull(values.monthlyCapMinutes),
     comp_off_instead_of_pay: values.compOffInsteadOfPay,
     comp_off_expiry_days: intOrNull(values.compOffExpiryDays),
+    comp_off_day_length_minutes: intOrNull(values.compOffDayLengthMinutes),
     night_ot_mode: values.nightOtMode,
     night_window_start: values.nightWindowStart.trim() || null,
     night_window_end: values.nightWindowEnd.trim() || null,

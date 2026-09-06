@@ -75,6 +75,9 @@ def ping() -> str:
 |-----|----------|------|
 | Outbox sweep | Every 10s | `core.events.tasks.dispatch_outbox` |
 | Leave accrual | Monthly cron | `leave.run_monthly_accrual` |
+| Leave comp-off credit | Hourly | `leave.run_comp_off_credit_sweep` |
+| Leave comp-off expiry | Daily | `leave.run_comp_off_expiry_sweep` |
+| Leave year-end (yearly accrual + carry-forward cap) | Daily | `leave.run_year_end_sweep` |
 | Attendance lock | Daily | `attendance.lock_period` |
 
 Run: `celery -A entrypoints.worker beat`

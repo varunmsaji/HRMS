@@ -56,6 +56,7 @@ const sampleDepartment: Department = {
   parent_id: null,
   name: "Engineering",
   code: null,
+  head_employee_id: null,
   is_active: true,
   version: 1,
   created_at: "2026-08-01T00:00:00Z",
@@ -66,6 +67,7 @@ function mockLoad(departments: Department[], branches: Branch[] = [sampleBranch]
   mockedGet.mockImplementation((path: string) => {
     if (path === "/departments") return Promise.resolve(departments);
     if (path === "/branches") return Promise.resolve(branches);
+    if (path === "/employees") return Promise.resolve([]);
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
 }
@@ -113,6 +115,7 @@ describe("DepartmentsPage", () => {
     mockedGet.mockImplementation((path: string) => {
       if (path === "/departments") return Promise.resolve(departments);
       if (path === "/branches") return Promise.resolve([sampleBranch]);
+      if (path === "/employees") return Promise.resolve([]);
       return Promise.reject(new Error(`Unexpected path ${path}`));
     });
     mockedPost.mockImplementationOnce(async () => {

@@ -264,6 +264,18 @@ export function LeaveApplicationDialog({
             />
           </FormField>
 
+          <FormField
+            id="leave-application-expected-delivery"
+            label="Expected delivery date"
+            description="Optional — for maternity leave, informational only."
+          >
+            <Input
+              type="date"
+              value={values.expectedDeliveryDate}
+              onChange={(e) => setValues((c) => ({ ...c, expectedDeliveryDate: e.target.value }))}
+            />
+          </FormField>
+
           {formError ? (
             <p role="alert" className="text-sm text-danger">
               {formError}

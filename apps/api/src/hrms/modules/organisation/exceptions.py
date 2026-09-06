@@ -138,6 +138,21 @@ class InvalidParentDepartmentError(ValidationError):
         )
 
 
+class InvalidDepartmentHeadError(ValidationError):
+    """Raised when a Department's `head_employee_id` does not exist or belongs to a
+    different tenant — mirrors `InvalidBranchError` for Department's own `branch_id`."""
+
+    code = "INVALID_DEPARTMENT_HEAD"
+
+    def __init__(
+        self, message: str = "head_employee_id does not reference a valid employee"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "head_employee_id", "code": self.code, "message": message}],
+        )
+
+
 class InvalidDepartmentError(ValidationError):
     """Raised when a Designation is created/updated against a `department_id` that does not
     exist, is soft-deleted, or belongs to a different tenant — mirrors `InvalidBranchError`

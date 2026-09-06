@@ -51,6 +51,16 @@ class LeaveType(Base, TimestampMixin):
     # LOP-style types are never balance-backed — no ledger entries are ever expected for them,
     # and application submission skips the balance-sufficiency check entirely (LD-02).
     requires_balance: Mapped[bool] = mapped_column(Boolean, default=True)
+    # LD-14 — marks this the company's comp-off balance type (OvertimeRecord has no
+    # leave_type_id of its own to link against). At most one active row per company
+    # (DB partial unique index, migration 20260909090000).
+    is_comp_off: Mapped[bool] = mapped_column(Boolean, default=False)
+    # LD-22 — classifies this company's free-form leave type against the small fixed statutory
+    # taxonomy `statutory_leave_minimum` rows are keyed on, so "Privilege Leave" and "Earned
+    # Leave" (different companies, same legal category) both compare against the same floor.
+    # NULL means this leave type has no statutory category (LOP, comp-off, bereavement, ...) and
+    # is never checked against a minimum.
+    statutory_category: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -122,7 +132,8 @@ class LeavePolicyVersion(Base, TimestampMixin):
     max_requests_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason_required: Mapped[bool] = mapped_column(Boolean, default=True)
     attachment_required: Mapped[bool] = mapped_column(Boolean, default=False)
-    approval_chain: Mapped[str] = mapped_column(String(20), default="MANAGER")
+    # LD-23 — widened from VARCHAR(20) to fit MANAGER_THEN_HOD_THEN_HR (24 chars).
+    approval_chain: Mapped[str] = mapped_column(String(30), default="MANAGER")
     half_day_allowed: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Accrual (LD-06 — mechanism only in this slice; values are HR-set, several remain OPEN
@@ -135,6 +146,32 @@ class LeavePolicyVersion(Base, TimestampMixin):
     # LD-06 decision 5: sandwich-leave rule applies for this client — new drafts default to it
     # being on, though HR can still turn it off per policy.
     sandwich_rule_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # LD-15 — whether a SUBMITTED (not yet resolved) application blocks further balance for this
+    # leave type. Reserved amount itself is never stored here or in the ledger — always derived
+    # live from open `leave_application` rows (LD-15's "no new ledger entry type" decision).
+    reserve_balance_on_submission: Mapped[bool] = mapped_column(Boolean, default=False)
+    # LD-17 — client spec §F. Purely HR-documented entitlement split (e.g. "6 weeks pre + 20
+    # weeks post"); never enforced against an application's actual start_date/end_date, which
+    # count days the same way every other leave type does.
+    pre_delivery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    post_delivery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # LD-18 — client spec §9. Reads the existing `Employee.status = 'PROBATION'` fact (FR-EMP-014
+    # lifecycle enum) — no new schema in the Employee module. Both default True: neither
+    # submission nor accrual look at employee status today, so this preserves that exactly until
+    # HR explicitly turns one off.
+    allowed_during_probation: Mapped[bool] = mapped_column(Boolean, default=True)
+    accrue_during_probation: Mapped[bool] = mapped_column(Boolean, default=True)
+    # LD-19 — client spec §12. `max_encashment_days`/`min_balance_after_encashment` are enforced
+    # by LeaveLedgerService.create_encashment; both nullable (no limit assumed when unset).
+    # `encashment_frequency`/`encashment_calculation_basis` are informational only — frequency
+    # enforcement needs a leave-year concept not yet decided, and calculation basis is a Payroll
+    # concern (Payroll doesn't exist as a module yet).
+    max_encashment_days: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    min_balance_after_encashment: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+    encashment_frequency: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    encashment_calculation_basis: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     publish_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -211,8 +248,11 @@ class LeaveApplication(Base, TimestampMixin):
     """Employee's request for leave over a date range. `leave_policy_version_id` is snapshotted
     at submit time (mirrors `AttendanceRegularizationRequest.regularization_policy_version_id`)
     so a later policy edit cannot retroactively change how an in-flight application is reviewed.
-    `approval_stage` tracks whose turn it is next (`MANAGER`|`HR`|`NULL` once terminal or
-    `AUTO`) — identical state machine to Regularization's, mirrored not shared (LD-05)."""
+    `approval_stage` tracks whose turn it is next (`MANAGER`|`HOD`|`HR`|`NULL` once terminal or
+    `AUTO`) — identical state machine to Regularization's, mirrored not shared (LD-05).
+    `resolved_department_head_id` (LD-23) is the third stage's snapshotted reviewer, resolved
+    from the employee's assignment `department_id` at submit time exactly like
+    `resolved_approver_manager_id` — only ever populated for `MANAGER_THEN_HOD_THEN_HR`."""
 
     __tablename__ = "leave_application"
 
@@ -235,11 +275,19 @@ class LeaveApplication(Base, TimestampMixin):
     total_days: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     attachment_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # LD-17 — client spec §F. Generic, optional, harmless for every non-maternity leave type
+    # (same posture as `attachment_reference`/half-day) — never read by day-counting or balance
+    # logic, purely informational for HR/coverage planning.
+    expected_delivery_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     status: Mapped[str] = mapped_column(String(20), default="SUBMITTED")
-    approval_chain: Mapped[str] = mapped_column(String(20))
+    # LD-23 — widened from VARCHAR(20) to fit MANAGER_THEN_HOD_THEN_HR (24 chars).
+    approval_chain: Mapped[str] = mapped_column(String(30))
     approval_stage: Mapped[str | None] = mapped_column(String(10), nullable=True)
     resolved_approver_manager_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
+    resolved_department_head_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
     )
 
@@ -318,4 +366,100 @@ class LeaveApplicationAction(Base):
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ---------------------------------------------------------------------------
+# Leave Combination Rule — client spec §7 (LD-16), configurable pairwise exclusivity
+# ---------------------------------------------------------------------------
+
+
+class LeaveCombinationRule(Base, TimestampMixin):
+    """An unordered pair of leave types plus whether they may be applied for on overlapping
+    dates (client spec §7 — "CL + SL = Not Allowed", "AL + CL = Allowed"). Absence of a row for
+    a pair means allowed — matches today's behavior, where nothing blocks any combination
+    (LD-16). No versioning/publish lifecycle (unlike `LeavePolicyVersion`) — this is a flat
+    identity row; changing a rule is delete-and-recreate, since there's no meaningful
+    "in-flight draft" state for a single boolean.
+
+    `leave_type_id_a`/`_b` are stored in whatever order the creator gave them — the DB partial
+    unique index (`leave_combination_rule_pair_idx`, `LEAST`/`GREATEST` over both columns) is
+    what actually enforces "at most one rule per unordered pair", not column order."""
+
+    __tablename__ = "leave_combination_rule"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    leave_type_id_a: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_type.id")
+    )
+    leave_type_id_b: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("leave_type.id")
+    )
+    allowed: Mapped[bool] = mapped_column(Boolean)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# Leave Year Setting — client spec §10 (LD-20), singleton per company
+# ---------------------------------------------------------------------------
+
+
+class LeaveYearSetting(Base, TimestampMixin):
+    """Singleton per company (unique index on `company_id`) — client answer (2026-09-06):
+    default `CALENDAR`. `start_month`/`start_day` are only meaningful for `CUSTOM`; `CALENDAR`
+    (Jan 1) and `FINANCIAL` (client answer: India, so Apr 1) have their start dates hardcoded in
+    application code (`leave/year.py`), not stored — they aren't configurable values, just named
+    choices. `ANNIVERSARY` has no company-wide start date at all — each employee's own
+    `Employment.joining_date` month/day is used instead (LD-20)."""
+
+    __tablename__ = "leave_year_setting"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    leave_year_type: Mapped[str] = mapped_column(String(20), default="CALENDAR")
+    start_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+# ---------------------------------------------------------------------------
+# Statutory Leave Minimum — client spec §16 (LD-22), legal compliance floor
+# ---------------------------------------------------------------------------
+
+
+class StatutoryLeaveMinimum(Base, TimestampMixin):
+    """HR/compliance-entered floor for a statutory leave category (LD-22) — no legal figures are
+    hardcoded anywhere in this codebase, the same "engine reads whatever is configured" posture
+    LD-06 established for accrual. `state_code`/`establishment_type` are reference dimensions
+    (India's Shops & Establishments minimums vary by state and, in some states, by establishment
+    type) — `NULL` on either means "not narrowed by this dimension". Flat identity row, no
+    versioning: editing a minimum is delete-and-recreate, same posture as `LeaveCombinationRule`.
+
+    The publish-time check (`LeavePolicyService.publish_version`) does not resolve a specific
+    branch/state at publish time — a policy's eventual `PolicyAssignment` scope isn't known yet —
+    so it compares against the *strictest* (`MAX`) `min_days_per_year` configured for the leave
+    type's `statutory_category`, regardless of `state_code`/`establishment_type`. Fail-safe, not
+    scope-precise (LD-22)."""
+
+    __tablename__ = "statutory_leave_minimum"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    state_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    establishment_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    leave_category: Mapped[str] = mapped_column(String(20))
+    min_days_per_year: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )

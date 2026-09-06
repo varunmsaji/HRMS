@@ -704,6 +704,7 @@ class OvertimePolicyVersionCreate(BaseModel):
     monthly_cap_minutes: int | None = Field(default=None, gt=0)
     comp_off_instead_of_pay: bool = False
     comp_off_expiry_days: int | None = Field(default=None, gt=0)
+    comp_off_day_length_minutes: int | None = Field(default=None, gt=0)
     night_ot_mode: str = "SHIFT_FLAG"
     night_window_start: str | None = None
     night_window_end: str | None = None
@@ -736,6 +737,7 @@ class OvertimePolicyVersionUpdate(BaseModel):
     monthly_cap_minutes: int | None = Field(default=None, gt=0)
     comp_off_instead_of_pay: bool | None = None
     comp_off_expiry_days: int | None = Field(default=None, gt=0)
+    comp_off_day_length_minutes: int | None = Field(default=None, gt=0)
     night_ot_mode: str | None = None
     night_window_start: str | None = None
     night_window_end: str | None = None
@@ -778,6 +780,7 @@ class OvertimePolicyVersionRead(BaseModel):
     monthly_cap_minutes: int | None
     comp_off_instead_of_pay: bool
     comp_off_expiry_days: int | None
+    comp_off_day_length_minutes: int | None
     night_ot_mode: str
     night_window_start: str | None
     night_window_end: str | None
@@ -814,6 +817,7 @@ def overtime_policy_version_to_read(
         monthly_cap_minutes=row.monthly_cap_minutes,
         comp_off_instead_of_pay=row.comp_off_instead_of_pay,
         comp_off_expiry_days=row.comp_off_expiry_days,
+        comp_off_day_length_minutes=row.comp_off_day_length_minutes,
         night_ot_mode=row.night_ot_mode,
         night_window_start=_format_time(row.night_window_start),
         night_window_end=_format_time(row.night_window_end),

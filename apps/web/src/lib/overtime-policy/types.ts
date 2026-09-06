@@ -50,6 +50,7 @@ export interface OvertimePolicyVersion {
   monthly_cap_minutes: number | null;
   comp_off_instead_of_pay: boolean;
   comp_off_expiry_days: number | null;
+  comp_off_day_length_minutes: number | null;
   night_ot_mode: (typeof NIGHT_OT_MODES)[number];
   night_window_start: string | null;
   night_window_end: string | null;

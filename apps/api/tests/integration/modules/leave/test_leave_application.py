@@ -328,6 +328,7 @@ async def _teardown(*, company_id: UUID) -> None:
             "leave_application_action",
             "leave_application",
             "leave_ledger",
+            "leave_combination_rule",
             "policy_assignment",
             "leave_policy_version",
             "leave_policy",

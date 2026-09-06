@@ -6,14 +6,14 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "cd apps/api && uv run uvicorn entrypoints.api:app --reload --port 8000"
+        "cd apps/api && ./.venv/bin/python -m uvicorn entrypoints.api:app --reload --port 8000"
       ],
       "port": 8000
     },
     {
       "name": "web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd apps/web && npm run dev"],
       "port": 3000
     }
   ]

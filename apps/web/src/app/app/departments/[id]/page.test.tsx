@@ -58,6 +58,7 @@ const sampleDepartment: Department = {
   parent_id: null,
   name: "Engineering",
   code: null,
+  head_employee_id: null,
   is_active: true,
   version: 1,
   created_at: "2026-08-01T00:00:00Z",
@@ -73,6 +74,7 @@ function mockLoad(
     if (path === "/departments/dept-1") return Promise.resolve(department);
     if (path === "/branches") return Promise.resolve(branches);
     if (path === "/departments") return Promise.resolve(departments);
+    if (path === "/employees") return Promise.resolve([]);
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
 }

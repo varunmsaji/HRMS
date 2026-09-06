@@ -1,6 +1,12 @@
 /** Mirrors `apps/api/src/hrms/modules/leave/schemas.py` `LeavePolicy*` (L1/L3/L6). */
 
-export const APPROVAL_CHAINS = ["AUTO", "MANAGER", "MANAGER_THEN_HR", "HR"] as const;
+export const APPROVAL_CHAINS = [
+  "AUTO",
+  "MANAGER",
+  "MANAGER_THEN_HR",
+  "MANAGER_THEN_HOD_THEN_HR",
+  "HR",
+] as const;
 export type ApprovalChain = (typeof APPROVAL_CHAINS)[number];
 
 export const ACCRUAL_FREQUENCIES = ["NONE", "MONTHLY", "YEARLY"] as const;
@@ -43,6 +49,15 @@ export interface LeavePolicyVersion {
   encashment_allowed: boolean;
   allow_negative_balance: boolean;
   sandwich_rule_enabled: boolean;
+  reserve_balance_on_submission: boolean;
+  pre_delivery_days: number | null;
+  post_delivery_days: number | null;
+  allowed_during_probation: boolean;
+  accrue_during_probation: boolean;
+  max_encashment_days: string | null;
+  min_balance_after_encashment: string | null;
+  encashment_frequency: string | null;
+  encashment_calculation_basis: string | null;
 
   publish_reason: string | null;
   published_at: string | null;

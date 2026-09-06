@@ -5,6 +5,7 @@ export interface DepartmentFormValues {
   code: string;
   branchId: string;
   parentId: string;
+  headEmployeeId: string;
 }
 
 export type DepartmentFormErrors = Partial<Record<keyof DepartmentFormValues, string>>;
@@ -14,6 +15,7 @@ export const EMPTY_DEPARTMENT_FORM_VALUES: DepartmentFormValues = {
   code: "",
   branchId: "",
   parentId: "",
+  headEmployeeId: "",
 };
 
 export function departmentToFormValues(department: Department): DepartmentFormValues {
@@ -22,6 +24,7 @@ export function departmentToFormValues(department: Department): DepartmentFormVa
     code: department.code ?? "",
     branchId: department.branch_id ?? "",
     parentId: department.parent_id ?? "",
+    headEmployeeId: department.head_employee_id ?? "",
   };
 }
 
@@ -32,6 +35,7 @@ export function buildCreatePayload(values: DepartmentFormValues): Record<string,
     code: values.code.trim() || null,
     branch_id: values.branchId || null,
     parent_id: values.parentId || null,
+    head_employee_id: values.headEmployeeId || null,
   };
 }
 
@@ -52,6 +56,11 @@ export function buildUpdatePatch(
 
   const currentParentId = department.parent_id ?? "";
   if (values.parentId !== currentParentId) patch.parent_id = values.parentId || null;
+
+  const currentHeadEmployeeId = department.head_employee_id ?? "";
+  if (values.headEmployeeId !== currentHeadEmployeeId) {
+    patch.head_employee_id = values.headEmployeeId || null;
+  }
 
   return patch;
 }

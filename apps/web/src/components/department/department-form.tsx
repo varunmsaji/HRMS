@@ -5,6 +5,7 @@ import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import { descendantIds } from "@/lib/department/validate-department";
 import type { DepartmentFormErrors, DepartmentFormValues } from "@/lib/department/validate-department";
+import type { Employee } from "@/lib/employee/types";
 
 interface DepartmentFormProps {
   values: DepartmentFormValues;
@@ -12,9 +13,17 @@ interface DepartmentFormProps {
   onChange: (values: DepartmentFormValues) => void;
   branches: Branch[];
   departments: Department[];
+  employees: Employee[];
   /** The department being edited, if any — excluded (with its descendants) from the parent picker. */
   excludeDepartmentId?: string;
   idPrefix?: string;
+}
+
+function employeeLabel(employee: Employee): string {
+  const name =
+    employee.display_name?.trim() ||
+    [employee.first_name, employee.last_name].filter(Boolean).join(" ");
+  return `${name || "Unnamed"} (${employee.employee_code})`;
 }
 
 export function DepartmentForm({
@@ -23,6 +32,7 @@ export function DepartmentForm({
   onChange,
   branches,
   departments,
+  employees,
   excludeDepartmentId,
   idPrefix = "",
 }: DepartmentFormProps) {
@@ -74,6 +84,33 @@ export function DepartmentForm({
               {parentOptions.map((department) => (
                 <option key={department.id} value={department.id}>
                   {department.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </FormField>
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-sm font-medium text-foreground">Leadership</h3>
+        <p className="mt-1 text-xs text-foreground-muted">
+          Optional — resolves Leave&apos;s Head of Department approval stage for employees in
+          this department.
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FormField
+            id={id("headEmployeeId")}
+            label="Department head"
+            error={errors.headEmployeeId}
+          >
+            <NativeSelect
+              value={values.headEmployeeId}
+              onChange={(e) => update("headEmployeeId", e.target.value)}
+            >
+              <option value="">No department head</option>
+              {employees.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {employeeLabel(employee)}
                 </option>
               ))}
             </NativeSelect>

@@ -795,6 +795,7 @@ class DepartmentCreate(BaseModel):
     code: str | None = Field(default=None, max_length=30)
     branch_id: UUID | None = None
     parent_id: UUID | None = None
+    head_employee_id: UUID | None = None
 
 
 class DepartmentUpdate(BaseModel):
@@ -804,6 +805,7 @@ class DepartmentUpdate(BaseModel):
     code: str | None = Field(default=None, max_length=30)
     branch_id: UUID | None = None
     parent_id: UUID | None = None
+    head_employee_id: UUID | None = None
     is_active: bool | None = None
 
 
@@ -814,6 +816,7 @@ class DepartmentRead(BaseModel):
     parent_id: UUID | None
     name: str
     code: str | None
+    head_employee_id: UUID | None
     is_active: bool
     version: int
     created_at: str
@@ -828,6 +831,7 @@ def department_to_read(department: "Department") -> DepartmentRead:
         parent_id=department.parent_id,
         name=department.name,
         code=department.code,
+        head_employee_id=department.head_employee_id,
         is_active=department.is_active,
         version=department.version,
         created_at=_format_timestamp(department.created_at) or "",

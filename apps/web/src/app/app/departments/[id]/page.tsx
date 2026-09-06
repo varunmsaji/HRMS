@@ -31,6 +31,7 @@ import {
   type DepartmentFormErrors,
   type DepartmentFormValues,
 } from "@/lib/department/validate-department";
+import type { Employee } from "@/lib/employee/types";
 
 function DetailField({ label, value }: { label: string; value: string | null | undefined }) {
   const display = value && value.trim() ? value : "Not configured";
@@ -51,6 +52,7 @@ export default function DepartmentDetailPage() {
   const [department, setDepartment] = useState<Department | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -67,14 +69,16 @@ export default function DepartmentDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [data, branchData, departmentData] = await Promise.all([
+      const [data, branchData, departmentData, employeeData] = await Promise.all([
         apiClient.get<Department>(`/departments/${params.id}`),
         apiClient.get<Branch[]>("/branches"),
         apiClient.get<Department[]>("/departments"),
+        Promise.resolve(apiClient.get<Employee[]>("/employees")).catch(() => []),
       ]);
       setDepartment(data);
       setBranches(branchData);
       setDepartments(departmentData);
+      setEmployees(employeeData ?? []);
       return data;
     } catch (err) {
       setDepartment(null);
@@ -101,6 +105,16 @@ export default function DepartmentDetailPage() {
   function parentName(parentId: string | null): string | null {
     if (!parentId) return null;
     return departments.find((d) => d.id === parentId)?.name ?? "Unknown department";
+  }
+
+  function headEmployeeName(employeeId: string | null): string | null {
+    if (!employeeId) return null;
+    const employee = employees.find((e) => e.id === employeeId);
+    if (!employee) return "Unknown employee";
+    const name =
+      employee.display_name?.trim() ||
+      [employee.first_name, employee.last_name].filter(Boolean).join(" ");
+    return `${name || "Unnamed"} (${employee.employee_code})`;
   }
 
   function startEditing() {
@@ -166,6 +180,7 @@ export default function DepartmentDetailPage() {
             name: getFieldError(err.details, "name"),
             branchId: getFieldError(err.details, "branch_id"),
             parentId: getFieldError(err.details, "parent_id"),
+            headEmployeeId: getFieldError(err.details, "head_employee_id"),
           });
           return;
         }
@@ -290,6 +305,7 @@ export default function DepartmentDetailPage() {
                 onChange={setFormValues}
                 branches={branches}
                 departments={departments}
+                employees={employees}
                 excludeDepartmentId={department.id}
               />
               <div className="flex flex-wrap gap-2">
@@ -322,6 +338,15 @@ export default function DepartmentDetailPage() {
                 <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <DetailField label="Branch" value={branchName(department.branch_id)} />
                   <DetailField label="Parent department" value={parentName(department.parent_id)} />
+                </dl>
+              </section>
+              <section>
+                <h3 className="text-sm font-medium text-foreground">Leadership</h3>
+                <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <DetailField
+                    label="Department head"
+                    value={headEmployeeName(department.head_employee_id)}
+                  />
                 </dl>
               </section>
             </div>

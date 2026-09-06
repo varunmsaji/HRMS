@@ -40,6 +40,23 @@ class LeaveTypeCodeAlreadyExistsError(ConflictError):
         )
 
 
+class LeaveTypeCompOffAlreadyExistsError(ConflictError):
+    """LD-14 — the DB partial unique index allows at most one active `is_comp_off=true` leave
+    type per company."""
+
+    code = "LEAVE_TYPE_COMP_OFF_ALREADY_EXISTS"
+
+    def __init__(
+        self, message: str = "Another leave type is already marked as the comp-off type"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {"field": "is_comp_off", "code": self.code, "message": message},
+            ],
+        )
+
+
 class LeavePolicyDraftAlreadyExistsError(ConflictError):
     code = "LEAVE_POLICY_DRAFT_ALREADY_EXISTS"
 
@@ -162,6 +179,21 @@ class LeaveApplicationPolicyNotResolvedError(ValidationError):
 
     def __init__(
         self, message: str = "No leave policy is configured for this employee and leave type"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "leave_type_id", "code": self.code, "message": message}]
+        )
+
+
+class LeaveApplicationNotAllowedDuringProbationError(ValidationError):
+    """LD-18 — the applicable `LeavePolicyVersion` has `allowed_during_probation=False` and the
+    employee's `Employee.status` is currently `PROBATION`."""
+
+    code = "LEAVE_APPLICATION_NOT_ALLOWED_DURING_PROBATION"
+
+    def __init__(
+        self,
+        message: str = "This leave type is not available to employees on probation",
     ) -> None:
         super().__init__(
             message, details=[{"field": "leave_type_id", "code": self.code, "message": message}]
@@ -304,4 +336,130 @@ class LeaveApplicationApproverMismatchError(PermissionDeniedError):
     ) -> None:
         super().__init__(
             message, details=[{"field": "approval_stage", "code": self.code, "message": message}]
+        )
+
+
+# ---------------------------------------------------------------------------
+# Encashment — client spec §12 (LD-19)
+# ---------------------------------------------------------------------------
+
+
+class LeaveEncashmentPolicyNotResolvedError(ValidationError):
+    code = "LEAVE_ENCASHMENT_POLICY_NOT_RESOLVED"
+
+    def __init__(
+        self, message: str = "No leave policy is configured for this employee and leave type"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "leave_type_id", "code": self.code, "message": message}]
+        )
+
+
+class LeaveEncashmentNotAllowedError(ValidationError):
+    code = "LEAVE_ENCASHMENT_NOT_ALLOWED"
+
+    def __init__(
+        self, message: str = "Encashment is not allowed for this leave type"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "leave_type_id", "code": self.code, "message": message}]
+        )
+
+
+class LeaveEncashmentMaxDaysExceededError(ValidationError):
+    code = "LEAVE_ENCASHMENT_MAX_DAYS_EXCEEDED"
+
+    def __init__(
+        self, message: str = "This request exceeds the maximum encashable days allowed"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "days", "code": self.code, "message": message}]
+        )
+
+
+class LeaveEncashmentMinimumBalanceViolationError(ValidationError):
+    code = "LEAVE_ENCASHMENT_MINIMUM_BALANCE_VIOLATION"
+
+    def __init__(
+        self,
+        message: str = "This request would leave the balance below the required minimum",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "days", "code": self.code, "message": message}]
+        )
+
+
+# ---------------------------------------------------------------------------
+# Leave Combination Rule — client spec §7 (LD-16)
+# ---------------------------------------------------------------------------
+
+
+class LeaveCombinationRuleAlreadyExistsError(ConflictError):
+    """The DB partial unique index allows at most one rule per unordered leave-type pair
+    (LD-16)."""
+
+    code = "LEAVE_COMBINATION_RULE_ALREADY_EXISTS"
+
+    def __init__(
+        self, message: str = "A combination rule for this pair of leave types already exists"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "leave_type_id_b", "code": self.code, "message": message}],
+        )
+
+
+class LeaveCombinationRuleNotFoundError(NotFoundError):
+    code = "LEAVE_COMBINATION_RULE_NOT_FOUND"
+
+    def __init__(self, message: str = "Leave combination rule not found") -> None:
+        super().__init__(message)
+
+
+class LeaveApplicationCombinationNotAllowedError(ValidationError):
+    """LD-16 — this leave type has an explicit `allowed=False` combination rule against another
+    leave type the employee already has an active (SUBMITTED or APPROVED) application for on an
+    overlapping date."""
+
+    code = "LEAVE_APPLICATION_COMBINATION_NOT_ALLOWED"
+
+    def __init__(
+        self,
+        message: str = (
+            "This leave type cannot be combined with another leave type already applied for "
+            "on an overlapping date"
+        ),
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "leave_type_id", "code": self.code, "message": message}]
+        )
+
+
+# ---------------------------------------------------------------------------
+# Statutory Leave Minimum — client spec §16 (LD-22), legal compliance floor
+# ---------------------------------------------------------------------------
+
+
+class LeaveStatutoryMinimumNotFoundError(NotFoundError):
+    code = "LEAVE_STATUTORY_MINIMUM_NOT_FOUND"
+
+    def __init__(self, message: str = "Statutory leave minimum not found") -> None:
+        super().__init__(message)
+
+
+class LeavePolicyBelowStatutoryMinimumError(ValidationError):
+    """LD-22 — the draft's computed annual entitlement (from `accrual_frequency`/
+    `accrual_rate_per_cycle`) is below the strictest `statutory_leave_minimum` configured for its
+    leave type's `statutory_category`. Publishing is hard-blocked (client answer 2026-09-06), not
+    just flagged."""
+
+    code = "LEAVE_POLICY_BELOW_STATUTORY_MINIMUM"
+
+    def __init__(
+        self,
+        message: str = "This policy's annual entitlement is below the statutory minimum",
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "accrual_rate_per_cycle", "code": self.code, "message": message}],
         )

@@ -4,7 +4,7 @@
 export const LEAVE_APPLICATION_STATUSES = ["SUBMITTED", "APPROVED", "REJECTED", "CANCELLED"] as const;
 export type LeaveApplicationStatus = (typeof LEAVE_APPLICATION_STATUSES)[number];
 
-export const LEAVE_APPROVAL_STAGES = ["MANAGER", "HR"] as const;
+export const LEAVE_APPROVAL_STAGES = ["MANAGER", "HOD", "HR"] as const;
 export type LeaveApprovalStage = (typeof LEAVE_APPROVAL_STAGES)[number];
 
 export const LEAVE_HALF_DAY_VALUES = ["FIRST_HALF", "SECOND_HALF"] as const;
@@ -51,11 +51,13 @@ export interface LeaveApplication {
   total_days: string;
   reason: string | null;
   attachment_reference: string | null;
+  expected_delivery_date: string | null;
 
   status: LeaveApplicationStatus;
-  approval_chain: "AUTO" | "MANAGER" | "MANAGER_THEN_HR" | "HR";
+  approval_chain: "AUTO" | "MANAGER" | "MANAGER_THEN_HR" | "MANAGER_THEN_HOD_THEN_HR" | "HR";
   approval_stage: LeaveApprovalStage | null;
   resolved_approver_manager_id: string | null;
+  resolved_department_head_id: string | null;
 
   submitted_by_user_id: string | null;
   submitted_at: string;
@@ -86,6 +88,7 @@ export interface LeaveApplicationCreatePayload {
   half_day?: LeaveHalfDay;
   reason?: string;
   attachment_reference?: string;
+  expected_delivery_date?: string;
 }
 
 /** Mirrors `LeaveApplicationReviewInput`. */

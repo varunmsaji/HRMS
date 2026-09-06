@@ -69,7 +69,21 @@ async def _cleanup_departments_and_branches(*, company_id: UUID) -> None:
         await session.execute(
             text("DELETE FROM branch WHERE company_id = :cid"), {"cid": str(company_id)}
         )
+        await session.execute(
+            text("DELETE FROM employee WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
+        await session.execute(
+            text("DELETE FROM number_series WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
         await session.commit()
+
+
+async def _create_employee(
+    client: AsyncClient, headers: dict[str, str], first_name: str = "Priya"
+) -> dict[str, Any]:
+    response = await client.post("/v1/employees", headers=headers, json={"first_name": first_name})
+    assert response.status_code == 201
+    return dict(response.json()["data"])
 
 
 @pytest.mark.asyncio
@@ -569,6 +583,96 @@ async def test_multiple_departments_supported(
         listed = await client.get("/v1/departments", headers=headers)
         names = {row["name"] for row in listed.json()["data"]}
         assert names == {"Engineering", "Sales"}
+    finally:
+        await _cleanup_departments_and_branches(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+# ---------------------------------------------------------------------------
+# Department Head assignment (LEAVE_DECISION_LOG.md LD-23)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_department_with_head_employee_success(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        head = await _create_employee(client, headers, first_name="Heena")
+        response = await client.post(
+            "/v1/departments",
+            headers=headers,
+            json={"name": "Engineering", "head_employee_id": head["id"]},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["data"]["head_employee_id"] == head["id"]
+    finally:
+        await _cleanup_departments_and_branches(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_create_department_invalid_head_employee_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        response = await client.post(
+            "/v1/departments",
+            headers=headers,
+            json={"name": "Engineering", "head_employee_id": str(uuid4())},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "INVALID_DEPARTMENT_HEAD"
+    finally:
+        await _cleanup_departments_and_branches(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_update_department_sets_and_clears_head_employee(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        head = await _create_employee(client, headers, first_name="Heena")
+        department = await _create_department(client, headers)
+
+        updated = await client.patch(
+            f"/v1/departments/{department['id']}",
+            headers={**headers, "If-Match": str(department["version"])},
+            json={"head_employee_id": head["id"]},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["data"]["head_employee_id"] == head["id"]
+
+        cleared = await client.patch(
+            f"/v1/departments/{department['id']}",
+            headers={**headers, "If-Match": str(updated.json()["data"]["version"])},
+            json={"head_employee_id": None},
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["data"]["head_employee_id"] is None
+    finally:
+        await _cleanup_departments_and_branches(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_update_department_invalid_head_employee_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        department = await _create_department(client, headers)
+        response = await client.patch(
+            f"/v1/departments/{department['id']}",
+            headers={**headers, "If-Match": str(department["version"])},
+            json={"head_employee_id": str(uuid4())},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "INVALID_DEPARTMENT_HEAD"
     finally:
         await _cleanup_departments_and_branches(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

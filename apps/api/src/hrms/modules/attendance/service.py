@@ -83,6 +83,7 @@ from hrms.modules.attendance.repository import (
     AttendanceRegularizationActionRepository,
     AttendanceRegularizationRequestedPunchRepository,
     AttendanceRegularizationRequestRepository,
+    CompOffFactRow,
     LeaveDayProjectionRepository,
     OvertimeActionRepository,
     OvertimePolicyRepository,
@@ -1007,6 +1008,7 @@ class AttendanceService:
                 "monthly_cap_minutes": body.monthly_cap_minutes,
                 "comp_off_instead_of_pay": body.comp_off_instead_of_pay,
                 "comp_off_expiry_days": body.comp_off_expiry_days,
+                "comp_off_day_length_minutes": body.comp_off_day_length_minutes,
                 "night_ot_mode": body.night_ot_mode,
                 "night_window_start": _parse_time(body.night_window_start)
                 if body.night_window_start
@@ -4270,6 +4272,17 @@ class OvertimeRecordService:
                 "comment": comment,
             },
         )
+
+    async def list_comp_off_facts(self, company_id: UUID) -> list[CompOffFactRow]:
+        """LEAVE_DECISION_LOG.md LD-14 — the public seam Leave's L5 comp-off credit engine calls
+        into (never queries `overtime_record` directly), mirroring how `LeaveAccrualService`
+        already calls `EmploymentService`/`CalendarResolutionService` rather than reaching into
+        their tables. Read-only, no `DataScope` narrowing — this is background-job-to-background-
+        job, not a request-scoped read (same posture as `LeaveAccrualService.run_for_company`
+        itself). Defined before `list()` below — that method's own name would otherwise shadow
+        the builtin `list` for every annotation evaluated later in this class body (no
+        `from __future__ import annotations` in this module)."""
+        return await self._repo.list_comp_off_eligible(self._session, company_id=company_id)
 
     async def get(
         self,

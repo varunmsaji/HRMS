@@ -38,8 +38,10 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
 
 const ACTION_LABELS: Record<string, string> = {
   SUBMITTED: "Submitted",
-  APPROVER_UNRESOLVED: "No manager resolved — routed to HR",
-  STAGE_APPROVED: "Approved by manager, forwarded to HR",
+  // Which reviewer wasn't resolved / which stage forwarded to which (MANAGER -> HOD -> HR,
+  // per policy) varies by chain — see the comment line below each entry for the specifics.
+  APPROVER_UNRESOLVED: "Reviewer not resolved — routed to the next stage",
+  STAGE_APPROVED: "Approved at this stage, forwarded to the next",
   APPROVED: "Approved",
   REJECTED: "Rejected",
   CANCELLED: "Cancelled",

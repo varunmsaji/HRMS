@@ -145,8 +145,13 @@ class Branch(Base, TimestampMixin):
 class Department(Base, TimestampMixin):
     """An organisational unit under a Branch, optionally nested under a parent Department
     (FR-ORG-005 — hierarchy must reject cycles, max 5 levels; enforced in the service layer).
-    `head_employee_id` exists at the DB level only (Sprint 3 Scope Decision D10) — not
-    exposed by any schema/service/UI this slice, since Employee does not exist yet.
+    `head_employee_id` (LD-23, Leave decision log) is now a real ORM-level FK — the DB
+    constraint has existed since migration 20260813140000, but the ORM column stayed a plain
+    UUID until now because `Employee` didn't exist at the time (Sprint 3 Scope Decision D10);
+    `Employee` exists today, so nothing prevents a real `ForeignKey` any longer. Exposed via
+    `DepartmentCreate`/`Update`/`Read` and validated in `OrganisationService`
+    (`_assert_department_head_reference`) as of LD-23 — used to resolve Leave's third
+    (`HOD`) approval stage.
     `cost_centre_id` is intentionally absent — see the Department module audit."""
 
     __tablename__ = "department"
@@ -163,11 +168,9 @@ class Department(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(150))
     code: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    # No `Employee` ORM model exists yet (Employee is out of scope this slice), so this
-    # can't be a SQLAlchemy `ForeignKey("employee.id")` — that would fail to resolve
-    # against this Base's metadata. The real FK constraint is still enforced at the
-    # database level by the migration; this is a plain UUID column at the ORM layer.
-    head_employee_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    head_employee_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)

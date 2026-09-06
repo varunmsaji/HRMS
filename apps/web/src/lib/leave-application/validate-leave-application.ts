@@ -10,6 +10,7 @@ export interface LeaveApplicationFormValues {
   halfDay: LeaveHalfDay | "";
   reason: string;
   attachmentReference: string;
+  expectedDeliveryDate: string;
 }
 
 export type LeaveApplicationFormErrors = Partial<
@@ -26,6 +27,7 @@ export function emptyLeaveApplicationFormValues(
     halfDay: "",
     reason: "",
     attachmentReference: "",
+    expectedDeliveryDate: "",
     ...overrides,
   };
 }
@@ -58,6 +60,7 @@ export function buildLeaveApplicationCreatePayload(
     end_date: values.endDate,
     reason: values.reason.trim() || undefined,
     attachment_reference: values.attachmentReference.trim() || undefined,
+    expected_delivery_date: values.expectedDeliveryDate || undefined,
   };
   if (employeeId) payload.employee_id = employeeId;
   if (values.halfDay) payload.half_day = values.halfDay;

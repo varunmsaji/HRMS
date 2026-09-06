@@ -30,9 +30,12 @@ from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.leave.dependencies import (
     get_leave_application_service,
+    get_leave_combination_rule_service,
     get_leave_ledger_service,
     get_leave_policy_service,
     get_leave_type_service,
+    get_leave_year_setting_service,
+    get_statutory_leave_minimum_service,
 )
 from hrms.modules.leave.permissions import (
     LEAVE_APPLICATION_APPROVE,
@@ -41,15 +44,21 @@ from hrms.modules.leave.permissions import (
     LEAVE_BALANCE_ADJUST,
     LEAVE_BALANCE_VIEW,
     LEAVE_BALANCE_VIEW_ALL,
+    LEAVE_COMBINATION_RULE_MANAGE,
     LEAVE_POLICY_MANAGE,
+    LEAVE_STATUTORY_MINIMUM_MANAGE,
     LEAVE_TYPE_MANAGE,
+    LEAVE_YEAR_SETTING_MANAGE,
 )
 from hrms.modules.leave.schemas import (
     LeaveApplicationCreate,
     LeaveApplicationRead,
     LeaveApplicationReviewInput,
     LeaveBalanceRead,
+    LeaveCombinationRuleCreate,
+    LeaveCombinationRuleRead,
     LeaveLedgerAdjustmentCreate,
+    LeaveLedgerEncashmentCreate,
     LeaveLedgerEntryRead,
     LeavePolicyCreate,
     LeavePolicyRead,
@@ -61,12 +70,19 @@ from hrms.modules.leave.schemas import (
     LeaveTypeCreate,
     LeaveTypeRead,
     LeaveTypeUpdate,
+    LeaveYearSettingRead,
+    LeaveYearSettingUpsert,
+    StatutoryLeaveMinimumCreate,
+    StatutoryLeaveMinimumRead,
 )
 from hrms.modules.leave.service import (
     LeaveApplicationService,
+    LeaveCombinationRuleService,
     LeaveLedgerService,
     LeavePolicyService,
     LeaveTypeService,
+    LeaveYearSettingService,
+    StatutoryLeaveMinimumService,
 )
 from hrms.shared.pagination import DataEnvelope, ListEnvelope
 
@@ -336,6 +352,92 @@ async def publish_leave_policy_version(
 
 
 # ---------------------------------------------------------------------------
+# Leave Year Setting — client spec §10 (LD-20), singleton per company
+# ---------------------------------------------------------------------------
+
+
+@router.get("/leave-year-setting", status_code=status.HTTP_200_OK)
+async def get_leave_year_setting(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_YEAR_SETTING_MANAGE))],
+    service: Annotated[LeaveYearSettingService, Depends(get_leave_year_setting_service)],
+) -> DataEnvelope[LeaveYearSettingRead]:
+    data = await service.get_effective(tenant.company_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.put("/leave-year-setting", status_code=status.HTTP_200_OK)
+async def upsert_leave_year_setting(
+    body: LeaveYearSettingUpsert,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_YEAR_SETTING_MANAGE))],
+    service: Annotated[LeaveYearSettingService, Depends(get_leave_year_setting_service)],
+) -> DataEnvelope[LeaveYearSettingRead]:
+    """A singleton resource — `PUT` creates or replaces it, no `If-Match` required (low-
+    contention, HR-only company-wide config; a genuine concurrent-write race raises
+    `STALE_RESOURCE` regardless, LeaveYearSettingService.upsert)."""
+    data = await service.upsert(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Leave Combination Rules — client spec §7 (LD-16)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/leave-combination-rules", status_code=status.HTTP_200_OK)
+async def list_leave_combination_rules(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_COMBINATION_RULE_MANAGE))],
+    service: Annotated[LeaveCombinationRuleService, Depends(get_leave_combination_rule_service)],
+) -> ListEnvelope[LeaveCombinationRuleRead]:
+    data = await service.list(tenant.company_id)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/leave-combination-rules", status_code=status.HTTP_201_CREATED)
+async def create_leave_combination_rule(
+    body: LeaveCombinationRuleCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_COMBINATION_RULE_MANAGE))],
+    service: Annotated[LeaveCombinationRuleService, Depends(get_leave_combination_rule_service)],
+) -> DataEnvelope[LeaveCombinationRuleRead]:
+    data = await service.create(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete("/leave-combination-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_leave_combination_rule(
+    rule_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_COMBINATION_RULE_MANAGE))],
+    service: Annotated[LeaveCombinationRuleService, Depends(get_leave_combination_rule_service)],
+) -> None:
+    await service.delete(
+        tenant.company_id,
+        rule_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Leave Ledger — L2
 # ---------------------------------------------------------------------------
 
@@ -364,6 +466,28 @@ async def create_leave_ledger_adjustment(
     service: Annotated[LeaveLedgerService, Depends(get_leave_ledger_service)],
 ) -> DataEnvelope[LeaveLedgerEntryRead]:
     data = await service.create_adjustment(
+        tenant.company_id,
+        body.employee_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/leave-ledger/encashments", status_code=status.HTTP_201_CREATED)
+async def create_leave_ledger_encashment(
+    body: LeaveLedgerEncashmentCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
+    service: Annotated[LeaveLedgerService, Depends(get_leave_ledger_service)],
+) -> DataEnvelope[LeaveLedgerEntryRead]:
+    """Client spec §12 (LD-19) — same `LEAVE.BALANCE_ADJUST` HR-admin gate as
+    `create_leave_ledger_adjustment` above, but validated against the applicable policy's
+    encashment config rather than writing unconditionally."""
+    data = await service.create_encashment(
         tenant.company_id,
         body.employee_id,
         body,
@@ -591,3 +715,59 @@ async def reject_leave_application(
         user_agent=request.headers.get("User-Agent"),
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Statutory Leave Minimum — client spec §16 (LD-22), legal compliance floor
+# ---------------------------------------------------------------------------
+
+
+@router.get("/statutory-leave-minimums", status_code=status.HTTP_200_OK)
+async def list_statutory_leave_minimums(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_STATUTORY_MINIMUM_MANAGE))],
+    service: Annotated[
+        StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)
+    ],
+) -> ListEnvelope[StatutoryLeaveMinimumRead]:
+    data = await service.list(tenant.company_id)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/statutory-leave-minimums", status_code=status.HTTP_201_CREATED)
+async def create_statutory_leave_minimum(
+    body: StatutoryLeaveMinimumCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_STATUTORY_MINIMUM_MANAGE))],
+    service: Annotated[
+        StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)
+    ],
+) -> DataEnvelope[StatutoryLeaveMinimumRead]:
+    data = await service.create(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete("/statutory-leave-minimums/{minimum_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_statutory_leave_minimum(
+    minimum_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_STATUTORY_MINIMUM_MANAGE))],
+    service: Annotated[
+        StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)
+    ],
+) -> None:
+    await service.delete(
+        tenant.company_id,
+        minimum_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )

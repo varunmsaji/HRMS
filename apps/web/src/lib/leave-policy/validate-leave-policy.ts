@@ -71,6 +71,15 @@ export interface LeavePolicyVersionFormValues {
   encashmentAllowed: boolean;
   allowNegativeBalance: boolean;
   sandwichRuleEnabled: boolean;
+  reserveBalanceOnSubmission: boolean;
+  preDeliveryDays: string;
+  postDeliveryDays: string;
+  allowedDuringProbation: boolean;
+  accrueDuringProbation: boolean;
+  maxEncashmentDays: string;
+  minBalanceAfterEncashment: string;
+  encashmentFrequency: string;
+  encashmentCalculationBasis: string;
 }
 
 export const EMPTY_LEAVE_POLICY_VERSION_FORM_VALUES: LeavePolicyVersionFormValues = {
@@ -90,6 +99,15 @@ export const EMPTY_LEAVE_POLICY_VERSION_FORM_VALUES: LeavePolicyVersionFormValue
   encashmentAllowed: false,
   allowNegativeBalance: false,
   sandwichRuleEnabled: true,
+  reserveBalanceOnSubmission: false,
+  preDeliveryDays: "",
+  postDeliveryDays: "",
+  allowedDuringProbation: true,
+  accrueDuringProbation: true,
+  maxEncashmentDays: "",
+  minBalanceAfterEncashment: "",
+  encashmentFrequency: "",
+  encashmentCalculationBasis: "",
 };
 
 export interface LeavePolicyVersionFormErrors {
@@ -132,6 +150,16 @@ export function leavePolicyVersionToFormValues(
     encashmentAllowed: version.encashment_allowed,
     allowNegativeBalance: version.allow_negative_balance,
     sandwichRuleEnabled: version.sandwich_rule_enabled,
+    reserveBalanceOnSubmission: version.reserve_balance_on_submission,
+    preDeliveryDays: version.pre_delivery_days === null ? "" : String(version.pre_delivery_days),
+    postDeliveryDays:
+      version.post_delivery_days === null ? "" : String(version.post_delivery_days),
+    allowedDuringProbation: version.allowed_during_probation,
+    accrueDuringProbation: version.accrue_during_probation,
+    maxEncashmentDays: version.max_encashment_days ?? "",
+    minBalanceAfterEncashment: version.min_balance_after_encashment ?? "",
+    encashmentFrequency: version.encashment_frequency ?? "",
+    encashmentCalculationBasis: version.encashment_calculation_basis ?? "",
   };
 }
 
@@ -158,6 +186,15 @@ export function buildLeavePolicyVersionPayload(
     encashment_allowed: values.encashmentAllowed,
     allow_negative_balance: values.allowNegativeBalance,
     sandwich_rule_enabled: values.sandwichRuleEnabled,
+    reserve_balance_on_submission: values.reserveBalanceOnSubmission,
+    pre_delivery_days: intOrNull(values.preDeliveryDays),
+    post_delivery_days: intOrNull(values.postDeliveryDays),
+    allowed_during_probation: values.allowedDuringProbation,
+    accrue_during_probation: values.accrueDuringProbation,
+    max_encashment_days: decimalOrNull(values.maxEncashmentDays),
+    min_balance_after_encashment: decimalOrNull(values.minBalanceAfterEncashment),
+    encashment_frequency: values.encashmentFrequency.trim() || null,
+    encashment_calculation_basis: values.encashmentCalculationBasis.trim() || null,
   };
 }
 

@@ -31,11 +31,13 @@ import {
   type DepartmentFormErrors,
   type DepartmentFormValues,
 } from "@/lib/department/validate-department";
+import type { Employee } from "@/lib/employee/types";
 
 export default function DepartmentsPage() {
   const { toast } = useToast();
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -48,12 +50,14 @@ export default function DepartmentsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [departmentData, branchData] = await Promise.all([
+      const [departmentData, branchData, employeeData] = await Promise.all([
         apiClient.get<Department[]>("/departments"),
         apiClient.get<Branch[]>("/branches"),
+        Promise.resolve(apiClient.get<Employee[]>("/employees")).catch(() => []),
       ]);
       setDepartments(departmentData);
       setBranches(branchData);
+      setEmployees(employeeData ?? []);
     } catch (err) {
       setDepartments(null);
       setError(
@@ -106,6 +110,7 @@ export default function DepartmentsPage() {
           name: getFieldError(err.details, "name"),
           branchId: getFieldError(err.details, "branch_id"),
           parentId: getFieldError(err.details, "parent_id"),
+          headEmployeeId: getFieldError(err.details, "head_employee_id"),
         });
         return;
       }
@@ -213,6 +218,7 @@ export default function DepartmentsPage() {
               onChange={setFormValues}
               branches={branches}
               departments={departments ?? []}
+              employees={employees}
               idPrefix="create-"
             />
           </div>

@@ -6,6 +6,8 @@ export interface Department {
   parent_id: string | null;
   name: string;
   code: string | null;
+  /** LEAVE_DECISION_LOG.md LD-23 — resolves Leave's third (HOD) approval stage. */
+  head_employee_id: string | null;
   is_active: boolean;
   version: number;
   created_at: string;
@@ -18,4 +20,5 @@ export interface DepartmentWritableFields {
   parent_id?: string | null;
   name?: string;
   code?: string | null;
+  head_employee_id?: string | null;
 }

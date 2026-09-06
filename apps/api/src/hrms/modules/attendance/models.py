@@ -259,6 +259,11 @@ class OvertimePolicyVersion(Base, TimestampMixin):
     monthly_cap_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     comp_off_instead_of_pay: Mapped[bool] = mapped_column(Boolean, default=False)
     comp_off_expiry_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # LEAVE_DECISION_LOG.md LD-14 — the minutes-per-day basis Leave's comp-off credit engine uses
+    # to convert `OvertimeRecord.comp_off_minutes` into `leave_ledger.amount` (days). `None` means
+    # not configured yet; the credit engine skips crediting for such a policy version rather than
+    # guessing a day length.
+    comp_off_day_length_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     night_ot_mode: Mapped[str] = mapped_column(String(20), default="SHIFT_FLAG")
     night_window_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     night_window_end: Mapped[time | None] = mapped_column(Time, nullable=True)

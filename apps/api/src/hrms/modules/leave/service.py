@@ -3,12 +3,13 @@ Standard). L1: leave-type identity CRUD + leave-policy identity/version CRUD wit
 draft/publish/discard lifecycle every other policy family in this codebase uses. L2: the
 append-only leave ledger (ADR-0004) and balance computation. L3: the monthly accrual engine
 (LEAVE_DECISION_LOG.md LD-06), invoked from `leave/tasks.py`. L4: application submission +
-approval workflow (LD-02/LD-05/LD-12/LD-13). No comp-off redemption (L5) yet — see
-LEAVE_DECISION_LOG.md LD-09."""
+approval workflow (LD-02/LD-05/LD-12/LD-13). L5: comp-off credit + expiry sweep
+(LD-07/LD-14), also invoked from `leave/tasks.py` — redemption itself is not new code, since it
+reuses L4's generic application/ledger machinery against an `is_comp_off=true` `LeaveType`."""
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -17,44 +18,62 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.audit.service import AuditService
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError
 from hrms.core.rbac.types import DataScope, DataScopeLevel
+from hrms.modules.leave.approval_chain import effective_stage_sequence, next_approval_stage
 from hrms.modules.leave.exceptions import (
     LeaveApplicationApproverMismatchError,
     LeaveApplicationAttachmentRequiredError,
     LeaveApplicationCalendarNotResolvedError,
+    LeaveApplicationCombinationNotAllowedError,
     LeaveApplicationDateRangeInvalidError,
     LeaveApplicationHalfDayNotAllowedError,
     LeaveApplicationInsufficientBalanceError,
     LeaveApplicationInvalidTransitionError,
     LeaveApplicationLimitExceededError,
+    LeaveApplicationNotAllowedDuringProbationError,
     LeaveApplicationNotFoundError,
     LeaveApplicationNotPermittedError,
     LeaveApplicationPolicyNotResolvedError,
     LeaveApplicationReasonRequiredError,
     LeaveApplicationSelfApprovalNotAllowedError,
     LeaveApplicationWindowExceededError,
+    LeaveCombinationRuleAlreadyExistsError,
+    LeaveCombinationRuleNotFoundError,
+    LeaveEncashmentMaxDaysExceededError,
+    LeaveEncashmentMinimumBalanceViolationError,
+    LeaveEncashmentNotAllowedError,
+    LeaveEncashmentPolicyNotResolvedError,
+    LeavePolicyBelowStatutoryMinimumError,
     LeavePolicyCodeAlreadyExistsError,
     LeavePolicyDraftAlreadyExistsError,
     LeavePolicyPublishIncompleteError,
     LeavePolicyVersionNotDraftError,
     LeavePolicyVersionOverlapError,
     LeavePolicyVersionPreviousVersionRequiredError,
+    LeaveStatutoryMinimumNotFoundError,
     LeaveTypeCodeAlreadyExistsError,
+    LeaveTypeCompOffAlreadyExistsError,
     StaleLeaveResourceError,
 )
 from hrms.modules.leave.repository import (
     LeaveApplicationActionRepository,
     LeaveApplicationDayRepository,
     LeaveApplicationRepository,
+    LeaveCombinationRuleRepository,
     LeaveLedgerRepository,
     LeavePolicyRepository,
     LeaveTypeRepository,
+    LeaveYearSettingRepository,
+    StatutoryLeaveMinimumRepository,
 )
 from hrms.modules.leave.schemas import (
     LeaveApplicationCreate,
     LeaveApplicationRead,
     LeaveApplicationReviewInput,
     LeaveBalanceRead,
+    LeaveCombinationRuleCreate,
+    LeaveCombinationRuleRead,
     LeaveLedgerAdjustmentCreate,
+    LeaveLedgerEncashmentCreate,
     LeaveLedgerEntryRead,
     LeavePolicyCreate,
     LeavePolicyRead,
@@ -66,11 +85,17 @@ from hrms.modules.leave.schemas import (
     LeaveTypeCreate,
     LeaveTypeRead,
     LeaveTypeUpdate,
+    LeaveYearSettingRead,
+    LeaveYearSettingUpsert,
+    StatutoryLeaveMinimumCreate,
+    StatutoryLeaveMinimumRead,
     build_leave_policy_update_values,
     build_leave_policy_version_update_values,
     build_leave_type_update_values,
     leave_application_to_audit_dict,
     leave_application_to_read,
+    leave_combination_rule_to_audit_dict,
+    leave_combination_rule_to_read,
     leave_ledger_entry_to_audit_dict,
     leave_ledger_entry_to_read,
     leave_policy_to_audit_dict,
@@ -79,7 +104,15 @@ from hrms.modules.leave.schemas import (
     leave_policy_version_to_read,
     leave_type_to_audit_dict,
     leave_type_to_read,
+    leave_year_setting_to_audit_dict,
+    leave_year_setting_to_read,
+    statutory_leave_minimum_to_audit_dict,
+    statutory_leave_minimum_to_read,
 )
+from hrms.modules.leave.year import LeaveYearSettingData, is_leave_year_start
+
+if TYPE_CHECKING:
+    from hrms.modules.leave.models import LeavePolicyVersion
 
 
 class LeaveTypeService:
@@ -109,6 +142,8 @@ class LeaveTypeService:
                     "name": body.name,
                     "is_paid_default": body.is_paid_default,
                     "requires_balance": body.requires_balance,
+                    "is_comp_off": body.is_comp_off,
+                    "statutory_category": body.statutory_category,
                     "is_active": True,
                     "created_at": now,
                     "updated_at": now,
@@ -116,6 +151,8 @@ class LeaveTypeService:
             )
         except IntegrityError as exc:
             await self._session.rollback()
+            if "leave_type_company_comp_off_idx" in str(exc.orig):
+                raise LeaveTypeCompOffAlreadyExistsError() from exc
             raise LeaveTypeCodeAlreadyExistsError() from exc
 
         read = leave_type_to_read(row)
@@ -166,14 +203,18 @@ class LeaveTypeService:
         now = datetime.now(UTC)
         updated = row
         if values:
-            result = await self._repo.update(
-                self._session,
-                company_id=company_id,
-                leave_type_id=leave_type_id,
-                values=values,
-                expected_version=expected_version,
-                now=now,
-            )
+            try:
+                result = await self._repo.update(
+                    self._session,
+                    company_id=company_id,
+                    leave_type_id=leave_type_id,
+                    values=values,
+                    expected_version=expected_version,
+                    now=now,
+                )
+            except IntegrityError as exc:
+                await self._session.rollback()
+                raise LeaveTypeCompOffAlreadyExistsError() from exc
             if result is None:
                 latest = await self._repo.get(
                     self._session, company_id=company_id, leave_type_id=leave_type_id
@@ -202,12 +243,325 @@ class LeaveTypeService:
         return after_read
 
 
+class LeaveCombinationRuleService:
+    """Client spec §7 (LD-16) — configurable pairwise leave-type exclusivity. Flat identity
+    CRUD, no draft/publish lifecycle (unlike `LeavePolicyVersion`): changing a rule is
+    delete-and-recreate, since there's no meaningful in-flight-draft state for a single
+    boolean. Enforcement itself lives in `LeaveApplicationService.submit()`, not here — this
+    class is purely the admin config surface."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._audit = AuditService()
+        self._repo = LeaveCombinationRuleRepository()
+        self._type_repo = LeaveTypeRepository()
+
+    async def create(
+        self,
+        company_id: UUID,
+        body: LeaveCombinationRuleCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveCombinationRuleRead:
+        for leave_type_id in (body.leave_type_id_a, body.leave_type_id_b):
+            leave_type = await self._type_repo.get(
+                self._session, company_id=company_id, leave_type_id=leave_type_id
+            )
+            if leave_type is None:
+                raise NotFoundError("Resource not found")
+
+        now = datetime.now(UTC)
+        rule_id = uuid4()
+        try:
+            row = await self._repo.insert(
+                self._session,
+                data={
+                    "id": rule_id,
+                    "company_id": company_id,
+                    "leave_type_id_a": body.leave_type_id_a,
+                    "leave_type_id_b": body.leave_type_id_b,
+                    "allowed": body.allowed,
+                    "reason": body.reason,
+                    "created_by_user_id": actor_user_id,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        except IntegrityError as exc:
+            await self._session.rollback()
+            raise LeaveCombinationRuleAlreadyExistsError() from exc
+
+        read = leave_combination_rule_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_COMBINATION_RULE_CREATED",
+            entity_type="leave_combination_rule",
+            entity_id=rule_id,
+            after=leave_combination_rule_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list(self, company_id: UUID) -> list[LeaveCombinationRuleRead]:
+        rows = await self._repo.list(self._session, company_id=company_id)
+        return [leave_combination_rule_to_read(r) for r in rows]
+
+    async def delete(
+        self,
+        company_id: UUID,
+        rule_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        row = await self._repo.get(self._session, company_id=company_id, rule_id=rule_id)
+        if row is None:
+            raise LeaveCombinationRuleNotFoundError()
+        before_read = leave_combination_rule_to_read(row)
+
+        deleted = await self._repo.delete(self._session, company_id=company_id, rule_id=rule_id)
+        if not deleted:
+            raise LeaveCombinationRuleNotFoundError()
+
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_COMBINATION_RULE_DELETED",
+            entity_type="leave_combination_rule",
+            entity_id=rule_id,
+            before=leave_combination_rule_to_audit_dict(before_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+
+class LeaveYearSettingService:
+    """Client spec §10 (LD-20) — a singleton per-company setting, not a versioned/CRUD
+    collection like `LeavePolicyVersion`. `get_effective` lazily materializes the `CALENDAR`
+    default on first read rather than requiring HR to explicitly create a row before this
+    setting "exists" — every company effectively already has a calendar leave year until told
+    otherwise."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._audit = AuditService()
+        self._repo = LeaveYearSettingRepository()
+
+    async def get_effective(self, company_id: UUID) -> LeaveYearSettingRead:
+        row = await self._repo.get(self._session, company_id=company_id)
+        if row is None:
+            now = datetime.now(UTC)
+            row = await self._repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "leave_year_type": "CALENDAR",
+                    "start_month": None,
+                    "start_day": None,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+        return leave_year_setting_to_read(row)
+
+    async def upsert(
+        self,
+        company_id: UUID,
+        body: LeaveYearSettingUpsert,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveYearSettingRead:
+        row = await self._repo.get(self._session, company_id=company_id)
+        now = datetime.now(UTC)
+
+        if row is None:
+            created = await self._repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "leave_year_type": body.leave_year_type,
+                    "start_month": body.start_month,
+                    "start_day": body.start_day,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            read = leave_year_setting_to_read(created)
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="LEAVE_YEAR_SETTING_CREATED",
+                entity_type="leave_year_setting",
+                entity_id=created.id,
+                after=leave_year_setting_to_audit_dict(read),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+            return read
+
+        before_read = leave_year_setting_to_read(row)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            values={
+                "leave_year_type": body.leave_year_type,
+                "start_month": body.start_month,
+                "start_day": body.start_day,
+            },
+            expected_version=row.version,
+            now=now,
+        )
+        if updated is None:
+            latest = await self._repo.get(self._session, company_id=company_id)
+            current = (
+                leave_year_setting_to_audit_dict(leave_year_setting_to_read(latest))
+                if latest
+                else {}
+            )
+            raise StaleLeaveResourceError(
+                "This leave year setting has been modified by another request", current=current
+            )
+
+        after_read = leave_year_setting_to_read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_YEAR_SETTING_UPDATED",
+            entity_type="leave_year_setting",
+            entity_id=updated.id,
+            before=leave_year_setting_to_audit_dict(before_read),
+            after=leave_year_setting_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+
+class StatutoryLeaveMinimumService:
+    """Client spec §16 (LD-22) — HR/compliance-entered legal compliance floor. Flat identity
+    CRUD, no draft/publish lifecycle (mirrors `LeaveCombinationRuleService`): editing a minimum
+    is delete-and-recreate. Enforcement lives in `LeavePolicyService.publish_version`, not here —
+    this class is purely the admin config surface."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._audit = AuditService()
+        self._repo = StatutoryLeaveMinimumRepository()
+
+    async def create(
+        self,
+        company_id: UUID,
+        body: StatutoryLeaveMinimumCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> StatutoryLeaveMinimumRead:
+        now = datetime.now(UTC)
+        minimum_id = uuid4()
+        row = await self._repo.insert(
+            self._session,
+            data={
+                "id": minimum_id,
+                "company_id": company_id,
+                "state_code": body.state_code,
+                "establishment_type": body.establishment_type,
+                "leave_category": body.leave_category,
+                "min_days_per_year": body.min_days_per_year,
+                "note": body.note,
+                "created_by_user_id": actor_user_id,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        read = statutory_leave_minimum_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="STATUTORY_LEAVE_MINIMUM_CREATED",
+            entity_type="statutory_leave_minimum",
+            entity_id=minimum_id,
+            after=statutory_leave_minimum_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list(self, company_id: UUID) -> list[StatutoryLeaveMinimumRead]:
+        rows = await self._repo.list(self._session, company_id=company_id)
+        return [statutory_leave_minimum_to_read(r) for r in rows]
+
+    async def delete(
+        self,
+        company_id: UUID,
+        minimum_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        row = await self._repo.get(self._session, company_id=company_id, minimum_id=minimum_id)
+        if row is None:
+            raise LeaveStatutoryMinimumNotFoundError()
+        before_read = statutory_leave_minimum_to_read(row)
+
+        deleted = await self._repo.delete(
+            self._session, company_id=company_id, minimum_id=minimum_id
+        )
+        if not deleted:
+            raise LeaveStatutoryMinimumNotFoundError()
+
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="STATUTORY_LEAVE_MINIMUM_DELETED",
+            entity_type="statutory_leave_minimum",
+            entity_id=minimum_id,
+            before=statutory_leave_minimum_to_audit_dict(before_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+
+def _annual_entitlement_days(
+    accrual_frequency: str, accrual_rate_per_cycle: Decimal | None
+) -> Decimal:
+    """LD-22 — the same two fields `LeaveAccrualService` already reads, converted to a per-year
+    figure for comparison against a statutory minimum. `NONE`/unset accrual has no entitlement to
+    compare, so it never trips the floor (nothing to publish-block on for a leave type with no
+    accrual configured at all)."""
+    if accrual_rate_per_cycle is None:
+        return Decimal("0")
+    if accrual_frequency == "MONTHLY":
+        return accrual_rate_per_cycle * 12
+    if accrual_frequency == "YEARLY":
+        return accrual_rate_per_cycle
+    return Decimal("0")
+
+
 class LeavePolicyService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._audit = AuditService()
         self._repo = LeavePolicyRepository()
         self._type_repo = LeaveTypeRepository()
+        self._statutory_repo = StatutoryLeaveMinimumRepository()
 
     # -----------------------------------------------------------------
     # Leave Policy — identity
@@ -383,6 +737,15 @@ class LeavePolicyService:
                 "encashment_allowed": body.encashment_allowed,
                 "allow_negative_balance": body.allow_negative_balance,
                 "sandwich_rule_enabled": body.sandwich_rule_enabled,
+                "reserve_balance_on_submission": body.reserve_balance_on_submission,
+                "pre_delivery_days": body.pre_delivery_days,
+                "post_delivery_days": body.post_delivery_days,
+                "allowed_during_probation": body.allowed_during_probation,
+                "accrue_during_probation": body.accrue_during_probation,
+                "max_encashment_days": body.max_encashment_days,
+                "min_balance_after_encashment": body.min_balance_after_encashment,
+                "encashment_frequency": body.encashment_frequency,
+                "encashment_calculation_basis": body.encashment_calculation_basis,
                 "publish_reason": None,
                 "published_at": None,
                 "published_by": None,
@@ -533,6 +896,41 @@ class LeavePolicyService:
         )
         return after_read
 
+    async def _enforce_statutory_minimum(
+        self, company_id: UUID, draft: "LeavePolicyVersion"
+    ) -> None:
+        """LD-22 — client spec §16. Hard-blocks publishing when the draft's computed annual
+        entitlement falls below the strictest `statutory_leave_minimum` configured for its leave
+        type's `statutory_category`. A leave type with no `statutory_category`, or a company with
+        no minimum configured for that category, has nothing to enforce — both valid, non-error
+        states (same "not configured yet" posture every other optional policy field in this
+        module already uses)."""
+        policy = await self._repo.get_policy(
+            self._session, company_id=company_id, policy_id=draft.policy_id
+        )
+        if policy is None:
+            return
+        leave_type = await self._type_repo.get(
+            self._session, company_id=company_id, leave_type_id=policy.leave_type_id
+        )
+        if leave_type is None or leave_type.statutory_category is None:
+            return
+
+        floor = await self._statutory_repo.max_min_days_per_year(
+            self._session, company_id=company_id, leave_category=leave_type.statutory_category
+        )
+        if floor is None:
+            return
+
+        entitlement = _annual_entitlement_days(
+            draft.accrual_frequency, draft.accrual_rate_per_cycle
+        )
+        if entitlement < floor:
+            raise LeavePolicyBelowStatutoryMinimumError(
+                f"This policy's annual entitlement ({entitlement} days) is below the statutory "
+                f"minimum for {leave_type.statutory_category} leave ({floor} days)"
+            )
+
     async def publish_version(
         self,
         company_id: UUID,
@@ -557,6 +955,7 @@ class LeavePolicyService:
             raise LeavePolicyVersionNotDraftError()
         if draft.effective_from is None:
             raise LeavePolicyPublishIncompleteError("effective_from is required to publish")
+        await self._enforce_statutory_minimum(company_id, draft)
 
         before_read = leave_policy_version_to_read(draft)
 
@@ -670,6 +1069,8 @@ class LeaveLedgerService:
         self._audit = AuditService()
         self._repo = LeaveLedgerRepository()
         self._type_repo = LeaveTypeRepository()
+        self._app_repo = LeaveApplicationRepository()
+        self._policy_repo = LeavePolicyRepository()
 
     async def _resolve_visible_employee_ids(
         self, company_id: UUID, scope: DataScope, caller_employee_id: UUID | None
@@ -748,6 +1149,101 @@ class LeaveLedgerService:
         )
         return read
 
+    async def create_encashment(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: LeaveLedgerEncashmentCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> LeaveLedgerEntryRead:
+        """L2.5 — client spec §12 (LD-19). Same COMPANY-scoped, no-`DataScope`-narrowing posture
+        as `create_adjustment` (the permission grant is the gate). Resolves the applicable
+        published `LeavePolicyVersion` the same way `LeaveApplicationService.submit()` does, and
+        validates against it before writing — the one real difference from a plain adjustment,
+        which writes unconditionally."""
+        leave_type = await self._type_repo.get(
+            self._session, company_id=company_id, leave_type_id=body.leave_type_id
+        )
+        if leave_type is None:
+            raise NotFoundError("Resource not found")
+
+        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+
+        resolver = CalendarResolutionService(self._session)
+        found = await resolver.resolve_policy_assignment(
+            company_id,
+            "LEAVE_POLICY",
+            employee_id=employee_id,
+            target_date=body.effective_date,
+            leave_type_id=body.leave_type_id,
+        )
+        if found is None:
+            raise LeaveEncashmentPolicyNotResolvedError()
+        assignment, _scope_type = found
+
+        policy_version = await self._policy_repo.find_effective_as_of(
+            self._session,
+            company_id=company_id,
+            policy_id=assignment.policy_id,
+            as_of=body.effective_date,
+        )
+        if policy_version is None:
+            raise LeaveEncashmentPolicyNotResolvedError()
+
+        if not policy_version.encashment_allowed:
+            raise LeaveEncashmentNotAllowedError()
+        if (
+            policy_version.max_encashment_days is not None
+            and body.days > policy_version.max_encashment_days
+        ):
+            raise LeaveEncashmentMaxDaysExceededError()
+
+        balances = await self._repo.get_balances(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        current_balance = next(
+            (b.balance for b in balances if b.leave_type_id == body.leave_type_id),
+            Decimal("0.00"),
+        )
+        remaining = current_balance - body.days
+        min_required = policy_version.min_balance_after_encashment or Decimal("0.00")
+        if remaining < min_required:
+            raise LeaveEncashmentMinimumBalanceViolationError()
+
+        entry_id = uuid4()
+        row = await self._repo.insert(
+            self._session,
+            data={
+                "id": entry_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "leave_type_id": body.leave_type_id,
+                "entry_type": "ENCASHMENT",
+                "amount": -body.days,
+                "effective_date": body.effective_date,
+                "reference_id": None,
+                "reason": body.reason,
+                "created_by_user_id": actor_user_id,
+            },
+        )
+
+        read = leave_ledger_entry_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_LEDGER_ENCASHMENT_CREATED",
+            entity_type="leave_ledger",
+            entity_id=entry_id,
+            after=leave_ledger_entry_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
     async def list_entries(
         self,
         company_id: UUID,
@@ -782,6 +1278,12 @@ class LeaveLedgerService:
         rows = await self._repo.get_balances(
             self._session, company_id=company_id, employee_id=employee_id
         )
+        # LD-15 — reserved balance is always derived live from open applications, shown
+        # alongside `balance` regardless of whether reservation is actually enforced for that
+        # type (client spec §8: "preferably show" both figures separately).
+        pending_by_type = await self._app_repo.sum_pending_by_leave_type(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
         return [
             LeaveBalanceRead(
                 employee_id=employee_id,
@@ -789,6 +1291,7 @@ class LeaveLedgerService:
                 leave_type_code=r.leave_type_code,
                 leave_type_name=r.leave_type_name,
                 balance=r.balance,
+                reserved_balance=pending_by_type.get(r.leave_type_id, Decimal("0.00")),
             )
             for r in rows
         ]
@@ -822,19 +1325,16 @@ class LeaveAccrualService:
     background-job business logic, not a request-scoped one, so it takes no `DataScope`/caller
     and writes system-generated ledger rows (`created_by_user_id=None`).
 
-    **Scope of this slice:** only `accrual_frequency == "MONTHLY"` policies accrue. `YEARLY`
-    policies are resolved but skipped — LD-06 answered the client's rate/cap/encashment/
-    negative-balance/sandwich-rule questions, not a yearly cadence's anchor date (fiscal-year
-    start vs. joining-date anniversary), so nothing is guessed here (WD-21 fail-closed
-    precedent). Carry-forward cap enforcement (`max_carry_forward_days`) is likewise out of
-    scope — that's a year-end sweep, not a monthly accrual concern, and has no anchor to trigger
-    from yet either. Both are natural follow-up slices once a fiscal-year anchor is decided."""
+    `run_for_company` handles `accrual_frequency == "MONTHLY"`. `run_year_end_for_company`
+    (LD-21) handles `YEARLY` accrual and carry-forward cap enforcement together, both gated on
+    `LeaveYearSetting` (LD-20) — the fiscal-year anchor LD-06/WD-21 originally left undecided."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._ledger_repo = LeaveLedgerRepository()
         self._type_repo = LeaveTypeRepository()
         self._policy_repo = LeavePolicyRepository()
+        self._year_setting_service = LeaveYearSettingService(session)
 
     async def run_for_company(self, company_id: UUID, *, as_of: date) -> int:
         """Accrue for the calendar month before `as_of`, for every employee whose employment
@@ -845,7 +1345,7 @@ class LeaveAccrualService:
         are new rows, but duplicates are not corrections)."""
         period_start, period_end = _previous_month_bounds(as_of)
 
-        from hrms.modules.employee.service import EmploymentService
+        from hrms.modules.employee.service import EmployeeService, EmploymentService
         from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
 
         spans = await EmploymentService(self._session).list_spans_overlapping(
@@ -860,12 +1360,17 @@ class LeaveAccrualService:
             return 0
 
         resolver = CalendarResolutionService(self._session)
+        employee_service = EmployeeService(self._session)
         written = 0
         for employee_id, joining_date, last_working_day in spans:
             worked_start = max(period_start, joining_date)
             worked_end = min(period_end, last_working_day or period_end)
             if worked_start > worked_end:
                 continue
+
+            # LD-18: fetched once per employee, not per leave type — read once, reused across
+            # every leave type's accrue_during_probation check below.
+            employee = await employee_service.get_employee(company_id, employee_id)
 
             for leave_type in accrual_types:
                 found = await resolver.resolve_policy_assignment(
@@ -888,6 +1393,8 @@ class LeaveAccrualService:
                 if version is None or version.accrual_frequency != "MONTHLY":
                     continue
                 if not version.accrual_rate_per_cycle or version.accrual_rate_per_cycle <= 0:
+                    continue
+                if not version.accrue_during_probation and employee.status == "PROBATION":
                     continue
 
                 already_written = await self._ledger_repo.exists_for_cycle(
@@ -929,6 +1436,280 @@ class LeaveAccrualService:
                 written += 1
         return written
 
+    async def run_year_end_for_company(self, company_id: UUID, *, as_of: date) -> int:
+        """LD-21 — for every employee whose employment span covers `as_of` and for whom `as_of`
+        is their leave-year start date (per the company's `LeaveYearSetting`, LD-20 — the same
+        date for everyone under `CALENDAR`/`FINANCIAL`/`CUSTOM`, each employee's own
+        `Employment.joining_date` anniversary under `ANNIVERSARY`): enforces the carry-forward
+        cap against the balance as it stood at day-start, then credits `YEARLY` accrual — both
+        per leave type, both idempotent (`exists_for_cycle`, keyed on `as_of` as the cycle date,
+        same mechanism `run_for_company` already uses for monthly cycles)."""
+        setting_read = await self._year_setting_service.get_effective(company_id)
+        setting = LeaveYearSettingData(
+            leave_year_type=setting_read.leave_year_type,
+            start_month=setting_read.start_month,
+            start_day=setting_read.start_day,
+        )
+
+        from hrms.modules.employee.service import EmploymentService
+
+        spans = await EmploymentService(self._session).list_spans_overlapping(
+            company_id, date_from=as_of, date_to=as_of
+        )
+        if not spans:
+            return 0
+
+        leave_types = await self._type_repo.list(self._session, company_id=company_id)
+        accrual_types = [t for t in leave_types if t.is_active and t.requires_balance]
+        if not accrual_types:
+            return 0
+
+        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+
+        resolver = CalendarResolutionService(self._session)
+        written = 0
+        for employee_id, joining_date, last_working_day in spans:
+            if last_working_day is not None and as_of > last_working_day:
+                continue
+            if not is_leave_year_start(setting, as_of=as_of, joining_date=joining_date):
+                continue
+
+            # Fetched once per employee, before either write below, so the carry-forward check
+            # reflects the balance as it stood at day-start — not double-counting today's own
+            # fresh accrual credit.
+            balances = await self._ledger_repo.get_balances(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            balance_by_type = {b.leave_type_id: b.balance for b in balances}
+
+            for leave_type in accrual_types:
+                found = await resolver.resolve_policy_assignment(
+                    company_id,
+                    "LEAVE_POLICY",
+                    employee_id=employee_id,
+                    target_date=as_of,
+                    leave_type_id=leave_type.id,
+                )
+                if found is None:
+                    continue
+                assignment, _scope_type = found
+
+                version = await self._policy_repo.find_effective_as_of(
+                    self._session,
+                    company_id=company_id,
+                    policy_id=assignment.policy_id,
+                    as_of=as_of,
+                )
+                if version is None:
+                    continue
+
+                if version.max_carry_forward_days is not None:
+                    current_balance = balance_by_type.get(leave_type.id, Decimal("0.00"))
+                    excess = current_balance - version.max_carry_forward_days
+                    if excess > 0:
+                        already_forfeited = await self._ledger_repo.exists_for_cycle(
+                            self._session,
+                            company_id=company_id,
+                            employee_id=employee_id,
+                            leave_type_id=leave_type.id,
+                            entry_type="CARRY_FORWARD",
+                            effective_date=as_of,
+                        )
+                        if not already_forfeited:
+                            await self._ledger_repo.insert(
+                                self._session,
+                                data={
+                                    "id": uuid4(),
+                                    "company_id": company_id,
+                                    "employee_id": employee_id,
+                                    "leave_type_id": leave_type.id,
+                                    "entry_type": "CARRY_FORWARD",
+                                    "amount": -excess,
+                                    "effective_date": as_of,
+                                    "reference_id": version.id,
+                                    "reason": (
+                                        f"Carry-forward cap ({version.max_carry_forward_days} "
+                                        f"days) exceeded at leave year start {as_of}"
+                                    ),
+                                    "created_by_user_id": None,
+                                },
+                            )
+                            written += 1
+
+                if (
+                    version.accrual_frequency == "YEARLY"
+                    and version.accrual_rate_per_cycle
+                    and version.accrual_rate_per_cycle > 0
+                ):
+                    already_accrued = await self._ledger_repo.exists_for_cycle(
+                        self._session,
+                        company_id=company_id,
+                        employee_id=employee_id,
+                        leave_type_id=leave_type.id,
+                        entry_type="ACCRUAL",
+                        effective_date=as_of,
+                    )
+                    if not already_accrued:
+                        await self._ledger_repo.insert(
+                            self._session,
+                            data={
+                                "id": uuid4(),
+                                "company_id": company_id,
+                                "employee_id": employee_id,
+                                "leave_type_id": leave_type.id,
+                                "entry_type": "ACCRUAL",
+                                "amount": version.accrual_rate_per_cycle,
+                                "effective_date": as_of,
+                                "reference_id": version.id,
+                                "reason": f"Yearly accrual for leave year starting {as_of}",
+                                "created_by_user_id": None,
+                            },
+                        )
+                        written += 1
+        return written
+
+
+class LeaveCompOffService:
+    """L5 — comp-off credit + expiry (LEAVE_DECISION_LOG.md LD-07/LD-14). Invoked by the
+    `leave.credit_comp_off`/`leave.sweep_comp_off_expiry` Celery tasks (`leave/tasks.py`),
+    mirroring `LeaveAccrualService`'s background-job posture: no `DataScope`/caller, system-
+    generated ledger rows (`created_by_user_id=None`).
+
+    Redemption itself needs no new code here — per LD-07's "explicit spend" UX, an employee
+    applies for leave against the `is_comp_off=true` `LeaveType` exactly like any other
+    `requires_balance` leave type; the existing generic `LeaveApplicationService`/ledger
+    machinery already debits it on approval."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._ledger_repo = LeaveLedgerRepository()
+        self._type_repo = LeaveTypeRepository()
+
+    async def credit_company(self, company_id: UUID) -> int:
+        """Reads Attendance's terminal, comp-off-bearing `OvertimeRecord`s as a read-only fact
+        (LD-07 — Leave never writes to Attendance tables) and writes one `COMP_OFF_CREDIT`
+        ledger row per record not yet credited (idempotency keyed on
+        `reference_id=overtime_record_id`, mirrors `exists_for_cycle`'s role for accrual).
+        Skips entirely if the company hasn't designated a comp-off leave type yet (LD-14), or
+        for any individual record whose policy version has no `comp_off_day_length_minutes`
+        configured — never guesses a conversion basis."""
+        comp_off_type = await self._type_repo.get_comp_off_type(
+            self._session, company_id=company_id
+        )
+        if comp_off_type is None:
+            return 0
+
+        from hrms.modules.attendance.service import OvertimeRecordService
+
+        facts = await OvertimeRecordService(self._session).list_comp_off_facts(company_id)
+
+        written = 0
+        for fact in facts:
+            if fact.comp_off_day_length_minutes is None or fact.comp_off_day_length_minutes <= 0:
+                continue
+            already_credited = await self._ledger_repo.exists_with_reference(
+                self._session,
+                company_id=company_id,
+                entry_type="COMP_OFF_CREDIT",
+                reference_id=fact.overtime_record_id,
+            )
+            if already_credited:
+                continue
+
+            amount = (
+                Decimal(fact.comp_off_minutes) / Decimal(fact.comp_off_day_length_minutes)
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if amount <= 0:
+                continue
+
+            await self._ledger_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": fact.employee_id,
+                    "leave_type_id": comp_off_type.id,
+                    "entry_type": "COMP_OFF_CREDIT",
+                    "amount": amount,
+                    "effective_date": fact.attendance_date,
+                    "reference_id": fact.overtime_record_id,
+                    "reason": f"Comp-off earned for {fact.attendance_date:%d %b %Y}",
+                    "created_by_user_id": None,
+                },
+            )
+            written += 1
+        return written
+
+    async def expire_company(self, company_id: UUID, *, as_of: date) -> int:
+        """LD-14's simple expiry heuristic — no FIFO lot-tracking against the pooled balance
+        (LD-03: balance is always a derived `SUM`, with no per-entry "remaining" concept). For
+        every `COMP_OFF_CREDIT` entry whose source `OvertimeRecord.comp_off_expiry_date` has
+        passed and that hasn't already been offset (idempotency keyed on
+        `reference_id=credit.id`), writes one offsetting `ADJUSTMENT` for the credit's full
+        original amount — but only if the employee's *current* comp-off balance still covers
+        it. If the balance has already fallen below the credit's amount (some of it was spent
+        since), nothing is expired for that credit — this never drives a balance negative, at
+        the cost of being generous in the edge case where a newer credit was drawn down first."""
+        comp_off_type = await self._type_repo.get_comp_off_type(
+            self._session, company_id=company_id
+        )
+        if comp_off_type is None:
+            return 0
+
+        from hrms.modules.attendance.service import OvertimeRecordService
+
+        facts_by_id = {
+            f.overtime_record_id: f
+            for f in await OvertimeRecordService(self._session).list_comp_off_facts(company_id)
+        }
+
+        credits = await self._ledger_repo.list_credits_for_expiry(
+            self._session, company_id=company_id, leave_type_id=comp_off_type.id
+        )
+
+        expired = 0
+        for credit in credits:
+            fact = facts_by_id.get(credit.reference_id) if credit.reference_id else None
+            expiry_date = fact.comp_off_expiry_date if fact else None
+            if expiry_date is None or expiry_date > as_of:
+                continue
+            already_expired = await self._ledger_repo.exists_with_reference(
+                self._session,
+                company_id=company_id,
+                entry_type="ADJUSTMENT",
+                reference_id=credit.id,
+            )
+            if already_expired:
+                continue
+
+            balances = await self._ledger_repo.get_balances(
+                self._session, company_id=company_id, employee_id=credit.employee_id
+            )
+            current_balance = next(
+                (b.balance for b in balances if b.leave_type_id == comp_off_type.id),
+                Decimal("0.00"),
+            )
+            if current_balance < credit.amount:
+                continue
+
+            await self._ledger_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": credit.employee_id,
+                    "leave_type_id": comp_off_type.id,
+                    "entry_type": "ADJUSTMENT",
+                    "amount": -credit.amount,
+                    "effective_date": as_of,
+                    "reference_id": credit.id,
+                    "reason": f"Comp-off expired (earned {credit.effective_date:%d %b %Y})",
+                    "created_by_user_id": None,
+                },
+            )
+            expired += 1
+        return expired
+
 
 class LeaveApplicationService:
     """L4 — submission + approval workflow (LEAVE_DECISION_LOG.md LD-02/LD-05/LD-12/LD-13).
@@ -949,6 +1730,7 @@ class LeaveApplicationService:
         self._type_repo = LeaveTypeRepository()
         self._policy_repo = LeavePolicyRepository()
         self._ledger_repo = LeaveLedgerRepository()
+        self._combination_rule_repo = LeaveCombinationRuleRepository()
 
     # -----------------------------------------------------------------
     # Shared helpers
@@ -1122,6 +1904,28 @@ class LeaveApplicationService:
         if leave_type is None:
             raise NotFoundError("Resource not found")
 
+        # LD-16: reject if another leave type this employee already has an active (SUBMITTED or
+        # APPROVED) application for, overlapping this date range, has an explicit
+        # allowed=False combination rule against the type being submitted. No rule for a pair
+        # means allowed — matches today's behavior, where nothing blocks any combination.
+        other_active_types = await self._repo.list_active_overlapping_other_types(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            leave_type_id=body.leave_type_id,
+            start_date=body.start_date,
+            end_date=body.end_date,
+        )
+        for other_type_id in other_active_types:
+            rule = await self._combination_rule_repo.get_by_pair(
+                self._session,
+                company_id=company_id,
+                leave_type_id_a=body.leave_type_id,
+                leave_type_id_b=other_type_id,
+            )
+            if rule is not None and not rule.allowed:
+                raise LeaveApplicationCombinationNotAllowedError()
+
         from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
 
         resolver = CalendarResolutionService(self._session)
@@ -1144,6 +1948,16 @@ class LeaveApplicationService:
         )
         if policy_version is None:
             raise LeaveApplicationPolicyNotResolvedError()
+
+        # LD-18: reads the existing Employee.status fact (no new Employee-module schema) — only
+        # blocks when the policy explicitly opts out (default True preserves the prior
+        # no-such-check behavior for every existing policy version).
+        if not policy_version.allowed_during_probation:
+            from hrms.modules.employee.service import EmployeeService
+
+            employee = await EmployeeService(self._session).get_employee(company_id, employee_id)
+            if employee.status == "PROBATION":
+                raise LeaveApplicationNotAllowedDuringProbationError()
 
         if on_behalf:
             if not (
@@ -1192,18 +2006,32 @@ class LeaveApplicationService:
             current_balance = next(
                 (b.balance for b in balances if b.leave_type_id == leave_type.id), Decimal("0.00")
             )
+            # LD-15: when this leave type's policy reserves balance on submission, other still-
+            # SUBMITTED applications for it block further balance too — derived live from
+            # leave_application, never a stored figure. Default (reserve_balance_on_submission=
+            # False) preserves the original LD-06 behavior exactly: only the ledger's own balance
+            # is checked, pending applications don't count against it.
+            if policy_version.reserve_balance_on_submission:
+                reserved = await self._repo.sum_pending_for_type(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    leave_type_id=leave_type.id,
+                )
+                current_balance -= reserved
             # LD-06: never negative — hard-capped at current balance, no exceptions.
             if current_balance < total_days:
                 raise LeaveApplicationInsufficientBalanceError()
 
         approval_chain = policy_version.approval_chain
         resolved_manager_id: UUID | None = None
+        resolved_department_head_id: UUID | None = None
         approval_stage: str | None
         if approval_chain == "AUTO":
             approval_stage = None
         elif approval_chain == "HR":
             approval_stage = "HR"
-        else:  # MANAGER or MANAGER_THEN_HR
+        else:  # MANAGER, MANAGER_THEN_HR, or MANAGER_THEN_HOD_THEN_HR
             from hrms.modules.employee.service import EmployeeAssignmentService
 
             assignment_service = EmployeeAssignmentService(self._session)
@@ -1213,9 +2041,34 @@ class LeaveApplicationService:
             resolved_manager_id = (
                 employee_assignment.reporting_manager_id if employee_assignment else None
             )
-            # Mirrors Regularization/Overtime: resolution failure routes to HR, audited, never
-            # auto-approved on failure.
-            approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
+            if (
+                approval_chain == "MANAGER_THEN_HOD_THEN_HR"
+                and employee_assignment is not None
+                and employee_assignment.department_id is not None
+            ):
+                from hrms.modules.organisation.repository import OrganisationRepository
+
+                department = await OrganisationRepository().get_department(
+                    self._session,
+                    company_id=company_id,
+                    department_id=employee_assignment.department_id,
+                )
+                head_id = department.head_employee_id if department else None
+                # An employee who is their own department's head can't review their own
+                # application (self-approval is always blocked, no escape hatch) — treating this
+                # as "no HOD resolved" for this application lets it fall through to HR instead of
+                # getting permanently stuck (LD-23), same posture as any other resolution gap.
+                resolved_department_head_id = head_id if head_id != employee_id else None
+
+            # LD-05/LD-23: resolution failure never blocks submission and never auto-approves —
+            # it drops that stage from this application's effective sequence, HR is always the
+            # guaranteed backstop.
+            sequence = effective_stage_sequence(
+                approval_chain,
+                manager_id=resolved_manager_id,
+                department_head_id=resolved_department_head_id,
+            )
+            approval_stage = sequence[0]
 
         application_id = uuid4()
         data = {
@@ -1229,10 +2082,12 @@ class LeaveApplicationService:
             "total_days": total_days,
             "reason": body.reason,
             "attachment_reference": body.attachment_reference,
+            "expected_delivery_date": body.expected_delivery_date,
             "status": "SUBMITTED",
             "approval_chain": approval_chain,
             "approval_stage": approval_stage,
             "resolved_approver_manager_id": resolved_manager_id,
+            "resolved_department_head_id": resolved_department_head_id,
             "submitted_by_user_id": actor_user_id,
             "submitted_at": now,
         }
@@ -1263,7 +2118,8 @@ class LeaveApplicationService:
             stage=None,
             comment=body.reason,
         )
-        if approval_chain in ("MANAGER", "MANAGER_THEN_HR") and resolved_manager_id is None:
+        manager_stage_chains = ("MANAGER", "MANAGER_THEN_HR", "MANAGER_THEN_HOD_THEN_HR")
+        if approval_chain in manager_stage_chains and resolved_manager_id is None:
             await self._record_action(
                 company_id=company_id,
                 leave_application_id=application_id,
@@ -1271,7 +2127,19 @@ class LeaveApplicationService:
                 actor_user_id=None,
                 actor_employee_id=None,
                 stage="MANAGER",
-                comment="No manager resolved as of the start date; routed to HR",
+                comment="No manager resolved as of the start date; routed to the next stage",
+            )
+        if approval_chain == "MANAGER_THEN_HOD_THEN_HR" and resolved_department_head_id is None:
+            await self._record_action(
+                company_id=company_id,
+                leave_application_id=application_id,
+                action="APPROVER_UNRESOLVED",
+                actor_user_id=None,
+                actor_employee_id=None,
+                stage="HOD",
+                comment=(
+                    "No department head resolved as of the start date; routed to the next stage"
+                ),
             )
 
         read = await self._read(row, company_id=company_id)
@@ -1325,6 +2193,12 @@ class LeaveApplicationService:
 
         if row.approval_stage == "MANAGER":
             if caller_employee_id is None or caller_employee_id != row.resolved_approver_manager_id:
+                raise LeaveApplicationApproverMismatchError()
+        elif row.approval_stage == "HOD":
+            if (
+                caller_employee_id is None
+                or caller_employee_id != row.resolved_department_head_id
+            ):
                 raise LeaveApplicationApproverMismatchError()
         else:  # HR
             if DataScopeLevel.COMPANY not in scope.levels:
@@ -1432,9 +2306,18 @@ class LeaveApplicationService:
         user_agent: str | None,
     ) -> LeaveApplicationRead:
         now = datetime.now(UTC)
-        is_final_stage = not (
-            row.approval_chain == "MANAGER_THEN_HR" and row.approval_stage == "MANAGER"
+        # LD-23: generalizes the old hardcoded "MANAGER_THEN_HR + at MANAGER stage -> not final"
+        # check into a lookup against this application's own effective stage sequence
+        # (recomputed from its snapshotted resolved_approver_manager_id/
+        # resolved_department_head_id — deterministic, no re-resolution against current
+        # org-chart state).
+        next_stage = next_approval_stage(
+            row.approval_chain,
+            row.approval_stage,
+            manager_id=row.resolved_approver_manager_id,
+            department_head_id=row.resolved_department_head_id,
         )
+        is_final_stage = next_stage is None
         values: dict[str, Any] = (
             {
                 "status": "APPROVED",
@@ -1444,7 +2327,7 @@ class LeaveApplicationService:
                 "reviewer_comment": reviewer_comment,
             }
             if is_final_stage
-            else {"approval_stage": "HR"}
+            else {"approval_stage": next_stage}
         )
 
         before_read = await self._read(row, company_id=company_id)
@@ -1466,7 +2349,7 @@ class LeaveApplicationService:
                 action="STAGE_APPROVED",
                 actor_user_id=actor_user_id,
                 actor_employee_id=actor_employee_id,
-                stage="MANAGER",
+                stage=row.approval_stage,
                 comment=reviewer_comment,
             )
             read = await self._read(updated, company_id=company_id)

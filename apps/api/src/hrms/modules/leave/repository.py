@@ -8,17 +8,20 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.leave.models import (
     LeaveApplication,
     LeaveApplicationAction,
     LeaveApplicationDay,
+    LeaveCombinationRule,
     LeaveLedgerEntry,
     LeavePolicy,
     LeavePolicyVersion,
     LeaveType,
+    LeaveYearSetting,
+    StatutoryLeaveMinimum,
 )
 
 
@@ -46,6 +49,20 @@ class LeaveTypeRepository:
             .order_by(LeaveType.name)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def get_comp_off_type(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> LeaveType | None:
+        """LD-14 — the one active `is_comp_off=true` leave type for this company, if HR has
+        designated one yet. `None` is a valid, non-error state (not configured), matching the
+        accrual engine's own "skip if not configured" posture for other unset policy fields."""
+        stmt = select(LeaveType).where(
+            LeaveType.company_id == company_id,
+            LeaveType.is_comp_off.is_(True),
+            LeaveType.is_active.is_(True),
+            LeaveType.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     async def update(
         self,
@@ -330,6 +347,39 @@ class LeaveLedgerRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none() is not None
 
+    async def exists_with_reference(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        entry_type: str,
+        reference_id: UUID,
+    ) -> bool:
+        """Idempotency guard for the L5 comp-off credit engine (LD-14) — mirrors
+        `exists_for_cycle`'s role for accrual, but keyed on `reference_id` (the
+        `overtime_record_id`) rather than a cycle date, since a comp-off credit is a one-off
+        event, not a recurring cycle."""
+        stmt = select(LeaveLedgerEntry.id).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.entry_type == entry_type,
+            LeaveLedgerEntry.reference_id == reference_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+    async def list_credits_for_expiry(
+        self, session: AsyncSession, *, company_id: UUID, leave_type_id: UUID
+    ) -> list[LeaveLedgerEntry]:
+        """All `COMP_OFF_CREDIT` entries for this leave type — the expiry sweep (LD-14)
+        cross-references each one's `reference_id` (the source `overtime_record_id`) against
+        Attendance's facts to find its expiry date, since `leave_ledger` itself has no
+        `expiry_date` column (LD-02's locked shape)."""
+        stmt = select(LeaveLedgerEntry).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.leave_type_id == leave_type_id,
+            LeaveLedgerEntry.entry_type == "COMP_OFF_CREDIT",
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def get_balances(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
     ) -> list[LeaveBalanceRow]:
@@ -411,6 +461,70 @@ class LeaveApplicationRepository:
             LeaveApplication.status.notin_(exclude_statuses),
         )
         return len((await session.execute(stmt)).scalars().all())
+
+    async def sum_pending_for_type(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, leave_type_id: UUID
+    ) -> Decimal:
+        """LD-15 — reserved balance for one leave type, derived live from every currently
+        `SUBMITTED` application (never stored — no new ledger entry type). Used by `submit()`'s
+        balance check when the resolved policy version has `reserve_balance_on_submission`
+        enabled."""
+        stmt = select(func.coalesce(func.sum(LeaveApplication.total_days), 0)).where(
+            LeaveApplication.company_id == company_id,
+            LeaveApplication.employee_id == employee_id,
+            LeaveApplication.leave_type_id == leave_type_id,
+            LeaveApplication.status == "SUBMITTED",
+        )
+        return (await session.execute(stmt)).scalar_one()
+
+    async def sum_pending_by_leave_type(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> dict[UUID, Decimal]:
+        """Same derivation as `sum_pending_for_type`, grouped across every leave type at once —
+        backs the `/leave-balances` read (LD-15), which shows Reserved/Pending Balance for every
+        type in one response rather than one call per type."""
+        stmt = (
+            select(
+                LeaveApplication.leave_type_id,
+                func.coalesce(func.sum(LeaveApplication.total_days), 0),
+            )
+            .where(
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.employee_id == employee_id,
+                LeaveApplication.status == "SUBMITTED",
+            )
+            .group_by(LeaveApplication.leave_type_id)
+        )
+        rows = (await session.execute(stmt)).all()
+        return {r[0]: r[1] for r in rows}
+
+    async def list_active_overlapping_other_types(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID,
+        start_date: date,
+        end_date: date,
+    ) -> list[UUID]:
+        """LD-16 — distinct `leave_type_id`s (other than `leave_type_id`) with a currently
+        active (`SUBMITTED` or `APPROVED`) application overlapping `[start_date, end_date]` for
+        this employee. Backs `submit()`'s combination-rule check — `REJECTED`/`CANCELLED`
+        applications are not "active" and never block a new submission."""
+        stmt = (
+            select(LeaveApplication.leave_type_id)
+            .where(
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.employee_id == employee_id,
+                LeaveApplication.leave_type_id != leave_type_id,
+                LeaveApplication.status.in_(("SUBMITTED", "APPROVED")),
+                LeaveApplication.start_date <= end_date,
+                LeaveApplication.end_date >= start_date,
+            )
+            .distinct()
+        )
+        return list((await session.execute(stmt)).scalars().all())
 
     async def list_filtered(
         self,
@@ -532,3 +646,163 @@ class LeaveApplicationActionRepository:
             .order_by(LeaveApplicationAction.created_at)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Leave Combination Rule — client spec §7 (LD-16)
+# ---------------------------------------------------------------------------
+
+
+class LeaveCombinationRuleRepository:
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> LeaveCombinationRule:
+        row = LeaveCombinationRule(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[LeaveCombinationRule]:
+        stmt = (
+            select(LeaveCombinationRule)
+            .where(LeaveCombinationRule.company_id == company_id)
+            .order_by(LeaveCombinationRule.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, rule_id: UUID
+    ) -> LeaveCombinationRule | None:
+        stmt = select(LeaveCombinationRule).where(
+            LeaveCombinationRule.id == rule_id, LeaveCombinationRule.company_id == company_id
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_pair(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        leave_type_id_a: UUID,
+        leave_type_id_b: UUID,
+    ) -> LeaveCombinationRule | None:
+        """Order-independent lookup — a rule stored as (A, B) governs a submission checking
+        (B, A) just as much (LD-16: the pair is unordered)."""
+        stmt = select(LeaveCombinationRule).where(
+            LeaveCombinationRule.company_id == company_id,
+            or_(
+                (LeaveCombinationRule.leave_type_id_a == leave_type_id_a)
+                & (LeaveCombinationRule.leave_type_id_b == leave_type_id_b),
+                (LeaveCombinationRule.leave_type_id_a == leave_type_id_b)
+                & (LeaveCombinationRule.leave_type_id_b == leave_type_id_a),
+            ),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete(self, session: AsyncSession, *, company_id: UUID, rule_id: UUID) -> bool:
+        result = await session.execute(
+            delete(LeaveCombinationRule).where(
+                LeaveCombinationRule.id == rule_id, LeaveCombinationRule.company_id == company_id
+            )
+        )
+        return result.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Leave Year Setting — client spec §10 (LD-20), singleton per company
+# ---------------------------------------------------------------------------
+
+
+class LeaveYearSettingRepository:
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> LeaveYearSetting | None:
+        stmt = select(LeaveYearSetting).where(LeaveYearSetting.company_id == company_id)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> LeaveYearSetting:
+        row = LeaveYearSetting(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> LeaveYearSetting | None:
+        stmt = (
+            update(LeaveYearSetting)
+            .where(
+                LeaveYearSetting.company_id == company_id,
+                LeaveYearSetting.version == expected_version,
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(LeaveYearSetting)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Statutory Leave Minimum — client spec §16 (LD-22), legal compliance floor
+# ---------------------------------------------------------------------------
+
+
+class StatutoryLeaveMinimumRepository:
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> StatutoryLeaveMinimum:
+        row = StatutoryLeaveMinimum(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[StatutoryLeaveMinimum]:
+        stmt = (
+            select(StatutoryLeaveMinimum)
+            .where(StatutoryLeaveMinimum.company_id == company_id)
+            .order_by(StatutoryLeaveMinimum.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, minimum_id: UUID
+    ) -> StatutoryLeaveMinimum | None:
+        stmt = select(StatutoryLeaveMinimum).where(
+            StatutoryLeaveMinimum.id == minimum_id,
+            StatutoryLeaveMinimum.company_id == company_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete(
+        self, session: AsyncSession, *, company_id: UUID, minimum_id: UUID
+    ) -> bool:
+        result = await session.execute(
+            delete(StatutoryLeaveMinimum).where(
+                StatutoryLeaveMinimum.id == minimum_id,
+                StatutoryLeaveMinimum.company_id == company_id,
+            )
+        )
+        return result.rowcount > 0
+
+    async def max_min_days_per_year(
+        self, session: AsyncSession, *, company_id: UUID, leave_category: str
+    ) -> Decimal | None:
+        """LD-22 — the strictest configured floor for this category, since the publish-time
+        check doesn't know which state/establishment_type a policy will end up assigned to yet
+        (fail-safe: a policy can never publish below the toughest applicable minimum)."""
+        stmt = select(func.max(StatutoryLeaveMinimum.min_days_per_year)).where(
+            StatutoryLeaveMinimum.company_id == company_id,
+            StatutoryLeaveMinimum.leave_category == leave_category,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()

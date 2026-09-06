@@ -2,6 +2,7 @@
 mirroring `organisation.repository`'s `ShiftVersionRepository` shape (identity CRUD + version
 CRUD + full-replace typed children, no independent lifecycle for children)."""
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -1519,6 +1520,20 @@ class AttendanceRegularizationActionRepository:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class CompOffFactRow:
+    """Result shape of `OvertimeRecordRepository.list_comp_off_eligible` — the read-only fact
+    Leave's L5 comp-off credit engine consumes (LEAVE_DECISION_LOG.md LD-14). Leave never writes
+    to attendance tables; this is the one seam it reads through."""
+
+    overtime_record_id: UUID
+    employee_id: UUID
+    attendance_date: date
+    comp_off_minutes: int
+    comp_off_expiry_date: date | None
+    comp_off_day_length_minutes: int | None
+
+
 class OvertimeRecordRepository:
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> OvertimeRecord:
         row = OvertimeRecord(**data)
@@ -1665,6 +1680,50 @@ class OvertimeRecordRepository:
             *conditions
         )
         return int((await session.execute(stmt)).scalar_one())
+
+    async def list_comp_off_eligible(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[CompOffFactRow]:
+        """LEAVE_DECISION_LOG.md LD-14 — the read-only fact feed for Leave's L5 comp-off credit
+        engine. Every terminal (`AUTO_APPROVED`/`APPROVED`) record with `comp_off_minutes > 0`,
+        joined with its `OvertimePolicyVersion` for the minutes-per-day conversion basis. No
+        window/date filter — comp-off volume is low (mirrors `LeaveAccrualService`'s own
+        low-volume assumption, ADR-0004), and idempotency against re-crediting an already-handled
+        record is the caller's (Leave's) responsibility, keyed on `reference_id`, not this
+        query's."""
+        stmt = (
+            select(
+                OvertimeRecord.id,
+                OvertimeRecord.employee_id,
+                OvertimeRecord.attendance_date,
+                OvertimeRecord.comp_off_minutes,
+                OvertimeRecord.comp_off_expiry_date,
+                OvertimePolicyVersion.comp_off_day_length_minutes,
+            )
+            .select_from(OvertimeRecord)
+            .join(
+                OvertimePolicyVersion,
+                OvertimePolicyVersion.id == OvertimeRecord.overtime_policy_version_id,
+            )
+            .where(
+                OvertimeRecord.company_id == company_id,
+                OvertimeRecord.status.in_(("AUTO_APPROVED", "APPROVED")),
+                OvertimeRecord.comp_off_minutes > 0,
+            )
+            .order_by(OvertimeRecord.attendance_date)
+        )
+        rows = (await session.execute(stmt)).all()
+        return [
+            CompOffFactRow(
+                overtime_record_id=r[0],
+                employee_id=r[1],
+                attendance_date=r[2],
+                comp_off_minutes=r[3],
+                comp_off_expiry_date=r[4],
+                comp_off_day_length_minutes=r[5],
+            )
+            for r in rows
+        ]
 
 
 class OvertimeActionRepository:

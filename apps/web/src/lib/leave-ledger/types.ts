@@ -30,6 +30,7 @@ export interface LeaveBalance {
   leave_type_code: string;
   leave_type_name: string;
   balance: string;
+  reserved_balance: string;
 }
 
 /** Mirrors `LeaveLedgerAdjustmentCreate`. */
@@ -37,6 +38,15 @@ export interface LeaveLedgerAdjustmentPayload {
   employee_id: string;
   leave_type_id: string;
   amount: string;
+  effective_date: string;
+  reason: string;
+}
+
+/** Mirrors `LeaveLedgerEncashmentCreate` (LD-19). */
+export interface LeaveLedgerEncashmentPayload {
+  employee_id: string;
+  leave_type_id: string;
+  days: string;
   effective_date: string;
   reason: string;
 }

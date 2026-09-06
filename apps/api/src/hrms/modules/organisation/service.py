@@ -31,6 +31,7 @@ from hrms.modules.organisation.exceptions import (
     InvalidBranchError,
     InvalidCtcRangeError,
     InvalidDepartmentError,
+    InvalidDepartmentHeadError,
     InvalidGradeError,
     InvalidHolidayCalendarError,
     InvalidLegalEntityError,
@@ -1115,6 +1116,23 @@ class OrganisationService:
         if branch is None:
             raise InvalidBranchError()
 
+    async def _assert_department_head_reference(
+        self, company_id: UUID, head_employee_id: UUID
+    ) -> None:
+        """A Department's `head_employee_id`, when provided, must reference an existing,
+        same-tenant employee — repo-level existence check, same shape as Employee's own
+        `_assert_manager_reference` (cheaper than the full `EmployeeService`, no data-scope
+        resolution needed for a plain existence check). `head_employee_id` has carried a real
+        DB-level FK to `employee.id` since migration 20260813140000 — this is the first slice
+        to validate it at the application layer too (LD-23)."""
+        from hrms.modules.employee.repository import EmployeeRepository
+
+        employee = await EmployeeRepository().get_employee(
+            self._session, company_id=company_id, employee_id=head_employee_id
+        )
+        if employee is None:
+            raise InvalidDepartmentHeadError()
+
     async def _validate_department_parent(
         self, company_id: UUID, own_id: UUID | None, parent_id: UUID
     ) -> None:
@@ -1151,6 +1169,8 @@ class OrganisationService:
             await self._assert_branch_ownership(company_id, body.branch_id)
         if body.parent_id is not None:
             await self._validate_department_parent(company_id, None, body.parent_id)
+        if body.head_employee_id is not None:
+            await self._assert_department_head_reference(company_id, body.head_employee_id)
 
         now = datetime.now(UTC)
         department_id = uuid4()
@@ -1163,6 +1183,7 @@ class OrganisationService:
                 "parent_id": body.parent_id,
                 "name": body.name,
                 "code": body.code,
+                "head_employee_id": body.head_employee_id,
                 "is_active": True,
                 "created_at": now,
                 "updated_at": now,
@@ -1215,6 +1236,8 @@ class OrganisationService:
             await self._assert_branch_ownership(company_id, patch.branch_id)
         if patch.parent_id is not None:
             await self._validate_department_parent(company_id, department_id, patch.parent_id)
+        if patch.head_employee_id is not None:
+            await self._assert_department_head_reference(company_id, patch.head_employee_id)
 
         before_read = department_to_read(department)
         # Captured before `update_department` runs below: that `UPDATE ... RETURNING`

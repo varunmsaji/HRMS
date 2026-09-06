@@ -1,9 +1,19 @@
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { STATUTORY_LEAVE_CATEGORIES } from "@/lib/leave-type/types";
 import type {
   LeaveTypeFormErrors,
   LeaveTypeFormValues,
 } from "@/lib/leave-type/validate-leave-type";
+
+const STATUTORY_CATEGORY_LABELS: Record<string, string> = {
+  EARNED: "Earned / Privilege Leave",
+  SICK: "Sick Leave",
+  CASUAL: "Casual Leave",
+  MATERNITY: "Maternity Leave",
+  PATERNITY: "Paternity Leave",
+};
 
 interface LeaveTypeFormProps {
   values: LeaveTypeFormValues;
@@ -76,7 +86,31 @@ export function LeaveTypeForm({
           checked={values.requiresBalance}
           onChange={(checked) => update("requiresBalance", checked)}
         />
+        <Checkbox
+          label="This is the company's comp-off type (only one leave type per company may be marked this way — approved overtime credits its balance automatically)"
+          checked={values.isCompOff}
+          onChange={(checked) => update("isCompOff", checked)}
+        />
       </div>
+      <FormField
+        id={id("statutory-category")}
+        label="Statutory category"
+        description="Classifies this leave type against a legal minimum (client spec §16) — leave unset for types with no statutory floor (LOP, comp-off, bereavement, ...)."
+      >
+        <NativeSelect
+          value={values.statutoryCategory}
+          onChange={(e) =>
+            update("statutoryCategory", e.target.value as LeaveTypeFormValues["statutoryCategory"])
+          }
+        >
+          <option value="">None</option>
+          {STATUTORY_LEAVE_CATEGORIES.map((category) => (
+            <option key={category} value={category}>
+              {STATUTORY_CATEGORY_LABELS[category] ?? category}
+            </option>
+          ))}
+        </NativeSelect>
+      </FormField>
     </div>
   );
 }
