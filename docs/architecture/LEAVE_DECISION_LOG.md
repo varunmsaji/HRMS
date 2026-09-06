@@ -824,7 +824,15 @@ Department Head assignment gap in Organisation this log had been reading but cou
 exercise). L6 (a full, standalone frontend module) was never built as a separate slice —
 instead, each config surface (leave types, policies, combination rules, leave year setting,
 balances/encashment, statutory minimums) got its own page as it shipped, application submission
-got its own dialog, and no gap in UI coverage remains for anything built through LD-23. The one
-remaining open item is outside this module's own scope: the Employee confirmation/probation
-transition workflow (blocks `allowed_during_probation`/`accrue_during_probation`, LD-18, from
-ever actually triggering).
+got its own dialog, and no gap in UI coverage remains for anything built through LD-23. The item
+this log previously flagged as the one remaining external gap — the Employee module never
+writing a real `PROBATION`/`ACTIVE` transition, so LD-18's `allowed_during_probation`/
+`accrue_during_probation` flags could never actually trigger — is now closed via the Employee
+module's own "minimal unblock" slice (`EmploymentService.create_employment` auto-transitions
+`PRE_JOINING` → `PROBATION` on joining; `POST /employees/{id}/confirm` transitions
+`PROBATION` → `ACTIVE`), proven end-to-end by
+`tests/integration/modules/leave/test_leave_probation_rules.py::test_confirm_unblocks_probation_restricted_leave_type`.
+That slice deliberately did not build the full FR-EMP-010 feature — no reminders, no
+manager-recommendation routing, no auto-extend/auto-confirm rules, no letter generation — so a
+richer confirmation workflow remains a legitimate future Employee-module enhancement, but LD-18's
+flags are no longer permanently inert.

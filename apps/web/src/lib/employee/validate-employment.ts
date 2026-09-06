@@ -1,6 +1,7 @@
 export interface EmploymentFormValues {
   legalEntityId: string;
   joiningDate: string;
+  probationEndDate: string;
 }
 
 export type EmploymentFormErrors = Partial<Record<keyof EmploymentFormValues, string>>;
@@ -8,13 +9,17 @@ export type EmploymentFormErrors = Partial<Record<keyof EmploymentFormValues, st
 export const EMPTY_EMPLOYMENT_FORM_VALUES: EmploymentFormValues = {
   legalEntityId: "",
   joiningDate: "",
+  probationEndDate: "",
 };
 
-/** Full payload for `POST /employees/{id}/employments` — covers both first hire and rehire. */
+/** Full payload for `POST /employees/{id}/employments` — covers both first hire and rehire.
+ * `probation_end_date` is optional and purely informational (Employee confirmation, minimal
+ * slice) — nothing reads or auto-computes it. */
 export function buildEmploymentCreatePayload(values: EmploymentFormValues): Record<string, unknown> {
   return {
     legal_entity_id: values.legalEntityId,
     joining_date: values.joiningDate,
+    probation_end_date: values.probationEndDate || null,
   };
 }
 

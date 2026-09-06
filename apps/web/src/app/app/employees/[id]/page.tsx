@@ -84,6 +84,9 @@ export default function EmployeeDetailPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
 
+  const [confirmProbationOpen, setConfirmProbationOpen] = useState(false);
+  const [confirmingProbation, setConfirmingProbation] = useState(false);
+
   const loadEmployee = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -231,8 +234,46 @@ export default function EmployeeDetailPage() {
     }
   }
 
+  async function handleConfirmProbation() {
+    if (!employee) return;
+    setConfirmingProbation(true);
+    try {
+      const updated = await apiClient.post<Employee>(
+        `/employees/${employee.id}/confirm`,
+        {},
+        { ifMatch: String(employee.version) },
+      );
+      setEmployee(updated);
+      toast({ title: "Employee confirmed", variant: "success" });
+      setConfirmProbationOpen(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "STALE_RESOURCE") {
+        toast({
+          title: "Could not confirm employee",
+          description: "This employee record was changed by someone else. Reload and try again.",
+          variant: "danger",
+        });
+        setConfirmProbationOpen(false);
+        return;
+      }
+      if (err instanceof ApiError && err.status === 403) {
+        toast({ title: "You don't have permission to do that", variant: "danger" });
+        setConfirmProbationOpen(false);
+        return;
+      }
+      toast({
+        title: "Could not confirm employee",
+        description: describeApiError(err),
+        variant: "danger",
+      });
+    } finally {
+      setConfirmingProbation(false);
+    }
+  }
+
   const canUpdate = can("EMPLOYEE.UPDATE");
   const canDeactivate = can("EMPLOYEE.DEACTIVATE");
+  const canConfirm = can("EMPLOYEE.CONFIRM");
 
   return (
     <div className="space-y-6">
@@ -248,6 +289,11 @@ export default function EmployeeDetailPage() {
         actions={
           employee && !editing ? (
             <div className="flex items-center gap-2">
+              {canConfirm && employee.status === "PROBATION" ? (
+                <Button type="button" variant="outline" onClick={() => setConfirmProbationOpen(true)}>
+                  Confirm
+                </Button>
+              ) : null}
               {canDeactivate ? (
                 <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)}>
                   {employee.is_active ? "Deactivate" : "Reactivate"}
@@ -372,6 +418,37 @@ export default function EmployeeDetailPage() {
               disabled={statusChanging}
             >
               {statusChanging ? "Saving…" : employee?.is_active ? "Deactivate" : "Reactivate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={confirmProbationOpen}
+        onOpenChange={(open) => (!confirmingProbation ? setConfirmProbationOpen(open) : null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm employee?</DialogTitle>
+            <DialogDescription>
+              This moves the employee from Probation to Active. This action cannot be reversed.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmProbationOpen(false)}
+              disabled={confirmingProbation}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleConfirmProbation()}
+              disabled={confirmingProbation}
+            >
+              {confirmingProbation ? "Confirming…" : "Confirm"}
             </Button>
           </DialogFooter>
         </DialogContent>

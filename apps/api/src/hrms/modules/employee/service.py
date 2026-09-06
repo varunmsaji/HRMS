@@ -21,6 +21,7 @@ from hrms.modules.employee.exceptions import (
     CompensationDatesOverlapError,
     CompensationVersionRequiredError,
     DuplicateEmployeeCodeError,
+    EmployeeNotOnProbationError,
     EmployeeSeatLimitExceededError,
     EmploymentDatesOverlapError,
     EmploymentNotActiveError,
@@ -55,6 +56,7 @@ from hrms.modules.employee.schemas import (
     BankRead,
     CompensationCreate,
     CompensationRead,
+    EmployeeConfirmInput,
     EmployeeCreate,
     EmployeeRead,
     EmployeeUpdate,
@@ -423,6 +425,78 @@ class EmployeeService:
             user_agent=user_agent,
         )
 
+    async def confirm_employee(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: EmployeeConfirmInput,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeRead:
+        """`POST /employees/{id}/confirm` — one-way `PROBATION` -> `ACTIVE`. Minimal
+        confirmation slice: no reminders, no manager-recommendation routing, no auto-extend/
+        auto-confirm rules, no letter generation (full FR-EMP-010 scope, deliberately not built
+        here). Mirrors `EmploymentService.terminate_employment`'s shape — a dedicated
+        precondition-guarded action, not a generic-`PATCH`-reachable field, since `status` isn't
+        settable via `EmployeeUpdate` at all."""
+        visible_ids = (
+            await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
+            if scope is not None
+            else None
+        )
+        employee = await self._repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+        if employee.status != "PROBATION":
+            raise EmployeeNotOnProbationError()
+
+        before_read = employee_to_read(employee)
+        now = datetime.now(UTC)
+        updated = await self._repo.update_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            values={"status": "ACTIVE"},
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            current = await self._repo.get_employee(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            if current is None:
+                raise NotFoundError("Resource not found")
+            current_read = employee_to_read(current)
+            raise StaleResourceError(
+                "This employee has been modified by another request",
+                current=employee_to_audit_dict(current_read),
+            )
+
+        after_read = employee_to_read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_CONFIRMED",
+            entity_type="employee",
+            entity_id=employee_id,
+            before=employee_to_audit_dict(before_read),
+            after=employee_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
 
 class EmploymentService:
     """E-03 — employment lifecycle. Create (first hire or rehire), read/list (incl. as-of-date),
@@ -533,6 +607,7 @@ class EmploymentService:
                     "employee_id": employee_id,
                     "legal_entity_id": body.legal_entity_id,
                     "joining_date": body.joining_date,
+                    "probation_end_date": body.probation_end_date,
                     "status": "ACTIVE",
                     "previous_employment_id": previous_employment_id,
                     "version": 1,
@@ -562,6 +637,40 @@ class EmploymentService:
             ip=ip_address,
             user_agent=user_agent,
         )
+
+        # Employee confirmation (minimal slice) — "pre-joining" ends once they actually join.
+        # Guarded to only fire from `PRE_JOINING` so a rejoin/transfer never resets an
+        # already-`ACTIVE` employee back into probation. Best-effort: a concurrent-update race
+        # on the employee row here just skips the transition rather than failing employment
+        # creation over it — this is a side effect of joining, not the primary action.
+        employee = await self._employee_repo.get_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if employee is not None and employee.status == "PRE_JOINING":
+            employee_before = employee_to_read(employee)
+            confirmed_employee = await self._employee_repo.update_employee(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                values={"status": "PROBATION"},
+                expected_version=employee.version,
+                now=now,
+            )
+            if confirmed_employee is not None:
+                employee_after = employee_to_read(confirmed_employee)
+                await self._audit.record(
+                    self._session,
+                    company_id=company_id,
+                    actor_user_id=actor_user_id,
+                    action="EMPLOYEE_PROBATION_STARTED",
+                    entity_type="employee",
+                    entity_id=employee_id,
+                    before=employee_to_audit_dict(employee_before),
+                    after=employee_to_audit_dict(employee_after),
+                    ip=ip_address,
+                    user_agent=user_agent,
+                )
+
         return read
 
     async def list_employments(

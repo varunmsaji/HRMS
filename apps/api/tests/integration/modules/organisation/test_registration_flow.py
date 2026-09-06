@@ -272,6 +272,8 @@ async def test_registration_success_full_row_graph(
                 # Added by employee_import (CSV bulk employee import) — defined in
                 # employee/permissions.py so it rides the same EMPLOYEE.* grant loop.
                 "EMPLOYEE.BULK_IMPORT",
+                # Added by Employee confirmation (minimal slice) — PROBATION -> ACTIVE.
+                "EMPLOYEE.CONFIRM",
                 "LEAVE.TYPE_MANAGE",
                 "LEAVE.POLICY_MANAGE",
                 "LEAVE.BALANCE_VIEW",

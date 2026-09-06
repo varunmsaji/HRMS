@@ -71,6 +71,9 @@ export interface Employment {
   legal_entity_id: string;
   joining_date: string;
   last_working_day: string | null;
+  /** Purely informational (Employee confirmation, minimal slice) — nothing reads or
+   * auto-computes this; HR sets/corrects it directly. */
+  probation_end_date: string | null;
   status: string;
   previous_employment_id: string | null;
   version: number;

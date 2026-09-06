@@ -117,6 +117,22 @@ class EmploymentNotActiveError(ConflictError):
         )
 
 
+class EmployeeNotOnProbationError(ConflictError):
+    """Raised when `confirm` is attempted against an employee whose `Employee.status` is not
+    `PROBATION` — mirrors `EmploymentNotActiveError`'s exact shape. Confirmation is a one-way,
+    one-time transition; there is no path that re-confirms an already-`ACTIVE` employee or
+    confirms one who never reached `PROBATION` (still `PRE_JOINING`) or has since moved on
+    (`EXITED`, etc.)."""
+
+    code = "EMPLOYEE_NOT_ON_PROBATION"
+
+    def __init__(self, message: str = "This employee is not on probation") -> None:
+        super().__init__(
+            message,
+            details=[{"field": "status", "code": "EMPLOYEE_NOT_ON_PROBATION", "message": message}],
+        )
+
+
 class InvalidLastWorkingDayError(ValidationError):
     code = "INVALID_LAST_WORKING_DAY"
 

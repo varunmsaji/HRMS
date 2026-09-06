@@ -82,9 +82,12 @@ the caller's `DataScope` via `EmployeeService.resolve_visible_employee_ids` exac
 unaffected by wiring `SELF`, since `REPORTEES`/`REPORTEE_TREE` is never *granted* to any
 manager-shaped role for this code, not merely narrowed at read time.
 
-The remaining codes not yet added (`.VIEW_DOCUMENTS`, `.CONFIRM`, etc.) belong to later slices —
-this task's own scope explicitly excludes the confirmation/probation workflow, so its permission
-codes are not added here either.
+Employee Confirmation adds `EMPLOYEE.CONFIRM` — this is the exact code named above as
+deliberately-not-added by that earlier slice; added now that the confirmation action itself
+exists (`POST /employees/{id}/confirm`, `PROBATION` -> `ACTIVE`). Deliberately minimal: no
+reminders, no manager-recommendation routing, no auto-extend/auto-confirm rules, no letter
+generation — see this feature's own plan/decision notes for the full FR-EMP-010 scope this does
+*not* cover. `.VIEW_DOCUMENTS` remains unaddressed, still belonging to a later slice.
 
 Bulk Employee Import adds `EMPLOYEE.BULK_IMPORT` (**new**) — gates the CSV upload/status/error
 endpoints in `modules/employee_import/`. Not folded into `EMPLOYEE_CREATE`: bulk-creating up to a
@@ -109,6 +112,7 @@ EMPLOYEE_VIEW_STATUTORY = "EMPLOYEE.VIEW_STATUTORY"
 EMPLOYEE_UPDATE_SENSITIVE = "EMPLOYEE.UPDATE_SENSITIVE"
 EMPLOYEE_VIEW_BANKING = "EMPLOYEE.VIEW_BANKING"
 EMPLOYEE_BULK_IMPORT = "EMPLOYEE.BULK_IMPORT"
+EMPLOYEE_CONFIRM = "EMPLOYEE.CONFIRM"
 
 EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_VIEW_ALL, "EMPLOYEE", "View all employees in the company"),
@@ -124,4 +128,5 @@ EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_UPDATE_SENSITIVE, "EMPLOYEE", "Edit PAN/Aadhaar/bank/statutory"),
     (EMPLOYEE_VIEW_BANKING, "EMPLOYEE", "View an employee's bank account details"),
     (EMPLOYEE_BULK_IMPORT, "EMPLOYEE", "Bulk-import employees from a CSV file"),
+    (EMPLOYEE_CONFIRM, "EMPLOYEE", "Confirm an employee from probation to active"),
 ]

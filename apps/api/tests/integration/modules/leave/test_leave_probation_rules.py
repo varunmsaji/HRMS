@@ -6,14 +6,14 @@ Reuses `_setup_full`/`_submit`/`_create_employee`/`_create_employment`/`_create_
 `_teardown` from `test_leave_application.py` — the same cross-file reuse pattern every other
 Leave test file in this suite already established.
 
-`Employee.status` has no transition workflow built yet — its own schema docstring says so
-explicitly ("system-managed via lifecycle actions; no transition exists in this slice"), and
-`EmployeeUpdate` has no `status` field at all. `_set_employee_status` below sets it directly via
-SQL, the only way to reach `PROBATION` in this codebase today. This is a real, current gap: these
-probation-gating flags are correctly implemented and read the real `Employee.status` column, but
-in practice cannot be triggered organically through any existing product workflow until Employee's
-own confirmation/probation lifecycle is built — nothing on the Leave side needs to change when
-that happens, since it already reads the column that will then start getting set for real.
+`_set_employee_status` below sets `Employee.status` directly via SQL — this predates the minimal
+Employee confirmation feature and is kept here to test these flags in isolation from that
+feature's own transition logic. As of that feature, `Employee.status` genuinely does reach
+`PROBATION` organically too: `EmploymentService.create_employment` auto-transitions
+`PRE_JOINING` -> `PROBATION` on joining, and `POST /employees/{id}/confirm` transitions
+`PROBATION` -> `ACTIVE` — see `test_confirm_unblocks_probation_restricted_leave_type` below for
+the real (no-SQL-hack) end-to-end proof, and
+`tests/integration/modules/employee/test_employee_confirmation.py` for that feature's own tests.
 """
 
 from datetime import date
@@ -180,6 +180,49 @@ async def test_accrue_during_probation_false_skips_probation_but_not_active(
         # entirely) — COALESCE's zero-row fallback serializes as a plain "0", not "0.00".
         assert await _balance(probation_employee["id"]) == "0"
         assert await _balance(active_employee["id"]) == "1.50"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_confirm_unblocks_probation_restricted_leave_type(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The real, no-SQL-hack end-to-end proof: `EmploymentService.create_employment` puts a new
+    employee into genuine `PROBATION` on its own; `allowed_during_probation=False` blocks their
+    submission exactly like the SQL-hack test above; `POST /employees/{id}/confirm` (the actual
+    Employee confirmation action) moves them to `ACTIVE`; the identical submission then
+    succeeds — proving the unblock, not just the flag's own isolated logic."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        ctx = await _setup_full(
+            client, headers, approval_chain="AUTO", allowed_during_probation=False
+        )
+        employee_id, leave_type_id = ctx["employee"]["id"], ctx["leave_type"]["id"]
+
+        employee = await client.get(f"/v1/employees/{employee_id}", headers=headers)
+        assert employee.json()["data"]["status"] == "PROBATION"
+
+        blocked = await _submit(
+            client, headers, employee_id=employee_id, leave_type_id=leave_type_id
+        )
+        assert blocked.status_code == 422, blocked.text
+        assert (
+            blocked.json()["error"]["code"] == "LEAVE_APPLICATION_NOT_ALLOWED_DURING_PROBATION"
+        )
+
+        confirmed = await client.post(
+            f"/v1/employees/{employee_id}/confirm",
+            headers={**headers, "If-Match": str(employee.json()["data"]["version"])},
+            json={},
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        assert confirmed.json()["data"]["status"] == "ACTIVE"
+
+        allowed = await _submit(
+            client, headers, employee_id=employee_id, leave_type_id=leave_type_id
+        )
+        assert allowed.status_code == 201, allowed.text
     finally:
         await _teardown(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

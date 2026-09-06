@@ -27,8 +27,14 @@ class Employee(Base, TimestampMixin):
     `uan_number` exist as columns (per `02_EMPLOYEE_DATA_MODEL.md` §3's ALTER TABLE target) but
     have no write path in this slice — `EMPLOYEE.UPDATE_SENSITIVE` is out of E-01's permission
     scope (`01_EMPLOYEE_FOUNDATION_AUDIT.md` §2.2). `status` defaults to `PRE_JOINING`
-    (FR-EMP-014, `docs/product/17_SRS_Phase1_Core_Modules.md:151`) and is system-managed only —
-    no lifecycle transition exists yet in this slice."""
+    (FR-EMP-014, `docs/product/17_SRS_Phase1_Core_Modules.md:151`), DB `CHECK`-locked to the
+    10-value enum as of the Employee confirmation feature — only two transitions exist:
+    `EmploymentService.create_employment` moves `PRE_JOINING` -> `PROBATION` (guarded to only
+    fire from `PRE_JOINING`, so a rejoin never resets an already-`ACTIVE` employee), and
+    `EmployeeService.confirm_employee` moves `PROBATION` -> `ACTIVE` explicitly. No other
+    transition (e.g. into `EXITED`, `SUSPENDED`) is wired yet — this is a deliberately minimal
+    slice, not the full FR-EMP-010 confirmation workflow (no reminders, no manager-recommendation
+    routing, no auto-extend/auto-confirm rules, no letter generation)."""
 
     __tablename__ = "employee"
 
@@ -93,6 +99,10 @@ class Employment(Base, TimestampMixin):
     )
     joining_date: Mapped[date] = mapped_column(Date)
     last_working_day: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Purely informational (mirrors Leave's LD-17 maternity-fields posture) — nothing reads or
+    # auto-computes this; HR sets/corrects it directly. Not a trigger for anything: the actual
+    # PROBATION -> ACTIVE transition is the explicit `EmployeeService.confirm_employee` action.
+    probation_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
     previous_employment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("employment.id"), nullable=True

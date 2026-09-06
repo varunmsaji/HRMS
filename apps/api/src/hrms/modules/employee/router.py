@@ -46,6 +46,7 @@ from hrms.modules.employee.dependencies import (
     get_employment_service,
 )
 from hrms.modules.employee.permissions import (
+    EMPLOYEE_CONFIRM,
     EMPLOYEE_CREATE,
     EMPLOYEE_DEACTIVATE,
     EMPLOYEE_PROMOTE,
@@ -66,6 +67,7 @@ from hrms.modules.employee.schemas import (
     BankRead,
     CompensationCreate,
     CompensationRead,
+    EmployeeConfirmInput,
     EmployeeCreate,
     EmployeeRead,
     EmployeeUpdate,
@@ -176,6 +178,34 @@ async def deactivate_employee(
     data = await service.deactivate_employee(
         tenant.company_id,
         employee_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/employees/{employee_id}/confirm", status_code=status.HTTP_200_OK)
+async def confirm_employee(
+    employee_id: UUID,
+    body: EmployeeConfirmInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_CONFIRM))],
+    service: Annotated[EmployeeService, Depends(get_employee_service)],
+) -> DataEnvelope[EmployeeRead]:
+    """Transitions `PROBATION` -> `ACTIVE` — one-way, never reversed. Minimal confirmation
+    slice: no reminders, no manager-recommendation routing, no auto-extend/auto-confirm rules,
+    no letter generation (full FR-EMP-010 scope, deliberately not built here)."""
+    data = await service.confirm_employee(
+        tenant.company_id,
+        employee_id,
+        body,
         expected_version=int(if_match),
         actor_user_id=tenant.user_id,
         scope=scope,

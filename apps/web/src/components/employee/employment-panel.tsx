@@ -260,6 +260,14 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                     <dd className="mt-0.5 text-sm text-foreground">{current.joining_date}</dd>
                   </div>
                   <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                      Probation end date
+                    </dt>
+                    <dd className="mt-0.5 text-sm text-foreground">
+                      {current.probation_end_date ?? "Not configured"}
+                    </dd>
+                  </div>
+                  <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Status</dt>
                     <dd className="mt-0.5 text-sm">
                       <Badge variant="success">Active</Badge>
@@ -334,6 +342,18 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                 type="date"
                 value={hireValues.joiningDate}
                 onChange={(e) => setHireValues({ ...hireValues, joiningDate: e.target.value })}
+              />
+            </FormField>
+            <FormField
+              id="hire-probation-end-date"
+              label="Probation end date"
+              description="Optional — purely informational, doesn't gate anything."
+              error={hireErrors.probationEndDate}
+            >
+              <Input
+                type="date"
+                value={hireValues.probationEndDate}
+                onChange={(e) => setHireValues({ ...hireValues, probationEndDate: e.target.value })}
               />
             </FormField>
           </div>

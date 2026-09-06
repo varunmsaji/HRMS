@@ -80,6 +80,16 @@ class EmployeeUpdate(BaseModel):
     is_active: bool | None = None
 
 
+class EmployeeConfirmInput(BaseModel):
+    """`POST /employees/{id}/confirm` — transitions `PROBATION` -> `ACTIVE`. No fields: unlike
+    `EmploymentTerminate` (which needs `last_working_day`), confirmation needs no input at all —
+    the before/after `Employee.status` values in the audit record are the entire story. Kept as
+    an explicit (empty) body model rather than no body, matching every other action in this
+    router."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class EmployeeRead(BaseModel):
     id: UUID
     company_id: UUID
@@ -163,25 +173,34 @@ class EmploymentCreate(BaseModel):
     (no prior employment rows) and a rehire (at least one prior, necessarily `TERMINATED`,
     episode exists). The distinction is not client-supplied: `previous_employment_id` is
     always computed server-side from the employee's own employment history, never accepted as
-    input (`status`/`version` are likewise system-set, never client-settable)."""
+    input (`status`/`version` are likewise system-set, never client-settable).
+
+    `probation_end_date` is optional and purely informational — nothing reads or auto-computes
+    it; the actual `PROBATION` -> `ACTIVE` transition is the explicit `confirm` action, never
+    gated by this date."""
 
     model_config = ConfigDict(extra="forbid")
 
     legal_entity_id: UUID
     joining_date: date
+    probation_end_date: date | None = None
 
 
 class EmploymentUpdate(BaseModel):
-    """Only `legal_entity_id` is correctable post-creation. `joining_date` is a historical
-    fact once recorded (no document states it is ever legitimately revised, and every other
-    slice in this codebase treats a spell's start as immutable); `status`/`last_working_day`
-    only ever change via the dedicated `terminate` action, never a generic field patch — this
-    keeps the one-way `ACTIVE` → `TERMINATED` transition from being reachable through an
-    unvalidated arbitrary-field update."""
+    """Only `legal_entity_id` and `probation_end_date` are correctable post-creation.
+    `joining_date` is a historical fact once recorded (no document states it is ever
+    legitimately revised, and every other slice in this codebase treats a spell's start as
+    immutable); `status`/`last_working_day` only ever change via the dedicated `terminate`
+    action, never a generic field patch — this keeps the one-way `ACTIVE` → `TERMINATED`
+    transition from being reachable through an unvalidated arbitrary-field update.
+    `probation_end_date` is the one exception to "immutable once set": it's purely
+    informational bookkeeping, not a fact anything downstream depends on, so HR correcting it
+    carries none of `joining_date`'s risk."""
 
     model_config = ConfigDict(extra="forbid")
 
     legal_entity_id: UUID | None = None
+    probation_end_date: date | None = None
 
 
 class EmploymentTerminate(BaseModel):
@@ -197,6 +216,7 @@ class EmploymentRead(BaseModel):
     legal_entity_id: UUID
     joining_date: date
     last_working_day: date | None
+    probation_end_date: date | None
     status: str
     previous_employment_id: UUID | None
     version: int
@@ -212,6 +232,7 @@ def employment_to_read(employment: "Employment") -> EmploymentRead:
         legal_entity_id=employment.legal_entity_id,
         joining_date=employment.joining_date,
         last_working_day=employment.last_working_day,
+        probation_end_date=employment.probation_end_date,
         status=employment.status,
         previous_employment_id=employment.previous_employment_id,
         version=employment.version,
