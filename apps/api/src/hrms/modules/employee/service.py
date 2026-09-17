@@ -114,7 +114,9 @@ class EmployeeService:
         own ID is never a member of their own `REPORTEES` set), so a caller holding both grants
         (e.g. via two roles) must see the union, not just the "widest-sounding" level alone.
         `COMPANY` always short-circuits to "no filter," regardless of what else is granted, and
-        regardless of `caller_employee_id`.
+        regardless of `caller_employee_id`. `BRANCH` is independent of the REPORTEES/REPORTEE_TREE
+        axis (a caller can hold both, e.g. REPORTEE_TREE for cross-branch reports plus BRANCH for
+        the rest of their own branch) so it is resolved in its own, separately-unioned branch.
         """
         if DataScopeLevel.COMPANY in scope.levels:
             return None
@@ -135,7 +137,20 @@ class EmployeeService:
                     self._session, company_id=company_id, manager_employee_id=caller_employee_id
                 )
 
-        # `caller_employee_id is None` with only SELF/REPORTEES/REPORTEE_TREE granted (no
+            if DataScopeLevel.BRANCH in scope.levels:
+                caller_assignment = await self._assignment_repo.get_current_assignment(
+                    self._session, company_id=company_id, employee_id=caller_employee_id
+                )
+                # No current assignment, or one with no `branch_id` set, yields no BRANCH grant —
+                # fails closed (no colleagues resolved), never an error and never COMPANY.
+                if caller_assignment is not None and caller_assignment.branch_id is not None:
+                    visible |= await self._assignment_repo.get_branch_colleague_ids(
+                        self._session,
+                        company_id=company_id,
+                        branch_id=caller_assignment.branch_id,
+                    )
+
+        # `caller_employee_id is None` with only SELF/REPORTEES/REPORTEE_TREE/BRANCH granted (no
         # Employee record for this user — Decisions doc, Decision B edge case): every branch
         # above is skipped, `visible` stays empty — fails closed, never falls back to COMPANY.
         return frozenset(visible)
@@ -1430,6 +1445,17 @@ class EmployeeAssignmentService:
             self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
         )
         return assignment_to_read(assignment) if assignment is not None else None
+
+    async def list_distinct_employee_ids_for_branch(
+        self, company_id: UUID, branch_id: UUID
+    ) -> list[UUID]:
+        """`ED-12` (execution gate §12.4) — another shared cross-module contract, alongside
+        `get_assignment_as_of` above: `organisation.service`'s branch-scope timezone-change guard
+        calls this to resolve every employee who has ever been assigned to a branch, not just its
+        current roster, before checking whether any of them has computed attendance."""
+        return await self._repo.list_distinct_employee_ids_for_branch(
+            self._session, company_id=company_id, branch_id=branch_id
+        )
 
 
 class EmployeeCompensationService:

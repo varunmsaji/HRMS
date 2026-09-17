@@ -13,8 +13,19 @@ from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import ConflictError, NotFoundError, ValidationError
-from hrms.modules.employee.permissions import EMPLOYEE_PERMISSIONS
-from hrms.modules.identity.permissions import EMPLOYEE_VIEW
+from hrms.core.rbac.types import DataScopeLevel
+from hrms.modules.employee.permissions import (
+    EMPLOYEE_PERMISSIONS,
+    EMPLOYEE_VIEW_ALL,
+    EMPLOYEE_VIEW_BANKING,
+    EMPLOYEE_VIEW_COMPENSATION,
+    EMPLOYEE_VIEW_STATUTORY,
+)
+from hrms.modules.identity.permissions import (
+    EMPLOYEE_VIEW,
+    SETTINGS_ROLE_MANAGE,
+    SETTINGS_USER_MANAGE,
+)
 from hrms.modules.identity.schemas import CompanySummary, TokenResponseData
 from hrms.modules.identity.service import IdentityService
 from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
@@ -59,6 +70,7 @@ from hrms.modules.organisation.exceptions import (
     ShiftVersionOverlapError,
     ShiftVersionPreviousVersionRequiredError,
     StaleResourceError,
+    TimezoneChangeBlockedError,
     WeeklyOffRuleInvalidError,
     WorkCalendarCompositionInvalidError,
     WorkCalendarDeactivationBlockedError,
@@ -187,6 +199,7 @@ from hrms.modules.organisation.schemas import (
     work_calendar_to_read,
 )
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
+from hrms.shared.timezone import validate_iana_timezone
 
 # No explicit trial length is defined anywhere in the frozen Company docs — 14 days is an
 # assumed, easily-changed default (common SaaS convention), not a sourced product decision.
@@ -198,6 +211,32 @@ TRIAL_PERIOD_DAYS = 14
 DEFAULT_TRIAL_PLAN_CODE = "FREE"
 
 COMPANY_ADMIN_ROLE_CODE = "COMPANY_ADMIN"
+# `docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md` Decision H — the three default roles the
+# SELF/REPORTEES/REPORTEE_TREE data-scope model (`docs/modules/employee/
+# 25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md`) needs a second holder to ever apply to.
+# Seeded here (role rows only) so a future account-provisioning flow
+# (`docs/modules/employee/41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md`) has a role
+# to assign; none of these roles are assigned to the registering admin, who keeps COMPANY_ADMIN.
+HR_ADMIN_ROLE_CODE = "HR_ADMIN"
+REPORTING_MANAGER_ROLE_CODE = "REPORTING_MANAGER"
+# `docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md`'s 2026-09-23/24 Addendum — a manager whose
+# scope is their own branch (`DataScopeLevel.BRANCH`, resolved from the holder's own current
+# `EmployeeAssignment.branch_id`), for tenants that manage each branch as its own unit rather
+# than through the reporting hierarchy `REPORTING_MANAGER` already covers. Also granted
+# `EMPLOYEE.VIEW_ALL` (gates `GET /v1/employees`, the list endpoint `/app/employees` calls —
+# distinct from `EMPLOYEE.VIEW`, which only gates the single-record `GET /v1/employees/{id}`) and
+# `ATTENDANCE.VIEW` at `BRANCH` scope: both permissions' read paths resolve scope generically
+# through `EmployeeService.resolve_visible_employee_ids` (same seam `EMPLOYEE.VIEW` uses), so
+# `BRANCH` works there with no service-layer change. Deliberately NOT granted
+# `ATTENDANCE.REGULARIZATION_APPROVE`/`ATTENDANCE.OVERTIME_APPROVE`/`LEAVE.APPLICATION_APPROVE`:
+# those services' `_get_reviewable()` gates the MANAGER stage on an exact
+# `resolved_approver_manager_id`/`resolved_department_head_id` identity match and the HR stage on
+# `DataScopeLevel.COMPANY` specifically — neither branch treats `BRANCH` as satisfying anything,
+# so granting those codes at `BRANCH` scope today would be a silent no-op (the permission would
+# exist but every approve/reject call would still raise an approver-mismatch error). Revisit if a
+# future change teaches those three `_get_reviewable()` methods a `BRANCH` branch.
+BRANCH_MANAGER_ROLE_CODE = "BRANCH_MANAGER"
+EMPLOYEE_ROLE_CODE = "EMPLOYEE"
 
 # FR-ORG-005 — department hierarchy is capped at 5 levels (root = depth 1).
 DEPARTMENT_MAX_DEPTH = 5
@@ -379,6 +418,7 @@ class OrganisationService:
             )
             for code, domain, description in EMPLOYEE_PERMISSIONS
         ]
+        employee_permission_by_code = {perm.code: perm for perm in employee_permission_rows}
         # Workforce Calendar (W1) — `ORG.CALENDAR.MANAGE` / `ORG.HOLIDAY.MANAGE`
         # (architecture §23.2, WD-19). Granted here via the same list-comprehension idiom as
         # `EMPLOYEE_PERMISSIONS` immediately above, rather than the older one-call-per-code
@@ -401,7 +441,7 @@ class OrganisationService:
         # W3 — `ATTENDANCE.POLICY_MANAGE` (architecture §23.2, WD-19). Same live-registration-path
         # rationale as `calendar_permission_rows` above; a local import avoids a module-top-level
         # organisation -> attendance dependency (mirrors `_validate_policy_reference`).
-        from hrms.modules.attendance.permissions import ATTENDANCE_PERMISSIONS
+        from hrms.modules.attendance.permissions import ATTENDANCE_PERMISSIONS, ATTENDANCE_VIEW
 
         attendance_permission_rows = [
             await self._repo.get_or_create_permission(
@@ -409,6 +449,7 @@ class OrganisationService:
             )
             for code, domain, description in ATTENDANCE_PERMISSIONS
         ]
+        attendance_permission_by_code = {perm.code: perm for perm in attendance_permission_rows}
 
         # L1 — `LEAVE.*` (LEAVE_DECISION_LOG.md LD-08). Same live-registration-path rationale as
         # `attendance_permission_rows` immediately above.
@@ -491,6 +532,120 @@ class OrganisationService:
             self._session, user_company_id=user_company.id, role_id=role.id
         )
 
+        # `SETTINGS.USER.MANAGE`/`SETTINGS.ROLE.MANAGE` were previously never granted to
+        # `COMPANY_ADMIN` at all — dead permission codes with no holder, per `docs/modules/
+        # employee/41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md` Decision P5. Granting
+        # them here is what will let a future role-assignment endpoint be callable by the one role
+        # that exists today.
+        settings_user_manage_perm = await self._repo.get_or_create_permission(
+            self._session,
+            code=SETTINGS_USER_MANAGE,
+            domain="SETTINGS",
+            description="Manage users",
+        )
+        settings_role_manage_perm = await self._repo.get_or_create_permission(
+            self._session,
+            code=SETTINGS_ROLE_MANAGE,
+            domain="SETTINGS",
+            description="Manage roles",
+        )
+        await self._repo.insert_role_permission(
+            self._session, role_id=role.id, permission_id=settings_user_manage_perm.id
+        )
+        await self._repo.insert_role_permission(
+            self._session, role_id=role.id, permission_id=settings_role_manage_perm.id
+        )
+
+        # Default roles beyond `COMPANY_ADMIN` — `docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md`
+        # Decision H. Role rows only; none is assigned to the registering admin. They exist so a
+        # future invite/role-assignment flow (doc 41) has something to assign. Grants below reuse
+        # the `Permission` rows already fetched above rather than re-querying.
+        hr_admin_role = await self._repo.insert_role(
+            self._session,
+            company_id=company_id,
+            code=HR_ADMIN_ROLE_CODE,
+            name="HR Administrator",
+            is_system=True,
+            now=now,
+        )
+        await self._repo.insert_role_permission(
+            self._session, role_id=hr_admin_role.id, permission_id=employee_view_perm.id
+        )
+        for perm in employee_permission_rows:
+            await self._repo.insert_role_permission(
+                self._session, role_id=hr_admin_role.id, permission_id=perm.id
+            )
+
+        reporting_manager_role = await self._repo.insert_role(
+            self._session,
+            company_id=company_id,
+            code=REPORTING_MANAGER_ROLE_CODE,
+            name="Reporting Manager",
+            is_system=True,
+            now=now,
+        )
+        await self._repo.insert_role_permission(
+            self._session,
+            role_id=reporting_manager_role.id,
+            permission_id=employee_view_perm.id,
+            data_scope=DataScopeLevel.REPORTEE_TREE,
+        )
+
+        branch_manager_role = await self._repo.insert_role(
+            self._session,
+            company_id=company_id,
+            code=BRANCH_MANAGER_ROLE_CODE,
+            name="Branch Manager",
+            is_system=True,
+            now=now,
+        )
+        await self._repo.insert_role_permission(
+            self._session,
+            role_id=branch_manager_role.id,
+            permission_id=employee_view_perm.id,
+            data_scope=DataScopeLevel.BRANCH,
+        )
+        # `GET /v1/employees` (the list endpoint `/app/employees` calls) gates on
+        # `EMPLOYEE.VIEW_ALL`, not `EMPLOYEE.VIEW` (`employee/router.py:list_employees` vs.
+        # `get_employee`) — without this, a branch manager could fetch a colleague's record by ID
+        # but never see their own branch's roster. Both still resolve the same generic
+        # `resolve_visible_employee_ids` seam, so `BRANCH` scope filters this list identically to
+        # the single-record read.
+        await self._repo.insert_role_permission(
+            self._session,
+            role_id=branch_manager_role.id,
+            permission_id=employee_permission_by_code[EMPLOYEE_VIEW_ALL].id,
+            data_scope=DataScopeLevel.BRANCH,
+        )
+        await self._repo.insert_role_permission(
+            self._session,
+            role_id=branch_manager_role.id,
+            permission_id=attendance_permission_by_code[ATTENDANCE_VIEW].id,
+            data_scope=DataScopeLevel.BRANCH,
+        )
+
+        employee_role = await self._repo.insert_role(
+            self._session,
+            company_id=company_id,
+            code=EMPLOYEE_ROLE_CODE,
+            name="Employee",
+            is_system=True,
+            now=now,
+        )
+        await self._repo.insert_role_permission(
+            self._session,
+            role_id=employee_role.id,
+            permission_id=employee_view_perm.id,
+            data_scope=DataScopeLevel.SELF,
+        )
+        for code in (EMPLOYEE_VIEW_COMPENSATION, EMPLOYEE_VIEW_STATUTORY, EMPLOYEE_VIEW_BANKING):
+            await self._repo.insert_role_permission(
+                self._session,
+                role_id=employee_role.id,
+                permission_id=employee_permission_by_code[code].id,
+                data_scope=DataScopeLevel.SELF,
+            )
+
         await self._repo.insert_setup_progress(self._session, company_id=company_id, now=now)
 
         plan = await self._repo.get_plan_by_code(self._session, code=DEFAULT_TRIAL_PLAN_CODE)
@@ -555,7 +710,7 @@ class OrganisationService:
                 raise CurrencyLockedError()
 
         if patch.timezone is not None and patch.timezone != company.timezone:
-            self._assert_timezone_change_allowed(company_id, company.timezone, patch.timezone)
+            await self._assert_timezone_change_allowed(company_id, employee_ids=None)
 
         if count_working_days(company, patch) < 1:
             raise InvalidWorkingDaysError()
@@ -598,14 +753,32 @@ class OrganisationService:
         )
         return after_profile
 
-    def _assert_timezone_change_allowed(
-        self,
-        company_id: UUID,
-        current_timezone: str,
-        new_timezone: str,
+    async def _assert_timezone_change_allowed(
+        self, company_id: UUID, *, employee_ids: list[UUID] | None
     ) -> None:
-        """Documented no-op hook until Payroll/Attendance modules exist (Domain Model §5.5)."""
-        _ = (company_id, current_timezone, new_timezone)
+        """`TZ-01`/`DEC-TZ-04` (SELECTED, execution gate §12) — was a documented no-op hook
+        (Domain Model §5.5) until this phase; now `async` because it needs an existence query
+        against computed attendance (`ED-11`), which the previous synchronous stub could not
+        perform.
+
+        `employee_ids=None` — a company-scope change (`update_company_profile`): blocked if any
+        attendance exists anywhere in the company. `employee_ids=[...]` — a branch-scope change
+        (`update_branch`): the caller has already walked `EmployeeAssignment` history for every
+        employee ever assigned to that branch (`ED-12`, not just the current roster — an employee
+        who has since transferred away still has historical days computed in the old zone).
+
+        Local, function-scoped import — mirrors the established reverse-direction precedent
+        (`policy_exists`, above, and `employee/service.py` importing `organisation.service`
+        locally): `attendance` already imports `organisation` at module scope for shift/branch/
+        company resolution, so a module-level import in the other direction would be circular."""
+        from hrms.modules.attendance.service import AttendanceService
+
+        attendance_service = AttendanceService(self._session)
+        blocked = await attendance_service.has_computed_attendance_blocking_timezone_change(
+            company_id, employee_ids=employee_ids
+        )
+        if blocked:
+            raise TimezoneChangeBlockedError()
 
     async def get_setup_progress(self, company_id: UUID) -> CompanySetupProgressSummary:
         progress = await self._repo.get_setup_progress(self._session, company_id=company_id)
@@ -1021,6 +1194,18 @@ class OrganisationService:
 
         if patch.legal_entity_id is not None:
             await self._assert_legal_entity_ownership(company_id, patch.legal_entity_id)
+
+        if patch.timezone is not None and patch.timezone != branch.timezone:
+            # `TZ-01`/`DEC-TZ-04` (SELECTED, execution gate §12) — `update_branch` had NO guard
+            # at all before this phase (confirmed: only `update_company_profile` had a call site,
+            # and that call site was itself a no-op). `ED-12`: scope is every employee ever
+            # assigned to this branch, not the current roster.
+            from hrms.modules.employee.service import EmployeeAssignmentService
+
+            branch_employee_ids = await EmployeeAssignmentService(
+                self._session
+            ).list_distinct_employee_ids_for_branch(company_id, branch_id)
+            await self._assert_timezone_change_allowed(company_id, employee_ids=branch_employee_ids)
 
         before_read = branch_to_read(branch)
         # Captured before `update_branch` runs below: that `UPDATE ... RETURNING`
@@ -2201,6 +2386,28 @@ class OrganisationService:
             raise InvalidShiftVersionEffectiveFromError(
                 "effective_from is required to publish a shift version"
             )
+        # `NEW-01` publish-time re-check (execution gate §4.3, defence in depth). The `Create`/
+        # `Update` schema validators now reject an invalid timezone at every write, so the only
+        # way an invalid value reaches this point is a row written before that validator existed,
+        # whose `timezone` field a later PATCH never happened to touch (every `Update` field is
+        # optional and only-if-set). Re-validating here, once, at the one gate every version must
+        # pass before it can affect real attendance, closes that window without needing a
+        # one-off data migration to sweep legacy rows first.
+        if version.timezone is not None:
+            try:
+                validate_iana_timezone(version.timezone)
+            except ValueError as exc:
+                raise ValidationError(
+                    str(exc),
+                    code="INVALID_SHIFT_VERSION_TIMEZONE",
+                    details=[
+                        {
+                            "field": "timezone",
+                            "code": "INVALID_SHIFT_VERSION_TIMEZONE",
+                            "message": str(exc),
+                        }
+                    ],
+                ) from exc
         self._validate_shift_version_type_fields(version.shift_type, version)
 
         start_time = _format_time(version.start_time)
@@ -2682,6 +2889,16 @@ class OrganisationService:
         before_read = shift_version_to_read(draft, breaks, duty_blocks)
 
         is_cross_midnight = self._validate_and_derive_for_publish(draft, breaks, duty_blocks)
+
+        # `SR-11` (execution gate §12.4) — a backdated publish whose `effective_from` falls
+        # inside an already-`CLOSED` period must be refused, the same way punch ingestion and
+        # roster writes already are. Narrow, deliberately: only this one publish path, not every
+        # backdated policy version (recorded as debt elsewhere, §12.4).
+        # enforced above, inside _validate_and_derive_for_publish:
+        assert draft.effective_from is not None
+        from hrms.modules.attendance.service import AttendanceService
+
+        await AttendanceService(self._session).assert_date_open(company_id, draft.effective_from)
 
         current = await self._shift_version_repo.get_current_published(
             self._session, company_id=company_id, shift_id=shift_id
@@ -3743,9 +3960,7 @@ class OrganisationService:
             from hrms.modules.leave.service import LeavePolicyService
 
             try:
-                policy = await LeavePolicyService(self._session).get_policy(
-                    company_id, policy_id
-                )
+                policy = await LeavePolicyService(self._session).get_policy(company_id, policy_id)
                 found = object() if policy.leave_type_id == leave_type_id else None
             except NotFoundError:
                 found = None

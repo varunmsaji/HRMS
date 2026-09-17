@@ -120,7 +120,7 @@ build `DEPARTMENT`, `BRANCH`, `LEGAL_ENTITY`, or `ALL_COMPANIES` in this pass.**
 | `SELF` | Yes | Cheapest to implement (JWT already carries `employee_id`); addresses the highest-volume real use case (an employee viewing their own record) before Attendance/Leave/Payroll self-service ships. |
 | `REPORTEES` | Yes | This is literally the distinction Doc 19's `VIEW`/`VIEW_ALL` split was designed around ("what separates a Reporting Manager from an HR Manager," `19_RBAC_and_Permission_Matrix.md §2`) — building it is what finally makes the already-shipped permission catalogue mean what its own names say. |
 | `REPORTEE_TREE` | Yes | Same resolver machinery as `REPORTEES` (one level vs. recursive), same source data, fully specified reference CTE already exists in Doc 19 §5 — near-zero marginal cost once `REPORTEES` is built, and needed for any manager more than one layer above their reports (a department head, not just a team lead). |
-| `DEPARTMENT` / `BRANCH` / `LEGAL_ENTITY` | No | Blocked on Decision B's genuinely open question (derived vs. explicitly-assigned). Building either interpretation now risks exactly the rework the Audit's Section 21 warns about. No current role needs it yet — `COMPANY` scope is an acceptable approximation for HR-admin-style roles until this is prioritized. |
+| `DEPARTMENT` / `BRANCH` / `LEGAL_ENTITY` | `BRANCH`: **Yes, as of 2026-09-23** (see Addendum below). `DEPARTMENT`/`LEGAL_ENTITY`: still No. | `BRANCH` was blocked on Decision B's genuinely open question (derived vs. explicitly-assigned) until a real customer need (multi-branch tenants managing each branch as its own unit) resolved it — see Addendum. `DEPARTMENT`/`LEGAL_ENTITY` remain blocked on the same open question, with no comparable need yet; building either interpretation now risks exactly the rework the Audit's Section 21 warns about. |
 | `ALL_COMPANIES` | No | No Super Admin role or platform-level concept exists anywhere in the codebase today — this is materially different infrastructure (deliberately crossing the RLS tenant boundary), out of scope for a within-tenant data-scope fix. |
 
 This matches, and locks, the Audit's own Section 18/19 recommendation.
@@ -252,13 +252,15 @@ Plan §17) — named here only so a future task knows exactly where it attaches.
 | `EMPLOYEE` | **PROPOSED** | Every ordinary employee's baseline self-service role | `EMPLOYEE.VIEW`, `EMPLOYEE.VIEW_COMPENSATION`, (future) `.VIEW_STATUTORY`/`.VIEW_BANKING` — no write permissions at all | `SELF` on every granted permission | Own record only, per Decision E |
 | `REPORTING_MANAGER` | **PROPOSED** | Line/department managers | `EMPLOYEE.VIEW` | `REPORTEE_TREE` (recommended over `REPORTEES` — see reasoning below) | None by default (no compensation/statutory/banking grant at all) |
 | `HR_ADMIN` | **PROPOSED** | Runs HR operations without necessarily owning company/billing settings | Full Employee permission catalogue (`VIEW_ALL`/`CREATE`/`UPDATE`/`DEACTIVATE`/`TERMINATE`/`TRANSFER`/`PROMOTE`/`VIEW_COMPENSATION`/`UPDATE_COMPENSATION`, future `VIEW_STATUTORY`/`VIEW_BANKING`/`UPDATE_SENSITIVE`) | `COMPANY` on everything | Full |
+| `BRANCH_MANAGER` | **IMPLEMENTED as of 2026-09-23/25** (see Addendum below) | Manages one branch as its own unit, for tenants that don't use `REPORTING_MANAGER`'s hierarchy to express that | `EMPLOYEE.VIEW`, `EMPLOYEE.VIEW_ALL`, `ATTENDANCE.VIEW` | `BRANCH` on every granted permission | None by default |
 
 **Reasoning:**
-- This is deliberately **not** a large role catalogue (`HR_MANAGER`, `HR_EXECUTIVE`, `BRANCH_MANAGER`
-  are **not** proposed) — none of them are needed to make the four `SELF`/`REPORTEES`/
-  `REPORTEE_TREE`/`COMPANY` levels usable, and inventing roles ahead of a real customer need
-  repeats the "config-driven engine before a second consumer" mistake this project's own
-  convention warns against.
+- This was deliberately **not** a large role catalogue at the time this decision was locked
+  (`HR_MANAGER`, `HR_EXECUTIVE`, `BRANCH_MANAGER` were **not** proposed) — none of them were needed
+  to make the four `SELF`/`REPORTEES`/`REPORTEE_TREE`/`COMPANY` levels usable, and inventing roles
+  ahead of a real customer need repeats the "config-driven engine before a second consumer" mistake
+  this project's own convention warns against. `BRANCH_MANAGER` was added later, once a real need
+  surfaced — see Addendum below for why this one crossed that bar and the others still haven't.
 - `REPORTING_MANAGER` is given `REPORTEE_TREE`, not `REPORTEES`, as the default: Doc 19 frames
   this role as the headline `REPORTEES`/`REPORTEE_TREE` use case, and a department head with two
   layers of reports is a more common real shape than a single-level team lead — `REPORTEE_TREE`
@@ -368,3 +370,63 @@ No claim checked came back **PARTIALLY CONFIRMED**, **NOT CONFIRMED**, or **OUTD
 is accurate as of this document's date. This document does not re-verify every one of the Audit's
 ~150 individual statements — the sample above covers every load-bearing FACT claim the decisions
 above depend on.
+
+---
+
+## Addendum (2026-09-23/24/25) — `BRANCH` scope + `BRANCH_MANAGER` role
+
+**Status note:** this addendum was written after the fact — `BRANCH` (`core/rbac/types.py`),
+`EmployeeService.resolve_visible_employee_ids`'s `BRANCH` branch,
+`EmployeeAssignmentRepository.get_branch_colleague_ids`, the `BRANCH_MANAGER` role seeded by
+`organisation/service.py::register_company`, and migrations `20260923090000_branch_manager_role`
+/ `20260924090000_branch_manager_attendance_view` /
+`20260925090000_branch_manager_employee_view_all` were implemented and merged into the working
+tree citing "this document's `BRANCH` extension" before any such extension existed here. This
+addendum is the retroactive product decision that reconciles the code with the record, not a
+plan written before implementation the way Decisions A–J were. Treat the gap itself as a process
+lesson: a future scope-level addition should update this document in the same change, not after.
+
+**LOCKED, closing Decision B's open question for `BRANCH` specifically (still open for
+`DEPARTMENT`/`LEGAL_ENTITY`): Model 2 — derived from the user's own current `EmployeeAssignment`,
+same as `REPORTEES`/`REPORTEE_TREE`.** `BRANCH` resolves to "every employee whose *current*
+assignment row (`effective_to IS NULL`) has the same `branch_id` as the caller's own current
+assignment," including the caller themself (a branch manager is a colleague of their own branch,
+unlike `REPORTEES`, where a manager is never their own report). No `as_of` support, no per-user
+explicit assignment table — identical posture to `REPORTEES`/`REPORTEE_TREE`'s "current row only"
+resolution (Decision D).
+
+**Why `BRANCH` crossed the bar `DEPARTMENT`/`LEGAL_ENTITY` haven't:** the real customer need
+Decision B's reasoning said this was blocked on has surfaced — tenants that manage each branch as
+an operational unit in its own right, where the branch manager is not necessarily positioned in
+the `reporting_manager_id` hierarchy `REPORTEES`/`REPORTEE_TREE` already covers (e.g., a
+multi-location retail/services tenant where branch staff don't formally report to the branch
+manager in the org chart, but the branch manager still needs to see who's currently posted to
+their branch). `DEPARTMENT` and `LEGAL_ENTITY` have no equivalent stated need yet and remain
+exactly as deferred as Decision C originally left them.
+
+**What was actually granted, and why not more:** `BRANCH_MANAGER` holds `EMPLOYEE.VIEW`,
+`EMPLOYEE.VIEW_ALL`, and `ATTENDANCE.VIEW`, all at `BRANCH` scope. `EMPLOYEE.VIEW_ALL` is needed
+alongside `EMPLOYEE.VIEW` because `GET /v1/employees` (the list endpoint `/app/employees` calls)
+gates on `.VIEW_ALL` while `GET /v1/employees/{id}` gates on plain `.VIEW`
+(`employee/router.py`) — a gap only found once this role was verified end-to-end through the
+actual UI, not from reading the seeding code alone. All three permissions' read paths resolve
+scope generically through `EmployeeService.resolve_visible_employee_ids`, so `BRANCH` works for
+them with no service-layer change beyond the scope resolver itself. `BRANCH_MANAGER` deliberately
+does **not**
+hold `ATTENDANCE.REGULARIZATION_APPROVE`, `ATTENDANCE.OVERTIME_APPROVE`, or
+`LEAVE.APPLICATION_APPROVE`: those three services gate their `MANAGER`-stage approval on an exact
+`resolved_approver_manager_id`/`resolved_department_head_id` identity match, and their `HR`-stage
+fallback specifically requires `DataScopeLevel.COMPANY` — neither branch treats `BRANCH` as
+satisfying anything today, so granting those codes at `BRANCH` scope would be a silent no-op (see
+`organisation/service.py`'s `BRANCH_MANAGER_ROLE_CODE` comment). Making a branch manager a real
+approver for those three workflows is a separate, not-yet-made product decision (does a branch
+manager's authority over their branch's approvals bypass the actual reporting hierarchy, the way
+`COMPANY` scope already bypasses it for HR? — this is materially the same shape as Decision B's
+original open question, now one level higher in the approval chain) and is intentionally left
+undone rather than guessed at here.
+
+**Consequence:** `role_permission_data_scope_check` now allows `'BRANCH'` alongside `SELF`/
+`REPORTEES`/`REPORTEE_TREE`/`COMPANY`. Every company registered before this shipped was backfilled
+a `BRANCH_MANAGER` role (not assigned to any existing user) by the two migrations above, mirroring
+`20260920090000_default_roles_backfill`'s own catch-up pattern for `HR_ADMIN`/`REPORTING_MANAGER`/
+`EMPLOYEE`.

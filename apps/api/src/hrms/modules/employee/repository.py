@@ -107,6 +107,19 @@ class EmployeeRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def link_user(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, user_id: UUID
+    ) -> None:
+        """Sets `Employee.user_id` — the one write path for a column that has existed since the
+        original schema but had no writer anywhere (`docs/modules/employee/
+        41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md` F1). Called once, from
+        `AccountInviteService.accept` at invite-acceptance time — never re-linked afterward."""
+        await session.execute(
+            update(Employee)
+            .where(Employee.id == employee_id, Employee.company_id == company_id)
+            .values(user_id=user_id)
+        )
+
     async def get_by_code_or_email(
         self, session: AsyncSession, *, company_id: UUID, value: str
     ) -> Employee | None:
@@ -321,6 +334,27 @@ class EmployeeAssignmentRepository:
         await session.flush()
         return row
 
+    async def list_distinct_employee_ids_for_branch(
+        self, session: AsyncSession, *, company_id: UUID, branch_id: UUID
+    ) -> list[UUID]:
+        """`ED-12` (execution gate §12.4) — every employee who has EVER been assigned to this
+        branch, not just the current roster. Consumed by the branch-scope timezone-change guard:
+        an employee who has since transferred away still has historical `attendance_day` rows
+        computed under the branch's old timezone, and a current-roster-only check would miss
+        exactly the case this guard exists to catch. Includes closed (`effective_to` set) rows
+        deliberately — history, not current state. Excludes soft-deleted rows only, since those
+        were erased as a data-entry correction, not a genuine placement."""
+        stmt = (
+            select(EmployeeAssignment.employee_id)
+            .where(
+                EmployeeAssignment.company_id == company_id,
+                EmployeeAssignment.branch_id == branch_id,
+                EmployeeAssignment.deleted_at.is_(None),
+            )
+            .distinct()
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def get_direct_report_ids(
         self, session: AsyncSession, *, company_id: UUID, manager_employee_id: UUID
     ) -> set[UUID]:
@@ -377,6 +411,25 @@ class EmployeeAssignmentRepository:
         )
         tree = tree.union_all(recursive_step)
         stmt = select(tree.c.employee_id).distinct()
+        return set((await session.execute(stmt)).scalars().all())
+
+    async def get_branch_colleague_ids(
+        self, session: AsyncSession, *, company_id: UUID, branch_id: UUID
+    ) -> set[UUID]:
+        """`BRANCH` resolution — employees whose *current* assignment row (`effective_to IS
+        NULL`) has `branch_id` equal to the caller's own current branch. Same "current row only,
+        no `as_of` support yet" posture as `get_direct_report_ids`
+        (`docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md` Decision C, `BRANCH` extension).
+        Deliberately does not exclude the caller themself — unlike `REPORTEES` (a manager is
+        never their own report), a branch manager *is* a colleague of their own branch, and
+        callers needing `SELF` excluded already compose it via a separate `SELF` grant/union in
+        `EmployeeService.resolve_visible_employee_ids`, same pattern as `REPORTEES`+`SELF`."""
+        stmt = select(EmployeeAssignment.employee_id).where(
+            EmployeeAssignment.company_id == company_id,
+            EmployeeAssignment.branch_id == branch_id,
+            EmployeeAssignment.deleted_at.is_(None),
+            EmployeeAssignment.effective_to.is_(None),
+        )
         return set((await session.execute(stmt)).scalars().all())
 
     async def get_current_assignment(

@@ -11,6 +11,7 @@ from hrms.core.audit.models import AuditLog
 from hrms.core.auth.passwords import verify_password
 from hrms.core.db.models.identity import (
     Company,
+    Permission,
     RefreshToken,
     Role,
     RolePermission,
@@ -192,7 +193,11 @@ async def test_registration_success_full_row_graph(
             assert membership.status == "ACTIVE"
 
             role = (
-                await session.execute(select(Role).where(Role.company_id == company_id))
+                await session.execute(
+                    select(Role).where(
+                        Role.company_id == company_id, Role.code == "COMPANY_ADMIN"
+                    )
+                )
             ).scalar_one()
             assert role.code == "COMPANY_ADMIN"
             assert role.is_system is True
@@ -455,6 +460,39 @@ async def test_registration_invalid_timezone_rejected(
 
 
 @pytest.mark.asyncio
+async def test_registration_non_indian_valid_timezone_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`DEC-TZ-02` (SELECTED) — a *valid* IANA zone outside `settings.allowed_company_timezones`
+    is still rejected. Before Phase 2, this was accepted: an anonymous, unauthenticated visitor
+    could create a company running every attendance calculation in `America/Los_Angeles` on a
+    product that is India-only for V1 (execution gate §6)."""
+    payload = _payload(timezone="America/Los_Angeles")
+    response = await client.post("/v1/companies/register", json=payload)
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_registration_asia_calcutta_canonicalised(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Canonicalisation runs BEFORE the allow-list check (execution gate §6.3) — `Asia/Calcutta`
+    must be accepted, not rejected for a spelling difference, because it resolves to the one
+    allowed zone."""
+    response, company_id, user_id = await _register(client, timezone="Asia/Calcutta")
+    try:
+        assert response.status_code == 201, response.text
+        factory = get_session_factory()
+        async with factory() as session:
+            company = (
+                await session.execute(select(Company).where(Company.id == company_id))
+            ).scalar_one()
+            assert company.timezone == "Asia/Kolkata"
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
 async def test_registration_invalid_fy_start_month_rejected(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
@@ -517,5 +555,60 @@ async def test_registration_no_client_suppliable_tenant_fields(
     try:
         assert response.status_code == 201
         assert response.json()["data"]["company_id"] != fabricated_company_id
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_registration_config_is_public_and_lists_india_only(
+    client: AsyncClient,
+) -> None:
+    """No auth header, no company header, no `seeded_plan_catalogue` — this must be reachable
+    by the sign-up page before any tenant or session exists (execution gate §6.3)."""
+    response = await client.get("/v1/companies/registration-config")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["allowed_company_timezones"] == ["Asia/Kolkata"]
+
+
+@pytest.mark.asyncio
+async def test_registration_seeds_branch_manager_role(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md`'s 2026-09-23/24 Addendum — a fresh
+    registration gets a `BRANCH_MANAGER` role (`EMPLOYEE.VIEW` + `EMPLOYEE.VIEW_ALL` +
+    `ATTENDANCE.VIEW`, all `BRANCH` scope) alongside `COMPANY_ADMIN`, same as `HR_ADMIN`/
+    `REPORTING_MANAGER`/`EMPLOYEE`. Not assigned to the registering admin — exists so a future
+    role-assignment flow can grant it, same as its siblings. `EMPLOYEE.VIEW_ALL` is needed
+    alongside `EMPLOYEE.VIEW` because `GET /v1/employees` (the list endpoint) gates on `.VIEW_ALL`
+    while `GET /v1/employees/{id}` gates on plain `.VIEW` (`employee/router.py`). `ATTENDANCE.VIEW`
+    is the only approval-adjacent grant this role gets — see `organisation/service.py`'s
+    `BRANCH_MANAGER_ROLE_CODE` comment for why `ATTENDANCE.REGULARIZATION_APPROVE`/
+    `ATTENDANCE.OVERTIME_APPROVE`/`LEAVE.APPLICATION_APPROVE` are deliberately not granted here."""
+    response, company_id, user_id = await _register(client)
+    try:
+        assert response.status_code == 201
+        factory = get_session_factory()
+        async with factory() as session:
+            role = (
+                await session.execute(
+                    select(Role).where(
+                        Role.company_id == company_id, Role.code == "BRANCH_MANAGER"
+                    )
+                )
+            ).scalar_one()
+            assert role.is_system is True
+
+            grants = (
+                await session.execute(
+                    select(RolePermission, Permission.code)
+                    .join(Permission, Permission.id == RolePermission.permission_id)
+                    .where(RolePermission.role_id == role.id)
+                )
+            ).all()
+            assert {code: grant.data_scope for grant, code in grants} == {
+                "EMPLOYEE.VIEW": "BRANCH",
+                "EMPLOYEE.VIEW_ALL": "BRANCH",
+                "ATTENDANCE.VIEW": "BRANCH",
+            }
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)

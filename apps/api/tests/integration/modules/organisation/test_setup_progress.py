@@ -79,7 +79,9 @@ async def test_get_setup_progress_requires_permission(
             from hrms.core.db.models.identity import Permission, Role, RolePermission
 
             role = (
-                await session.execute(select(Role).where(Role.company_id == company_id))
+                await session.execute(
+                    select(Role).where(Role.company_id == company_id, Role.code == "COMPANY_ADMIN")
+                )
             ).scalar_one()
             org_perm = (
                 await session.execute(

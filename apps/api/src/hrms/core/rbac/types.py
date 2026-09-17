@@ -3,16 +3,22 @@ from enum import StrEnum
 
 
 class DataScopeLevel(StrEnum):
-    """`docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md` Decision C — four levels only in this
-    slice. `TEAM` (ambiguous — one level or recursive?) is retired in favor of the two explicit
-    names `REPORTEES`/`REPORTEE_TREE` `docs/product/19_RBAC_and_Permission_Matrix.md §5` already
-    uses. `DEPARTMENT`/`BRANCH`/`LEGAL_ENTITY`/`ALL_COMPANIES` are deliberately not added yet —
-    out of this slice's scope (`docs/modules/employee/
-    25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §3)."""
+    """`docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md` Decision C locked four levels
+    (`SELF`/`REPORTEES`/`REPORTEE_TREE`/`COMPANY`) and left `DEPARTMENT`/`BRANCH`/`LEGAL_ENTITY`/
+    `ALL_COMPANIES` deliberately unbuilt, pending Decision B's open question: derived from the
+    caller's own org placement, or explicitly per-user assigned. `BRANCH` is now added, resolved
+    the derived way (Model 2 in Decision B) — same shape as `REPORTEES`/`REPORTEE_TREE`: no new
+    storage, read off the caller's own *current* `EmployeeAssignment.branch_id`
+    (`employee.repository.EmployeeAssignmentRepository.get_branch_colleague_ids`). This means one
+    holder's scope is always their own single branch — a manager responsible for more than one
+    branch, or a branch with co-managers, is not expressible without a second role, the same
+    accepted limitation Decision A already documents for `REPORTEES`/`REPORTEE_TREE`.
+    `DEPARTMENT`/`LEGAL_ENTITY`/`ALL_COMPANIES` remain out of scope."""
 
     SELF = "SELF"
     REPORTEES = "REPORTEES"
     REPORTEE_TREE = "REPORTEE_TREE"
+    BRANCH = "BRANCH"
     COMPANY = "COMPANY"
 
 

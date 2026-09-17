@@ -34,6 +34,7 @@ from hrms.core.db.models.identity import (
     UserRole,
 )
 from hrms.core.db.session import get_session_factory, set_rls_company_id
+from hrms.modules.employee.models import EmployeeAssignment
 
 pytestmark = pytest.mark.asyncio
 
@@ -276,6 +277,7 @@ async def test_on_behalf_punch_without_permission_rejected(
                 "employee_id": target_employee_id,
                 "punch_time": "2026-08-10T09:00:00Z",
                 "direction": "IN",
+                "reference": "missed punch correction",
             },
         )
         assert response.status_code == 403
@@ -514,6 +516,107 @@ async def test_reportee_tree_scope_sees_descendants_not_unrelated_branch(
         await _cleanup_scoped_users()
 
 
+async def _assign_branch(
+    *, company_id: UUID, employee_id: UUID, branch_id: UUID, effective_from: str = "2026-01-01"
+) -> None:
+    """Inserts a minimal `employee_assignment` row directly — mirrors `employee/
+    test_employee_data_scope.py::_assign_manager`'s "just enough columns for the code path under
+    test" pattern. `get_branch_colleague_ids` (employee/repository.py) only reads `company_id`,
+    `employee_id`, `branch_id`, and `effective_to IS NULL` (current row), so nothing else is
+    needed here — no department/designation/shift, unlike `_add_reportee_employee`'s full
+    API-driven assignment, which this test doesn't need since it isn't exercising REPORTEES."""
+    from datetime import date as _date
+
+    factory = get_session_factory()
+    async with factory() as session:
+        now = datetime.now(UTC)
+        session.add(
+            EmployeeAssignment(
+                id=uuid4(),
+                company_id=company_id,
+                employee_id=employee_id,
+                branch_id=branch_id,
+                effective_from=_date.fromisoformat(effective_from),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+
+async def test_branch_scope_sees_branch_colleagues_only(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`BRANCH_MANAGER`'s registration-seeded grant (`ATTENDANCE.VIEW` at `BRANCH`,
+    `organisation/service.py::register_company`) exercised end-to-end: a caller sees attendance
+    days for employees currently assigned to their own branch, including themself (unlike
+    REPORTEES, a branch manager is a colleague of their own branch), and not employees in a
+    different branch."""
+    from hrms.modules.attendance.permissions import ATTENDANCE_VIEW
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        manager_id = UUID(wired["employee"]["id"])
+        branch_a = UUID(wired["branch"]["id"])
+
+        own_day = await _calculate_day(client, headers, employee_id=wired["employee"]["id"])
+
+        colleague_employee = (
+            await client.post("/v1/employees", headers=headers, json={"first_name": "Colleague"})
+        ).json()["data"]
+        colleague_day = await _calculate_day(
+            client, headers, employee_id=colleague_employee["id"]
+        )
+        await _assign_branch(
+            company_id=company_id, employee_id=UUID(colleague_employee["id"]), branch_id=branch_a
+        )
+
+        other_branch_employee = (
+            await client.post("/v1/employees", headers=headers, json={"first_name": "OtherBranch"})
+        ).json()["data"]
+        other_branch_day = await _calculate_day(
+            client, headers, employee_id=other_branch_employee["id"]
+        )
+        from tests.integration.modules.employee.test_employee_data_scope import _setup_branches
+
+        (branch_b,) = await _setup_branches(company_id=company_id, count=1)
+        await _assign_branch(
+            company_id=company_id,
+            employee_id=UUID(other_branch_employee["id"]),
+            branch_id=branch_b,
+        )
+
+        scoped_headers, _scoped_user_id = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[ATTENDANCE_VIEW],
+            data_scope="BRANCH",
+            caller_employee_id=manager_id,
+        )
+
+        for day in (own_day, colleague_day):
+            resp = await client.get(f"/v1/attendance/days/{day['id']}", headers=scoped_headers)
+            assert resp.status_code == 200, day
+
+        other = await client.get(
+            f"/v1/attendance/days/{other_branch_day['id']}", headers=scoped_headers
+        )
+        assert other.status_code == 404
+
+        listed = await client.get(
+            "/v1/attendance/days", headers=scoped_headers, params={"date_from": "2026-08-10"}
+        )
+        assert listed.status_code == 200
+        assert {row["id"] for row in listed.json()["data"]} == {
+            own_day["id"],
+            colleague_day["id"],
+        }
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
 # ---------------------------------------------------------------------------
 # Forged company ID — a caller authenticated for company A cannot read company B's attendance
 # by presenting a mismatched `X-Company-Id` header (`get_tenant_context` compares it against
@@ -586,6 +689,7 @@ async def test_on_behalf_punch_reportees_scope_blocks_target_outside_visible_set
                 "employee_id": stranger["id"],
                 "punch_time": "2026-08-10T09:00:00Z",
                 "direction": "IN",
+                "reference": "missed punch correction",
             },
         )
         assert blocked.status_code == 404
@@ -598,6 +702,7 @@ async def test_on_behalf_punch_reportees_scope_blocks_target_outside_visible_set
                 "employee_id": reportee["id"],
                 "punch_time": "2026-08-10T09:00:00Z",
                 "direction": "IN",
+                "reference": "missed punch correction",
             },
         )
         assert allowed.status_code == 201, allowed.text
@@ -628,6 +733,7 @@ async def test_forged_employee_id_punch_rejected(
                 "employee_id": str(uuid4()),
                 "punch_time": "2026-08-10T09:00:00Z",
                 "direction": "IN",
+                "reference": "missed punch correction",
             },
         )
         assert response.status_code == 404
@@ -667,6 +773,7 @@ async def test_cross_company_employee_id_punch_rejected(
                 "employee_id": employee_b["id"],
                 "punch_time": "2026-08-10T09:00:00Z",
                 "direction": "IN",
+                "reference": "missed punch correction",
             },
         )
         assert response.status_code == 404
@@ -713,6 +820,7 @@ async def test_disabled_employee_remains_a_valid_punch_target(
                 "employee_id": employee["id"],
                 "punch_time": "2026-08-10T09:00:00Z",
                 "direction": "IN",
+                "reference": "missed punch correction",
             },
         )
         assert response.status_code == 201, response.text
@@ -768,25 +876,30 @@ async def test_employee_self_service_flow_from_real_login(
             "X-Company-Id": str(company_id),
         }
 
+        # Self-service route (`/attendance/punches/me`) has no `punch_time` field — the server
+        # stamps the instant at receipt (`DEC-TZ-01`, SELECTED). The test can no longer stage a
+        # fixed historical punch through this path, so it reads back the server-assigned instant
+        # and calculates for *that* date instead of a hardcoded one.
         punch_in = await client.post(
-            "/v1/attendance/punches",
+            "/v1/attendance/punches/me",
             headers=self_headers,
-            json={"punch_time": "2026-08-10T09:00:00Z", "direction": "IN"},
+            json={"direction": "IN"},
         )
         assert punch_in.status_code == 201, punch_in.text
         assert punch_in.json()["data"]["employee_id"] == self_employee_id
+        punch_date = punch_in.json()["data"]["punch_time"][:10]
 
         punch_out = await client.post(
-            "/v1/attendance/punches",
+            "/v1/attendance/punches/me",
             headers=self_headers,
-            json={"punch_time": "2026-08-10T18:00:00Z", "direction": "OUT"},
+            json={"direction": "OUT"},
         )
         assert punch_out.status_code == 201, punch_out.text
 
         calculated = await client.post(
             "/v1/attendance/days/calculate",
             headers=headers,
-            params={"employee_id": self_employee_id, "date": "2026-08-10"},
+            params={"employee_id": self_employee_id, "date": punch_date},
         )
         assert calculated.status_code == 200, calculated.text
         own_day_id = calculated.json()["data"]["id"]
@@ -812,6 +925,7 @@ async def test_employee_self_service_flow_from_real_login(
                 "employee_id": other_employee["id"],
                 "punch_time": "2026-08-10T09:00:00Z",
                 "direction": "IN",
+                "reference": "missed punch correction",
             },
         )
         assert cross_punch.status_code == 403

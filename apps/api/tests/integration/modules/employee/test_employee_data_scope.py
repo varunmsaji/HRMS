@@ -35,7 +35,7 @@ from hrms.core.db.session import get_session_factory
 from hrms.modules.employee.models import EmployeeAssignment, Employment
 from hrms.modules.employee.permissions import EMPLOYEE_TRANSFER, EMPLOYEE_VIEW_ALL
 from hrms.modules.identity.permissions import EMPLOYEE_VIEW
-from hrms.modules.organisation.models import LegalEntity
+from hrms.modules.organisation.models import Branch, LegalEntity
 
 from ..organisation.test_registration_flow import _cleanup, _register
 
@@ -77,16 +77,18 @@ async def _assign_manager(
     company_id: UUID,
     employee_id: UUID,
     reporting_manager_id: UUID | None,
+    branch_id: UUID | None = None,
     effective_from: date = date(2027, 1, 1),
     effective_to: date | None = None,
 ) -> None:
     """Inserts a minimal `employee_assignment` row directly — only the columns the
-    `REPORTEES`/`REPORTEE_TREE` resolver reads (`company_id`, `employee_id`,
-    `reporting_manager_id`, `effective_from`/`effective_to`) are set; every other column is left
-    at its nullable/default value, matching the schema (`employee/models.py:126-154`).
-    `created_at`/`updated_at` are passed explicitly, matching every other inline-fixture pattern
-    in this codebase (`test_employee.py`'s inline `Role`/`User`/`Session` construction) rather
-    than relying on `TimestampMixin`'s `server_default`."""
+    `REPORTEES`/`REPORTEE_TREE`/`BRANCH` resolvers read (`company_id`, `employee_id`,
+    `reporting_manager_id`, `branch_id`, `effective_from`/`effective_to`) are set; every other
+    column is left at its nullable/default value, matching the schema
+    (`employee/models.py:126-154`). `created_at`/`updated_at` are passed explicitly, matching
+    every other inline-fixture pattern in this codebase (`test_employee.py`'s inline
+    `Role`/`User`/`Session` construction) rather than relying on `TimestampMixin`'s
+    `server_default`."""
     factory = get_session_factory()
     async with factory() as session:
         now = datetime.now(UTC)
@@ -96,6 +98,7 @@ async def _assign_manager(
                 company_id=company_id,
                 employee_id=employee_id,
                 reporting_manager_id=reporting_manager_id,
+                branch_id=branch_id,
                 effective_from=effective_from,
                 effective_to=effective_to,
                 created_at=now,
@@ -103,6 +106,40 @@ async def _assign_manager(
             )
         )
         await session.commit()
+
+
+async def _setup_branches(*, company_id: UUID, count: int) -> list[UUID]:
+    """Inserts one `legal_entity` row plus `count` `branch` rows directly — `branch_id` is a real
+    FK (`branch.id`), so the `BRANCH` scope tests need actual rows to reference, the same reason
+    `_setup_active_employment` inserts a real `LegalEntity` for its own FK."""
+    factory = get_session_factory()
+    branch_ids = [uuid4() for _ in range(count)]
+    async with factory() as session:
+        now = datetime.now(UTC)
+        legal_entity_id = uuid4()
+        session.add(
+            LegalEntity(
+                id=legal_entity_id,
+                company_id=company_id,
+                name="Test Legal Entity",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.flush()
+        for branch_id in branch_ids:
+            session.add(
+                Branch(
+                    id=branch_id,
+                    company_id=company_id,
+                    legal_entity_id=legal_entity_id,
+                    name=f"Test Branch {branch_id.hex[:8]}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await session.commit()
+    return branch_ids
 
 
 async def _setup_active_employment(
@@ -238,6 +275,9 @@ async def _cleanup_employees(*, company_id: UUID) -> None:
         )
         await session.execute(
             text("DELETE FROM employee WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
+        await session.execute(
+            text("DELETE FROM branch WHERE company_id = :cid"), {"cid": str(company_id)}
         )
         await session.execute(
             text("DELETE FROM legal_entity WHERE company_id = :cid"), {"cid": str(company_id)}
@@ -466,6 +506,133 @@ async def test_reportees_scope_includes_inactive_but_not_deactivated_employee(
         )
         response = await client.get(f"/v1/employees/{report['id']}", headers=actor_headers)
         assert response.status_code == 200
+    finally:
+        await _cleanup_employees(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=admin_id)
+        await _cleanup_scoped_actors()
+
+
+# --- BRANCH -----------------------------------------------------------------------------------
+
+
+async def test_branch_scope_sees_branch_colleagues_only(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Unlike `REPORTEES`, `BRANCH` includes the caller themself — a branch manager is a
+    colleague of their own branch, not excluded from it (`core/rbac/types.py`
+    `DataScopeLevel.BRANCH` docstring)."""
+    headers, company_id, admin_id = await _register_tenant(client)
+    try:
+        branch_a, branch_b = await _setup_branches(company_id=company_id, count=2)
+
+        manager = await _create_employee(client, headers, first_name="BranchManager")
+        colleague = await _create_employee(client, headers, first_name="BranchColleague")
+        other_branch = await _create_employee(client, headers, first_name="OtherBranch")
+        no_branch = await _create_employee(client, headers, first_name="NoBranch")
+
+        await _assign_manager(
+            company_id=company_id,
+            employee_id=UUID(manager["id"]),
+            reporting_manager_id=None,
+            branch_id=branch_a,
+        )
+        await _assign_manager(
+            company_id=company_id,
+            employee_id=UUID(colleague["id"]),
+            reporting_manager_id=None,
+            branch_id=branch_a,
+        )
+        await _assign_manager(
+            company_id=company_id,
+            employee_id=UUID(other_branch["id"]),
+            reporting_manager_id=None,
+            branch_id=branch_b,
+        )
+        # `no_branch` deliberately has no assignment row at all.
+
+        actor_headers, _actor_id = await _create_scoped_actor(
+            company_id=company_id,
+            role_grants=[[(EMPLOYEE_VIEW, "BRANCH"), (EMPLOYEE_VIEW_ALL, "BRANCH")]],
+            employee_id=UUID(manager["id"]),
+        )
+
+        for emp in (manager, colleague):
+            response = await client.get(f"/v1/employees/{emp['id']}", headers=actor_headers)
+            assert response.status_code == 200, emp
+
+        for emp in (other_branch, no_branch):
+            response = await client.get(f"/v1/employees/{emp['id']}", headers=actor_headers)
+            assert response.status_code == 404, emp
+
+        listed = await client.get("/v1/employees", headers=actor_headers)
+        assert {row["id"] for row in listed.json()["data"]} == {manager["id"], colleague["id"]}
+    finally:
+        await _cleanup_employees(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=admin_id)
+        await _cleanup_scoped_actors()
+
+
+async def test_branch_scope_caller_with_no_branch_sees_nothing(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Fails closed: a caller with no current assignment (or one with `branch_id IS NULL`)
+    resolves to an empty visible set, never `COMPANY` (Decision B edge case, extended to
+    `BRANCH`)."""
+    headers, company_id, admin_id = await _register_tenant(client)
+    try:
+        manager = await _create_employee(client, headers, first_name="UnassignedManager")
+        actor_headers, _actor_id = await _create_scoped_actor(
+            company_id=company_id,
+            role_grants=[[(EMPLOYEE_VIEW_ALL, "BRANCH")]],
+            employee_id=UUID(manager["id"]),
+        )
+        listed = await client.get("/v1/employees", headers=actor_headers)
+        assert listed.status_code == 200
+        assert listed.json()["data"] == []
+    finally:
+        await _cleanup_employees(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=admin_id)
+        await _cleanup_scoped_actors()
+
+
+async def test_branch_scope_excludes_terminated_assignment(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A closed (`effective_to` set) assignment row no longer counts as the caller's *current*
+    branch — same "current row only" posture as `REPORTEES` (Decision D)."""
+    headers, company_id, admin_id = await _register_tenant(client)
+    try:
+        (branch_a,) = await _setup_branches(company_id=company_id, count=1)
+
+        manager = await _create_employee(client, headers, first_name="FormerBranchManager")
+        formerly_colleague = await _create_employee(client, headers, first_name="FormerColleague")
+
+        await _assign_manager(
+            company_id=company_id,
+            employee_id=UUID(manager["id"]),
+            reporting_manager_id=None,
+            branch_id=branch_a,
+            effective_from=date(2026, 1, 1),
+            effective_to=date(2026, 6, 1),
+        )
+        await _assign_manager(
+            company_id=company_id,
+            employee_id=UUID(formerly_colleague["id"]),
+            reporting_manager_id=None,
+            branch_id=branch_a,
+            effective_from=date(2026, 1, 1),
+            effective_to=date(2026, 6, 1),
+        )
+
+        actor_headers, _actor_id = await _create_scoped_actor(
+            company_id=company_id,
+            role_grants=[[(EMPLOYEE_VIEW_ALL, "BRANCH")]],
+            employee_id=UUID(manager["id"]),
+        )
+
+        listed = await client.get("/v1/employees", headers=actor_headers)
+        assert listed.status_code == 200
+        assert listed.json()["data"] == []
     finally:
         await _cleanup_employees(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=admin_id)

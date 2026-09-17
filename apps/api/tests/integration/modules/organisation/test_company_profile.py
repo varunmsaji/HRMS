@@ -81,7 +81,9 @@ async def test_get_company_profile_requires_permission(
             from hrms.core.db.models.identity import Permission, Role, RolePermission
 
             role = (
-                await session.execute(select(Role).where(Role.company_id == company_id))
+                await session.execute(
+                    select(Role).where(Role.company_id == company_id, Role.code == "COMPANY_ADMIN")
+                )
             ).scalar_one()
             org_perm = (
                 await session.execute(
@@ -174,6 +176,47 @@ async def test_patch_company_profile_success_and_audit(
             assert audit.after_json is not None
             assert audit.before_json["legal_name"] is None
             assert audit.after_json["legal_name"] == "Acme Manufacturing Private Limited"
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_patch_company_profile_non_indian_timezone_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`DEC-TZ-02` (SELECTED) — the SAME authenticated allow-list as registration, in the SAME
+    order, on this profile-edit path. Before Phase 2, an admin could switch a live company to
+    any of ~600 IANA zones (execution gate §6.3) — not the `TZ-01` "may it change at all" guard
+    (Phase 3), a separate question about *which value* is acceptable."""
+    headers, company_id, user_id = await _auth_headers(client)
+    try:
+        get_response = await client.get(PROFILE_PATH, headers=headers)
+        version = get_response.json()["data"]["version"]
+        response = await client.patch(
+            PROFILE_PATH,
+            headers={**headers, "If-Match": str(version)},
+            json={"timezone": "America/Los_Angeles"},
+        )
+        assert response.status_code == 422, response.text
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_patch_company_profile_asia_calcutta_canonicalised(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _auth_headers(client)
+    try:
+        get_response = await client.get(PROFILE_PATH, headers=headers)
+        version = get_response.json()["data"]["version"]
+        response = await client.patch(
+            PROFILE_PATH,
+            headers={**headers, "If-Match": str(version)},
+            json={"timezone": "Asia/Calcutta"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["timezone"] == "Asia/Kolkata"
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)
 

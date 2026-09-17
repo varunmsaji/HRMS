@@ -57,7 +57,9 @@ async def _strip_permission(company_id: UUID, code: str) -> None:
     factory = get_session_factory()
     async with factory() as session:
         role = (
-            await session.execute(select(Role).where(Role.company_id == company_id))
+            await session.execute(
+                select(Role).where(Role.company_id == company_id, Role.code == "COMPANY_ADMIN")
+            )
         ).scalar_one()
         perm = (
             await session.execute(select(Permission).where(Permission.code == code))

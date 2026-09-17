@@ -140,9 +140,16 @@ class OrganisationRepository:
         return row
 
     async def insert_role_permission(
-        self, session: AsyncSession, *, role_id: UUID, permission_id: UUID
+        self,
+        session: AsyncSession,
+        *,
+        role_id: UUID,
+        permission_id: UUID,
+        data_scope: str = "COMPANY",
     ) -> None:
-        session.add(RolePermission(role_id=role_id, permission_id=permission_id))
+        session.add(
+            RolePermission(role_id=role_id, permission_id=permission_id, data_scope=data_scope)
+        )
         await session.flush()
 
     async def insert_user_role(
