@@ -34,7 +34,13 @@ interface UserSummary {
   role_codes: string[];
 }
 
-const ASSIGNABLE_ROLES = ["COMPANY_ADMIN", "HR_ADMIN", "REPORTING_MANAGER", "EMPLOYEE"] as const;
+const ASSIGNABLE_ROLES = [
+  "COMPANY_ADMIN",
+  "HR_ADMIN",
+  "REPORTING_MANAGER",
+  "BRANCH_MANAGER",
+  "EMPLOYEE",
+] as const;
 
 function userName(user: UserSummary): string {
   return [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email || "—";
