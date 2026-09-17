@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import (
     Company,
+    PasswordResetToken,
     RefreshToken,
     Session,
     User,
@@ -159,6 +160,42 @@ class IdentityRepository:
                 )
             )
             .values(revoked_at=datetime.now(UTC))
+        )
+
+    async def create_password_reset_token(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: UUID,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> PasswordResetToken:
+        row = PasswordResetToken(
+            id=uuid4(), user_id=user_id, token_hash=token_hash, expires_at=expires_at
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_password_reset_token_by_hash(
+        self, session: AsyncSession, token_hash: str
+    ) -> PasswordResetToken | None:
+        stmt = select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def mark_password_reset_token_used(
+        self, session: AsyncSession, token: PasswordResetToken, now: datetime
+    ) -> None:
+        token.used_at = now
+        await session.flush()
+
+    async def update_user_password(
+        self, session: AsyncSession, *, user_id: UUID, password_hash: str
+    ) -> None:
+        await session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(password_hash=password_hash, failed_login_count=0, locked_until=None)
         )
 
     async def increment_failed_login(self, session: AsyncSession, user_id: UUID) -> User:

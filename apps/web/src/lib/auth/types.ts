@@ -27,6 +27,11 @@ export interface UserProfile {
   company_id: string;
   employee_id: string | null;
   permissions: string[];
+  /** `TZ-07` — the resolved business timezone (execution gate §13), shipped in the session
+   * bootstrap payload so screens can compute `businessToday()` and render attendance timestamps
+   * without a separate round trip. Always the company's timezone, never a per-shift/branch
+   * resolution — see the field's own docstring on the backend `UserProfile` schema. */
+  company_timezone: string;
 }
 
 export interface MeResponseData {

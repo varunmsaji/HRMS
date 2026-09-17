@@ -87,6 +87,8 @@ export default function EmployeeDetailPage() {
   const [confirmProbationOpen, setConfirmProbationOpen] = useState(false);
   const [confirmingProbation, setConfirmingProbation] = useState(false);
 
+  const [inviting, setInviting] = useState(false);
+
   const loadEmployee = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -271,9 +273,44 @@ export default function EmployeeDetailPage() {
     }
   }
 
+  async function handleInvite() {
+    if (!employee) return;
+    setInviting(true);
+    try {
+      const result = await apiClient.post<{ email: string; email_sent: boolean }>(
+        `/employees/${employee.id}/invite`,
+        {},
+      );
+      toast({
+        title: `Invite sent to ${result.email}`,
+        description: result.email_sent
+          ? undefined
+          : "The invite was created, but the email could not be delivered — share the link manually if needed.",
+        variant: "success",
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        toast({ title: "This employee already has a login account", variant: "danger" });
+        return;
+      }
+      if (err instanceof ApiError && err.status === 422) {
+        toast({
+          title: "Can't invite this employee",
+          description: "Add a personal email to their profile first.",
+          variant: "danger",
+        });
+        return;
+      }
+      toast({ title: "Could not send invite", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setInviting(false);
+    }
+  }
+
   const canUpdate = can("EMPLOYEE.UPDATE");
   const canDeactivate = can("EMPLOYEE.DEACTIVATE");
   const canConfirm = can("EMPLOYEE.CONFIRM");
+  const canInvite = can("EMPLOYEE.INVITE");
 
   return (
     <div className="space-y-6">
@@ -292,6 +329,11 @@ export default function EmployeeDetailPage() {
               {canConfirm && employee.status === "PROBATION" ? (
                 <Button type="button" variant="outline" onClick={() => setConfirmProbationOpen(true)}>
                   Confirm
+                </Button>
+              ) : null}
+              {canInvite ? (
+                <Button type="button" variant="outline" onClick={() => void handleInvite()} disabled={inviting}>
+                  {inviting ? "Inviting…" : "Invite"}
                 </Button>
               ) : null}
               {canDeactivate ? (

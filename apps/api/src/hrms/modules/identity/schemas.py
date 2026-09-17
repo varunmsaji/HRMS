@@ -16,6 +16,15 @@ class RefreshRequest(BaseModel):
     refresh_token: str | None = None
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=1)
+
+
 class CompanySummary(BaseModel):
     id: UUID
     name: str
@@ -37,6 +46,13 @@ class UserProfile(BaseModel):
     company_id: UUID
     employee_id: UUID | None
     permissions: list[str]
+    # `TZ-07` (execution gate §13, Phase 4/6) — the resolved business timezone, shipped in the
+    # session/bootstrap payload so the web client can compute `businessToday()` and render
+    # attendance timestamps without a separate round trip or client-side guesswork. Always
+    # `Company.timezone` here (never a per-shift/branch WD-06 resolution) — this is the
+    # session-wide default the UI falls back to; any screen showing a specific employee's
+    # attendance uses that record's own already-resolved timezone instead.
+    company_timezone: str
 
 
 class MeResponseData(BaseModel):

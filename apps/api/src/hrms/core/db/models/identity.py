@@ -165,6 +165,25 @@ class Session(Base):
     )
 
 
+class PasswordResetToken(Base):
+    """`docs/modules/employee/41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md` Phase 3 —
+    same hash-only-storage, TTL-bound shape as `RefreshToken`/`account_invite`. No RLS, matching
+    `refresh_token`'s own precedent: a public, unauthenticated `POST /auth/password/reset` caller
+    has no tenant context yet, and `user`/`refresh_token` are the only two tables this table needs
+    to join against, neither of which is RLS-protected either."""
+
+    __tablename__ = "password_reset_token"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user.id"))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class RefreshToken(Base):
     __tablename__ = "refresh_token"
 

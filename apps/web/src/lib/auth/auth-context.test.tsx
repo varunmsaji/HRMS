@@ -24,6 +24,7 @@ const SAMPLE_ME = {
     company_id: "company-1",
     employee_id: null,
     permissions: [],
+    company_timezone: "Asia/Kolkata",
   },
 };
 const SAMPLE_TOKEN_RESPONSE = {

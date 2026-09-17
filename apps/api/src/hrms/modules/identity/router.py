@@ -12,16 +12,23 @@ from hrms.modules.identity.dependencies import get_identity_service
 from hrms.modules.identity.permissions import SETTINGS_USER_MANAGE
 from hrms.modules.identity.schemas import (
     CompanyDetail,
+    ForgotPasswordRequest,
     LoginRequest,
     MeResponseData,
     RefreshRequest,
+    ResetPasswordRequest,
     TokenResponseData,
     build_meta,
 )
 from hrms.modules.identity.service import IdentityService
 from hrms.shared.pagination import DataEnvelope
+from hrms.shared.rate_limit import rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Same "Auth endpoints: 10/min per IP" bucket registration reuses — both are unauthenticated,
+# publicly reachable, account-affecting endpoints (Phase 5 hardening, doc 41 §8).
+_password_rate_limit = rate_limit("auth", limit=10, window_seconds=60)
 
 
 @router.post("/login", status_code=status.HTTP_200_OK)
@@ -51,6 +58,28 @@ async def refresh_token(
         raise InvalidTokenError("Refresh token is required")
     data = await service.refresh(raw)
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/password/forgot", status_code=status.HTTP_202_ACCEPTED)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    _rate_limit: Annotated[None, Depends(_password_rate_limit)],
+    service: Annotated[IdentityService, Depends(get_identity_service)],
+) -> DataEnvelope[dict[str, bool]]:
+    await service.forgot_password(body.email)
+    return DataEnvelope(
+        data={"accepted": True}, meta=build_meta(current_request_id() or "unknown")
+    )
+
+
+@router.post("/password/reset", status_code=status.HTTP_200_OK)
+async def reset_password(
+    body: ResetPasswordRequest,
+    _rate_limit: Annotated[None, Depends(_password_rate_limit)],
+    service: Annotated[IdentityService, Depends(get_identity_service)],
+) -> DataEnvelope[dict[str, bool]]:
+    await service.reset_password(body.token, body.password)
+    return DataEnvelope(data={"reset": True}, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

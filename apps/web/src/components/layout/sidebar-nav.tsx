@@ -4,14 +4,17 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { NAV_ITEMS } from "@/components/layout/nav-items";
+import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
 
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const { user } = useAuth();
+  const items = NAV_ITEMS.filter((item) => !item.requiresEmployeeId || Boolean(user?.employee_id));
 
   return (
     <nav className="flex flex-col gap-1 p-3" aria-label="Primary">
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const active = pathname === item.href || pathname?.startsWith(`${item.href}/`);
         const Icon = item.icon;
         return (

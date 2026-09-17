@@ -127,11 +127,18 @@ async def _verified_case(
 async def _cleanup_employee_graph(*, company_id: UUID) -> None:
     factory = get_session_factory()
     async with factory() as session:
-        # FK-safe order: onboarding_case (references employee) -> bank/statutory/assignment ->
-        # employment (references employee, legal_entity) -> employee (references number_series)
-        # -> designation/department/branch (references legal_entity/company).
+        # FK-safe order: onboarding_case/account_invite (reference employee) -> bank/statutory/
+        # assignment -> employment (references employee, legal_entity) -> employee (references
+        # number_series) -> designation/department/branch (references legal_entity/company).
+        # `account_invite` row added by activation's now-integrated invite-issuance
+        # (`onboarding/service.py` -> `AccountInviteService.issue_for_employee`) — without
+        # deleting it first, `DELETE FROM employee` below fails on
+        # `account_invite_employee_id_fkey`.
         await session.execute(
             text("DELETE FROM onboarding_case WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
+        await session.execute(
+            text("DELETE FROM account_invite WHERE company_id = :cid"), {"cid": str(company_id)}
         )
         await session.execute(
             text("DELETE FROM employee_bank WHERE company_id = :cid"), {"cid": str(company_id)}

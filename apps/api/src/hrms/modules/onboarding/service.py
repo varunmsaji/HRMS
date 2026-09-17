@@ -1002,6 +1002,24 @@ class OnboardingActivationService:
         except Exception:  # noqa: BLE001 — delivery failure must not undo the activation
             pass
 
+        # Account-invite auto-issue — Decision P2 path 1 (`docs/modules/employee/
+        # 41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md`). Best-effort, same as the
+        # activation email above: a failure here (including "no actor" for a system-triggered
+        # activation) must never undo an activation that has already committed its Employee row.
+        if actor_user_id is not None:
+            try:
+                from hrms.modules.account_invite.service import AccountInviteService
+
+                await AccountInviteService(self._session, self._settings).issue_for_employee(
+                    company_id,
+                    employee.id,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            except Exception:  # noqa: BLE001 — must not undo the activation
+                pass
+
         read = onboarding_case_to_read(case)
         await self._audit.record(
             self._session,

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { FormField } from "@/components/common/form-field";
 import { PasswordInput } from "@/components/common/password-input";
@@ -22,7 +22,7 @@ import {
   type RegistrationFormErrors,
   type RegistrationFormValues,
 } from "@/lib/company/validate-registration";
-import { listTimezones } from "@/lib/timezones";
+import { fetchAllowedCompanyTimezones } from "@/lib/timezones";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -32,12 +32,34 @@ const MONTHS = [
 export default function RegisterPage() {
   const router = useRouter();
   const { applyTokenResponse } = useAuth();
-  const timezones = useMemo(() => listTimezones(), []);
+  // `DEC-TZ-02` (SELECTED) — filtered to what the server will actually accept (execution gate
+  // §6.3), fetched from the API rather than the full ~600-zone `Intl` list this page showed
+  // before Phase 2. Defaults to `Asia/Kolkata` alone while the fetch is in flight or if it
+  // fails, matching the server's own default.
+  const [timezones, setTimezones] = useState<string[]>(["Asia/Kolkata"]);
 
-  const [values, setValues] = useState<RegistrationFormValues>(emptyRegistrationForm);
+  const [values, setValues] = useState<RegistrationFormValues>(() => ({
+    ...emptyRegistrationForm,
+    timezone: "Asia/Kolkata",
+  }));
   const [errors, setErrors] = useState<RegistrationFormErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAllowedCompanyTimezones().then((allowed) => {
+      if (cancelled || allowed.length === 0) return;
+      setTimezones(allowed);
+      setValues((current) => ({
+        ...current,
+        timezone: allowed.includes(current.timezone) ? current.timezone : allowed[0],
+      }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function updateField<K extends keyof RegistrationFormValues>(key: K, value: RegistrationFormValues[K]) {
     setValues((current) => ({ ...current, [key]: value }));
@@ -157,17 +179,28 @@ export default function RegisterPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <FormField id="timezone" label="Timezone" error={errors.timezone}>
-              <NativeSelect
-                value={values.timezone}
-                onChange={(e) => updateField("timezone", e.target.value)}
-              >
-                {timezones.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-              </NativeSelect>
+            <FormField
+              id="timezone"
+              label="Timezone"
+              error={errors.timezone}
+              description={
+                timezones.length === 1 ? "India-only for now — more regions coming soon." : undefined
+              }
+            >
+              {timezones.length === 1 ? (
+                <Input value={timezones[0]} disabled />
+              ) : (
+                <NativeSelect
+                  value={values.timezone}
+                  onChange={(e) => updateField("timezone", e.target.value)}
+                >
+                  {timezones.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz}
+                    </option>
+                  ))}
+                </NativeSelect>
+              )}
             </FormField>
 
             <FormField id="fyStartMonth" label="Financial year starts" error={errors.fyStartMonth}>

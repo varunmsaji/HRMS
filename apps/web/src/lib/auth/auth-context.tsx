@@ -22,9 +22,13 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (body: LoginRequest) => Promise<void>;
+  /** Returns the freshly-loaded profile — callers that need to redirect based on permissions
+   * right after login (doc 41 Phase 4) can't rely on this hook's own `user` value, since a state
+   * update from inside an async callback isn't visible in that same closure until the next
+   * render. */
+  login: (body: LoginRequest) => Promise<UserProfile | null>;
   /** Registration already returns an authenticated session (C-08) — no separate login step. */
-  applyTokenResponse: (tokenResponse: TokenResponseData) => Promise<void>;
+  applyTokenResponse: (tokenResponse: TokenResponseData) => Promise<UserProfile | null>;
   logout: () => Promise<void>;
 }
 
@@ -33,14 +37,16 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading", session: null, user: null });
 
-  const loadCurrentUser = useCallback(async (session: StoredSession) => {
+  const loadCurrentUser = useCallback(async (session: StoredSession): Promise<UserProfile | null> => {
     try {
       const me = await apiClient.get<MeResponseData>("/auth/me");
       setState({ status: "authenticated", session, user: me.user });
+      return me.user;
     } catch {
       // /auth/me failing for a reason other than an expired session (network blip) shouldn't
       // block the user from the app shell — permissions/email just won't be shown yet.
       setState({ status: "authenticated", session, user: null });
+      return null;
     }
   }, []);
 
@@ -65,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (tokenResponse: TokenResponseData) => {
       const session = sessionFromTokenResponse(tokenResponse);
       saveSession(session);
-      await loadCurrentUser(session);
+      return loadCurrentUser(session);
     },
     [loadCurrentUser],
   );
@@ -75,7 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const data = await apiClient.post<TokenResponseData>("/auth/login", body, {
         authenticated: false,
       });
-      await applyTokenResponse(data);
+      return applyTokenResponse(data);
     },
     [applyTokenResponse],
   );

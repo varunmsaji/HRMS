@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
+import { landingPathFor } from "@/lib/auth/landing";
 import { validateLoginForm, type LoginFormErrors } from "@/lib/auth/validate-login";
 
 export default function LoginPage() {
@@ -36,8 +37,8 @@ export default function LoginPage() {
 
     setSubmitting(true);
     try {
-      await login({ email: email.trim(), password });
-      router.push("/app/dashboard");
+      const user = await login({ email: email.trim(), password });
+      router.push(landingPathFor(user));
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.status === 401) {
@@ -101,6 +102,12 @@ export default function LoginPage() {
             disabled={submitting}
           />
         </FormField>
+
+        <div className="text-right text-sm">
+          <Link href="/forgot-password" className="font-medium text-primary hover:underline">
+            Forgot password?
+          </Link>
+        </div>
 
         <Button type="submit" className="w-full" disabled={submitting}>
           {submitting ? "Signing in…" : "Sign in"}

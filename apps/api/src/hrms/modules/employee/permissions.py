@@ -97,6 +97,12 @@ Defined here rather than in `employee_import/permissions.py` so it's picked up a
 `OrganisationService.register_company`'s existing `EMPLOYEE_PERMISSIONS` grant loop and by
 `seed/bootstrap.py` — both already iterate this list, so a new module-specific permissions file
 and a second registration wire-up would duplicate that plumbing for one code.
+
+Account Provisioning (`docs/modules/employee/41_...AUDIT_AND_PLAN.md`, Phase 2) adds
+`EMPLOYEE.INVITE` (**new**) — gates `POST /employees/{id}/invite`, in
+`modules/account_invite/`. Defined here for the same reason `.BULK_IMPORT` is: automatic pickup
+by `register_company`'s grant loop (`COMPANY_ADMIN` and `HR_ADMIN` both get it; `EMPLOYEE` does
+not — an ordinary employee cannot invite anyone, per Decision H).
 """
 
 EMPLOYEE_VIEW_ALL = "EMPLOYEE.VIEW_ALL"
@@ -113,6 +119,7 @@ EMPLOYEE_UPDATE_SENSITIVE = "EMPLOYEE.UPDATE_SENSITIVE"
 EMPLOYEE_VIEW_BANKING = "EMPLOYEE.VIEW_BANKING"
 EMPLOYEE_BULK_IMPORT = "EMPLOYEE.BULK_IMPORT"
 EMPLOYEE_CONFIRM = "EMPLOYEE.CONFIRM"
+EMPLOYEE_INVITE = "EMPLOYEE.INVITE"
 
 EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_VIEW_ALL, "EMPLOYEE", "View all employees in the company"),
@@ -129,4 +136,5 @@ EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_VIEW_BANKING, "EMPLOYEE", "View an employee's bank account details"),
     (EMPLOYEE_BULK_IMPORT, "EMPLOYEE", "Bulk-import employees from a CSV file"),
     (EMPLOYEE_CONFIRM, "EMPLOYEE", "Confirm an employee from probation to active"),
+    (EMPLOYEE_INVITE, "EMPLOYEE", "Invite an employee to create their login account"),
 ]

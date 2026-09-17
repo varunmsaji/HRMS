@@ -27,6 +27,8 @@ import {
   Search,
   Tag,
   Timer,
+  UserCircle,
+  UserCog,
   UserPlus,
   Users,
   Wallet,
@@ -37,12 +39,17 @@ export interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** Only shown when true — currently just "does this user have a linked Employee record"
+   * (`My Profile`, doc 41 Phase 4). Every other item is unconditional, matching this list's own
+   * long-standing convention (docs/design/03_Navigation_System.md §5 — items the role/build
+   * can't access yet are absent, not disabled) rather than per-permission filtering, which this
+   * one item doesn't fit: it's gated on data (an Employee link), not a permission code. */
+  requiresEmployeeId?: boolean;
 }
 
-/** Navigation for screens that exist today (docs/design/03_Navigation_System.md §5 —
- * items the role/build can't access yet are absent, not disabled). */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/me", label: "My Profile", icon: UserCircle, requiresEmployeeId: true },
   { href: "/app/company", label: "Company", icon: Building2 },
   { href: "/app/employees", label: "Employees", icon: Users },
   { href: "/app/onboarding", label: "Onboarding", icon: UserPlus },
@@ -73,4 +80,5 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/app/policy-assignments", label: "Policy Assignments", icon: Link2 },
   { href: "/app/policy-resolution", label: "Policy Resolution", icon: Search },
   { href: "/app/setup", label: "Setup", icon: ListChecks },
+  { href: "/app/users", label: "Users", icon: UserCog },
 ];

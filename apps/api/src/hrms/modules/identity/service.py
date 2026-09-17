@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -5,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.auth.jwt import create_access_token
-from hrms.core.auth.passwords import verify_password
+from hrms.core.auth.passwords import hash_password, is_password_strong_enough, verify_password
 from hrms.core.auth.tokens import generate_refresh_token, hash_token
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.repositories.identity import IdentityRepository
@@ -15,7 +17,9 @@ from hrms.core.errors.auth import (
     InvalidCredentialsError,
     InvalidTokenError,
 )
+from hrms.core.errors.base import ValidationError
 from hrms.core.rbac.service import RbacService
+from hrms.modules.identity.email_templates import build_password_reset_email
 from hrms.modules.identity.schemas import (
     CompanyDetail,
     CompanySummary,
@@ -24,6 +28,12 @@ from hrms.modules.identity.schemas import (
     TokenResponseData,
     UserProfile,
 )
+from hrms.modules.onboarding.email_sender import get_email_sender
+
+#: Matches `account_invite`'s own default — no stated reason for a different window, and a
+#: shorter-lived credential (a password reset, vs. a first-time account setup) if anything argues
+#: for parity rather than a longer one.
+PASSWORD_RESET_TTL_HOURS = 2
 
 
 class IdentityService:
@@ -155,6 +165,9 @@ class IdentityService:
         user = await self._repo.get_user_by_id(self._session, user_id)
         if user is None:
             raise InvalidCredentialsError("Invalid email or password")
+        company = await self._repo.get_company_by_id(self._session, company_id)
+        if company is None:
+            raise InvalidCredentialsError("Invalid email or password")
         permissions = sorted(await self._rbac.get_permission_codes(user_id, company_id))
         return MeResponseData(
             user=UserProfile(
@@ -163,6 +176,7 @@ class IdentityService:
                 company_id=company_id,
                 employee_id=employee_id,
                 permissions=permissions,
+                company_timezone=company.timezone,
             )
         )
 
@@ -257,3 +271,71 @@ class IdentityService:
             company_id=company_id,
             companies=companies,
         )
+
+    async def forgot_password(self, email: str) -> None:
+        """`POST /auth/password/forgot` (Phase 3, Decision P6) — always returns successfully
+        regardless of whether the email matches a real account, to avoid account-existence
+        enumeration (the same anti-enumeration posture `login`'s own company-mismatch branch
+        already follows). If the email does match an active user, issues a time-boxed reset
+        token using the exact hash/TTL shape `AccountInviteService`/`OnboardingTokenService`
+        already established, and emails it — best-effort, a delivery failure must not surface to
+        the caller (same reasoning as every other best-effort send in this codebase)."""
+        user = await self._repo.get_user_by_email(self._session, email.lower())
+        if user is None or user.deleted_at is not None or user.status != "ACTIVE":
+            return
+
+        now = datetime.now(UTC)
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        await self._repo.create_password_reset_token(
+            self._session,
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=now + timedelta(hours=PASSWORD_RESET_TTL_HOURS),
+        )
+
+        reset_url = f"{self._settings.web_app_base_url}/reset-password/{raw_token}"
+        subject, html_body, text_body = build_password_reset_email(
+            first_name=user.first_name, reset_url=reset_url
+        )
+        try:
+            await get_email_sender(self._settings).send(
+                to=user.email or email, subject=subject, html_body=html_body, text_body=text_body
+            )
+        except Exception:  # noqa: BLE001 — delivery failure must not fail the request
+            pass
+
+        # No `AuditService.record` call here, deliberately: that table's `company_id` is a real
+        # tenant FK (and RLS-protected) — a password reset has no company context to attach to
+        # (a `User` can belong to several), so there is no correct value to pass. Every other
+        # `audit_action` in this module fires only once a `company_id` is genuinely known
+        # (`login`/`refresh` resolve one before calling `issue_tokens_for`).
+
+    async def reset_password(self, raw_token: str, new_password: str) -> None:
+        """`POST /auth/password/reset` — single-use, TTL-bound, same failure-mode-hiding posture
+        as `AccountInviteService.accept`: an invalid/expired/already-used token and a
+        never-existed one raise the identical error."""
+        if not is_password_strong_enough(new_password):
+            raise ValidationError(
+                "Password does not meet minimum strength requirements",
+                details=[
+                    {
+                        "field": "password",
+                        "code": "WEAK_PASSWORD",
+                        "message": "Password must be at least 8 characters and include "
+                        "both a letter and a digit",
+                    }
+                ],
+            )
+
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        token = await self._repo.get_password_reset_token_by_hash(self._session, token_hash)
+        now = datetime.now(UTC)
+        if token is None or token.used_at is not None or token.expires_at <= now:
+            raise InvalidTokenError("This password reset link is invalid or has expired")
+
+        await self._repo.update_user_password(
+            self._session, user_id=token.user_id, password_hash=hash_password(new_password)
+        )
+        await self._repo.mark_password_reset_token_used(self._session, token, now)
+        # No `AuditService.record` call — same reasoning as `forgot_password` above.
