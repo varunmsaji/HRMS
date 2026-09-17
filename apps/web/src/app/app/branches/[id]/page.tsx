@@ -282,6 +282,7 @@ export default function BranchDetailPage() {
                 errors={formErrors}
                 onChange={setFormValues}
                 legalEntities={legalEntities}
+                hideLegalEntitySelector={legalEntities.length === 1}
               />
               <div className="flex flex-wrap gap-2">
                 <Button type="button" onClick={() => void handleSave()} disabled={saving}>

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BranchForm } from "@/components/branch/branch-form";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
+import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
@@ -20,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { Branch } from "@/lib/branch/types";
@@ -30,12 +32,14 @@ import {
   type BranchFormErrors,
   type BranchFormValues,
 } from "@/lib/branch/validate-branch";
+import type { CompanyProfile } from "@/lib/company/types";
 import type { LegalEntity } from "@/lib/legal-entity/types";
 
 export default function BranchesPage() {
   const { toast } = useToast();
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [legalEntities, setLegalEntities] = useState<LegalEntity[]>([]);
+  const [company, setCompany] = useState<CompanyProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -44,16 +48,26 @@ export default function BranchesPage() {
   const [formErrors, setFormErrors] = useState<BranchFormErrors>({});
   const [saving, setSaving] = useState(false);
 
+  // First-run-only: replaces the old "go to Legal Entities first" dead end. Most companies only
+  // ever have one legal entity, so we collect just its name here, inline, instead of making the
+  // user understand a separate top-level concept before they can add their first branch.
+  const [quickSetupOpen, setQuickSetupOpen] = useState(false);
+  const [quickSetupName, setQuickSetupName] = useState("");
+  const [quickSetupError, setQuickSetupError] = useState<string | undefined>(undefined);
+  const [quickSetupSaving, setQuickSetupSaving] = useState(false);
+
   const loadBranches = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [branchData, entityData] = await Promise.all([
+      const [branchData, entityData, companyData] = await Promise.all([
         apiClient.get<Branch[]>("/branches"),
         apiClient.get<LegalEntity[]>("/legal-entities"),
+        apiClient.get<CompanyProfile>("/companies/current").catch(() => null),
       ]);
       setBranches(branchData);
       setLegalEntities(entityData);
+      setCompany(companyData);
     } catch (err) {
       setBranches(null);
       setError(
@@ -75,9 +89,60 @@ export default function BranchesPage() {
   }
 
   function openCreate() {
-    setFormValues(EMPTY_BRANCH_FORM_VALUES);
+    setFormValues({
+      ...EMPTY_BRANCH_FORM_VALUES,
+      // The common case: exactly one legal entity, so there's nothing to pick — pre-fill it and
+      // the form hides the selector (see `hideLegalEntitySelector` below).
+      legalEntityId: legalEntities.length === 1 ? legalEntities[0].id : "",
+    });
     setFormErrors({});
     setCreateOpen(true);
+  }
+
+  function openQuickSetup() {
+    setQuickSetupName(company?.legal_name || company?.name || "");
+    setQuickSetupError(undefined);
+    setQuickSetupOpen(true);
+  }
+
+  async function handleQuickSetup() {
+    const name = quickSetupName.trim();
+    if (!name) {
+      setQuickSetupError("Enter your company's registered name.");
+      return;
+    }
+
+    setQuickSetupSaving(true);
+    setQuickSetupError(undefined);
+    try {
+      const created = await apiClient.post<LegalEntity>("/legal-entities", { name });
+      setLegalEntities((prev) => [...prev, created]);
+      setQuickSetupOpen(false);
+      // Straight into "Add Branch" — that's what the user was actually trying to do.
+      setFormValues({ ...EMPTY_BRANCH_FORM_VALUES, legalEntityId: created.id });
+      setFormErrors({});
+      setCreateOpen(true);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 422) {
+        setQuickSetupError(getFieldError(err.details, "name") ?? "Enter a valid name.");
+        return;
+      }
+      if (err instanceof ApiError && err.status === 403) {
+        setQuickSetupOpen(false);
+        toast({
+          title: "You don't have permission to set up the company",
+          variant: "danger",
+        });
+        return;
+      }
+      toast({
+        title: "Could not set up your company",
+        description: describeApiError(err),
+        variant: "danger",
+      });
+    } finally {
+      setQuickSetupSaving(false);
+    }
   }
 
   async function handleCreate() {
@@ -153,11 +218,11 @@ export default function BranchesPage() {
           {hasNoLegalEntities && branches && branches.length === 0 ? (
             <EmptyState
               icon={Building}
-              title="Add a legal entity before creating branches."
-              description="Branches belong to a legal entity. Set one up first, then come back to add your branches."
+              title="Let's set up your company."
+              description="Tell us your company's registered name, then add your first branch. Takes a few seconds — you can fill in registration numbers (PAN, GST, etc.) later from Legal Entities."
               action={
-                <Button asChild>
-                  <Link href="/app/legal-entities">Go to Legal Entities</Link>
+                <Button type="button" onClick={openQuickSetup}>
+                  Get started
                 </Button>
               }
             />
@@ -214,6 +279,7 @@ export default function BranchesPage() {
               onChange={setFormValues}
               legalEntities={legalEntities}
               idPrefix="create-"
+              hideLegalEntitySelector={legalEntities.length === 1}
             />
           </div>
           <DialogFooter>
@@ -222,6 +288,43 @@ export default function BranchesPage() {
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={saving}>
               {saving ? "Adding…" : "Add branch"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={quickSetupOpen}
+        onOpenChange={(open) => (!quickSetupSaving ? setQuickSetupOpen(open) : null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Set up your company</DialogTitle>
+          </DialogHeader>
+          <FormField
+            id="quick-setup-legal-name"
+            label="Registered company name"
+            required
+            error={quickSetupError}
+            description="Your company's legal/registered name. You can add PAN, GST, and other registration numbers later."
+          >
+            <Input
+              value={quickSetupName}
+              onChange={(e) => setQuickSetupName(e.target.value)}
+              autoFocus
+            />
+          </FormField>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setQuickSetupOpen(false)}
+              disabled={quickSetupSaving}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleQuickSetup()} disabled={quickSetupSaving}>
+              {quickSetupSaving ? "Saving…" : "Continue"}
             </Button>
           </DialogFooter>
         </DialogContent>

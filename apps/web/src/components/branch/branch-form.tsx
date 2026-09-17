@@ -1,9 +1,12 @@
+import { useMemo } from "react";
+
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import type { LegalEntity } from "@/lib/legal-entity/types";
 import { INDIA_STATE_CODES } from "@/lib/branch/validate-branch";
 import type { BranchFormErrors, BranchFormValues } from "@/lib/branch/validate-branch";
+import { listTimezones } from "@/lib/timezones";
 
 interface BranchFormProps {
   values: BranchFormValues;
@@ -11,42 +14,58 @@ interface BranchFormProps {
   onChange: (values: BranchFormValues) => void;
   legalEntities: LegalEntity[];
   idPrefix?: string;
+  /** Hide the Legal Entity picker when the company only has one (the common case) — it's
+   * already set on `values.legalEntityId` by the caller, nothing for the user to choose. */
+  hideLegalEntitySelector?: boolean;
 }
 
 const STATE_OPTIONS = Object.entries(INDIA_STATE_CODES).sort((a, b) => a[1].localeCompare(b[1]));
 
-export function BranchForm({ values, errors, onChange, legalEntities, idPrefix = "" }: BranchFormProps) {
+export function BranchForm({
+  values,
+  errors,
+  onChange,
+  legalEntities,
+  idPrefix = "",
+  hideLegalEntitySelector = false,
+}: BranchFormProps) {
   function update<K extends keyof BranchFormValues>(key: K, value: BranchFormValues[K]) {
     onChange({ ...values, [key]: value });
   }
 
   const id = (name: string) => `${idPrefix}${name}`;
+  // NEW-01/SR-09 (execution gate §4.5) — a select sourced from the runtime IANA list, not a
+  // free-text input. The backend already validated free text server-side; this replaces the
+  // usability gap, not a correctness gap (branch was never the confirmed vulnerable surface).
+  const timezones = useMemo(() => listTimezones(), []);
 
   return (
     <div className="space-y-6">
       <section>
         <h3 className="text-sm font-medium text-foreground">Identity</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField
-            id={id("legalEntityId")}
-            label="Legal entity"
-            required
-            error={errors.legalEntityId}
-            description="The legal entity this branch operates under."
-            className="sm:col-span-2"
-          >
-            <NativeSelect
-              value={values.legalEntityId}
-              onChange={(e) => update("legalEntityId", e.target.value)}
+          {hideLegalEntitySelector ? null : (
+            <FormField
+              id={id("legalEntityId")}
+              label="Legal entity"
+              required
+              error={errors.legalEntityId}
+              description="The legal entity this branch operates under."
+              className="sm:col-span-2"
             >
-              <option value="">Select a legal entity</option>
-              {legalEntities.map((entity) => (
-                <option key={entity.id} value={entity.id}>
-                  {entity.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
+              <NativeSelect
+                value={values.legalEntityId}
+                onChange={(e) => update("legalEntityId", e.target.value)}
+              >
+                <option value="">Select a legal entity</option>
+                {legalEntities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+          )}
           <FormField id={id("name")} label="Branch name" required error={errors.name}>
             <Input value={values.name} onChange={(e) => update("name", e.target.value)} />
           </FormField>
@@ -90,12 +109,20 @@ export function BranchForm({ values, errors, onChange, legalEntities, idPrefix =
           <FormField id={id("pincode")} label="PIN code" error={errors.pincode}>
             <Input value={values.pincode} onChange={(e) => update("pincode", e.target.value)} placeholder="560001" />
           </FormField>
-          <FormField id={id("timezone")} label="Timezone" error={errors.timezone}>
-            <Input
-              value={values.timezone}
-              onChange={(e) => update("timezone", e.target.value)}
-              placeholder="Asia/Kolkata"
-            />
+          <FormField
+            id={id("timezone")}
+            label="Timezone"
+            error={errors.timezone}
+            description="Leave unset to inherit the company's timezone."
+          >
+            <NativeSelect value={values.timezone} onChange={(e) => update("timezone", e.target.value)}>
+              <option value="">Inherit from company</option>
+              {timezones.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </NativeSelect>
           </FormField>
         </div>
       </section>
