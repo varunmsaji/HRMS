@@ -49,6 +49,7 @@ export default function OvertimeDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
+  const tz = user?.company_timezone ?? "Asia/Kolkata";
   const { can } = usePermissions();
 
   const [record, setRecord] = useState<OvertimeRecord | null>(null);
@@ -181,7 +182,7 @@ export default function OvertimeDetailPage() {
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-medium text-foreground">Review</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="Reviewed at" value={formatDateTime(record.reviewed_at)} />
+                <Field label="Reviewed at" value={formatDateTime(record.reviewed_at, tz)} />
                 <Field label="Reviewer comment" value={record.reviewer_comment ?? "—"} />
                 <Field label="Rejection reason" value={record.rejection_reason ?? "—"} />
               </dl>
@@ -203,7 +204,7 @@ export default function OvertimeDetailPage() {
                       ) : null}
                     </div>
                     <span className="whitespace-nowrap text-xs text-foreground-muted">
-                      {formatDateTime(entry.created_at)}
+                      {formatDateTime(entry.created_at, tz)}
                     </span>
                   </li>
                 ))}

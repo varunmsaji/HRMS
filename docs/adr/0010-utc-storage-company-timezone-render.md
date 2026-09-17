@@ -1,6 +1,6 @@
 # ADR-0010: UTC Storage, Company-Timezone Rendering, Company-Timezone Business-Day Boundaries
 
-**Status:** Accepted
+**Status:** Accepted, **rendering clause amended 2026-09-15** — see Amendment below.
 
 ## Context
 
@@ -46,3 +46,29 @@ All timestamps are stored in **UTC** in the database, full stop. Every `company`
 - **Store timestamps in each company's local time directly.** Rejected: ambiguous across DST
   transitions and impossible to compare/sort correctly across tenants in shared tables (e.g. a
   cross-tenant `punch` partition) — UTC storage with timezone-aware rendering is strictly safer.
+
+## Amendment (2026-09-15) — rendering clause
+
+`WD-06` (LOCKED, `../architecture/WORKFORCE_ATTENDANCE_DECISION_LOG.md` §140) supersedes this ADR's
+rendering clause for attendance specifically: the timezone used to *compute* an attendance day is
+`ShiftVersion.timezone > Branch.timezone > Company.timezone`, not `Company.timezone` alone. Literal
+compliance with this ADR's original wording — "`company.timezone` is the single source of truth for
+rendering" — would display a branch operating in a different zone from its company (e.g. a
+`Asia/Dubai` branch under an `Asia/Kolkata` company) in a zone its figures were never computed in.
+That is a second bug, not correctness.
+
+**The rendering clause is amended to:** for attendance timestamps, the single source of truth for
+rendering is **the timezone the figure was actually computed in** (the WD-06-resolved zone, recorded
+per-row on `attendance_day.timezone`) — not the literal `company.timezone` column. Every rendered
+attendance time must carry an explicit zone label; it must never fall back to the viewer's browser
+timezone. `company.timezone` remains the source of truth for every **non-attendance** timestamp
+(audit-log entries, `created_at`, notification times) and for business-day boundaries where no
+more specific zone applies, per the original Decision above — this amendment narrows the rendering
+clause only, and only for attendance.
+
+For the current tenant base (all companies on `Asia/Kolkata`, no branch-level timezone override in
+use) the two readings are identical and this amendment changes no visible behaviour today. It is
+recorded now — decided as `CD-3` in
+[`../audits/ATTENDANCE_TIMEZONE_FINAL_DECISION_AND_EXECUTION_GATE.md`](../audits/ATTENDANCE_TIMEZONE_FINAL_DECISION_AND_EXECUTION_GATE.md)
+§13.3 / §19 — so it is correct in advance of the day a second timezone is onboarded, rather than
+amended under production pressure later.

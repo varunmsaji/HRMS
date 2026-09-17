@@ -23,6 +23,7 @@ import {
   type AttendancePeriodValidation,
 } from "@/lib/attendance-period/types";
 import { formatDateTime } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
@@ -43,7 +44,9 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
 export default function AttendancePeriodDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const { user } = useAuth();
   const { can } = usePermissions();
+  const tz = user?.company_timezone ?? "Asia/Kolkata";
 
   const [period, setPeriod] = useState<AttendancePeriod | null>(null);
   const [summary, setSummary] = useState<AttendancePeriodSummaryRow[] | null>(null);
@@ -170,8 +173,8 @@ export default function AttendancePeriodDetailPage() {
                 <Field label="Label" value={period.label ?? "—"} />
                 <Field label="Period start" value={period.period_start} />
                 <Field label="Period end" value={period.period_end} />
-                <Field label="Opened at" value={formatDateTime(period.opened_at)} />
-                <Field label="Closed at" value={formatDateTime(period.closed_at)} />
+                <Field label="Opened at" value={formatDateTime(period.opened_at, tz)} />
+                <Field label="Closed at" value={formatDateTime(period.closed_at, tz)} />
                 <Field label="Reopen reason" value={period.reopen_reason ?? "—"} />
               </dl>
             </CardContent>
@@ -283,7 +286,7 @@ export default function AttendancePeriodDetailPage() {
                       ) : null}
                     </div>
                     <span className="whitespace-nowrap text-xs text-foreground-muted">
-                      {formatDateTime(entry.created_at)}
+                      {formatDateTime(entry.created_at, tz)}
                     </span>
                   </li>
                 ))}

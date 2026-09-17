@@ -2,10 +2,48 @@
 
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+
+def _reject_non_string_instant(value: Any) -> Any:
+    """`ED-5` — the wire contract for any client-supplied attendance instant is *"ISO-8601 string
+    with an explicit offset"*, and `AwareDatetime` alone does not deliver it.
+
+    `AwareDatetime` correctly rejects a naive string (`"2026-09-15T09:00:00"`) and a date-only
+    string (`"2026-09-15"`), but **accepts an epoch integer**: Pydantic v2 reads an `int` as Unix
+    epoch seconds, and the resulting datetime is genuinely timezone-aware, so the annotation has
+    nothing to object to — `punch_time: 0` would silently become `1970-01-01T00:00:00Z`.
+
+    Rejecting anything that is not a `str` before parsing closes that, and also rejects a float
+    epoch and a `{"$date": ...}`-style object. A real `datetime` instance is allowed through so
+    server-side construction of these models (tests, internal callers) still works — only
+    *wire* input is constrained, and wire input is always JSON-decoded to `str`/`int`/`float`."""
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        # noqa rationale: TRY004 suggests TypeError for a type check, but this runs inside a
+        # Pydantic `BeforeValidator`, which converts only `ValueError`/`AssertionError` into a
+        # 422. A `TypeError` here would escape as an unhandled 500 — exactly the failure mode
+        # this whole phase exists to remove.
+        raise ValueError(  # noqa: TRY004
+            "must be an ISO-8601 datetime string with an explicit UTC offset "
+            "(e.g. 2026-09-15T09:00:00+05:30) — numeric epoch values are not accepted"
+        )
+    return value
+
+
+AwareIsoDatetime = Annotated[AwareDatetime, BeforeValidator(_reject_non_string_instant)]
 
 if TYPE_CHECKING:
     from hrms.modules.attendance.models import (
@@ -1219,21 +1257,22 @@ _ATTENDANCE_STATUSES = (
 )
 
 
-class PunchCreate(BaseModel):
-    """Shared by both `POST /attendance/punches` (self) and the on-behalf variant — the router
-    decides `employee_id` (forces the caller's own for self-punch, requires it in the body for
-    on-behalf), not this schema (architecture §23.2: `ATTENDANCE.PUNCH` is SELF,
-    `ATTENDANCE.PUNCH_ON_BEHALF` is COMPANY). `source` defaults to `None` (not `"WEB"`) so the
-    router's `default_source` (`WEB` for self, `ADMIN` for on-behalf) actually takes effect
-    unless the caller explicitly overrides it — a truthy default here would silently defeat
-    that fallback for every on-behalf punch."""
+class PunchCreateSelf(BaseModel):
+    """Body for `POST /attendance/punches/me` — employee self-service (`DEC-TZ-01`, SELECTED).
+
+    **There is deliberately no `punch_time`, no `source`, and no `employee_id` field here.** The
+    punch instant is the moment the server receives the request; the source is assigned from the
+    authenticated route; the employee is the caller. Under `extra="forbid"` a client that sends
+    any of the three gets a 422 rather than being quietly ignored, so an old client fails loudly
+    instead of silently having its timestamp discarded.
+
+    This is why no clock-skew tolerance is configurable anywhere in the module: with no
+    client-supplied instant on this path there is nothing to compare a tolerance against. The
+    control is structural, not a threshold (execution gate §7.1)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    employee_id: UUID | None = None
-    punch_time: datetime | None = None
     direction: str
-    source: str | None = None
     reference: str | None = Field(default=None, max_length=200)
     idempotency_key: str | None = Field(default=None, max_length=100)
 
@@ -1244,11 +1283,35 @@ class PunchCreate(BaseModel):
             raise ValueError(f"direction must be one of {_PUNCH_DIRECTIONS}")
         return value
 
-    @field_validator("source")
+
+class PunchCreateOnBehalf(BaseModel):
+    """Body for `POST /attendance/punches` — HR/admin entering a punch for someone else
+    (`ATTENDANCE.PUNCH_ON_BEHALF`).
+
+    Client-supplied time is **required** here, because that is the workflow's entire purpose:
+    recording an instant the server did not itself observe. It is bounded rather than trusted —
+    not in the future (`FuturePunchTimeError`), not inside a `CLOSED` period (`_ensure_date_open`),
+    not before the employee's employment began (`PunchTimeBeforeEmploymentError`).
+
+    `reference` is the **reason** and is mandatory here (it stays optional on the self route),
+    so every administrative override carries its own justification into the audit log.
+
+    `source` is absent by design and server-assigned as `ADMIN`, closing `F-11`: the value can no
+    longer be chosen by the caller on any route."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    employee_id: UUID
+    punch_time: AwareIsoDatetime
+    direction: str
+    reference: str = Field(min_length=1, max_length=200)
+    idempotency_key: str | None = Field(default=None, max_length=100)
+
+    @field_validator("direction")
     @classmethod
-    def validate_source(cls, value: str | None) -> str | None:
-        if value is not None and value not in _PUNCH_SOURCES:
-            raise ValueError(f"source must be one of {_PUNCH_SOURCES}")
+    def validate_direction(cls, value: str) -> str:
+        if value not in _PUNCH_DIRECTIONS:
+            raise ValueError(f"direction must be one of {_PUNCH_DIRECTIONS}")
         return value
 
 
@@ -1467,12 +1530,17 @@ _REGULARIZATION_ACTIONS = (
 
 class RegularizationRequestedPunchInput(BaseModel):
     """One requested IN/OUT instant — reuses `_PUNCH_DIRECTIONS` verbatim (WD-12: don't
-    redefine a second direction enum)."""
+    redefine a second direction enum).
+
+    `requested_time` carries the same `AwareIsoDatetime` contract as the on-behalf punch route:
+    regularization is the *other* legitimately client-time-accepting path (execution gate §7.2),
+    so it gets the identical wire guard rather than a weaker one. It stays approval-gated — the
+    instant only becomes a `punch` row once a reviewer approves it."""
 
     model_config = ConfigDict(extra="forbid")
 
     direction: str
-    requested_time: datetime
+    requested_time: AwareIsoDatetime
 
     @field_validator("direction")
     @classmethod
@@ -1525,10 +1593,16 @@ def regularization_action_to_read(
 
 
 class RegularizationRequestCreate(BaseModel):
-    """Shared by self-submit and on-behalf-submit (router decides `employee_id`, mirrors
-    `PunchCreate` — architecture §23.2: self is SELF-scoped, on-behalf is COMPANY-scoped).
-    WD-28 decision 2: every request must carry `requested_punches` and/or `requested_shift_id`
-    so an approval always has a well-defined, engine-supported effect."""
+    """Shared by self-submit and on-behalf-submit (router decides `employee_id` — architecture
+    §23.2: self is SELF-scoped, on-behalf is COMPANY-scoped). WD-28 decision 2: every request
+    must carry `requested_punches` and/or `requested_shift_id` so an approval always has a
+    well-defined, engine-supported effect.
+
+    Note this schema keeps the single-endpoint, body-decides-`employee_id` shape that the punch
+    routes deliberately moved away from in Phase 1 (`ED-4`). That is intentional and not an
+    oversight: regularization is approval-gated end to end, so the body cannot select a
+    *privilege* here the way it could on the punch path — the reviewer, not the submitter,
+    decides whether anything is written."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
+from hrms.core.observability.logging import get_logger
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.attendance import calculation as calc
 from hrms.modules.attendance.exceptions import (
@@ -26,6 +27,7 @@ from hrms.modules.attendance.exceptions import (
     AttendancePeriodNotFoundError,
     AttendancePeriodOverlapError,
     DuplicatePunchIdempotencyKeyError,
+    FuturePunchTimeError,
     InvalidPolicyBandError,
     InvalidPolicyRateRowError,
     InvalidRegularizationAllowedTypeError,
@@ -42,6 +44,7 @@ from hrms.modules.attendance.exceptions import (
     PolicyVersionNotFoundForDateError,
     PolicyVersionOverlapError,
     PolicyVersionPreviousVersionRequiredError,
+    PunchTimeBeforeEmploymentError,
     RegularizationApproverMismatchError,
     RegularizationAttachmentRequiredError,
     RegularizationBlockedByLockError,
@@ -121,7 +124,6 @@ from hrms.modules.attendance.schemas import (
     OvertimeRecordRead,
     OvertimeReviewInput,
     PolicyResolutionRead,
-    PunchCreate,
     PunchRead,
     RegularizationPolicyCreate,
     RegularizationPolicyRead,
@@ -174,6 +176,10 @@ from hrms.modules.attendance.schemas import (
     shift_roster_to_audit_dict,
     shift_roster_to_read,
 )
+from hrms.shared.business_time import business_today
+from hrms.shared.timezone import resolve_zoneinfo
+
+_logger = get_logger(__name__)
 
 
 def _validate_bands(bands: list[Any], *, required: bool, field: str) -> None:
@@ -1870,6 +1876,47 @@ class AttendanceService:
             return False
         return row is not None
 
+    async def has_computed_attendance_blocking_timezone_change(
+        self, company_id: UUID, *, employee_ids: list[UUID] | None = None
+    ) -> bool:
+        """The single cross-module seam `organisation.service._assert_timezone_change_allowed`
+        calls (`TZ-01`/`DEC-TZ-04`, execution gate §12) — mirrors the established reverse-
+        direction precedent (`organisation.service` already imports `AttendanceService` locally
+        for `policy_exists`, above).
+
+        `employee_ids=None` means a company-scope change (every employee counts);
+        `employee_ids=[...]` means a branch-scope change, already resolved by the caller from
+        `EmployeeAssignment` history (`ED-12`) — this method does not know what a "branch" is,
+        keeping the module boundary the same shape as `policy_exists`'s own polymorphic-by-caller
+        design.
+
+        The `CLOSED`-period check runs first and unconditionally (`ED-12`'s point 3): a period
+        can be `CLOSED` with zero `AttendanceDay` rows underneath it if no employment spans
+        overlapped it, which the plain attendance-day check alone would miss."""
+        period_repo = AttendancePeriodRepository()
+        if await period_repo.has_any_closed(self._session, company_id=company_id):
+            return True
+        day_repo = AttendanceDayRepository()
+        if employee_ids is None:
+            return await day_repo.exists_for_company(self._session, company_id=company_id)
+        return await day_repo.exists_for_employees(
+            self._session, company_id=company_id, employee_ids=employee_ids
+        )
+
+    async def assert_date_open(self, company_id: UUID, target_date: date) -> None:
+        """`SR-11` (execution gate §12.4) — the cross-module seam for the narrow CLOSED-period
+        check added to shift-version publish (`organisation.service.publish_shift_version`):
+        a backdated version whose `effective_from` falls inside an already-`CLOSED` period must
+        be refused, the same way punch ingestion, roster writes, and regularization submission
+        already are. Reuses `_ensure_date_open` rather than a second implementation — raises
+        `AttendancePeriodClosedError` unchanged, so the API surface gains no new error shape.
+
+        Deliberately narrow: this is **not** the general case of "any backdated policy publish
+        reaching a closed period" — that is recorded as debt against the policy-versioning
+        workstream (§12.4), not absorbed here. Only `ShiftVersion` publish gets this check,
+        because it is the one the Phase 2/3 timezone work already touches in the same file."""
+        await _ensure_date_open(self._session, company_id, target_date)
+
 
 async def _resolve_visible_employee_ids(
     session: AsyncSession,
@@ -1927,6 +1974,55 @@ async def _ensure_date_open(session: AsyncSession, company_id: UUID, target_date
         session, company_id=company_id, target_date=target_date, status="CLOSED"
     )
     if closed_period is not None:
+        raise AttendancePeriodClosedError()
+
+
+async def _ensure_punch_date_open(
+    session: AsyncSession, company_id: UUID, punch_time: datetime
+) -> None:
+    """The period-lock gate for *punch ingestion specifically* (`DEC-TZ-05`/`CD-1` ⭐, SELECTED,
+    execution gate §10) — split out from `_ensure_date_open` so this basis can differ from the
+    roster/regularization/overtime basis (all three keep the plain attendance-date check
+    unchanged) without touching those three.
+
+    **Never permanently refuse at ingestion.** Accept the punch if EITHER its business-timezone
+    local date OR the previous local date is not `CLOSED`; refuse only when BOTH are closed. This
+    replaces the previous UTC-calendar-date basis, whose defect was asymmetric (§10.5): a false
+    rejection destroys a fact permanently (no orphan row exists to find later, and a
+    regularization request checks the same closed period and is also refused), while a false
+    acceptance is inert and recoverable — `AttendanceDayService.calculate()` keeps its own
+    separate, unconditional refusal to write into a locked day, so an over-eagerly-accepted punch
+    can never actually change a finalized figure; it becomes, at worst, an orphan row for the
+    Phase 8 report to surface.
+
+    Only ever tightens in one direction relative to the old basis: every case the UTC basis
+    accepted, this basis also accepts (the local-date leg alone reproduces it, since the two
+    bases can only disagree when the UTC date is CLOSED and the local date is not — the local
+    date is exactly the one that was being wrongly evaluated). The only NEW acceptances are the
+    early-morning IST punches (00:00-05:29) the UTC basis wrongly refused."""
+    from hrms.modules.organisation.service import OrganisationService
+
+    company = await OrganisationService(session).get_company_profile(company_id)
+    tz = resolve_zoneinfo(company.timezone)
+    local_date = punch_time.astimezone(tz).date()
+    previous_local_date = local_date - timedelta(days=1)
+
+    period_repo = AttendancePeriodRepository()
+    local_closed = (
+        await period_repo.get_covering(
+            session, company_id=company_id, target_date=local_date, status="CLOSED"
+        )
+        is not None
+    )
+    if not local_closed:
+        return
+    previous_closed = (
+        await period_repo.get_covering(
+            session, company_id=company_id, target_date=previous_local_date, status="CLOSED"
+        )
+        is not None
+    )
+    if previous_closed:
         raise AttendancePeriodClosedError()
 
 
@@ -2301,11 +2397,14 @@ class PunchService:
         self,
         company_id: UUID,
         employee_id: UUID,
-        body: PunchCreate,
         *,
+        direction: str,
+        requested_punch_time: datetime | None,
+        source: str,
+        reference: str | None,
+        idempotency_key: str | None,
         scope: DataScope,
         caller_employee_id: UUID | None,
-        default_source: str,
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
@@ -2322,19 +2421,43 @@ class PunchService:
         resolving a non-empty `DataScope` only proves the caller has *some* grant; without this,
         a `REPORTEES`/`REPORTEE_TREE`/`SELF`-scoped `PUNCH_ON_BEHALF` grant could be used to punch
         an employee entirely outside the caller's visible set. Checked first, before the
-        idempotency lookup, so a forged/out-of-scope `employee_id` never touches punch state."""
+        idempotency lookup, so a forged/out-of-scope `employee_id` never touches punch state.
+
+        **`requested_punch_time` is the one parameter that decides which clock is authoritative
+        (`DEC-TZ-01`, SELECTED).** `None` means *"self-service — use the server's clock"*, and is
+        what the `/attendance/punches/me` route always passes, because its schema has no
+        `punch_time` field to pass. A value means *"on-behalf correction"*, is only reachable from
+        the `ATTENDANCE.PUNCH_ON_BEHALF` route, and is validated rather than trusted.
+
+        This is deliberately an explicit parameter list rather than a request model: the previous
+        signature took a single `PunchCreate` whose `punch_time`/`source` the caller controlled,
+        and the router then decided the permission from that same body. Passing the decided values
+        in means the service cannot be handed a self-service punch that carries a client instant —
+        it is not expressible."""
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
 
-        if body.idempotency_key:
+        if idempotency_key:
             existing = await self._repo.get_by_idempotency_key(
-                self._session, company_id=company_id, idempotency_key=body.idempotency_key
+                self._session, company_id=company_id, idempotency_key=idempotency_key
             )
             if existing is not None:
                 return punch_to_read(existing)
 
         now = datetime.now(UTC)
+        punch_time = now if requested_punch_time is None else requested_punch_time
+
+        if requested_punch_time is not None:
+            # On-behalf only. The self path cannot reach any of these bounds because it has no
+            # client instant to bound — `punch_time` is `now` by construction above.
+            if punch_time > now:
+                # DEC-TZ-03 (SELECTED): unconditional floor, no tolerance window. An on-behalf
+                # punch is a correction about the past, so "slightly ahead" is never legitimate
+                # drift to absorb here.
+                raise FuturePunchTimeError()
+            await self._ensure_within_employment(company_id, employee_id, punch_time)
+
         # WD-30 — the UTC calendar date of the punch is the only date knowable *before* shift
         # resolution (which itself depends on the date), so this is a deliberate, documented
         # approximation: an overnight shift's punch a few minutes into the *next* UTC day, whose
@@ -2344,18 +2467,20 @@ class PunchService:
         # regardless: `AttendanceDayService.calculate()` refuses a locked day outright, so a
         # stray punch here is at worst an inert, orphaned row (WD-11 — additive, never mutates
         # facts), never a silent rewrite.
-        await _ensure_date_open(self._session, company_id, (body.punch_time or now).date())
+        await _ensure_punch_date_open(self._session, company_id, punch_time)
         punch_id = uuid4()
         data = {
             "id": punch_id,
             "company_id": company_id,
             "employee_id": employee_id,
-            "punch_time": body.punch_time or now,
-            "direction": body.direction,
-            "source": body.source or default_source,
-            "idempotency_key": body.idempotency_key,
+            "punch_time": punch_time,
+            "direction": direction,
+            # F-11 — server-assigned from the authenticated route, never a request field. There
+            # is no `or` fallback here on purpose: the caller has no say left to fall back to.
+            "source": source,
+            "idempotency_key": idempotency_key,
             "recorded_by_user_id": actor_user_id,
-            "reference": body.reference,
+            "reference": reference,
             "created_at": now,
         }
         try:
@@ -2375,7 +2500,106 @@ class PunchService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await self._try_immediate_calculate(
+            company_id,
+            employee_id,
+            punch_time,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         return read
+
+    async def _try_immediate_calculate(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        punch_time: datetime,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """Execution gate §16.2's "immediate trigger" — best-effort, non-blocking, failure-
+        tolerant. **Must never fail the punch write.** The punch is a fact; a calculation is a
+        derivation of it, and losing the fact because a derivation failed is unacceptable. Any
+        failure here — a `CONFIG_ERROR`-producing gap, a lock conflict, an unexpected exception —
+        is swallowed and logged; the Phase 8 scheduled sweep (`attendance.run_daily_calculation`,
+        trailing 3 days) picks up whatever this attempt missed.
+
+        Wrapped in `begin_nested()` (a `SAVEPOINT`) rather than a bare try/except: `calculate()`
+        does real writes (the day row, break rows, the overtime record) on this same session/
+        transaction as the punch insert above, so an exception here — including one that aborts
+        the transaction at the Postgres level, e.g. a constraint violation deep in
+        `_build_calculation_input` — must not poison the outer transaction the punch insert and
+        its audit row are still pending in. Rolling back to the savepoint discards only this
+        attempt's work, never the punch itself.
+
+        The target date is the *local* (company-timezone) calendar date of the punch instant —
+        the same derivation `_ensure_punch_date_open` uses for its own local/previous-local
+        check — not `business_today()`: an on-behalf punch backdated to last week must trigger a
+        calculation for last week, not for today. Cross-midnight attribution can differ from this
+        local-calendar-date approximation (`FR-ATT-005` — a shift's punch may actually belong to
+        the *previous* local date); this hook does not need to get that exactly right, because
+        `calculate()` re-derives ownership from the shift itself when it runs, and the trailing
+        sweep recomputes both the punch's local date and the day before it (`SR-14`'s window
+        shapes already cover the shift/no-shift distinction), whichever one recompute here
+        doesn't reach."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        try:
+            async with self._session.begin_nested():
+                company = await OrganisationService(self._session).get_company_profile(company_id)
+                local_date = punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
+                await AttendanceDayService(self._session).calculate(
+                    company_id,
+                    employee_id,
+                    local_date,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+        except Exception:  # noqa: BLE001 - best-effort by design; see docstring
+            _logger.warning(
+                "attendance_immediate_calculate_failed",
+                company_id=str(company_id),
+                employee_id=str(employee_id),
+                punch_time=punch_time.isoformat(),
+            )
+
+    async def _ensure_within_employment(
+        self, company_id: UUID, employee_id: UUID, punch_time: datetime
+    ) -> None:
+        """Execution gate §8.2's employment-start floor. Before this, `1900-01-01Z` was accepted
+        for any employee — verified — because nothing at any layer compared a supplied punch
+        instant against the employee's own employment record.
+
+        Reuses the established `employee.service` cross-module seam rather than adding a query:
+        `get_latest_employment_on_or_before` returning `None` means no employment episode had
+        begun by that date. Uses the UTC date of the instant, matching how every other date bound
+        on this path is derived at ingestion; the floor is a coarse-grained data-integrity check,
+        not a minute-accurate one, so the ±5h30m question that matters for period locks
+        (`DEC-TZ-05`) is immaterial against a joining date.
+
+        **Scoped deliberately to employees who have at least one employment episode.** An employee
+        record with no `Employment` row at all is not treated as a violation — rejecting those
+        would be a *new* rule ("a punch requires an employment record"), which §8.2 did not ask
+        for and which would break the legitimate ordering where a punch is recorded before HR has
+        finished creating the employment row. The calculation engine already classifies that case
+        as `NOT_JOINED` through its own population gate, so the fact stays recorded and is
+        correctly excluded from attendance. The floor here answers only the question it was
+        specified to answer: *is this instant before the employment that does exist?*"""
+        from hrms.modules.employee.service import EmploymentService
+
+        employment_service = EmploymentService(self._session)
+        latest = await employment_service.get_latest_employment_on_or_before(
+            company_id, employee_id, punch_time.date()
+        )
+        if latest is not None:
+            return
+        episodes = await employment_service.list_employments(company_id, employee_id)
+        if episodes:
+            raise PunchTimeBeforeEmploymentError()
 
     async def list_punches(
         self,
@@ -2484,7 +2708,7 @@ class AttendanceDayService:
         self,
         company_id: UUID,
         employee_id: UUID,
-        target_date: date,
+        target_date: date | None,
         *,
         actor_user_id: UUID | None,
         ip_address: str | None = None,
@@ -2495,14 +2719,33 @@ class AttendanceDayService:
         existing row *is* recompute (WD-10 — full replacement of derived fields, never a
         patch). Refuses to touch a locked day (WD-11) — nothing in W4 can set `is_locked=true`
         yet (plan decision 2), so this path is exercised by tests via a direct flag flip, ready
-        for W8's `AttendanceLock`."""
+        for W8's `AttendanceLock`.
+
+        `target_date=None` (`ED-2`, execution gate §9.3) — the caller stops sending `todayIso()`
+        (a UTC calendar date, `NEW-02`) and the server derives it instead, from the same
+        `business_today()` helper every other business-date site now uses. `date.today()`/
+        `datetime.now(UTC).date()` are never used here directly — an explicit `date` is honoured
+        unchanged when the caller (e.g. the scheduled job, Phase 8) supplies one."""
+        if target_date is None:
+            from hrms.modules.organisation.service import OrganisationService
+
+            company = await OrganisationService(self._session).get_company_profile(company_id)
+            target_date = business_today(company.timezone)
+
         # WD-30 — period-level check first (catches a date with no `AttendanceDay` row yet at
         # all); the pre-existing row-level `is_locked` check right after it stays as the
         # specific, narrower error for the already-computed-row case (`ATTENDANCE_DAY_LOCKED`,
         # not `ATTENDANCE_PERIOD_CLOSED`) — two independent, defence-in-depth guards, since the
         # two should never actually disagree (finalize/reopen sets both together).
         await _ensure_date_open(self._session, company_id, target_date)
-        existing = await self._day_repo.get_by_employee_date(
+        # Execution gate §17.3 — `FOR UPDATE`, acquired here (before `_build_calculation_input`
+        # re-resolves configuration below), not after. Taking it after the read would serialise
+        # the write but leave the read itself racing a concurrent calculate() for the same
+        # employee-date — exactly the race this lock exists to close, now that the immediate
+        # punch-triggered calculate and the scheduled trailing-window sweep (Phase 8) can
+        # legitimately collide on the same row. `FOR UPDATE` on a not-yet-existing row locks
+        # nothing; see the `IntegrityError` handling below, around the insert, for that case.
+        existing = await self._day_repo.get_by_employee_date_for_update(
             self._session,
             company_id=company_id,
             employee_id=employee_id,
@@ -2547,25 +2790,57 @@ class AttendanceDayService:
             )
             values["ot_pending"] = ot_decision["status"] == "PENDING"
 
-        row: AttendanceDay | None
+        row: AttendanceDay | None = None
+        action: str
         if existing is None:
+            # Execution gate §17.3 constraint 3 — `FOR UPDATE` above locks nothing for a row
+            # that doesn't exist yet, so the first-ever calculation of an employee-date (the
+            # immediate punch-triggered calculate and the scheduled sweep both reaching a brand
+            # new date at once) can still race here. Not a bespoke retry framework (§16.2's
+            # "Celery's own task retry semantics; no bespoke retry machinery" is about the
+            # trigger layer, not this) — a `SAVEPOINT` around the one statement that can violate
+            # the `(company_id, employee_id, attendance_date)` unique constraint, so losing the
+            # race self-heals within this same call instead of surfacing a 500: the loser rolls
+            # back to the savepoint (the outer transaction and everything already computed above
+            # stay intact), re-reads the winner's now-committed row under `FOR UPDATE`, and falls
+            # through to the ordinary recompute branch below.
             day_id = uuid4()
-            row = await self._day_repo.insert(
-                self._session,
-                data={
-                    **values,
-                    "id": day_id,
-                    "company_id": company_id,
-                    "employee_id": employee_id,
-                    "attendance_date": target_date,
-                    "calculation_version": 1,
-                    "is_locked": False,
-                    "created_at": now,
-                    "updated_at": now,
-                },
-            )
-            action = "ATTENDANCE_DAY_CALCULATED"
-        else:
+            try:
+                async with self._session.begin_nested():
+                    row = await self._day_repo.insert(
+                        self._session,
+                        data={
+                            **values,
+                            "id": day_id,
+                            "company_id": company_id,
+                            "employee_id": employee_id,
+                            "attendance_date": target_date,
+                            "calculation_version": 1,
+                            "is_locked": False,
+                            "created_at": now,
+                            "updated_at": now,
+                        },
+                    )
+                action = "ATTENDANCE_DAY_CALCULATED"
+            except IntegrityError:
+                existing = await self._day_repo.get_by_employee_date_for_update(
+                    self._session,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    attendance_date=target_date,
+                )
+                if existing is None:
+                    # The unique constraint fired but no row is visible under our own snapshot —
+                    # not the concurrent-insert race this handles; re-raise rather than mask a
+                    # real integrity issue.
+                    raise
+                if existing.is_locked:
+                    raise AttendanceDayLockedError() from None
+                # `row` stays `None` here on purpose — falls through to the replace-derived-
+                # fields branch below, the same branch an ordinary recompute takes.
+
+        if row is None:
+            assert existing is not None
             values["calculation_version"] = existing.calculation_version + 1
             row = await self._day_repo.replace_derived_fields(
                 self._session,
@@ -2650,6 +2925,90 @@ class AttendanceDayService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+
+    async def list_orphaned_punches(
+        self, company_id: UUID, *, date_from: date, date_to: date
+    ) -> list[PunchRead]:
+        """The orphan-punch report (`TZ-08`/`DEC-TZ-16`, execution gate §16.4) — punches that
+        fall outside every attendance day's own load window, and are therefore invisible to
+        `calculate()` regardless of how many times it runs: a supervisor arriving at 06:45 for a
+        09:00 shift and leaving at 20:30 punches successfully, but if 06:45 falls outside the
+        ±2h pad, that punch never gets picked up by any `AttendanceDay` row — the employee shows
+        `ABSENT` for a day nearly fourteen hours long, silently.
+
+        `[date_from, date_to]` are **local** (company-timezone) business dates — the same
+        convention as every other date-range parameter in this module — widened by one day on
+        each side when fetching candidate `AttendanceDay` rows, so a window that legitimately
+        extends past midnight (a cross-midnight shift's pad, or `FLEXIBLE`'s asymmetric +12h
+        lookahead) is still found even when its own `attendance_date` falls just outside the
+        nominal range.
+
+        **`SR-14` — the fourth window shape.** A no-shift day (`shift_id IS NULL`) uses
+        `calendar_day_window_utc` — the full local calendar day, no pad at all — never the ±2h
+        FIXED/SPLIT logic; applying the padded shape to an unscheduled employee would flag every
+        punch a little outside midnight as a false orphan. `FIXED`/`SPLIT` shifts share the same
+        `scheduled_start - 2h .. scheduled_end + 2h` shape and are reconstructed exactly from the
+        row's own stored `scheduled_start`/`scheduled_end`, with no further DB access needed.
+        `FLEXIBLE`'s own pad is asymmetric (`-2h/+12h`, `calculation.resolve_schedule_window`) —
+        not distinguishable from `FIXED`/`SPLIT` using only what's stored on `AttendanceDay`
+        (`shift_id`, not `shift_type`), so this report applies the narrower ±2h shape to every
+        shift-bearing day regardless of type. That is conservative in the safe direction for a
+        report: it can only ever over-report (flag a `FLEXIBLE` employee's punch inside their
+        real +12h lookahead as an orphan candidate for HR to dismiss), never under-report a
+        genuinely missed punch.
+
+        A date with **no** `AttendanceDay` row at all (calculation never ran for it) has no
+        window to cover anything — every punch on such a date is orphaned by definition, which is
+        exactly the visibility this report exists to provide (`F-14`'s gap, before the row is
+        ever created)."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        tz_name = company.timezone
+
+        padded_from = date_from - timedelta(days=1)
+        padded_to = date_to + timedelta(days=1)
+        window_start, _ = calc.calendar_day_window_utc(attendance_date=padded_from, tz_name=tz_name)
+        _, window_end = calc.calendar_day_window_utc(attendance_date=padded_to, tz_name=tz_name)
+
+        days = await self._day_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=None,
+            employee_id=None,
+            date_from=padded_from,
+            date_to=padded_to,
+            status=None,
+        )
+        windows_by_employee: dict[UUID, list[tuple[datetime, datetime]]] = {}
+        for day in days:
+            if day.shift_id is None:
+                covering = calc.calendar_day_window_utc(
+                    attendance_date=day.attendance_date, tz_name=day.timezone
+                )
+            elif day.scheduled_start is not None and day.scheduled_end is not None:
+                covering = (
+                    day.scheduled_start - timedelta(hours=2),
+                    day.scheduled_end + timedelta(hours=2),
+                )
+            else:
+                covering = calc.calendar_day_window_utc(
+                    attendance_date=day.attendance_date, tz_name=day.timezone
+                )
+            windows_by_employee.setdefault(day.employee_id, []).append(covering)
+
+        punches = await self._punch_repo.list_for_company_window(
+            self._session, company_id=company_id, window_start=window_start, window_end=window_end
+        )
+        orphaned = [
+            punch
+            for punch in punches
+            if not any(
+                start <= punch.punch_time < end
+                for start, end in windows_by_employee.get(punch.employee_id, [])
+            )
+        ]
+        return [punch_to_read(p) for p in orphaned]
 
     @staticmethod
     def _result_to_values(
@@ -3495,11 +3854,21 @@ class RegularizationRequestService:
         # request for a date that has no `AttendanceDay` row at all yet.
         await _ensure_date_open(self._session, company_id, body.attendance_date)
 
+        # `TZ-06` — was `date.today()`, the UTC calendar date under the pinned `TZ=UTC` server
+        # (`DEC-TZ-04`). Between 00:00 and 05:29 IST that is one day BEHIND the correct India
+        # business date, which would reject a same-day request as "in the future" for that
+        # entire window. `business_today(company.timezone)` matches `/attendance/days/calculate`'s
+        # own default (Phase 4) rather than a second, independently-derived "today".
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        today = business_today(company.timezone)
+
         # WD-32 decision 5 — `EARLY_DEPARTURE_APPROVAL` is the one correction type that is
         # forward-dated by nature ("I need to leave early on Friday"), not a backdated
         # correction to something that already happened. Every other type keeps the existing
         # future-date rejection.
-        if body.attendance_date > date.today() and body.request_type != "EARLY_DEPARTURE_APPROVAL":
+        if body.attendance_date > today and body.request_type != "EARLY_DEPARTURE_APPROVAL":
             raise ValidationError("attendance_date cannot be in the future")
 
         resolution = await self._resolution.resolve(
@@ -3544,7 +3913,7 @@ class RegularizationRequestService:
             )
 
         if policy_version.max_backdated_days is not None:
-            backdated_days = (date.today() - body.attendance_date).days
+            backdated_days = (today - body.attendance_date).days
             if backdated_days > policy_version.max_backdated_days:
                 raise RegularizationWindowExceededError()
 

@@ -12,7 +12,6 @@ async-task precedent here to mirror; `health.ping` takes no arguments and opens 
 """
 
 import asyncio
-from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -20,6 +19,7 @@ from sqlalchemy import select
 from hrms.core.celery_app import celery_app
 from hrms.core.db.models.identity import Company
 from hrms.core.db.session import session_scope
+from hrms.shared.business_time import business_today
 
 
 async def _list_active_company_ids() -> list[UUID]:
@@ -30,10 +30,20 @@ async def _list_active_company_ids() -> list[UUID]:
 
 async def _accrue_company_async(company_id: UUID) -> int:
     from hrms.modules.leave.service import LeaveAccrualService
+    from hrms.modules.organisation.service import OrganisationService
 
     async with session_scope(company_id=str(company_id)) as session:
+        company = await OrganisationService(session).get_company_profile(company_id)
+        # `business_today(company.timezone)`, not `datetime.now(UTC).date()` (`TZ-06`/gate
+        # §16.3). `celery_app.py`'s `beat_schedule` fires this at `crontab(hour=1)` under
+        # `Celery.conf.timezone = settings.app_timezone_default` (`Asia/Kolkata`), i.e. **01:00
+        # IST** — squarely inside the 00:00-05:29 IST window where the UTC calendar date is
+        # still *yesterday*. A `datetime.now(UTC).date()` `as_of` here computed the wrong
+        # (previous) month's 1st on every run, every month. If this schedule is ever moved to
+        # or past 05:30 IST the divergence stops being observable — `business_today` must stay
+        # regardless, so the bug cannot resurface the next time the schedule changes.
         return await LeaveAccrualService(session).run_for_company(
-            company_id, as_of=datetime.now(UTC).date()
+            company_id, as_of=business_today(company.timezone)
         )
 
 
@@ -79,10 +89,15 @@ def run_comp_off_credit_sweep() -> int:
 
 async def _sweep_comp_off_expiry_async(company_id: UUID) -> int:
     from hrms.modules.leave.service import LeaveCompOffService
+    from hrms.modules.organisation.service import OrganisationService
 
     async with session_scope(company_id=str(company_id)) as session:
+        company = await OrganisationService(session).get_company_profile(company_id)
+        # See `_accrue_company_async` above — this sweep fires at `crontab(minute=30, hour=1)`
+        # = **01:30 IST**, also inside the 00:00-05:29 IST divergence window, so the same
+        # `business_today()` requirement applies.
         return await LeaveCompOffService(session).expire_company(
-            company_id, as_of=datetime.now(UTC).date()
+            company_id, as_of=business_today(company.timezone)
         )
 
 
@@ -104,10 +119,15 @@ def run_comp_off_expiry_sweep() -> int:
 
 async def _run_year_end_async(company_id: UUID) -> int:
     from hrms.modules.leave.service import LeaveAccrualService
+    from hrms.modules.organisation.service import OrganisationService
 
     async with session_scope(company_id=str(company_id)) as session:
+        company = await OrganisationService(session).get_company_profile(company_id)
+        # See `_accrue_company_async` above — this sweep fires at `crontab(hour=2)` =
+        # **02:00 IST**, also inside the 00:00-05:29 IST divergence window, so the same
+        # `business_today()` requirement applies.
         return await LeaveAccrualService(session).run_year_end_for_company(
-            company_id, as_of=datetime.now(UTC).date()
+            company_id, as_of=business_today(company.timezone)
         )
 
 

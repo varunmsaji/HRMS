@@ -55,6 +55,7 @@ export default function RegularizationDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { user } = useAuth();
+  const tz = user?.company_timezone ?? "Asia/Kolkata";
   const { can } = usePermissions();
 
   const [request, setRequest] = useState<RegularizationRequest | null>(null);
@@ -175,7 +176,7 @@ export default function RegularizationDetailPage() {
                 <Field label="Attachment reference" value={request.attachment_reference ?? "—"} />
                 <Field label="Approval chain" value={request.approval_chain} />
                 <Field label="Approval stage" value={request.approval_stage ?? "—"} />
-                <Field label="Submitted at" value={formatDateTime(request.submitted_at)} />
+                <Field label="Submitted at" value={formatDateTime(request.submitted_at, tz)} />
                 <Field
                   label="Attendance day"
                   value={
@@ -216,7 +217,7 @@ export default function RegularizationDetailPage() {
                       {request.requested_punches.map((punch) => (
                         <tr key={punch.id}>
                           <td className="px-3 py-2">{punch.direction}</td>
-                          <td className="px-3 py-2">{formatDateTime(punch.requested_time)}</td>
+                          <td className="px-3 py-2">{formatDateTime(punch.requested_time, tz)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -230,11 +231,11 @@ export default function RegularizationDetailPage() {
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-medium text-foreground">Review</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="Reviewed at" value={formatDateTime(request.reviewed_at)} />
+                <Field label="Reviewed at" value={formatDateTime(request.reviewed_at, tz)} />
                 <Field label="Reviewer comment" value={request.reviewer_comment ?? "—"} />
                 <Field label="Rejection reason" value={request.rejection_reason ?? "—"} />
-                <Field label="Applied at" value={formatDateTime(request.applied_at)} />
-                <Field label="Cancelled at" value={formatDateTime(request.cancelled_at)} />
+                <Field label="Applied at" value={formatDateTime(request.applied_at, tz)} />
+                <Field label="Cancelled at" value={formatDateTime(request.cancelled_at, tz)} />
               </dl>
             </CardContent>
           </Card>
@@ -254,7 +255,7 @@ export default function RegularizationDetailPage() {
                       ) : null}
                     </div>
                     <span className="whitespace-nowrap text-xs text-foreground-muted">
-                      {formatDateTime(entry.created_at)}
+                      {formatDateTime(entry.created_at, tz)}
                     </span>
                   </li>
                 ))}

@@ -6,6 +6,7 @@ computation, break matching, band lookup, and the terminal-status short-circuits
 
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from hrms.modules.attendance.calculation import (
     AttendanceCalculationInput,
@@ -22,6 +23,7 @@ from hrms.modules.attendance.calculation import (
     detect_overtime,
     evaluate_day,
     lookup_band,
+    match_breaks,
     pair_punches,
     presence_span,
     resolve_timezone,
@@ -487,6 +489,26 @@ def test_evaluate_day_config_error_no_policy() -> None:
     assert result.attendance_status == "CONFIG_ERROR"
 
 
+def test_evaluate_day_config_error_unresolvable_timezone() -> None:
+    """`ED-10` (execution gate §4.3) — a pre-existing row carrying an invalid/unresolvable
+    timezone (written before the Phase 2 schema validators existed) must degrade to a
+    `CONFIG_ERROR` day, never raise `ZoneInfoNotFoundError` past this function. `IST` is the
+    single most likely value an Indian HR user typed before the shift-version validator closed
+    this (`SR-09`)."""
+    result = evaluate_day(_base_input(timezone="IST"))
+    assert result.attendance_status == "CONFIG_ERROR"
+    assert result.paid_day_fraction == "0.00"
+    assert result.lop_fraction == "0.00"
+
+
+def test_evaluate_day_valid_timezone_unaffected() -> None:
+    """Regression guard: the new timezone check must not turn a resolvable zone into a false
+    CONFIG_ERROR for any existing scenario — `UTC` is one of the 22 live non-IST rows this
+    programme explicitly keeps valid (§4.1)."""
+    result = evaluate_day(_base_input(timezone="UTC"))
+    assert result.attendance_status != "CONFIG_ERROR"
+
+
 def test_evaluate_day_not_expected_holiday_no_punches() -> None:
     result = evaluate_day(_base_input(calendar_day_type="HOLIDAY", holiday_name="Test Holiday"))
     assert result.attendance_status == "NOT_EXPECTED"
@@ -720,6 +742,165 @@ def test_paid_break_gap_added_back_to_worked_minutes() -> None:
     # 4.5h (3:30-8:00) + 4h15m (8:15-12:30) = 525m clocked-in, plus the 15m paid break = 540m —
     # the same as if the employee had never punched out for the paid break at all.
     assert result.worked_minutes == 540
+
+
+# ---------------------------------------------------------------------------
+# SR-01 — cross-midnight break matching, Approach A (execution gate §1)
+#
+# Direct `match_breaks` unit tests, not routed through `evaluate_day` — pure function, no
+# database, exercising the exact six-scenario table the gate's decision was derived from
+# (§1.1) plus the four additional invariant edges §1.4 states explicitly (point-in-time break,
+# FLEXIBLE_DURATION parity, and the two regression guards named twice for emphasis).
+# ---------------------------------------------------------------------------
+
+
+def _gap_at(hour: int, minute: int, *, day: int = 10) -> tuple[datetime, datetime]:
+    """A one-minute gap whose LOCAL (`Asia/Kolkata`) time-of-day is exactly `hour:minute` on
+    2026-08-`day`, expressed as a UTC instant — mirrors how `match_breaks` actually receives
+    gaps (UTC datetimes, converted to local time-of-day internally at the untouched line the
+    gate's invariant explicitly protects, `PC-15`)."""
+    local = datetime(2026, 8, day, hour, minute, tzinfo=ZoneInfo("Asia/Kolkata"))
+    start = local.astimezone(UTC)
+    return (start, start + timedelta(minutes=1))
+
+
+def _fixed_break(start: time, end: time | None, **overrides: object) -> ShiftBreakData:
+    defaults: dict[str, object] = dict(
+        id=uuid4(),
+        break_kind="FIXED_WINDOW",
+        start_time=start,
+        end_time=end,
+        window_start=None,
+        window_end=None,
+        min_minutes=None,
+        max_minutes=None,
+        is_paid=True,
+        is_mandatory=False,
+    )
+    defaults.update(overrides)
+    return ShiftBreakData(**defaults)  # type: ignore[arg-type]
+
+
+def _flexible_break(
+    window_start: time, window_end: time | None, **overrides: object
+) -> ShiftBreakData:
+    defaults: dict[str, object] = dict(
+        id=uuid4(),
+        break_kind="FLEXIBLE_DURATION",
+        start_time=None,
+        end_time=None,
+        window_start=window_start,
+        window_end=window_end,
+        min_minutes=None,
+        max_minutes=None,
+        is_paid=True,
+        is_mandatory=False,
+    )
+    defaults.update(overrides)
+    return ShiftBreakData(**defaults)  # type: ignore[arg-type]
+
+
+def test_match_breaks_case1_day_break_unaffected() -> None:
+    """Case 1 (§1.1) — regression guard. An ordinary same-day window is byte-identical to
+    before: `start < end`, unchanged code path."""
+    gap = _gap_at(13, 15)
+    matched = match_breaks([gap], [_fixed_break(time(13, 0), time(14, 0))], tz_name="Asia/Kolkata")
+    assert matched[0].shift_break_id is not None
+
+
+def test_match_breaks_case2_night_break_before_midnight() -> None:
+    """Case 2 — `F-05`'s defect: was unmatched, unpaid before this fix."""
+    gap = _gap_at(23, 45)
+    matched = match_breaks([gap], [_fixed_break(time(23, 30), time(0, 30))], tz_name="Asia/Kolkata")
+    assert matched[0].shift_break_id is not None
+
+
+def test_match_breaks_case3_night_break_after_midnight() -> None:
+    """Case 3 — same break window as case 2, gap now on the far side of midnight."""
+    gap = _gap_at(0, 5, day=11)
+    matched = match_breaks([gap], [_fixed_break(time(23, 30), time(0, 30))], tz_name="Asia/Kolkata")
+    assert matched[0].shift_break_id is not None
+
+
+def test_match_breaks_case4_after_midnight_break_regression_guard() -> None:
+    """Case 4 (§1.1) — THE mandatory regression guard: a break beginning after midnight
+    (`01:00-02:00` on a `22:00->06:00` shift) is already correct today and is exactly the case
+    Approach B was proven to regress. Must remain matched."""
+    gap = _gap_at(1, 15, day=11)
+    matched = match_breaks([gap], [_fixed_break(time(1, 0), time(2, 0))], tz_name="Asia/Kolkata")
+    assert matched[0].shift_break_id is not None
+
+
+def test_match_breaks_case5_flexible_duration_wrap() -> None:
+    """Case 5 — `FLEXIBLE_DURATION` gets the identical wrap-aware treatment as `FIXED_WINDOW`,
+    not a second implementation."""
+    gap = _gap_at(23, 30)
+    matched = match_breaks(
+        [gap], [_flexible_break(time(23, 0), time(1, 0))], tz_name="Asia/Kolkata"
+    )
+    assert matched[0].shift_break_id is not None
+
+
+def test_match_breaks_case6_over_match_guard() -> None:
+    """Case 6 — the guard that proves the wrap branch does not swallow every gap: a gap
+    (22:15) outside the wrapped window (23:30-00:30) is correctly NOT matched."""
+    gap = _gap_at(22, 15)
+    matched = match_breaks([gap], [_fixed_break(time(23, 30), time(0, 30))], tz_name="Asia/Kolkata")
+    assert matched[0].shift_break_id is None
+
+
+def test_match_breaks_point_in_time_break_not_a_24_hour_window() -> None:
+    """§1.4's explicit invariant: `end is None or end == start` matches ONLY the exact instant,
+    never every gap in the day. Without this, a point-in-time break declaration would silently
+    become an always-matching window under the wrap branch (`start > end` is never true, but
+    `start == end` must not fall into the ordinary `start <= point <= end` path treating it as a
+    zero-width-but-always-true range)."""
+    exact = _gap_at(13, 0)
+    elsewhere = _gap_at(13, 1)
+    matched = match_breaks(
+        [exact, elsewhere], [_fixed_break(time(13, 0), time(13, 0))], tz_name="Asia/Kolkata"
+    )
+    assert matched[0].shift_break_id is not None
+    assert matched[1].shift_break_id is None
+
+
+def test_match_breaks_end_none_treated_as_point_in_time() -> None:
+    """`end_time=None` (a legal `ShiftBreak` configuration) takes the same point-in-time path as
+    `end == start` — both are "no end configured", not "matches all day"."""
+    exact = _gap_at(9, 0)
+    elsewhere = _gap_at(9, 30)
+    matched = match_breaks(
+        [exact, elsewhere], [_fixed_break(time(9, 0), None)], tz_name="Asia/Kolkata"
+    )
+    assert matched[0].shift_break_id is not None
+    assert matched[1].shift_break_id is None
+
+
+def test_match_breaks_wrap_boundary_inclusive_both_ends() -> None:
+    """The wrap branch's boundaries are inclusive on both sides, matching the ordinary
+    same-day branch's own inclusivity — a gap landing exactly on `start` or exactly on `end`
+    of a wrapped window must match."""
+    on_start = _gap_at(23, 30)
+    on_end = _gap_at(0, 30, day=11)
+    matched = match_breaks(
+        [on_start, on_end], [_fixed_break(time(23, 30), time(0, 30))], tz_name="Asia/Kolkata"
+    )
+    assert matched[0].shift_break_id is not None
+    assert matched[1].shift_break_id is not None
+
+
+def test_match_breaks_multiple_breaks_first_match_wins_unaffected() -> None:
+    """Multiple configured breaks per gap: `match_breaks` takes the first match and stops —
+    unaffected by the wrap-aware rewrite, which changes only the per-break containment test,
+    not the iteration/selection logic around it."""
+    gap = _gap_at(23, 45)
+    breaks = [
+        _fixed_break(time(23, 30), time(0, 30), id=uuid4(), is_paid=True),
+        _fixed_break(time(23, 0), time(1, 0), id=uuid4(), is_paid=False),
+    ]
+    matched = match_breaks([gap], breaks, tz_name="Asia/Kolkata")
+    assert matched[0].shift_break_id == breaks[0].id
+    assert matched[0].is_paid is True
 
 
 # ---------------------------------------------------------------------------

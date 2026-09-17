@@ -16,7 +16,8 @@ import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { AttendanceDay, Punch } from "@/lib/attendance/types";
-import { formatClockTime, formatMinutes, todayIso } from "@/lib/attendance/format";
+import { businessToday, formatClockTime, formatMinutes } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 
 interface EmployeeAttendancePanelProps {
@@ -36,11 +37,12 @@ function daysAgoIso(n: number): string {
  * only their own row even if this panel is reused on someone else's employee page), so this
  * component does no additional client-side filtering. */
 export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeAttendancePanelProps) {
+  const { user } = useAuth();
   const { toast } = useToast();
   const { can } = usePermissions();
 
   const [dateFrom, setDateFrom] = useState(daysAgoIso(6));
-  const [dateTo, setDateTo] = useState(todayIso());
+  const [dateTo, setDateTo] = useState(businessToday(user?.company_timezone ?? "Asia/Kolkata"));
   const [days, setDays] = useState<AttendanceDay[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -74,9 +76,12 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
   async function handleCalculateToday() {
     setCalculating(true);
     try {
-      await apiClient.post(
-        `/attendance/days/calculate?employee_id=${employeeId}&date=${todayIso()}`,
-      );
+      // `NEW-02` (execution gate §9.3, `ED-2`) — `date` is no longer sent at all. It used to be
+      // `todayIso()`, the browser's UTC calendar date: between 00:00 and 05:29 IST that is one
+      // day BEHIND the correct India business date, so "Calculate today" would calculate
+      // *yesterday* for that entire window. The server now defaults to `business_today()` when
+      // `date` is omitted, so the client no longer computes "today" itself at all.
+      await apiClient.post(`/attendance/days/calculate?employee_id=${employeeId}`);
       toast({ title: "Today's attendance calculated", variant: "success" });
       await load();
     } catch (err) {
@@ -166,11 +171,11 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
                   </td>
                   <td className="px-3 py-2 text-foreground-secondary">
                     {day.scheduled_start && day.scheduled_end
-                      ? `${formatClockTime(day.scheduled_start)}–${formatClockTime(day.scheduled_end)}`
+                      ? `${formatClockTime(day.scheduled_start, day.timezone)}–${formatClockTime(day.scheduled_end, day.timezone)}`
                       : "—"}
                   </td>
                   <td className="px-3 py-2 text-foreground-secondary">
-                    {formatClockTime(day.actual_first_in)}–{formatClockTime(day.actual_last_out)}
+                    {formatClockTime(day.actual_first_in, day.timezone)}–{formatClockTime(day.actual_last_out, day.timezone)}
                   </td>
                   <td className="px-3 py-2 text-foreground-secondary">{formatMinutes(day.worked_minutes)}</td>
                   <td className="px-3 py-2 text-foreground-secondary">

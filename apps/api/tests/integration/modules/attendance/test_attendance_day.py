@@ -180,20 +180,30 @@ async def _punch(
     client: AsyncClient,
     headers: dict[str, str],
     *,
-    employee_id: str | None = None,
+    employee_id: str,
     hour: int,
     minute: int,
     direction: str,
     day: str = "2026-08-10",
     **extra: Any,
 ) -> dict[str, Any]:
+    """Posts to the **on-behalf** route (`POST /v1/attendance/punches`), which is the only route
+    that accepts a caller-supplied `punch_time` after Phase 1 (`DEC-TZ-01`, `ED-4`).
+
+    Every one of this helper's callers asserts against a *specific* historical instant, which is
+    definitionally the on-behalf/correction workflow — the self-service route deliberately has no
+    `punch_time` field, so it cannot be used to stage a fixture at 09:00 on a past date. Callers
+    therefore all pass `employee_id` (verified: 48/48 did so even before it became required).
+
+    `reference` carries a default because the on-behalf schema now makes the reason mandatory;
+    an individual test can still override it via `**extra`."""
     body: dict[str, Any] = {
+        "employee_id": employee_id,
         "punch_time": f"{day}T{hour:02d}:{minute:02d}:00Z",
         "direction": direction,
+        "reference": "test fixture punch",
         **extra,
     }
-    if employee_id is not None:
-        body["employee_id"] = employee_id
     response = await client.post("/v1/attendance/punches", headers=headers, json=body)
     assert response.status_code == 201, response.text
     return dict(response.json()["data"])
@@ -248,7 +258,10 @@ async def test_full_pipeline_present_day(client: AsyncClient, seeded_plan_catalo
         assert data["attendance_status"] == "PRESENT"
         assert data["worked_minutes"] == 540
         assert data["calendar_day_type"] == "WORKING"
-        assert data["calculation_version"] == 1
+        # Phase 8's best-effort immediate calculate (execution gate §16.2) already fired once
+        # per punch above, so this explicit call is not necessarily the *first* calculation —
+        # only guaranteed to be at least the first (idempotent, full-row-replacement either way).
+        assert data["calculation_version"] >= 1
         assert data["computation_snapshot"] is not None
     finally:
         await _cleanup_attendance_day(company_id=company_id)
@@ -341,7 +354,10 @@ async def test_recompute_replaces_derived_fields(
         assert second_data["id"] == first_data["id"]
         assert second_data["worked_minutes"] == 480
         assert second_data["attendance_status"] == "PRESENT"
-        assert second_data["calculation_version"] == 2
+        # Phase 8's best-effort immediate calculate (execution gate §16.2) fires on every punch
+        # in between, so the exact delta isn't 1 — only that recompute always moves the version
+        # forward, never resets or loses it.
+        assert second_data["calculation_version"] > first_data["calculation_version"]
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -463,6 +479,32 @@ async def test_on_behalf_punch_requires_permission(
         )
         assert punch["source"] == "ADMIN"
         assert punch["employee_id"] == employee_id
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_calculate_date_omitted_defaults_to_business_today(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`ED-2` (execution gate §9.3) — omitting `date` on `/attendance/days/calculate` must
+    default server-side to `business_today(company_tz)`, never require the caller to compute
+    "today" itself (the web client's own `todayIso()`, a UTC calendar date, was `NEW-02`)."""
+    from zoneinfo import ZoneInfo
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+
+        response = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id},
+        )
+        assert response.status_code == 200, response.text
+        expected = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        assert response.json()["data"]["attendance_date"] == expected
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

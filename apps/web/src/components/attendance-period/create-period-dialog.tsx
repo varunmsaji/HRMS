@@ -16,7 +16,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
-import { todayIso } from "@/lib/attendance/format";
+import { businessToday } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import type { AttendancePeriod, AttendancePeriodCreatePayload } from "@/lib/attendance-period/types";
 
 interface CreatePeriodDialogProps {
@@ -29,16 +30,22 @@ interface CreatePeriodDialogProps {
  * opens it immediately — there is no separate "open" step. Backend rejects an overlapping range
  * (`ATTENDANCE_PERIOD_OVERLAP`) for the same company. */
 export function CreatePeriodDialog({ open, onOpenChange, onCreated }: CreatePeriodDialogProps) {
+  const { user } = useAuth();
   const { toast } = useToast();
-  const [periodStart, setPeriodStart] = useState(todayIso());
-  const [periodEnd, setPeriodEnd] = useState(todayIso());
+  // `SR-06` (execution gate §21, Phase 4) — was `todayIso()`, the UTC calendar date, PERSISTED
+  // straight into `period_start`/`period_end`. Between 00:00 and 05:29 IST that pre-filled a
+  // payroll period boundary one day early — not just a display glitch, a wrong value written to
+  // a record HR then finalizes and locks.
+  const today = () => businessToday(user?.company_timezone ?? "Asia/Kolkata");
+  const [periodStart, setPeriodStart] = useState(today);
+  const [periodEnd, setPeriodEnd] = useState(today);
   const [label, setLabel] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   function reset() {
-    setPeriodStart(todayIso());
-    setPeriodEnd(todayIso());
+    setPeriodStart(today());
+    setPeriodEnd(today());
     setLabel("");
     setFormError(null);
   }

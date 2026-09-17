@@ -578,14 +578,25 @@ async def test_finalize_blocked_unpublished_roster(
 # ---------------------------------------------------------------------------
 
 
-async def test_punch_rejected_for_closed_period_date(
+async def test_punch_rejected_deep_inside_closed_period(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
+    """`DEC-TZ-05`/`CD-1` (SELECTED, execution gate §10.6): a punch is refused only when BOTH
+    its own local (IST) date and the previous local date are `CLOSED`. A realistic month-long
+    closed period (not a single isolated day) is what makes that true here — the punch's own
+    date and the day before it are both deep inside the same closed month, so this is the
+    "both closed" case the guard still rejects.
+
+    (Renamed from `test_punch_rejected_for_closed_period_date`, whose single-day `[_DAY, _DAY]`
+    closed window is exactly the boundary case Phase 4 intentionally makes more permissive —
+    see `test_punch_accepted_night_shift_month_boundary_*` below for that behaviour.)"""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
         employee_id = wired["employee"]["id"]
-        await _insert_closed_period(company_id=company_id)
+        await _insert_closed_period(
+            company_id=company_id, period_start="2026-08-01", period_end="2026-08-31"
+        )
 
         response = await client.post(
             "/v1/attendance/punches",
@@ -594,10 +605,140 @@ async def test_punch_rejected_for_closed_period_date(
                 "employee_id": employee_id,
                 "punch_time": f"{_DAY}T09:00:00Z",
                 "direction": "IN",
+                "reference": "backdated correction",
             },
         )
         assert response.status_code == 409, response.text
         assert response.json()["error"]["code"] == "ATTENDANCE_PERIOD_CLOSED"
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+# ---------------------------------------------------------------------------
+# DEC-TZ-05 / CD-1 — the night-shift month-boundary scenario, frozen as a test
+# (execution gate §10.2's exact worked table: September CLOSED, October OPEN,
+# a 22:00->06:00 shift starting 30 Sep, punches walked from 00:30 to 06:00 IST on 1 Oct).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ist_time_and_utc_instant",
+    [
+        ("00:30 IST", "2026-07-31T19:00:00Z"),
+        ("01:30 IST", "2026-07-31T20:00:00Z"),
+        ("03:00 IST", "2026-07-31T21:30:00Z"),
+        ("05:00 IST", "2026-07-31T23:30:00Z"),
+        ("05:29 IST", "2026-07-31T23:59:00Z"),
+        ("05:30 IST", "2026-08-01T00:00:00Z"),
+        ("06:00 IST", "2026-08-01T00:30:00Z"),
+    ],
+    ids=lambda p: p[0] if isinstance(p, tuple) else p,
+)
+async def test_punch_accepted_night_shift_month_boundary(
+    client: AsyncClient,
+    seeded_plan_catalogue: None,
+    ist_time_and_utc_instant: tuple[str, str],
+) -> None:
+    """The exact scenario `CD-1`'s recommendation was selected to fix: a night-shift punch
+    landing between 00:00 and 05:29 IST would, under the OLD UTC-date basis, have been WRONGLY
+    ACCEPTED for the two latest instants and correctly rejected for the five earlier ones
+    (execution gate §10.2's table) — an asymmetry with no relationship to the shift or the work
+    performed, purely an artefact of the UTC-date rollover at 05:30.
+
+    Under the SELECTED basis, every instant in this band is now ACCEPTED: the punch's own local
+    (IST) date is 1 Oct, in the OPEN October period, which alone is enough (`or`, not `and`) —
+    this is the deliberate trade the recommendation names explicitly (`§10.6`: "the cost of some
+    recoverable false acceptances"). Nothing about a locked, already-computed figure changes as
+    a result — `calculate()`'s own separate lock check is what keeps that true, and is exercised
+    by a different test, not this one."""
+    _, utc_instant = ist_time_and_utc_instant
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers, joining_date="2026-07-01")
+        employee_id = wired["employee"]["id"]
+        await _insert_closed_period(
+            company_id=company_id, period_start="2026-07-01", period_end="2026-07-31"
+        )
+
+        response = await client.post(
+            "/v1/attendance/punches",
+            headers=headers,
+            json={
+                "employee_id": employee_id,
+                "punch_time": utc_instant,
+                "direction": "IN",
+                "reference": "night-shift punch near month boundary",
+            },
+        )
+        assert response.status_code == 201, response.text
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_punch_still_rejected_when_both_local_and_previous_day_closed(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The mirror of the parametrised test above: if the SECOND month were also closed (both the
+    punch's own local date and the previous local date `CLOSED`), the punch must still be
+    refused. This is what proves the new basis is `or`, not "always accept near a boundary" —
+    the guard is still a real guard, not a no-op."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers, joining_date="2026-07-01")
+        employee_id = wired["employee"]["id"]
+        await _insert_closed_period(
+            company_id=company_id, period_start="2026-07-01", period_end="2026-08-31"
+        )
+
+        response = await client.post(
+            "/v1/attendance/punches",
+            headers=headers,
+            json={
+                "employee_id": employee_id,
+                "punch_time": "2026-08-01T00:30:00Z",  # 06:00 IST, 1 Aug
+                "direction": "IN",
+                "reference": "night-shift punch, both months closed",
+            },
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "ATTENDANCE_PERIOD_CLOSED"
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_punch_accepted_early_day_shift_mirror_case(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Execution gate §10.3's mirror case (dates shifted safely into the past from the
+    document's own Sept/Oct worked example): an early day shift's 04:30 IST punch on 1 Aug maps
+    to UTC date 31 Jul (CLOSED under the old basis, a FALSE rejection — the opposite error from
+    §10.2). Under the SELECTED basis the punch's own local date (1 Aug, OPEN) accepts it
+    directly, closing the unrecoverable-loss case `CD-1` was chosen to eliminate."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers, joining_date="2026-07-01")
+        employee_id = wired["employee"]["id"]
+        await _insert_closed_period(
+            company_id=company_id, period_start="2026-07-01", period_end="2026-07-31"
+        )
+
+        response = await client.post(
+            "/v1/attendance/punches",
+            headers=headers,
+            json={
+                "employee_id": employee_id,
+                "punch_time": "2026-07-31T23:00:00Z",  # 04:30 IST, 1 Aug
+                "direction": "IN",
+                "reference": "early day-shift punch near month boundary",
+            },
+        )
+        assert response.status_code == 201, response.text
     finally:
         await _cleanup_attendance_period(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)

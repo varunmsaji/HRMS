@@ -991,6 +991,28 @@ class PunchRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def list_for_company_window(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[Punch]:
+        """Company-wide analogue of `list_for_employee_window` — the orphan-punch report's
+        (Phase 8, execution gate §16.4) pool of candidate punches for a reporting window,
+        across every employee at once rather than one at a time."""
+        stmt = (
+            select(Punch)
+            .where(
+                Punch.company_id == company_id,
+                Punch.punch_time >= window_start,
+                Punch.punch_time < window_end,
+            )
+            .order_by(Punch.employee_id, Punch.punch_time)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def list_filtered(
         self,
         session: AsyncSession,
@@ -1052,6 +1074,54 @@ class AttendanceDayRepository:
             AttendanceDay.attendance_date == attendance_date,
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_employee_date_for_update(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, attendance_date: date
+    ) -> AttendanceDay | None:
+        """Concurrency gate execution gate §17.3 — the one lock in the module. `FOR UPDATE`
+        serialises two `calculate()` calls racing for the same `(company_id, employee_id,
+        attendance_date)` row (the scheduled sweep and an interactive recompute, or two
+        overlapping Beat firings under `OPS-006`'s no-leader-election gap). `FOR UPDATE` on a row
+        that does not exist locks nothing — the caller's `IntegrityError`-on-insert path is the
+        backstop for the first-ever calculation of an employee-date, not this method."""
+        stmt = (
+            select(AttendanceDay)
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.employee_id == employee_id,
+                AttendanceDay.attendance_date == attendance_date,
+            )
+            .with_for_update()
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def exists_for_company(self, session: AsyncSession, *, company_id: UUID) -> bool:
+        """`TZ-01`/`DEC-TZ-04` (SELECTED, execution gate §12) — the company-scope leg of the
+        timezone-change guard: does ANY computed `attendance_day` exist anywhere in this company?
+        `LIMIT 1` under `EXISTS` rather than a `count(*)` — this only ever needs a boolean."""
+        stmt = select(AttendanceDay.id).where(AttendanceDay.company_id == company_id).limit(1)
+        return (await session.execute(stmt)).first() is not None
+
+    async def exists_for_employees(
+        self, session: AsyncSession, *, company_id: UUID, employee_ids: list[UUID]
+    ) -> bool:
+        """The branch-scope leg. Takes an explicit employee-id list rather than a `branch_id`
+        column (`AttendanceDay` carries none) — the caller resolves which employees have ever
+        been assigned to the branch, via `EmployeeAssignment` history (`ED-12`), and passes that
+        set here. An empty list is a valid "no one has ever been assigned" case, not an error —
+        short-circuits to `False` without a query, since `IN ()` is either invalid SQL or
+        trivially false depending on dialect."""
+        if not employee_ids:
+            return False
+        stmt = (
+            select(AttendanceDay.id)
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.employee_id.in_(employee_ids),
+            )
+            .limit(1)
+        )
+        return (await session.execute(stmt)).first() is not None
 
     async def list_filtered(
         self,
@@ -1234,6 +1304,17 @@ class AttendanceDayRepository:
         `attendance_status`, including `CONFIG_ERROR`/`INCOMPLETE` rows — finalize's own
         validation gate is what prevents those from ever reaching this point (a `CLOSED` period
         with an unresolved exception inside it should never be reachable, not silently skipped
+
+        Lock-ordering note (execution gate §17.3 constraint 2, `IR-10`): reviewed against
+        `AttendanceDayService.calculate()`'s `FOR UPDATE` on a single `attendance_day` row.
+        `calculate()` never holds more than one `attendance_day` row lock at a time within its
+        own transaction (it acquires the target row, does read-only work, then writes that same
+        row once), and this range `UPDATE` touches only `attendance_day` — no other table this
+        method locks (`attendance_period`, via the caller's own `update()` just before this call)
+        is ever locked by `calculate()`. A range `UPDATE` here and a concurrent single-row `FOR
+        UPDATE` in `calculate()` can only block each other (whichever started first wins, the
+        other waits), never deadlock — a deadlock needs a cycle of at least two mutual waits, and
+        neither side ever holds one lock while requesting a second, conflicting one.
         here)."""
         await session.execute(
             update(AttendanceDay)
@@ -1766,6 +1847,22 @@ class AttendancePeriodRepository:
             AttendancePeriod.id == period_id, AttendancePeriod.company_id == company_id
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def has_any_closed(self, session: AsyncSession, *, company_id: UUID) -> bool:
+        """`DEC-TZ-04` (SELECTED, execution gate §12.4 point 3) — the absolute leg of the
+        timezone-change guard, checked before the TRIAL/zero-days hatch, not after. A `CLOSED`
+        period can exist with zero `AttendanceDay` rows underneath it (`finalize()`'s own
+        completeness check only requires a row per *employment span overlapping the period* —
+        an empty span list, e.g. no employees existed yet, passes trivially). `AttendancePeriod`
+        is company-grain only (no `branch_id`), so this check is identical for a company-scope
+        or a branch-scope timezone change — closing any period is company-wide evidence that a
+        real payroll cycle happened."""
+        stmt = (
+            select(AttendancePeriod.id)
+            .where(AttendancePeriod.company_id == company_id, AttendancePeriod.status == "CLOSED")
+            .limit(1)
+        )
+        return (await session.execute(stmt)).first() is not None
 
     async def list_filtered(
         self, session: AsyncSession, *, company_id: UUID, status: str | None

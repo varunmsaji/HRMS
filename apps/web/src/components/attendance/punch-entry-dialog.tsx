@@ -16,7 +16,9 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import { nowInZoneForDatetimeLocal, wallTimeToUtcIso, zoneLabel } from "@/lib/attendance/format";
 import type { Punch, PunchDirection } from "@/lib/attendance/types";
+import { useAuth } from "@/lib/auth/auth-context";
 
 interface EmployeeOption {
   id: string;
@@ -30,13 +32,6 @@ function employeeLabel(employee: EmployeeOption): string {
   return employee.employee_code ? `${name} (${employee.employee_code})` : name;
 }
 
-function nowForDatetimeLocal(): string {
-  const now = new Date();
-  now.setSeconds(0, 0);
-  const offsetMs = now.getTimezoneOffset() * 60_000;
-  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
-}
-
 interface PunchEntryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -47,9 +42,24 @@ interface PunchEntryDialogProps {
   onRecorded: (punch: Punch) => void;
 }
 
-/** `POST /v1/attendance/punches` — self-punch when `employee_id` matches the caller, on-behalf
- * (`ATTENDANCE.PUNCH_ON_BEHALF`) otherwise; the router decides which, not this dialog (architecture
- * §23.2). Callers gate visibility of the "Record punch" action itself with `usePermissions`. */
+/** Two distinct request shapes, chosen by mode — never one endpoint that infers the act from the
+ * body (`DEC-TZ-01`/`ED-4`, SELECTED):
+ *
+ * - **Self mode** — the target employee is the caller's own (`employeeId === user.employee_id`,
+ *   or no employee is pre-selected at all and the caller picks themselves). Posts to
+ *   `POST /v1/attendance/punches/me` with `{direction, reference?}` — **no time field is shown or
+ *   sent**. The server stamps the instant at receipt; a client clock can no longer set an
+ *   employee's own attendance time.
+ * - **Admin/on-behalf mode** — any other target employee. Posts to `POST /v1/attendance/punches`
+ *   with `{employee_id, direction, punch_time, reference}` — a specific time and a reason are
+ *   both required, because this path exists to record an instant the server did not itself
+ *   observe. The time field is a bare `datetime-local` value (no zone of its own) labelled with
+ *   the resolved business timezone (`punchTz`); `wallTimeToUtcIso`/`nowInZoneForDatetimeLocal`
+ *   (`@/lib/attendance/format`) interpret and seed it explicitly in that zone, never the admin's
+ *   own browser zone (`D1`, staging validation report — the label used to promise IST while
+ *   `new Date(punchTime).toISOString()` silently read the viewer's own clock instead).
+ *
+ * Callers gate visibility of the "Record punch" action itself with `usePermissions`. */
 export function PunchEntryDialog({
   open,
   onOpenChange,
@@ -58,19 +68,28 @@ export function PunchEntryDialog({
   onRecorded,
 }: PunchEntryDialogProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  // `DEC-TZ-02`/`D1` — the on-behalf punch instant is always interpreted in the resolved business
+  // timezone, never the admin's own browser zone. Falls back to `Asia/Kolkata`, matching every
+  // other `user?.company_timezone ?? "Asia/Kolkata"` call site in this module (e.g.
+  // `employee-attendance-panel.tsx`).
+  const punchTz = user?.company_timezone ?? "Asia/Kolkata";
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(employeeId ?? "");
   const [direction, setDirection] = useState<PunchDirection>("IN");
-  const [punchTime, setPunchTime] = useState(nowForDatetimeLocal());
+  const [punchTime, setPunchTime] = useState(() => nowInZoneForDatetimeLocal(punchTz));
   const [reference, setReference] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const targetEmployeeId = employeeId ?? selectedEmployeeId;
+  const isSelf = targetEmployeeId !== "" && targetEmployeeId === user?.employee_id;
 
   useEffect(() => {
     if (!open) return;
     setSelectedEmployeeId(employeeId ?? "");
     setDirection("IN");
-    setPunchTime(nowForDatetimeLocal());
+    setPunchTime(nowInZoneForDatetimeLocal(punchTz));
     setReference("");
     setError(null);
     if (!employeeId) {
@@ -79,22 +98,34 @@ export function PunchEntryDialog({
         .then(setEmployees)
         .catch(() => setEmployees([]));
     }
-  }, [open, employeeId]);
+  }, [open, employeeId, punchTz]);
 
   async function handleSubmit() {
     if (!employeeId && !selectedEmployeeId) {
       setError("Choose an employee.");
       return;
     }
+    if (!isSelf && !reference.trim()) {
+      setError("A reason is required for an on-behalf punch.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const punch = await apiClient.post<Punch>("/attendance/punches", {
-        employee_id: employeeId ?? selectedEmployeeId,
-        punch_time: new Date(punchTime).toISOString(),
-        direction,
-        reference: reference.trim() || undefined,
-      });
+      const punch = isSelf
+        ? await apiClient.post<Punch>("/attendance/punches/me", {
+            direction,
+            reference: reference.trim() || undefined,
+          })
+        : await apiClient.post<Punch>("/attendance/punches", {
+            employee_id: targetEmployeeId,
+            // `D1` — `punchTime` is a bare `datetime-local` wall-clock string with no zone of its
+            // own; `wallTimeToUtcIso` interprets it explicitly as `punchTz`, never the browser's
+            // own zone (`new Date(punchTime).toISOString()` would have done that instead).
+            punch_time: wallTimeToUtcIso(punchTime, punchTz),
+            direction,
+            reference: reference.trim(),
+          });
       onRecorded(punch);
       onOpenChange(false);
       toast({ title: `${direction === "IN" ? "Punch in" : "Punch out"} recorded`, variant: "success" });
@@ -144,14 +175,30 @@ export function PunchEntryDialog({
               <option value="OUT">OUT</option>
             </NativeSelect>
           </FormField>
-          <FormField id="punch-time" label="Punch time" required>
-            <Input
-              type="datetime-local"
-              value={punchTime}
-              onChange={(e) => setPunchTime(e.target.value)}
-            />
-          </FormField>
-          <FormField id="punch-reference" label="Reference" description="Optional note, e.g. a correction reason.">
+          {isSelf ? (
+            <p className="text-sm text-muted-foreground">
+              Recorded at the current time — self-service punches can no longer be backdated or
+              set from your device&rsquo;s clock.
+            </p>
+          ) : (
+            <FormField id="punch-time" label={`Punch time (${zoneLabel(punchTz)})`} required>
+              <Input
+                type="datetime-local"
+                value={punchTime}
+                onChange={(e) => setPunchTime(e.target.value)}
+              />
+            </FormField>
+          )}
+          <FormField
+            id="punch-reference"
+            label="Reference"
+            required={!isSelf}
+            description={
+              isSelf
+                ? "Optional note."
+                : "Required — the reason for this on-behalf correction, kept in the audit log."
+            }
+          >
             <Input value={reference} onChange={(e) => setReference(e.target.value)} maxLength={200} />
           </FormField>
           {error ? (

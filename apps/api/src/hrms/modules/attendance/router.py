@@ -80,7 +80,8 @@ from hrms.modules.attendance.schemas import (
     OvertimeRecordRead,
     OvertimeReviewInput,
     PolicyResolutionRead,
-    PunchCreate,
+    PunchCreateOnBehalf,
+    PunchCreateSelf,
     PunchRead,
     RegularizationPolicyCreate,
     RegularizationPolicyRead,
@@ -749,39 +750,81 @@ async def get_policy_resolution(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/attendance/punches", status_code=status.HTTP_201_CREATED)
-async def create_punch(
-    body: PunchCreate,
+@router.post("/attendance/punches/me", status_code=status.HTTP_201_CREATED)
+async def create_self_punch(
+    body: PunchCreateSelf,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
     service: Annotated[PunchService, Depends(get_punch_service)],
 ) -> DataEnvelope[PunchRead]:
-    """Self-punch (`ATTENDANCE.PUNCH`, SELF) when `employee_id` is omitted or matches the
-    caller's own; on-behalf (`ATTENDANCE.PUNCH_ON_BEHALF`, COMPANY) when it names someone else —
-    the gating permission depends on the request body, so this mirrors
-    `employee/router.py::create_assignment`'s direct `rbac.resolve_data_scope()` call rather
-    than a static `Depends(require_permission(CODE))`."""
-    target_employee_id = body.employee_id or user.employee_id
-    if target_employee_id is None:
-        raise ValidationError("employee_id is required — the caller has no linked employee record")
+    """Employee self-service punch (`ATTENDANCE.PUNCH`, SELF).
 
-    on_behalf = body.employee_id is not None and body.employee_id != user.employee_id
-    required_permission = ATTENDANCE_PUNCH_ON_BEHALF if on_behalf else ATTENDANCE_PUNCH
-    scope = await rbac.resolve_data_scope(user.user_id, user.company_id, required_permission)
-    if not scope.levels:
-        raise PermissionDeniedError(
-            f"Permission {required_permission} is required", code="PERMISSION_DENIED"
+    **The permission is static** — `Depends(require_permission(...))` resolves it before the body
+    is read, so no value a caller controls can route them into a different authorization branch.
+    That is the security half of `ED-4`; the schema half is that `PunchCreateSelf` has no
+    `punch_time`, `source`, or `employee_id` field to send.
+
+    The punch instant is assigned by the server at receipt (`requested_punch_time=None`)."""
+    if user.employee_id is None:
+        raise ValidationError(
+            "The caller has no linked employee record — use the on-behalf endpoint instead"
         )
 
     data = await service.record_punch(
         tenant.company_id,
-        target_employee_id,
-        body,
+        user.employee_id,
+        direction=body.direction,
+        # DEC-TZ-01 (SELECTED) — the server's clock, always. Not "the client's value if present":
+        # there is no client value, by schema.
+        requested_punch_time=None,
+        source="WEB",
+        reference=body.reference,
+        idempotency_key=body.idempotency_key,
         scope=scope,
         caller_employee_id=user.employee_id,
-        default_source="ADMIN" if on_behalf else "WEB",
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/punches", status_code=status.HTTP_201_CREATED)
+async def create_punch_on_behalf(
+    body: PunchCreateOnBehalf,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH_ON_BEHALF))],
+    service: Annotated[PunchService, Depends(get_punch_service)],
+) -> DataEnvelope[PunchRead]:
+    """HR/admin entering a punch for an employee (`ATTENDANCE.PUNCH_ON_BEHALF`, COMPANY).
+
+    This route previously served both acts and picked the required permission from
+    `body.employee_id` — meaning FastAPI had to parse and trust a caller-controlled field before
+    it could decide what the caller was allowed to do. Splitting the routes (`ED-4`) makes the
+    requirement static: a caller holding only `ATTENDANCE.PUNCH` now gets a clean 403 here,
+    regardless of what they put in the body.
+
+    A caller naming *their own* `employee_id` here is accepted rather than redirected — they
+    trivially hold the scope, and the resulting row is legitimately an `ADMIN`-source correction.
+
+    `scope`/`caller_employee_id` still gate the *target* employee inside the service: holding the
+    permission is not the same as being allowed to see this particular person."""
+    data = await service.record_punch(
+        tenant.company_id,
+        body.employee_id,
+        direction=body.direction,
+        # Required and client-supplied here — that is the workflow's purpose — but bounded in the
+        # service: not future, not before employment, not inside a CLOSED period.
+        requested_punch_time=body.punch_time,
+        source="ADMIN",
+        reference=body.reference,
+        idempotency_key=body.idempotency_key,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
@@ -862,13 +905,18 @@ async def calculate_attendance_day(
     _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW_ALL))],
     service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
     employee_id: Annotated[UUID, Query()],
-    date_param: Annotated[date, Query(alias="date")],
+    date_param: Annotated[date | None, Query(alias="date")] = None,
 ) -> DataEnvelope[AttendanceDayRead]:
     """On-demand calculation for one employee+date — creates the row if none exists yet, or
     fully replaces its derived fields if it does (WD-10). COMPANY-scoped
     (`ATTENDANCE.VIEW_ALL`) rather than `ATTENDANCE.RECOMPUTE`: this is the ordinary "compute
     today's attendance" path, not the privileged backdated-recompute act — see
-    `POST /attendance/days/{id}/recompute` for that."""
+    `POST /attendance/days/{id}/recompute` for that.
+
+    `date` is now optional (`ED-2`, execution gate §9.3) — omitting it defaults server-side to
+    `business_today(company_tz)`, so the client no longer has to compute "today" itself (the
+    web client's own `todayIso()`, a UTC calendar date, was `NEW-02`). Passing an explicit date
+    is unaffected and still honoured exactly as before."""
     data = await service.calculate(
         tenant.company_id,
         employee_id,

@@ -56,6 +56,7 @@ type ViewMode = "MINE" | "TEAM";
  * the caller's own linked employee; "Team" needs an explicit picker. */
 export default function LeaveBalancesPage() {
   const { user } = useAuth();
+  const tz = user?.company_timezone ?? "Asia/Kolkata";
   const { toast } = useToast();
   const { can } = usePermissions();
   const canViewAll = can("LEAVE.BALANCE_VIEW_ALL");
@@ -314,7 +315,7 @@ export default function LeaveBalancesPage() {
                           <td className="px-3 py-2 text-right">{entry.amount}</td>
                           <td className="px-3 py-2 text-foreground-secondary">{entry.reason ?? "—"}</td>
                           <td className="px-3 py-2 text-xs text-foreground-muted">
-                            {formatDateTime(entry.created_at)}
+                            {formatDateTime(entry.created_at, tz)}
                           </td>
                         </tr>
                       ))}

@@ -46,6 +46,8 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
+
 # ---------------------------------------------------------------------------
 # Inputs
 # ---------------------------------------------------------------------------
@@ -571,6 +573,34 @@ def worked_minutes_from_gross(
 # ---------------------------------------------------------------------------
 
 
+def _break_window_contains(start: time, end: time | None, point: time) -> bool:
+    """`SR-01` (execution gate §1.4) — Approach A, wrap-aware time-of-day containment, applied
+    identically to `FIXED_WINDOW` (`start_time`/`end_time`) and `FLEXIBLE_DURATION`
+    (`window_start`/`window_end`):
+
+        end is None or end == start  ->  match only when point == start
+                                          (a point-in-time break, never a 24-hour "always
+                                          matches" window — this is the guard case 6 in the
+                                          gate's scenario table depends on)
+        start < end                  ->  match when start <= point <= end
+                                          (ordinary same-day window, BYTE-IDENTICAL to the
+                                          previous implementation — cases 1 and 4 in the gate's
+                                          table are the regression guards this preserves)
+        start > end                  ->  the window wraps past midnight;
+                                          match when point >= start OR point <= end
+
+    This is the ONLY change `SR-01` makes: `match_breaks` below still computes `gap_start_local`
+    exactly as before (line untouched, `PC-15`), and neither its signature nor either call site
+    changes. Approach B (rejected, §1.2) would have rebuilt UTC spans from the attendance date
+    instead — CODE-PROVEN to regress case 4 (an after-midnight break on a night shift, already
+    correct today) while fixing the same three cases this function fixes."""
+    if end is None or end == start:
+        return point == start
+    if start < end:
+        return start <= point <= end
+    return point >= start or point <= end
+
+
 def match_breaks(
     gaps: list[tuple[datetime, datetime]], shift_breaks: list[ShiftBreakData], *, tz_name: str
 ) -> list[MatchedBreak]:
@@ -587,10 +617,8 @@ def match_breaks(
         best: ShiftBreakData | None = None
         for shift_break in shift_breaks:
             if shift_break.break_kind == "FIXED_WINDOW" and shift_break.start_time is not None:
-                if (
-                    shift_break.start_time
-                    <= gap_start_local
-                    <= (shift_break.end_time or shift_break.start_time)
+                if _break_window_contains(
+                    shift_break.start_time, shift_break.end_time, gap_start_local
                 ):
                     best = shift_break
                     break
@@ -598,8 +626,9 @@ def match_breaks(
                 shift_break.break_kind == "FLEXIBLE_DURATION"
                 and shift_break.window_start is not None
             ):
-                window_end = shift_break.window_end or shift_break.window_start
-                if shift_break.window_start <= gap_start_local <= window_end:
+                if _break_window_contains(
+                    shift_break.window_start, shift_break.window_end, gap_start_local
+                ):
                     best = shift_break
                     break
         is_paid = best.is_paid if best is not None else False
@@ -767,6 +796,17 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     if inputs.population_status != "ACTIVE":
         status = "NOT_JOINED" if inputs.population_status == "NOT_JOINED" else "EXITED"
         return _terminal_result(status, inputs, snapshot)
+
+    # `ED-10` (execution gate §4.3) — an unresolvable timezone must degrade this one
+    # employee-date to CONFIG_ERROR, never raise past this function as an unhandled
+    # `ZoneInfoNotFoundError` -> 500. Checked once, here, before any of the internal
+    # `ZoneInfo(inputs.timezone)` constructions later in this module run, so none of them need
+    # their own try/except — Phase 2's schema validators make this unreachable for any row
+    # written after they shipped; this is the fail-safe for a row written before they existed.
+    try:
+        resolve_zoneinfo(inputs.timezone)
+    except TimezoneConfigurationError:
+        return _terminal_result("CONFIG_ERROR", inputs, snapshot, reason="unresolvable_timezone")
 
     # §19.1 step 6 — calendar resolution failure (WD-21 fail closed)
     if inputs.calendar_day_type is None:

@@ -55,6 +55,7 @@ export default function LeaveApplicationDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { user } = useAuth();
+  const tz = user?.company_timezone ?? "Asia/Kolkata";
   const { can } = usePermissions();
 
   const [application, setApplication] = useState<LeaveApplication | null>(null);
@@ -187,7 +188,7 @@ export default function LeaveApplicationDetailPage() {
                 <Field label="Attachment reference" value={application.attachment_reference ?? "—"} />
                 <Field label="Approval chain" value={application.approval_chain} />
                 <Field label="Approval stage" value={application.approval_stage ?? "—"} />
-                <Field label="Submitted at" value={formatDateTime(application.submitted_at)} />
+                <Field label="Submitted at" value={formatDateTime(application.submitted_at, tz)} />
               </dl>
             </CardContent>
           </Card>
@@ -237,10 +238,10 @@ export default function LeaveApplicationDetailPage() {
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-medium text-foreground">Review</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="Reviewed at" value={formatDateTime(application.reviewed_at)} />
+                <Field label="Reviewed at" value={formatDateTime(application.reviewed_at, tz)} />
                 <Field label="Reviewer comment" value={application.reviewer_comment ?? "—"} />
                 <Field label="Rejection reason" value={application.rejection_reason ?? "—"} />
-                <Field label="Cancelled at" value={formatDateTime(application.cancelled_at)} />
+                <Field label="Cancelled at" value={formatDateTime(application.cancelled_at, tz)} />
               </dl>
             </CardContent>
           </Card>
@@ -260,7 +261,7 @@ export default function LeaveApplicationDetailPage() {
                       ) : null}
                     </div>
                     <span className="whitespace-nowrap text-xs text-foreground-muted">
-                      {formatDateTime(entry.created_at)}
+                      {formatDateTime(entry.created_at, tz)}
                     </span>
                   </li>
                 ))}

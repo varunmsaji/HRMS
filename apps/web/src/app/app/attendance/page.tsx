@@ -24,7 +24,8 @@ import {
   type AttendanceStatus,
   type Punch,
 } from "@/lib/attendance/types";
-import { formatMinutes, todayIso } from "@/lib/attendance/format";
+import { businessToday, formatMinutes } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 
 interface EmployeeOption {
@@ -61,9 +62,10 @@ function matchesException(day: AttendanceDay, key: ExceptionFilterKey): boolean 
  * filters are not exposed since `list_attendance_days` has no such parameters — a known
  * limitation, not an oversight (see the W4 report). */
 export default function AttendanceDashboardPage() {
+  const { user } = useAuth();
   const { can } = usePermissions();
 
-  const [date, setDate] = useState(todayIso());
+  const [date, setDate] = useState(businessToday(user?.company_timezone ?? "Asia/Kolkata"));
   const [statusFilter, setStatusFilter] = useState<AttendanceStatus | "">("");
   const [employeeFilter, setEmployeeFilter] = useState("");
   const [exceptionFilters, setExceptionFilters] = useState<Set<ExceptionFilterKey>>(new Set());

@@ -5,6 +5,28 @@ from typing import Any
 from hrms.core.errors.base import ConflictError, LockedError, NotFoundError, ValidationError
 
 
+class TimezoneChangeBlockedError(ConflictError):
+    """`DEC-TZ-04` (SELECTED) — once any computed attendance exists for the affected scope, a
+    company or branch timezone cannot be edited through the ordinary profile/branch-settings
+    screen (execution gate §12). Historical attendance is payroll evidence; a silent timezone
+    edit would reinterpret already-finalized hours under a different clock the next time they
+    are recomputed. A genuine correction is a deliberate, audited, one-off procedure, not an
+    ordinary settings PATCH."""
+
+    code = "TIMEZONE_CHANGE_BLOCKED"
+
+    def __init__(
+        self,
+        message: str = (
+            "timezone cannot be changed — computed attendance already exists for this scope"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "timezone", "code": "TIMEZONE_CHANGE_BLOCKED", "message": message}],
+        )
+
+
 class CurrencyLockedError(ValidationError):
     code = "CURRENCY_LOCKED"
 

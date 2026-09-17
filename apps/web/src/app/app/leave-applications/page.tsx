@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import { todayIso } from "@/lib/attendance/format";
+import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import {
@@ -59,8 +59,9 @@ export default function LeaveApplicationsPage() {
   const canSubmitOnBehalf = can("LEAVE.APPLICATION_SUBMIT_ON_BEHALF");
 
   const [view, setView] = useState<ViewMode>(canApprove ? "TEAM" : "MINE");
-  const [dateFrom, setDateFrom] = useState(addDays(todayIso(), -30));
-  const [dateTo, setDateTo] = useState(addDays(todayIso(), 90));
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
+  const [dateFrom, setDateFrom] = useState(addDays(today, -30));
+  const [dateTo, setDateTo] = useState(addDays(today, 90));
   const [statusFilter, setStatusFilter] = useState<LeaveApplicationStatus | "">("");
   const [employeeFilter, setEmployeeFilter] = useState("");
 

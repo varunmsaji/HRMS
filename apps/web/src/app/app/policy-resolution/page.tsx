@@ -12,7 +12,9 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import { businessToday } from "@/lib/attendance/format";
 import type { PolicyResolution } from "@/lib/attendance-policy/types";
+import { useAuth } from "@/lib/auth/auth-context";
 import { POLICY_KIND_LABELS } from "@/lib/policy-assignment/types";
 
 interface EmployeeOption {
@@ -24,17 +26,14 @@ interface EmployeeOption {
 
 const RESOLUTION_KINDS = ["ATTENDANCE_POLICY", "OVERTIME_POLICY", "REGULARIZATION_POLICY"] as const;
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 /** HR-debugging "resolved through" explain view (architecture §35) — mirrors `/calendar-resolution`
  * (W1) for the three W3 policy kinds. Answers: for this employee, on this date, which policy
  * applies, and which precedence level (EMPLOYEE/SHIFT/.../COMPANY) matched. */
 export default function PolicyResolutionPage() {
+  const { user } = useAuth();
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [employeeId, setEmployeeId] = useState("");
-  const [date, setDate] = useState(todayIso());
+  const [date, setDate] = useState(businessToday(user?.company_timezone ?? "Asia/Kolkata"));
   const [policyKind, setPolicyKind] = useState<(typeof RESOLUTION_KINDS)[number]>(
     "ATTENDANCE_POLICY",
   );

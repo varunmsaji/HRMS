@@ -641,3 +641,55 @@ class DuplicatePunchIdempotencyKeyError(ConflictError):
                 }
             ],
         )
+
+
+class FuturePunchTimeError(ValidationError):
+    """`DEC-TZ-03` (SELECTED: hard floor, no tolerance) — an on-behalf `punch_time` may never be
+    later than the instant the server received the request.
+
+    This bound only exists on the on-behalf route. The self-service route cannot express a future
+    time at all, because `DEC-TZ-01` removed its `punch_time` field entirely — the control there
+    is structural, not a threshold, which is why no skew tolerance is configurable anywhere.
+
+    Deliberately **no** grace window: an on-behalf punch is a human correction about the past, so
+    a future date is always an error, never absorbed device drift."""
+
+    code = "PUNCH_TIME_IN_FUTURE"
+
+    def __init__(
+        self, message: str = "punch_time may not be later than the current server time"
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "punch_time", "code": "PUNCH_TIME_IN_FUTURE", "message": message}],
+        )
+
+
+class PunchTimeBeforeEmploymentError(ValidationError):
+    """Execution gate §8.2's "employment-start floor" — a data-integrity bound, not a policy
+    choice, which is why it needed no client decision. Before this, `1900-01-01Z` was accepted
+    for any employee.
+
+    Resolved through the existing `EmploymentService.get_latest_employment_on_or_before` seam
+    rather than a new query: no episode starting on or before the punch date means the punch
+    predates the employee's own employment record."""
+
+    code = "PUNCH_TIME_BEFORE_EMPLOYMENT"
+
+    def __init__(
+        self,
+        message: str = (
+            "punch_time predates the employee's employment — no employment episode had started "
+            "on that date"
+        ),
+    ) -> None:
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "punch_time",
+                    "code": "PUNCH_TIME_BEFORE_EMPLOYMENT",
+                    "message": message,
+                }
+            ],
+        )

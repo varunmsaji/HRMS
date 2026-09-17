@@ -31,6 +31,11 @@ class Settings(BaseSettings):
 
     app_timezone_default: str = "Asia/Kolkata"
 
+    # `DEC-TZ-02` (SELECTED) — India V1 restricts both public registration and authenticated
+    # company-profile edits to this list. A setting rather than a hard-coded constant so
+    # international expansion is a configuration change, not a code release (execution gate §6.3).
+    allowed_company_timezones: tuple[str, ...] = ("Asia/Kolkata",)
+
     aws_region: str = "ap-south-1"
     s3_bucket_documents: str = ""
     s3_endpoint_url: str | None = None

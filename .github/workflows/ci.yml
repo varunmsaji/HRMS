@@ -8,11 +8,47 @@ on:
 
 jobs:
   api:
-    name: API — lint, typecheck, boundaries, test
+    name: API — lint, typecheck, boundaries, unit, integration
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/api
+
+    # Pinned to UTC deliberately (DEC-TZ-04 / TZ-02). The calculation engine must derive every
+    # business date from the WD-06-resolved IANA zone, never from the host clock — running CI in
+    # UTC is what makes a regression to `date.today()` fail here instead of passing because the
+    # developer's laptop happens to be in IST. `apps/api/Dockerfile` pins the same value.
+    env:
+      TZ: UTC
+
+    services:
+      # Port 5433 (not 5432) and these exact credentials are load-bearing:
+      # tests/security/test_rls_runtime_role.py hard-codes both role URLs at localhost:5433,
+      # and tests/conftest.py defaults DATABASE_URL to the same. Mapping the service here keeps
+      # CI and the docker-compose dev environment identical, so no test file needs a CI-only path.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: hrms
+          POSTGRES_PASSWORD: hrms_dev_password
+          POSTGRES_DB: hrms_dev
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U hrms -d hrms_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
 
     steps:
       - uses: actions/checkout@v4
@@ -41,11 +77,115 @@ jobs:
       - name: Import boundaries
         run: uv run lint-imports
 
-      - name: Unit tests
+      # A `services:` container does NOT execute docker-entrypoint-initdb.d, so the init scripts
+      # that docker-compose mounts must be applied explicitly here. Order matters: this runs
+      # BEFORE alembic so that 002_app_role.sql's ALTER DEFAULT PRIVILEGES is in effect for every
+      # table the migrations subsequently create as `hrms`. Reversing the order would leave
+      # hrms_app without DML grants on any migrated table, and the RLS tests would then fail for
+      # a permissions reason rather than proving anything about row-level security.
+      - name: Apply database init scripts (extensions + hrms_app runtime role)
+        env:
+          PGPASSWORD: hrms_dev_password
+        run: |
+          for f in ../../infra/docker/postgres/init/*.sql; do
+            echo "applying $f"
+            psql -h localhost -p 5433 -U hrms -d hrms_dev -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Alembic upgrade head
         env:
           ENVIRONMENT: development
           DATABASE_URL: postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev
           REDIS_URL: redis://localhost:6380/0
           JWT_ACCESS_SECRET: ci-test-access-secret-min-16
           JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
-        run: uv run pytest
+        run: uv run alembic upgrade head
+
+      # Cheap, explicit proof that the role the RLS suite depends on was actually provisioned with
+      # the attributes that make its assertions meaningful. Without this, a silently missing or
+      # mis-created role turns tests/security into a suite that passes vacuously.
+      - name: Verify the hrms_app runtime role is NOSUPERUSER / NOBYPASSRLS
+        env:
+          PGPASSWORD: hrms_dev_password
+        run: |
+          psql -h localhost -p 5433 -U hrms -d hrms_dev -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN
+               IF NOT EXISTS (SELECT 1 FROM pg_roles
+                              WHERE rolname='hrms_app' AND NOT rolsuper AND NOT rolbypassrls)
+               THEN RAISE EXCEPTION 'hrms_app missing or not NOSUPERUSER/NOBYPASSRLS';
+               END IF;
+             END \$\$;"
+
+      # Split from the integration/security run so each step name matches what it actually
+      # executes (execution gate §18.4 checklist item 9). `pyproject.toml`'s testpaths=["tests"]
+      # means a bare `pytest` collects everything, which is why the previous single step named
+      # "Unit tests" was misleading about its own coverage.
+      - name: Unit tests (no database)
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev
+          REDIS_URL: redis://localhost:6380/0
+          JWT_ACCESS_SECRET: ci-test-access-secret-min-16
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
+        run: uv run pytest tests/unit
+
+      # DATABASE_URL points at `hrms`, the schema owner — deliberately, and contrary to the
+      # execution gate's §18.4 checklist item 3. See the "CI" section of
+      # docs/audits/ATTENDANCE_TIMEZONE_IMPLEMENTATION_COMPLETION_REPORT.md for the measurement:
+      # pointing the default session at hrms_app produces 130 errors across tests/integration,
+      # because dozens of fixture setup/teardown helpers perform raw cross-tenant DELETE/INSERT
+      # with no RLS GUC set and rely on BYPASSRLS to do it.
+      #
+      # RLS is nonetheless a real gate here, because tests/security/test_rls_runtime_role.py does
+      # not read this variable: it repoints the app engine at hrms_app for the duration of each
+      # test, and additionally opens its own raw hrms_app engine to prove that the DATABASE — not
+      # application WHERE-clauses — blocks cross-tenant SELECT/INSERT/UPDATE/DELETE.
+      - name: Integration + security tests (database required)
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev
+          REDIS_URL: redis://localhost:6380/0
+          JWT_ACCESS_SECRET: ci-test-access-secret-min-16
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
+        run: uv run pytest tests/integration tests/security
+
+  web:
+    name: Web — typecheck, vitest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+
+    # Non-IST on purpose: the Phase 6 timezone tests assert that an attendance instant renders as
+    # IST regardless of the viewer's zone. Running this job in UTC would let a regression that
+    # falls back to the host timezone slip through on values that happen to look close enough.
+    env:
+      TZ: America/New_York
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # NOT `npm run lint`. The execution gate's §18.4 checklist item 6 assumed that script was
+      # usable; it is not. `apps/web` has no ESLint configuration and no ESLint dev dependency, so
+      # `next lint` drops into an interactive "How would you like to configure ESLint?" prompt,
+      # which in CI would hang rather than gate anything. Adding and triaging a fresh ESLint
+      # baseline across the whole web app is real work, but it is not timezone remediation, so it
+      # is recorded as a residual gap in the completion report rather than absorbed here.
+      #
+      # `tsc --noEmit` is substituted because it is a genuine static gate that passes cleanly on
+      # the current tree (verified), and it is what actually catches the class of mistake Phase 6
+      # can introduce: a formatter whose required `tz` parameter is missing at a call site.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Vitest
+        run: npm test

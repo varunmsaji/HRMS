@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import { ShiftBreaksEditor } from "@/components/shift/shift-breaks-editor";
 import { ShiftDutyBlocksEditor } from "@/components/shift/shift-duty-blocks-editor";
 import { FormField } from "@/components/common/form-field";
@@ -6,6 +8,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { SHIFT_VERSION_TYPES } from "@/lib/shift/types";
 import type { ShiftVersionFormErrors, ShiftVersionFormValues } from "@/lib/shift/validate-shift-version";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
+import { listTimezones } from "@/lib/timezones";
 
 interface ShiftVersionFormProps {
   values: ShiftVersionFormValues;
@@ -35,6 +38,11 @@ export function ShiftVersionForm({
   ) {
     onChange({ ...values, [key]: value });
   }
+  // NEW-01/SR-09 (execution gate §4.2-4.3) — this field previously had NO backend validation at
+  // all (confirmed reachable by an ordinary HR admin typing "IST" -> unhandled 500 at every
+  // subsequent calculation). The schema now rejects an invalid value; this select is the
+  // corresponding usability fix, sourced from the runtime IANA list rather than free text.
+  const timezones = useMemo(() => listTimezones(), []);
 
   return (
     <div className="space-y-6">
@@ -63,12 +71,19 @@ export function ShiftVersionForm({
               onChange={(e) => update("effectiveFrom", e.target.value)}
             />
           </FormField>
-          <FormField id="timezone" label="Timezone">
-            <Input
-              placeholder="Asia/Kolkata"
-              value={values.timezone}
-              onChange={(e) => update("timezone", e.target.value)}
-            />
+          <FormField
+            id="timezone"
+            label="Timezone"
+            description="Leave unset to inherit the branch's (or company's) timezone."
+          >
+            <NativeSelect value={values.timezone} onChange={(e) => update("timezone", e.target.value)}>
+              <option value="">Inherit from branch/company</option>
+              {timezones.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </NativeSelect>
           </FormField>
         </div>
       </section>

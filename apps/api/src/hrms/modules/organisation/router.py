@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
+from hrms.core.config.settings import get_settings
 from hrms.core.errors.base import PermissionDeniedError
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
@@ -61,6 +62,7 @@ from hrms.modules.organisation.schemas import (
     LegalEntityUpdate,
     PolicyAssignmentCreate,
     PolicyAssignmentRead,
+    RegistrationConfigRead,
     ShiftCreate,
     ShiftRead,
     ShiftUpdate,
@@ -86,6 +88,21 @@ router = APIRouter(tags=["organisation"])
 # bucket definition covering login, reused here; there is no per-account leg since no
 # account exists yet at registration time.
 _registration_rate_limit = rate_limit("auth", limit=10, window_seconds=60)
+
+
+@router.get("/companies/registration-config", status_code=status.HTTP_200_OK)
+async def get_registration_config() -> DataEnvelope[RegistrationConfigRead]:
+    """Public, unauthenticated — read-only. Lets the sign-up page (and the company-profile edit
+    screen) narrow their timezone `<select>` to the server's actual allow-list instead of a
+    second, hand-maintained TypeScript copy (execution gate §6.3). No rate limit beyond the
+    default: this returns no tenant data and cannot be used to enumerate or affect anything."""
+    settings = get_settings()
+    return DataEnvelope(
+        data=RegistrationConfigRead(
+            allowed_company_timezones=list(settings.allowed_company_timezones)
+        ),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.post("/companies/register", status_code=status.HTTP_201_CREATED)

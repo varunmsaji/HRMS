@@ -18,7 +18,8 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
-import { todayIso } from "@/lib/attendance/format";
+import { businessToday } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { ROSTER_STATUSES, type RosterStatus, type ShiftRoster } from "@/lib/shift-roster/types";
 
@@ -65,12 +66,14 @@ function addDays(iso: string, days: number): string {
 /** `/v1/rosters` list/filter + create (architecture §4.2/§9.7/§25, WD-27). Every roster row here
  * is already DataScope-filtered server-side, mirroring the Attendance dashboard's own posture. */
 export default function RostersPage() {
+  const { user } = useAuth();
   const { can } = usePermissions();
   const { toast } = useToast();
   const canManage = can("ATTENDANCE.ROSTER_MANAGE");
 
-  const [dateFrom, setDateFrom] = useState(todayIso());
-  const [dateTo, setDateTo] = useState(addDays(todayIso(), 13));
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
+  const [dateFrom, setDateFrom] = useState(today);
+  const [dateTo, setDateTo] = useState(addDays(today, 13));
   const [employeeFilter, setEmployeeFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<RosterStatus | "">("");
 

@@ -5,10 +5,10 @@ insert-new/close-previous publish)."""
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import CursorResult, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.leave.models import (
@@ -707,7 +707,10 @@ class LeaveCombinationRuleRepository:
                 LeaveCombinationRule.id == rule_id, LeaveCombinationRule.company_id == company_id
             )
         )
-        return result.rowcount > 0
+        # `AsyncSession.execute` is typed as returning `Result[Any]`, which has no
+        # `rowcount`; a DML statement returns a `CursorResult` at runtime. Narrowing here
+        # rather than silencing the error keeps the `> 0` comparison type-checked.
+        return cast(CursorResult[Any], result).rowcount > 0
 
 
 # ---------------------------------------------------------------------------
@@ -793,7 +796,10 @@ class StatutoryLeaveMinimumRepository:
                 StatutoryLeaveMinimum.company_id == company_id,
             )
         )
-        return result.rowcount > 0
+        # `AsyncSession.execute` is typed as returning `Result[Any]`, which has no
+        # `rowcount`; a DML statement returns a `CursorResult` at runtime. Narrowing here
+        # rather than silencing the error keeps the `> 0` comparison type-checked.
+        return cast(CursorResult[Any], result).rowcount > 0
 
     async def max_min_days_per_year(
         self, session: AsyncSession, *, company_id: UUID, leave_category: str

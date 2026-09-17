@@ -47,6 +47,15 @@ def create_celery_app() -> Celery:
                 "task": "leave.run_year_end_sweep",
                 "schedule": crontab(minute=0, hour=2),
             },
+            # `DEC-TZ-07`/`CD-4` (SELECTED, execution gate §16.3) — daily, trailing 3 days
+            # (`attendance/tasks.py::TRAILING_DAYS`). 09:30 is past the outer edge of a
+            # `22:00-06:00` shift's ±2h punch pad (08:00) *and* past the 05:30 UTC-date skew
+            # boundary (`TZ-06`/`SR-05`) under this same `timezone` config — see
+            # `attendance/tasks.py`'s module docstring before moving this earlier.
+            "attendance-run-daily-calculation": {
+                "task": "attendance.run_daily_calculation",
+                "schedule": crontab(minute=30, hour=9),
+            },
         },
     )
     return app

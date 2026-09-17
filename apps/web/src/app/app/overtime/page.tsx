@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
-import { formatMinutes, todayIso } from "@/lib/attendance/format";
+import { businessToday, formatMinutes } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import {
@@ -59,8 +59,9 @@ export default function OvertimePage() {
   const canApprove = can("ATTENDANCE.OVERTIME_APPROVE");
 
   const [view, setView] = useState<ViewMode>(canApprove ? "TEAM" : "MINE");
-  const [dateFrom, setDateFrom] = useState(addDays(todayIso(), -30));
-  const [dateTo, setDateTo] = useState(todayIso());
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
+  const [dateFrom, setDateFrom] = useState(addDays(today, -30));
+  const [dateTo, setDateTo] = useState(today);
   const [statusFilter, setStatusFilter] = useState<OvertimeStatus | "">("");
   const [employeeFilter, setEmployeeFilter] = useState("");
 

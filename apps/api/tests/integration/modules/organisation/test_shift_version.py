@@ -755,3 +755,159 @@ async def test_cross_tenant_shift_version_not_found(
         await _cleanup_shifts(company_id=company_b)
         await _cleanup(company_id=company_a, user_id=user_a)
         await _cleanup(company_id=company_b, user_id=user_b)
+
+
+# ---------------------------------------------------------------------------
+# NEW-01 / SR-09 — ShiftVersion timezone validation (execution gate §4.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shift_version_create_invalid_timezone_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`IST` is the single most likely value an Indian HR user would type for their own
+    timezone (`SR-09`) — before Phase 2, this was accepted at create and failed only at
+    calculation time as an unhandled 500."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        response = await client.post(
+            f"/v1/shifts/{shift['id']}/versions",
+            headers=headers,
+            json={"timezone": "IST"},
+        )
+        assert response.status_code == 422, response.text
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_shift_version_update_invalid_timezone_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        draft_id = shift["draft_version_id"]
+        response = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={"timezone": "IST"},
+        )
+        assert response.status_code == 422, response.text
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_shift_version_publish_rechecks_legacy_invalid_timezone(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Defence in depth (execution gate §4.3): a row written before the Phase 2 validators
+    existed, whose `timezone` a later PATCH never happened to touch, must still be caught at
+    publish — the one gate every version must pass before it can affect real attendance."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        draft_id = shift["draft_version_id"]
+        await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={
+                "shift_type": "FIXED",
+                "effective_from": "2026-01-01",
+                "start_time": "09:00",
+                "end_time": "18:00",
+            },
+        )
+        # Simulates a legacy row: written directly, bypassing the schema validator entirely —
+        # exactly what a row created before Phase 2 shipped would look like.
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await session.execute(
+                text("UPDATE shift_version SET timezone = 'IST' WHERE id = :vid"),
+                {"vid": draft_id},
+            )
+            await session.commit()
+
+        published = await client.post(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}/publish",
+            headers={**headers, "If-Match": "2"},
+            json={},
+        )
+        assert published.status_code == 422, published.text
+        assert published.json()["error"]["code"] == "INVALID_SHIFT_VERSION_TIMEZONE"
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_shift_version_timezone_null_falls_through_wd06(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`NULL` remains valid — it is WD-06's "inherit from branch/company" signal, not an
+    invalid value (7 live rows depend on this, execution gate §4.3)."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        draft_id = shift["draft_version_id"]
+        response = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={"timezone": None},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["timezone"] is None
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_shift_version_timezone_utc_accepted(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Regression guard: 22 live dev rows and 15 existing test literals carry `UTC` — must
+    remain accepted, unaffected by the India-only registration gate (`CD-2`), which does not
+    apply to `ShiftVersion` (execution gate §4.1, Option 1's rejection)."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        draft_id = shift["draft_version_id"]
+        response = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={"timezone": "UTC"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["timezone"] == "UTC"
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_shift_version_timezone_asia_calcutta_canonicalised(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The one real IANA legacy alias handled (execution gate §5) — a real browser can send
+    this; a guessed abbreviation like `IST` is never silently mapped."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers)
+        draft_id = shift["draft_version_id"]
+        response = await client.patch(
+            f"/v1/shifts/{shift['id']}/versions/{draft_id}",
+            headers={**headers, "If-Match": "1"},
+            json={"timezone": "Asia/Calcutta"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["timezone"] == "Asia/Kolkata"
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

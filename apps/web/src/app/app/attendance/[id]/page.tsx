@@ -23,7 +23,7 @@ import {
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { AttendanceDay } from "@/lib/attendance/types";
-import { formatDateTime, formatMinutes } from "@/lib/attendance/format";
+import { formatDateTime, formatMinutes, zoneLabel } from "@/lib/attendance/format";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LeaveDayProjection } from "@/lib/leave-projection/types";
 
@@ -107,7 +107,16 @@ export default function AttendanceDayDetailPage() {
     <div className="space-y-6">
       <PageHeader
         title="Attendance day"
-        description={day ? `${day.attendance_date} — ${day.timezone}` : undefined}
+        description={
+          day
+            ? // `DEC-TZ-06`/`CD-3` (SELECTED) — labels the zone every timestamp on this page is
+              // actually rendered in (`day.timezone`, the WD-06-resolved zone this day was
+              // COMPUTED in), not the viewer's browser zone. For India V1 this always reads
+              // "Asia/Kolkata (IST)"; the day it doesn't (a non-India branch, not in V1 scope)
+              // this label is what keeps the page honest about which clock it's showing.
+              `${day.attendance_date} — ${day.timezone} (${zoneLabel(day.timezone)})`
+            : undefined
+        }
         actions={
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" onClick={() => router.push("/app/attendance")}>
@@ -169,7 +178,7 @@ export default function AttendanceDayDetailPage() {
                   label="Scheduled"
                   value={
                     day.scheduled_start && day.scheduled_end
-                      ? `${formatDateTime(day.scheduled_start)} – ${formatDateTime(day.scheduled_end)}`
+                      ? `${formatDateTime(day.scheduled_start, day.timezone)} – ${formatDateTime(day.scheduled_end, day.timezone)}`
                       : "—"
                   }
                 />
@@ -184,8 +193,8 @@ export default function AttendanceDayDetailPage() {
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-medium text-foreground">Punches & worked time</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="First in" value={formatDateTime(day.actual_first_in)} />
-                <Field label="Last out" value={formatDateTime(day.actual_last_out)} />
+                <Field label="First in" value={formatDateTime(day.actual_first_in, day.timezone)} />
+                <Field label="Last out" value={formatDateTime(day.actual_last_out, day.timezone)} />
                 <Field label="Worked minutes" value={formatMinutes(day.worked_minutes)} />
                 <Field label="Unpaid break" value={formatMinutes(day.unpaid_break_minutes)} />
                 <Field label="Paid break" value={formatMinutes(day.paid_break_minutes)} />
@@ -209,8 +218,8 @@ export default function AttendanceDayDetailPage() {
                     <tbody className="divide-y divide-border">
                       {day.breaks.map((brk) => (
                         <tr key={brk.id}>
-                          <td className="px-3 py-2">{formatDateTime(brk.break_start)}</td>
-                          <td className="px-3 py-2">{formatDateTime(brk.break_end)}</td>
+                          <td className="px-3 py-2">{formatDateTime(brk.break_start, day.timezone)}</td>
+                          <td className="px-3 py-2">{formatDateTime(brk.break_end, day.timezone)}</td>
                           <td className="px-3 py-2">{formatMinutes(brk.minutes)}</td>
                           <td className="px-3 py-2">{brk.is_paid ? "Yes" : "No"}</td>
                           <td className="px-3 py-2">{brk.is_excess ? "Yes" : "No"}</td>
@@ -282,11 +291,11 @@ export default function AttendanceDayDetailPage() {
               <h2 className="mb-4 text-sm font-medium text-foreground">Calculation & audit</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <Field label="Calculation version" value={day.calculation_version} />
-                <Field label="Calculated at" value={formatDateTime(day.calculated_at)} />
+                <Field label="Calculated at" value={formatDateTime(day.calculated_at, day.timezone)} />
                 <Field label="Attendance policy version" value={day.attendance_policy_version_id ?? "—"} />
                 <Field label="Overtime policy version" value={day.overtime_policy_version_id ?? "—"} />
                 <Field label="Regularization policy version" value={day.regularization_policy_version_id ?? "—"} />
-                <Field label="Locked at" value={day.is_locked ? formatDateTime(day.locked_at) : "—"} />
+                <Field label="Locked at" value={day.is_locked ? formatDateTime(day.locked_at, day.timezone) : "—"} />
               </dl>
               <div className="mt-4">
                 <Button type="button" variant="outline" size="sm" onClick={() => setShowSnapshot((v) => !v)}>

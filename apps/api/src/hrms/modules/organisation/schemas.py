@@ -7,11 +7,12 @@ from datetime import date, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID
-from zoneinfo import available_timezones
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from hrms.core.config.settings import get_settings
 from hrms.core.db.models.identity import Company
+from hrms.shared.timezone import validate_allowed_company_timezone, validate_iana_timezone
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +93,17 @@ INDIA_STATE_CODES: dict[str, str] = {
 _PINCODE_PATTERN = r"^[1-9][0-9]{5}$"
 
 
+class RegistrationConfigRead(BaseModel):
+    """Body for the public, unauthenticated `GET /companies/registration-config` — lets the
+    sign-up page narrow its timezone `<select>` to what the server will actually accept, fetched
+    from the API rather than duplicated as a second, independently-maintained TypeScript list
+    (execution gate §6.3: "two independently maintained lists is how they drift"). Read-only;
+    changing the allowed set is a `settings.allowed_company_timezones` configuration change, not
+    a schema change."""
+
+    allowed_company_timezones: list[str]
+
+
 class CompanyRegistrationRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     industry_code: str | None = Field(default=None, max_length=40)
@@ -108,9 +120,14 @@ class CompanyRegistrationRequest(BaseModel):
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, value: str) -> str:
-        if value not in available_timezones():
-            raise ValueError("timezone must be a valid IANA time zone identifier")
-        return value
+        # `DEC-TZ-02` (SELECTED) — this is the public, unauthenticated entry point (`NEW-04`);
+        # the India-only gate must be enforced here regardless of what the shipped web client's
+        # `<select>` happens to show, because any caller can post any valid IANA zone directly.
+        # `settings.allowed_company_timezones` (default `("Asia/Kolkata",)`) is a setting, not a
+        # hard-coded constant, so international expansion is a configuration change (§6.3).
+        return validate_allowed_company_timezone(
+            value, allowed=get_settings().allowed_company_timezones
+        )
 
     @field_validator("currency", "country_code")
     @classmethod
@@ -256,9 +273,15 @@ class CompanyProfileUpdate(BaseModel):
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, value: str | None) -> str | None:
-        if value is not None and value not in available_timezones():
-            raise ValueError("timezone must be a valid IANA time zone identifier")
-        return value
+        # `DEC-TZ-02` (SELECTED) — the SAME authenticated admin-edit path, gated by the SAME
+        # allow-list, in the SAME canonicalise-then-check order as registration above. This is
+        # NOT the "may it change at all" guard (`DEC-TZ-04`/Phase 3) — that answers a different
+        # question and is checked separately, in the service layer, after this validator runs.
+        if value is None:
+            return None
+        return validate_allowed_company_timezone(
+            value, allowed=get_settings().allowed_company_timezones
+        )
 
     @field_validator("currency", "country_code")
     @classmethod
@@ -691,9 +714,12 @@ class BranchCreate(BaseModel):
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, value: str | None) -> str | None:
-        if value is not None and value not in available_timezones():
-            raise ValueError("timezone must be a valid IANA time zone identifier")
-        return value
+        # Branch stays a fully general IANA surface, not India-gated — WD-06 (Shift > Branch >
+        # Company) means a correctly-gated company timezone already makes every unset branch
+        # resolve to Asia/Kolkata; gating this too would only cost future non-India tenants.
+        if value is None:
+            return None
+        return validate_iana_timezone(value)
 
 
 class BranchUpdate(BaseModel):
@@ -726,9 +752,12 @@ class BranchUpdate(BaseModel):
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, value: str | None) -> str | None:
-        if value is not None and value not in available_timezones():
-            raise ValueError("timezone must be a valid IANA time zone identifier")
-        return value
+        # Branch stays a fully general IANA surface, not India-gated — WD-06 (Shift > Branch >
+        # Company) means a correctly-gated company timezone already makes every unset branch
+        # resolve to Asia/Kolkata; gating this too would only cost future non-India tenants.
+        if value is None:
+            return None
+        return validate_iana_timezone(value)
 
 
 class BranchRead(BaseModel):
@@ -1267,6 +1296,19 @@ class ShiftVersionCreate(BaseModel):
             raise ValueError(f"shift_type must be one of {_SHIFT_VERSION_TYPES}")
         return value
 
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        # `NEW-01`/`SR-09` (execution gate §4) — this field previously had no validator at all
+        # (`max_length=64` only), so a value like `IST` — the exact abbreviation an Indian HR user
+        # would type — was accepted at create/update and failed only at calculation time as an
+        # unhandled `ZoneInfoNotFoundError` -> HTTP 500. `NULL` remains valid: it is WD-06's
+        # "inherit from branch/company" signal, not an invalid value, so it is excluded here
+        # before the IANA check ever runs.
+        if value is None:
+            return None
+        return validate_iana_timezone(value)
+
 
 class ShiftVersionUpdate(BaseModel):
     """Draft-only PATCH (409 `SHIFT_VERSION_NOT_DRAFT` once published). `breaks`/
@@ -1303,6 +1345,13 @@ class ShiftVersionUpdate(BaseModel):
         if value is not None and value not in _SHIFT_VERSION_TYPES:
             raise ValueError(f"shift_type must be one of {_SHIFT_VERSION_TYPES}")
         return value
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_iana_timezone(value)
 
 
 class ShiftVersionPublishRequest(BaseModel):

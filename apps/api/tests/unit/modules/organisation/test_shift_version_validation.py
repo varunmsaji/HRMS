@@ -58,6 +58,7 @@ def _version(**overrides: object) -> SimpleNamespace:
         "core_start": None,
         "core_end": None,
         "required_minutes": None,
+        "timezone": None,
         "created_at": now,
     }
     defaults.update(overrides)
