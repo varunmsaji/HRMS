@@ -570,45 +570,89 @@ async def test_registration_config_is_public_and_lists_india_only(
     assert response.json()["data"]["allowed_company_timezones"] == ["Asia/Kolkata"]
 
 
+async def _role_grants(company_id: UUID, role_code: str) -> dict[str, str]:
+    factory = get_session_factory()
+    async with factory() as session:
+        role = (
+            await session.execute(
+                select(Role).where(Role.company_id == company_id, Role.code == role_code)
+            )
+        ).scalar_one()
+        grants = (
+            await session.execute(
+                select(RolePermission, Permission.code)
+                .join(Permission, Permission.id == RolePermission.permission_id)
+                .where(RolePermission.role_id == role.id)
+            )
+        ).all()
+        return {code: grant.data_scope for grant, code in grants}
+
+
 @pytest.mark.asyncio
 async def test_registration_seeds_branch_manager_role(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
     """`docs/architecture/RBAC_DATA_SCOPE_DECISIONS.md`'s 2026-09-23/24 Addendum — a fresh
-    registration gets a `BRANCH_MANAGER` role (`EMPLOYEE.VIEW` + `EMPLOYEE.VIEW_ALL` +
-    `ATTENDANCE.VIEW`, all `BRANCH` scope) alongside `COMPANY_ADMIN`, same as `HR_ADMIN`/
+    registration gets a `BRANCH_MANAGER` role alongside `COMPANY_ADMIN`, same as `HR_ADMIN`/
     `REPORTING_MANAGER`/`EMPLOYEE`. Not assigned to the registering admin — exists so a future
     role-assignment flow can grant it, same as its siblings. `EMPLOYEE.VIEW_ALL` is needed
     alongside `EMPLOYEE.VIEW` because `GET /v1/employees` (the list endpoint) gates on `.VIEW_ALL`
-    while `GET /v1/employees/{id}` gates on plain `.VIEW` (`employee/router.py`). `ATTENDANCE.VIEW`
-    is the only approval-adjacent grant this role gets — see `organisation/service.py`'s
-    `BRANCH_MANAGER_ROLE_CODE` comment for why `ATTENDANCE.REGULARIZATION_APPROVE`/
-    `ATTENDANCE.OVERTIME_APPROVE`/`LEAVE.APPLICATION_APPROVE` are deliberately not granted here."""
+    while `GET /v1/employees/{id}` gates on plain `.VIEW` (`employee/router.py`). The three
+    `.APPROVE` grants (added by the approval-authority backfill) only take effect for MANAGER/HOD-
+    stage approval when this role's holder is also literally the request's snapshotted
+    `reporting_manager_id`/department head — `BRANCH` scope has no bearing on that identity check,
+    see `organisation/service.py`'s `BRANCH_MANAGER_ROLE_CODE` comment."""
     response, company_id, user_id = await _register(client)
     try:
         assert response.status_code == 201
-        factory = get_session_factory()
-        async with factory() as session:
-            role = (
-                await session.execute(
-                    select(Role).where(
-                        Role.company_id == company_id, Role.code == "BRANCH_MANAGER"
-                    )
-                )
-            ).scalar_one()
-            assert role.is_system is True
+        assert await _role_grants(company_id, "BRANCH_MANAGER") == {
+            "EMPLOYEE.VIEW": "BRANCH",
+            "EMPLOYEE.VIEW_ALL": "BRANCH",
+            "ATTENDANCE.VIEW": "BRANCH",
+            "ATTENDANCE.REGULARIZATION_APPROVE": "BRANCH",
+            "ATTENDANCE.OVERTIME_APPROVE": "BRANCH",
+            "LEAVE.APPLICATION_APPROVE": "BRANCH",
+        }
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
 
-            grants = (
-                await session.execute(
-                    select(RolePermission, Permission.code)
-                    .join(Permission, Permission.id == RolePermission.permission_id)
-                    .where(RolePermission.role_id == role.id)
-                )
-            ).all()
-            assert {code: grant.data_scope for grant, code in grants} == {
-                "EMPLOYEE.VIEW": "BRANCH",
-                "EMPLOYEE.VIEW_ALL": "BRANCH",
-                "ATTENDANCE.VIEW": "BRANCH",
-            }
+
+@pytest.mark.asyncio
+async def test_registration_seeds_reporting_manager_approval_grants(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Before this grant, `REPORTING_MANAGER` held only `EMPLOYEE.VIEW` — the literal reporting
+    manager named on a regularization/overtime/leave request could never pass the router's
+    permission gate to even reach the identity check, so a MANAGER-stage request was
+    unapprovable by anyone. `REPORTEE_TREE` scope here is for consistency with this role's other
+    grant; the MANAGER/HOD-stage identity check itself doesn't consult it."""
+    response, company_id, user_id = await _register(client)
+    try:
+        assert response.status_code == 201
+        assert await _role_grants(company_id, "REPORTING_MANAGER") == {
+            "EMPLOYEE.VIEW": "REPORTEE_TREE",
+            "ATTENDANCE.REGULARIZATION_APPROVE": "REPORTEE_TREE",
+            "ATTENDANCE.OVERTIME_APPROVE": "REPORTEE_TREE",
+            "LEAVE.APPLICATION_APPROVE": "REPORTEE_TREE",
+        }
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_registration_seeds_hr_admin_approval_grants(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """HR-stage approval (all three request types) checks only `DataScopeLevel.COMPANY` on the
+    matching `.APPROVE` code, no identity match — before this grant, only `COMPANY_ADMIN` held
+    it, and `COMPANY_ADMIN` typically has no `Employee` record, so HR-stage approval was
+    effectively unreachable by the role whose name implies it should own that job."""
+    response, company_id, user_id = await _register(client)
+    try:
+        assert response.status_code == 201
+        grants = await _role_grants(company_id, "HR_ADMIN")
+        assert grants["ATTENDANCE.REGULARIZATION_APPROVE"] == "COMPANY"
+        assert grants["ATTENDANCE.OVERTIME_APPROVE"] == "COMPANY"
+        assert grants["LEAVE.APPLICATION_APPROVE"] == "COMPANY"
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)

@@ -411,22 +411,61 @@ gates on `.VIEW_ALL` while `GET /v1/employees/{id}` gates on plain `.VIEW`
 (`employee/router.py`) — a gap only found once this role was verified end-to-end through the
 actual UI, not from reading the seeding code alone. All three permissions' read paths resolve
 scope generically through `EmployeeService.resolve_visible_employee_ids`, so `BRANCH` works for
-them with no service-layer change beyond the scope resolver itself. `BRANCH_MANAGER` deliberately
-does **not**
-hold `ATTENDANCE.REGULARIZATION_APPROVE`, `ATTENDANCE.OVERTIME_APPROVE`, or
-`LEAVE.APPLICATION_APPROVE`: those three services gate their `MANAGER`-stage approval on an exact
-`resolved_approver_manager_id`/`resolved_department_head_id` identity match, and their `HR`-stage
-fallback specifically requires `DataScopeLevel.COMPANY` — neither branch treats `BRANCH` as
-satisfying anything today, so granting those codes at `BRANCH` scope would be a silent no-op (see
-`organisation/service.py`'s `BRANCH_MANAGER_ROLE_CODE` comment). Making a branch manager a real
-approver for those three workflows is a separate, not-yet-made product decision (does a branch
-manager's authority over their branch's approvals bypass the actual reporting hierarchy, the way
-`COMPANY` scope already bypasses it for HR? — this is materially the same shape as Decision B's
-original open question, now one level higher in the approval chain) and is intentionally left
-undone rather than guessed at here.
+them with no service-layer change beyond the scope resolver itself. As originally shipped,
+`BRANCH_MANAGER` deliberately did **not** hold `ATTENDANCE.REGULARIZATION_APPROVE`, `ATTENDANCE.
+OVERTIME_APPROVE`, or `LEAVE.APPLICATION_APPROVE` — see the 2026-09-26 addendum below for why
+that changed, and what "changed" actually means given those three services' approval mechanics.
 
 **Consequence:** `role_permission_data_scope_check` now allows `'BRANCH'` alongside `SELF`/
 `REPORTEES`/`REPORTEE_TREE`/`COMPANY`. Every company registered before this shipped was backfilled
 a `BRANCH_MANAGER` role (not assigned to any existing user) by the two migrations above, mirroring
 `20260920090000_default_roles_backfill`'s own catch-up pattern for `HR_ADMIN`/`REPORTING_MANAGER`/
 `EMPLOYEE`.
+
+---
+
+## Addendum (2026-09-26) — approval-authority grants for `HR_ADMIN`/`REPORTING_MANAGER`/`BRANCH_MANAGER`
+
+**Finding, discovered while answering "who currently approves anything in a branch":**
+`ATTENDANCE.REGULARIZATION_APPROVE`, `ATTENDANCE.OVERTIME_APPROVE`, and `LEAVE.APPLICATION_APPROVE`
+were held by no default role except `COMPANY_ADMIN`. Each of the three approval flows has a
+`MANAGER` stage (leave adds `HOD`) and an `HR` stage, checked completely differently:
+
+- **`MANAGER`/`HOD` stage:** an exact identity match — the caller's own `employee_id` must equal
+  the request's snapshotted `resolved_approver_manager_id`/`resolved_department_head_id`. Not
+  scope-based at all (`attendance/service.py`'s and `leave/service.py`'s `_get_reviewable`).
+- **`HR` stage:** the caller needs `DataScopeLevel.COMPANY` on the matching code. No identity
+  check.
+
+Cross-referencing against Decision H's role catalogue: `HR_ADMIN` held zero `ATTENDANCE.*`/
+`LEAVE.*` permissions (its grant list is purely `EMPLOYEE.*`) — despite the name, it could not
+clear the `HR` stage. `REPORTING_MANAGER` held only `EMPLOYEE.VIEW` — the literal reporting
+manager named on a request could not clear the router's permission gate to even reach the
+identity check, meaning **no one** could approve a `MANAGER`-stage request by default:
+`COMPANY_ADMIN`, the one role holding the codes, typically has no `Employee` record at all (the
+normal, documented case per Decision B above), so its `employee_id` is `None` and it fails the
+identity check immediately regardless of scope.
+
+**LOCKED:** grant all three codes to:
+
+| Role | Scope granted | What it actually unlocks |
+|---|---|---|
+| `HR_ADMIN` | `COMPANY` | Clears the `HR` stage — the role Decision H already describes as "runs HR operations" can now actually do that job, not just `COMPANY_ADMIN`. |
+| `REPORTING_MANAGER` | `REPORTEE_TREE` | Clears the router's permission gate so the literal manager named on a `MANAGER`-stage request can reach (and, being the correct identity, pass) the identity check. The scope value itself is not consulted by that check — `REPORTEE_TREE` is chosen only for consistency with this role's existing `EMPLOYEE.VIEW` grant. |
+| `BRANCH_MANAGER` | `BRANCH` | **Only takes effect when the branch manager is *also* literally the request's `resolved_approver_manager_id`/department head** — `BRANCH` scope has no relationship to the `reporting_manager_id` field the identity check reads, the same structural gap Decision C's `BRANCH` addendum above already accepted for visibility. This is not a silent no-op the way it would have been for a role with no path to the identity match at all (a branch manager who *is* also the reporting manager for their branch's staff — a common, reasonable real-world shape — gets working approval the moment this grant exists); it just doesn't make branch scope itself a substitute for reporting-line identity. |
+
+**Explicitly not resolved here:** whether `BRANCH` scope *should* be able to substitute for the
+`MANAGER`/`HOD` identity check — i.e., whether a branch manager's authority over their branch
+ought to bypass the actual reporting hierarchy, the way `COMPANY` scope already bypasses it for
+HR. That would mean changing `_get_reviewable` in both services to also accept a caller whose
+granted scope covers the target employee, not just an identity match — a real, separate product
+decision (this is structurally the same shape as Decision B's original open question, now one
+level higher in the approval chain), intentionally left undone rather than guessed at here. The
+grant above closes the "default roles hold none of these codes at all" gap; it does not change
+the approval services' logic.
+
+**Consequence:** purely additive `role_permission` inserts, no constraint or schema change (the
+three scope values used — `COMPANY`/`REPORTEE_TREE`/`BRANCH` — already existed). Backfilled for
+every existing company by `20260926090000_approval_authority_backfill.py`, same idempotent
+`ON CONFLICT DO NOTHING` shape as its predecessors. No request's outcome changes retroactively —
+only which callers are now capable of reaching an approve/reject decision at all.

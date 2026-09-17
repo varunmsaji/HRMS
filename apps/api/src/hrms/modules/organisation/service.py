@@ -441,7 +441,12 @@ class OrganisationService:
         # W3 — `ATTENDANCE.POLICY_MANAGE` (architecture §23.2, WD-19). Same live-registration-path
         # rationale as `calendar_permission_rows` above; a local import avoids a module-top-level
         # organisation -> attendance dependency (mirrors `_validate_policy_reference`).
-        from hrms.modules.attendance.permissions import ATTENDANCE_PERMISSIONS, ATTENDANCE_VIEW
+        from hrms.modules.attendance.permissions import (
+            ATTENDANCE_OVERTIME_APPROVE,
+            ATTENDANCE_PERMISSIONS,
+            ATTENDANCE_REGULARIZATION_APPROVE,
+            ATTENDANCE_VIEW,
+        )
 
         attendance_permission_rows = [
             await self._repo.get_or_create_permission(
@@ -453,7 +458,7 @@ class OrganisationService:
 
         # L1 — `LEAVE.*` (LEAVE_DECISION_LOG.md LD-08). Same live-registration-path rationale as
         # `attendance_permission_rows` immediately above.
-        from hrms.modules.leave.permissions import LEAVE_PERMISSIONS
+        from hrms.modules.leave.permissions import LEAVE_APPLICATION_APPROVE, LEAVE_PERMISSIONS
 
         leave_permission_rows = [
             await self._repo.get_or_create_permission(
@@ -461,6 +466,7 @@ class OrganisationService:
             )
             for code, domain, description in LEAVE_PERMISSIONS
         ]
+        leave_permission_by_code = {perm.code: perm for perm in leave_permission_rows}
 
         # Onboarding O1 — `ONBOARDING.*` (docs/modules/onboarding/01_ONBOARDING_MODULE_PLAN.md
         # §7.1/§11). Same live-registration-path rationale as `leave_permission_rows` above.
@@ -575,6 +581,28 @@ class OrganisationService:
             await self._repo.insert_role_permission(
                 self._session, role_id=hr_admin_role.id, permission_id=perm.id
             )
+        # HR-stage approval on all three request types (attendance/service.py's
+        # `_get_reviewable`/`leave/service.py`'s equivalent) checks only `DataScopeLevel.COMPANY`
+        # on the matching `.APPROVE` code — no identity match, unlike the MANAGER/HOD stages
+        # below. Before this grant, the only role holding these codes at all was `COMPANY_ADMIN`,
+        # which typically has no `Employee` record (a registering admin never entered into the
+        # roster is the expected, documented case) and so fails the *other* two stages' identity
+        # check outright — meaning an HR-stage request was the only one approvable by anyone,
+        # and only by whoever happened to hold `COMPANY_ADMIN`. `HR_ADMIN` is the role this
+        # product's own default-role catalogue (Decision H) already designates for "runs HR
+        # operations" — granting it here at `COMPANY` scope is what actually lets that persona do
+        # the job the role's name implies.
+        for perm in (
+            attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
+            attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
+            leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
+        ):
+            await self._repo.insert_role_permission(
+                self._session,
+                role_id=hr_admin_role.id,
+                permission_id=perm.id,
+                data_scope=DataScopeLevel.COMPANY,
+            )
 
         reporting_manager_role = await self._repo.insert_role(
             self._session,
@@ -590,6 +618,28 @@ class OrganisationService:
             permission_id=employee_view_perm.id,
             data_scope=DataScopeLevel.REPORTEE_TREE,
         )
+        # MANAGER/HOD-stage approval checks the caller's `employee_id` against the request's
+        # snapshotted `resolved_approver_manager_id`/`resolved_department_head_id` — an exact
+        # identity match, not this scope value. What the scope value *does* gate is whether the
+        # caller holds the `.APPROVE` code at all (the router's `require_permission` check, a
+        # defence-in-depth layer before the identity check ever runs) and, separately, list/filter
+        # endpoints that reuse `resolve_visible_employee_ids`. `REPORTEE_TREE` is used here purely
+        # for consistency with this role's own `EMPLOYEE.VIEW` grant above — the identity check
+        # doesn't consult it. Before this grant, `REPORTING_MANAGER` held none of these three
+        # codes, so even the literal manager named on a request could never pass the router gate
+        # to reach the identity check at all — a direct manager could not approve their own
+        # report's regularization/overtime/leave request, full stop.
+        for perm in (
+            attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
+            attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
+            leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
+        ):
+            await self._repo.insert_role_permission(
+                self._session,
+                role_id=reporting_manager_role.id,
+                permission_id=perm.id,
+                data_scope=DataScopeLevel.REPORTEE_TREE,
+            )
 
         branch_manager_role = await self._repo.insert_role(
             self._session,
@@ -623,6 +673,27 @@ class OrganisationService:
             permission_id=attendance_permission_by_code[ATTENDANCE_VIEW].id,
             data_scope=DataScopeLevel.BRANCH,
         )
+        # Same three approve grants as `REPORTING_MANAGER`, same caveat: the MANAGER/HOD-stage
+        # identity check is against `reporting_manager_id`/department-head, a field this role's
+        # `BRANCH` scope has no relationship to (branch assignment and reporting line are
+        # independent). This grant alone does not make branch-scoped approval work — it only
+        # takes effect for a branch manager who is *also* literally set as `reporting_manager_id`
+        # for the colleagues they're approving for (a reasonable, common real-world shape: the
+        # branch manager doubles as the reporting manager for everyone at that branch), the exact
+        # same mechanism `REPORTING_MANAGER` uses. Granted anyway, at `BRANCH` scope for
+        # consistency with this role's other grants, so that shape works out of the box the moment
+        # it's true, rather than requiring a second role assignment.
+        for perm in (
+            attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
+            attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
+            leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
+        ):
+            await self._repo.insert_role_permission(
+                self._session,
+                role_id=branch_manager_role.id,
+                permission_id=perm.id,
+                data_scope=DataScopeLevel.BRANCH,
+            )
 
         employee_role = await self._repo.insert_role(
             self._session,
