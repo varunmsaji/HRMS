@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     email_sender_from_address: str = "onboarding@hrms.local"
     web_app_base_url: str = "http://localhost:3000"
 
+    # PAY-006 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decision 16) — employees with
+    # unresolved INCOMPLETE days are reminded daily from this many days before an open attendance
+    # period's end until it is closed; HR gets a matching digest.
+    attendance_incomplete_reminder_lead_days: int = 3
+
     rate_limit_window_ms: int = 60000
     rate_limit_max: int = 100
 

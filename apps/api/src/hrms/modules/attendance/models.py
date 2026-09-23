@@ -602,9 +602,14 @@ class AttendanceDay(Base, TimestampMixin):
     ot_minutes_approved: Mapped[int] = mapped_column(Integer, default=0)
     ot_pending: Mapped[bool] = mapped_column(Boolean, default=False)
     ot_classification: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # The engine's OT day class (NORMAL|WEEKLY_OFF|HOLIDAY|NIGHT) — `ot_classification` is the
+    # policy's configurable rate code, so the period summary buckets OT by this column instead.
+    ot_day_class: Mapped[str | None] = mapped_column(String(20), nullable=True)
     comp_off_minutes_earned: Mapped[int] = mapped_column(Integer, default=0)
 
     calculation_version: Mapped[int] = mapped_column(Integer, default=1)
+    # PAY-008 — `calculation.ENGINE_VERSION` that produced this row; NULL = computed before it.
+    engine_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     computation_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     calculated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

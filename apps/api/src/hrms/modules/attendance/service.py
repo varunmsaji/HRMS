@@ -3192,7 +3192,9 @@ class AttendanceDayService:
             "ot_minutes_approved": result.ot_minutes_approved,
             "ot_pending": result.ot_pending,
             "ot_classification": result.ot_classification,
+            "ot_day_class": result.ot_day_class,
             "comp_off_minutes_earned": result.comp_off_minutes_earned,
+            "engine_version": calc.ENGINE_VERSION,
             "computation_snapshot": result.snapshot,
             "calculated_at": datetime.now(UTC),
         }
@@ -5576,11 +5578,13 @@ class AttendancePeriodService:
                 else:  # unresolved INCOMPLETE, CONFIG_ERROR
                     agg["incomplete_days"] += rest
 
-            if row.ot_classification == "WEEKLY_OFF":
+            # Bucket by the engine's day class, never the policy's configurable rate code.
+            ot_day_class = row.ot_day_class
+            if ot_day_class == "WEEKLY_OFF":
                 agg["ot_minutes_weekly_off"] += row.ot_minutes_approved
-            elif row.ot_classification == "HOLIDAY":
+            elif ot_day_class == "HOLIDAY":
                 agg["ot_minutes_holiday"] += row.ot_minutes_approved
-            elif row.ot_classification == "NIGHT":
+            elif ot_day_class == "NIGHT":
                 agg["ot_minutes_night"] += row.ot_minutes_approved
             elif row.ot_minutes_approved:
                 agg["ot_minutes_normal"] += row.ot_minutes_approved

@@ -85,6 +85,7 @@ const sampleDay: AttendanceDay = {
   ot_minutes_approved: 0,
   ot_pending: false,
   ot_classification: null,
+  ot_day_class: null,
   comp_off_minutes_earned: 0,
   calculation_version: 1,
   computation_snapshot: {},

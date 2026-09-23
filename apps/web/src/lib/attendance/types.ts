@@ -132,6 +132,7 @@ export interface AttendanceDay {
   ot_minutes_approved: number;
   ot_pending: boolean;
   ot_classification: string | null;
+  ot_day_class: string | null;
   comp_off_minutes_earned: number;
 
   calculation_version: number;

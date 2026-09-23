@@ -48,6 +48,14 @@ from zoneinfo import ZoneInfo
 
 from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 
+#: PAY-008 — identifies the algorithm, unlike `AttendanceDay.calculation_version` (a per-row
+#: recompute counter). Stored on every computed row (`attendance_day.engine_version`) and in its
+#: `computation_snapshot`, so a payslip can name the rules its figures came from. Bump it
+#: whenever a change alters any output for unchanged inputs. 1 = rows computed before this
+#: constant existed (backfilled as NULL); 2 = payroll-readiness step 1 (PAY-002…PAY-012,
+#: ATT-005, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decisions 1/4/5).
+ENGINE_VERSION = 2
+
 # ---------------------------------------------------------------------------
 # Inputs
 # ---------------------------------------------------------------------------
@@ -884,7 +892,33 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
             "population_status": inputs.population_status,
             "calendar_day_type": inputs.calendar_day_type,
             "punch_ids": [str(p.id) for p in inputs.punches],
-        }
+        },
+        "engine_version": ENGINE_VERSION,
+        # PAY-008 — everything `service.py` derived from sibling days or other modules before
+        # calling this engine. Recorded so a recompute that differs can be explained: the punch
+        # ids and policy version ids pin the rest of the inputs, these would otherwise be lost.
+        "derived_inputs": {
+            "prior_late_days_in_window": inputs.prior_late_days_in_window,
+            "prior_excess_break_days_in_window": inputs.prior_excess_break_days_in_window,
+            "remaining_weekly_ot_minutes": (
+                inputs.ot_policy.remaining_weekly_minutes if inputs.ot_policy else None
+            ),
+            "remaining_monthly_ot_minutes": (
+                inputs.ot_policy.remaining_monthly_minutes if inputs.ot_policy else None
+            ),
+            "leave_entries": [
+                {"fraction": e.fraction, "is_paid": e.is_paid, "half": e.half}
+                for e in inputs.leave_entries
+            ],
+            "roster_week_off_override": inputs.roster_week_off_override,
+            "roster_holiday_working_override": inputs.roster_holiday_working_override,
+            "early_departure_pre_approved": inputs.early_departure_pre_approved,
+            "on_duty_approved": inputs.on_duty_approved,
+            "weekly_off_fraction": inputs.weekly_off_fraction,
+            "pay_basis": inputs.pay_basis,
+            "holiday_type": inputs.holiday_type,
+            "holiday_is_paid": inputs.holiday_is_paid,
+        },
     }
 
     # §19.1 step 1 — employment gate

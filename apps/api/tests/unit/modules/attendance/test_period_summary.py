@@ -42,6 +42,7 @@ def _row(
         "weekly_off_fraction": Decimal("0.00"),
         "unpaid_off_fraction": Decimal("0.00"),
         "ot_classification": None,
+        "ot_day_class": None,
         "ot_minutes_approved": 0,
         "comp_off_minutes_earned": 0,
         "is_late": False,
@@ -297,3 +298,54 @@ def test_full_day_leave_with_overtime_punches_pays_leave_only_and_no_ot() -> Non
     assert on_leave.ot_classification is None
     assert on_leave.comp_off_minutes_earned == 0
     assert on_leave.work_on_leave_flagged is True
+
+
+def test_ot_buckets_follow_day_class_not_rate_code() -> None:
+    """The policy's rate codes are free text (e.g. `OT_NIGHT_2X`) — only the engine's day class
+    decides the summary bucket."""
+    agg = _aggregate(
+        [
+            _row(
+                "PRESENT",
+                paid="1.00",
+                lop="0.00",
+                day=1,
+                ot_classification="OT_NIGHT_2X",
+                ot_day_class="NIGHT",
+                ot_minutes_approved=60,
+            ),
+            _row(
+                "PRESENT",
+                paid="1.00",
+                lop="0.00",
+                day_type="HOLIDAY",
+                day=2,
+                ot_classification="OT_HOL",
+                ot_day_class="HOLIDAY",
+                ot_minutes_approved=120,
+            ),
+            _row(
+                "PRESENT",
+                paid="1.00",
+                lop="0.00",
+                day_type="WEEKLY_OFF",
+                day=3,
+                ot_classification="OT_WO",
+                ot_day_class="WEEKLY_OFF",
+                ot_minutes_approved=30,
+            ),
+            _row(
+                "PRESENT",
+                paid="1.00",
+                lop="0.00",
+                day=4,
+                ot_classification="NIGHT",
+                ot_day_class="NORMAL",
+                ot_minutes_approved=15,
+            ),
+        ]
+    )
+    assert agg["ot_minutes_night"] == 60
+    assert agg["ot_minutes_holiday"] == 120
+    assert agg["ot_minutes_weekly_off"] == 30
+    assert agg["ot_minutes_normal"] == 15

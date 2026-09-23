@@ -60,6 +60,28 @@ class RbacRepository:
         return set(result.scalars().all())
 
 
+    async def list_user_ids_with_permission(
+        self, session: AsyncSession, *, company_id: UUID, code: str
+    ) -> list[UUID]:
+        """Every active member of `company_id` holding `code` through any role — e.g. who to
+        notify about work only they can do (PAY-006's HR reminder digest)."""
+        stmt = (
+            select(UserCompany.user_id)
+            .join(UserRole, UserRole.user_company_id == UserCompany.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .join(RolePermission, RolePermission.role_id == Role.id)
+            .join(Permission, Permission.id == RolePermission.permission_id)
+            .where(
+                UserCompany.company_id == company_id,
+                UserCompany.status == "ACTIVE",
+                Permission.code == code,
+            )
+            .distinct()
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+
 class RbacService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

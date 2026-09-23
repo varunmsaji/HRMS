@@ -1434,9 +1434,11 @@ class AttendanceDayRead(BaseModel):
     ot_minutes_approved: int
     ot_pending: bool
     ot_classification: str | None
+    ot_day_class: str | None
     comp_off_minutes_earned: int
 
     calculation_version: int
+    engine_version: int | None
     computation_snapshot: dict[str, Any] | None
     calculated_at: str | None
 
@@ -1508,8 +1510,10 @@ def attendance_day_to_read(
         ot_minutes_approved=row.ot_minutes_approved,
         ot_pending=row.ot_pending,
         ot_classification=row.ot_classification,
+        ot_day_class=row.ot_day_class,
         comp_off_minutes_earned=row.comp_off_minutes_earned,
         calculation_version=row.calculation_version,
+        engine_version=row.engine_version,
         computation_snapshot=row.computation_snapshot,
         calculated_at=_format_timestamp(row.calculated_at),
         is_locked=row.is_locked,

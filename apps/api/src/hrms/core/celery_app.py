@@ -56,6 +56,11 @@ def create_celery_app() -> Celery:
                 "task": "attendance.run_daily_calculation",
                 "schedule": crontab(minute=30, hour=9),
             },
+            # PAY-006 — after the 09:30 calculation, so reminders reflect today's refresh.
+            "attendance-run-incomplete-reminders": {
+                "task": "attendance.run_incomplete_reminders",
+                "schedule": crontab(minute=0, hour=10),
+            },
         },
     )
     return app

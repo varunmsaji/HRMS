@@ -214,3 +214,45 @@ def calculate_range(
             UUID(actor_user_id) if actor_user_id else None,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# PAY-006 — pre-cutoff reminders for unresolved INCOMPLETE days (`reminders.py`)
+# ---------------------------------------------------------------------------
+
+
+async def _send_incomplete_reminders_async(company_id: UUID) -> int:
+    from hrms.core.config.settings import get_settings
+    from hrms.modules.attendance.reminders import IncompleteDayReminderService
+    from hrms.modules.onboarding.email_sender import get_email_sender
+    from hrms.modules.organisation.service import OrganisationService
+
+    settings = get_settings()
+    async with session_scope(company_id=str(company_id)) as session:
+        company = await OrganisationService(session).get_company_profile(company_id)
+        results = await IncompleteDayReminderService(
+            session, settings, get_email_sender(settings)
+        ).send_for_company(company_id, today=business_today(company.timezone))
+    notified = sum(r.employees_notified for r in results)
+    _logger.info(
+        "attendance_incomplete_reminders_finished",
+        company_id=str(company_id),
+        periods=len(results),
+        employees_notified=notified,
+    )
+    return notified
+
+
+@celery_app.task(name="attendance.send_incomplete_reminders_company")  # type: ignore[untyped-decorator]
+def send_incomplete_reminders_company(company_id: str) -> int:
+    return asyncio.run(_send_incomplete_reminders_async(UUID(company_id)))
+
+
+@celery_app.task(name="attendance.run_incomplete_reminders")  # type: ignore[untyped-decorator]
+def run_incomplete_reminders() -> int:
+    """Beat-scheduled entrypoint, 10:00 IST — after `run_daily_calculation` (09:30) has
+    refreshed the trailing days, so a day fixed by a late punch is not reminded about."""
+    company_ids = asyncio.run(_list_active_company_ids())
+    for company_id in company_ids:
+        send_incomplete_reminders_company.delay(str(company_id))
+    return len(company_ids)

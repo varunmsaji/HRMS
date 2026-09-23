@@ -89,23 +89,21 @@ Following from decisions 2, 3, 5, 16 and 17, the frozen `attendance_period_summa
 | Date | Batch | Done | Migration |
 |---|---|---|---|
 | 2026-09-23 | Step 1a | PAY-004/PAY-005 (NOT_JOINED/EXITED → 0.00 paid / 0.00 LOP); PAY-002/PAY-003 (mutually exclusive summary buckets, new `paid_days`/`payable_days`/`on_duty_days`/`incomplete_days`/`not_employed_days`, `attendance_day.leave_fraction`, reconciliation asserted at finalize, `PAID_LOP_MISMATCH` blocking reason); PAY-007 (lock-time INCOMPLETE resolution applied explicitly to in-memory rows + one `ATTENDANCE_INCOMPLETE_RESOLVED_AT_LOCK` audit row per period); `EMPLOYEES_WITHOUT_ATTENDANCE` now compares exact dates (a NOT_JOINED row could previously mask a missing employed day) | `20261004090000` |
-
 | 2026-09-23 | Step 1b | PAY-012 (half-day weekly off: evaluated as a working day, off half paid — `attendance_day.weekly_off_fraction`); ATT-005 (`night_ot_mode` honoured: `SHIFT_FLAG` = shift's `is_night_shift`, `WINDOW` = OT span overlaps the night window, `BOTH`; night OT without a NIGHT rate row falls back to the NORMAL rate code); decision 4 (no OT on a full-day leave day); decision 5 (full-day leave always wins over punches, day flagged, `WORK_ON_LEAVE_UNRESOLVED` blocks finalize until HR cancels the leave or calls `POST /attendance/days/{id}/work-on-leave/keep-leave`); PAY-001 completed (`POST /attendance/days/calculate-range`, ≤ 62 days, not past today, Celery job `attendance.calculate_range`, employed days only, one transaction per employee); decision 1 (`employment.pay_basis` MONTHLY/DAILY_WAGE; daily-wage paid only for PUBLIC/SUBSTITUTE holidays; `holiday.is_paid = false` now honoured for everyone; `attendance_day.unpaid_off_fraction` + summary `unpaid_off_days`, invariant `paid + lop + unpaid_off = payable`) | `20261004091000`, `20261004092000`, `20261004093000` |
+| 2026-09-23 | Step 1c | Summary OT buckets fixed — `attendance_day.ot_day_class` (engine day class, backfilled from `overtime_record.day_class`) replaces matching the policy's rate code, so codes like `OT_NIGHT_2X` no longer all land in `ot_minutes_normal`; PAY-006 pre-cutoff reminders (daily 10:00 IST Celery job `attendance.run_incomplete_reminders`: from `attendance_incomplete_reminder_lead_days` (3) before an open period's end until it closes, each employee with unlocked INCOMPLETE days before today gets one email, users with `ATTENDANCE.LOCK` get a digest; once per period per business day via an `ATTENDANCE_INCOMPLETE_REMINDERS_SENT` audit row); PAY-008 (`calculation.ENGINE_VERSION = 2` stored in `attendance_day.engine_version` and the snapshot; sibling-day and cross-module inputs recorded in `computation_snapshot["derived_inputs"]`) | `20261004094000`, `20261004095000` |
 
-Still to do in step 1: PAY-006 pre-cutoff reminder, PAY-008 (engine version + snapshotting
-sibling-day inputs).
+Step 1 is complete.
 
-Follow-ups found during step 1b (not yet done):
+Follow-ups found during step 1 (not yet done):
 
-- The summary's OT buckets (`ot_minutes_night` etc.) match `attendance_day.ot_classification`,
-  which is the policy's configured **classification code**, against the literal day-class names
-  `NIGHT`/`HOLIDAY`/`WEEKLY_OFF`. A policy whose codes differ (e.g. `OT_NIGHT_2X`) puts all its OT
-  in `ot_minutes_normal`. Needs the day class persisted on `attendance_day`.
 - `work_on_leave_behaviour = PRESENT_CANCEL_LEAVE_HINT` no longer changes the outcome (decision 5)
   — hide it with the other inert settings in step 4.
 - `pay_basis` is set on employment create/PATCH and shown in the employment panel, but not yet
   collected by the onboarding wizard or the CSV import (both default to MONTHLY), and the web UI
   has no employment-edit dialog to correct it (API only).
+- PAY-006 reminders reach only employees with an active login (`employee.user_id` → `user.email`);
+  the others are counted in the HR digest. There is no in-app notification yet — the emails go
+  through the onboarding `EmailSender` (logged, not sent, until `email_provider = "ses"`).
 
 ---
 

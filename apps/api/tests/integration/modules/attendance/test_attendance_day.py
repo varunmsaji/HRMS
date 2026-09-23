@@ -17,6 +17,7 @@ from sqlalchemy import text, update
 from tests.integration.modules.organisation.test_registration_flow import _cleanup, _register
 
 from hrms.core.db.session import get_session_factory, set_rls_company_id
+from hrms.modules.attendance.calculation import ENGINE_VERSION
 from hrms.modules.attendance.models import AttendanceDay
 
 pytestmark = pytest.mark.asyncio
@@ -263,6 +264,10 @@ async def test_full_pipeline_present_day(client: AsyncClient, seeded_plan_catalo
         # only guaranteed to be at least the first (idempotent, full-row-replacement either way).
         assert data["calculation_version"] >= 1
         assert data["computation_snapshot"] is not None
+        # PAY-008 — the algorithm version and the sibling-day inputs are recorded.
+        assert data["engine_version"] == ENGINE_VERSION
+        assert data["computation_snapshot"]["engine_version"] == ENGINE_VERSION
+        assert data["computation_snapshot"]["derived_inputs"]["prior_late_days_in_window"] == 0
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
