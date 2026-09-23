@@ -75,7 +75,11 @@ export function OvertimePolicyVersionForm({
               value={values.eligibility}
               onChange={(e) => update("eligibility", e.target.value)}
             >
-              {OT_ELIGIBILITY_OPTIONS.map((o) => (
+              {/* PD-1 — GRADE_VIA_ASSIGNMENT behaves like ALWAYS today (no grade check), so it
+                  is only listed when a stored version already uses it. */}
+              {OT_ELIGIBILITY_OPTIONS.filter(
+                (o) => o !== "GRADE_VIA_ASSIGNMENT" || values.eligibility === "GRADE_VIA_ASSIGNMENT",
+              ).map((o) => (
                 <option key={o} value={o}>
                   {o.replaceAll("_", " ")}
                 </option>
@@ -133,11 +137,8 @@ export function OvertimePolicyVersionForm({
             </NativeSelect>
           </FormField>
           <div className="flex flex-col justify-end gap-2 pb-2">
-            <Checkbox
-              label="Requires pre-approval"
-              checked={values.requiresPreApproval}
-              onChange={(v) => update("requiresPreApproval", v)}
-            />
+            {/* PD-1 — "requires pre-approval" is not applied by the engine yet, so it is not
+                shown; its stored value still round-trips through the form state. */}
             <Checkbox
               label="Requires post-approval"
               checked={values.requiresPostApproval}

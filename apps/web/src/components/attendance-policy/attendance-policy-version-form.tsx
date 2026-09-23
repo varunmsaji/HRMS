@@ -5,17 +5,13 @@ import { PolicyBandsEditor } from "@/components/attendance-policy/policy-bands-e
 import {
   CORE_HOURS_BREACH_BEHAVIOURS,
   EARLY_CLASSIFICATIONS,
-  EXCESS_BREAK_BEHAVIOURS,
-  HALF_DAY_SPLITS,
   HOUR_BAND_STATUSES,
   INCOMPLETE_AT_LOCK_BEHAVIOURS,
   LATE_CLASSIFICATIONS,
   MISSING_PUNCH_BEHAVIOURS,
   MISSING_SHIFT_BEHAVIOURS,
   MULTI_PUNCH_MODES,
-  PUNCH_ROUNDING_OPTIONS,
   SPLIT_SHIFT_MISSED_BLOCK_BEHAVIOURS,
-  WORK_ON_LEAVE_BEHAVIOURS,
 } from "@/lib/attendance-policy/types";
 import type {
   AttendancePolicyVersionFormErrors,
@@ -50,6 +46,12 @@ function Checkbox({
   );
 }
 
+/** PD-1 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — settings the engine does not apply yet
+ * (punch rounding, auto-close, half-day split, excess-break behaviour, early-out-uses-core-end,
+ * the split-shift block flags, the WFH flags, work-on-leave behaviour, the bands' "counts toward
+ * cap" flag) are not shown; AUTO_CLOSE is only listed when a stored version already uses it. Their
+ * stored values still round-trip unchanged through the form state, so saving a version never
+ * resets them. */
 export function AttendancePolicyVersionForm({
   values,
   errors,
@@ -84,7 +86,7 @@ export function AttendancePolicyVersionForm({
       </section>
 
       <section>
-        <h3 className="text-sm font-medium text-foreground">Grace &amp; rounding</h3>
+        <h3 className="text-sm font-medium text-foreground">Grace</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField id="grace-in" label="Grace in (minutes)">
             <Input
@@ -100,25 +102,6 @@ export function AttendancePolicyVersionForm({
               onChange={(e) => update("graceOutMinutes", e.target.value)}
             />
           </FormField>
-          <FormField id="punch-rounding" label="Punch rounding">
-            <NativeSelect
-              value={values.punchRounding}
-              onChange={(e) => update("punchRounding", e.target.value)}
-            >
-              {PUNCH_ROUNDING_OPTIONS.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
-          <FormField id="rounding-minutes" label="Rounding minutes">
-            <Input
-              type="number"
-              value={values.roundingMinutes}
-              onChange={(e) => update("roundingMinutes", e.target.value)}
-            />
-          </FormField>
         </div>
       </section>
 
@@ -130,7 +113,9 @@ export function AttendancePolicyVersionForm({
               value={values.missingPunchBehaviour}
               onChange={(e) => update("missingPunchBehaviour", e.target.value)}
             >
-              {MISSING_PUNCH_BEHAVIOURS.map((o) => (
+              {MISSING_PUNCH_BEHAVIOURS.filter(
+                (o) => o !== "AUTO_CLOSE" || values.missingPunchBehaviour === "AUTO_CLOSE",
+              ).map((o) => (
                 <option key={o} value={o}>
                   {o.replaceAll("_", " ")}
                 </option>
@@ -149,45 +134,12 @@ export function AttendancePolicyVersionForm({
               ))}
             </NativeSelect>
           </FormField>
-          <FormField id="auto-close-after" label="Auto-close after (minutes)">
-            <Input
-              type="number"
-              value={values.autoCloseAfterMinutes}
-              onChange={(e) => update("autoCloseAfterMinutes", e.target.value)}
-            />
-          </FormField>
-          <div className="flex items-end pb-2">
-            <Checkbox
-              label="Auto-close uses shift end"
-              checked={values.autoCloseUsesShiftEnd}
-              onChange={(v) => update("autoCloseUsesShiftEnd", v)}
-            />
-          </div>
         </div>
       </section>
 
       <section>
-        <h3 className="text-sm font-medium text-foreground">Half-day &amp; multi-punch</h3>
+        <h3 className="text-sm font-medium text-foreground">Multi-punch</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="half-day-split" label="Half-day split">
-            <NativeSelect
-              value={values.halfDaySplit}
-              onChange={(e) => update("halfDaySplit", e.target.value)}
-            >
-              {HALF_DAY_SPLITS.map((o) => (
-                <option key={o} value={o}>
-                  {o.replaceAll("_", " ")}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
-          <FormField id="half-day-boundary" label="Half-day boundary (minutes from start)">
-            <Input
-              type="number"
-              value={values.halfDayBoundaryMinutes}
-              onChange={(e) => update("halfDayBoundaryMinutes", e.target.value)}
-            />
-          </FormField>
           <FormField id="multi-punch-mode" label="Multi-punch mode">
             <NativeSelect
               value={values.multiPunchMode}
@@ -225,13 +177,6 @@ export function AttendancePolicyVersionForm({
               ))}
             </NativeSelect>
           </FormField>
-          <div className="flex items-end pb-2">
-            <Checkbox
-              label="Early-out uses core end"
-              checked={values.earlyOutUsesCoreEnd}
-              onChange={(v) => update("earlyOutUsesCoreEnd", v)}
-            />
-          </div>
           <FormField id="split-missed-block" label="Split shift: missed block behaviour">
             <NativeSelect
               value={values.splitShiftMissedBlockBehaviour}
@@ -244,47 +189,13 @@ export function AttendancePolicyVersionForm({
               ))}
             </NativeSelect>
           </FormField>
-          <div className="flex flex-col justify-end gap-2 pb-2">
-            <Checkbox
-              label="Each duty block is mandatory"
-              checked={values.splitShiftBlockMandatory}
-              onChange={(v) => update("splitShiftBlockMandatory", v)}
-            />
-            <Checkbox
-              label="Total hours can compensate a missed block"
-              checked={values.splitShiftAllowHoursCompensation}
-              onChange={(v) => update("splitShiftAllowHoursCompensation", v)}
-            />
-          </div>
         </div>
       </section>
 
       <section>
-        <h3 className="text-sm font-medium text-foreground">WFH, on-duty &amp; leave overlay</h3>
+        <h3 className="text-sm font-medium text-foreground">On-duty</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="work-on-leave" label="Work-on-approved-leave behaviour">
-            <NativeSelect
-              value={values.workOnLeaveBehaviour}
-              onChange={(e) => update("workOnLeaveBehaviour", e.target.value)}
-            >
-              {WORK_ON_LEAVE_BEHAVIOURS.map((o) => (
-                <option key={o} value={o}>
-                  {o.replaceAll("_", " ")}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
           <div className="flex flex-col justify-end gap-2 pb-2">
-            <Checkbox
-              label="WFH requires punch"
-              checked={values.wfhRequiresPunch}
-              onChange={(v) => update("wfhRequiresPunch", v)}
-            />
-            <Checkbox
-              label="WFH uses scheduled shift hours"
-              checked={values.wfhUsesShiftHours}
-              onChange={(v) => update("wfhUsesShiftHours", v)}
-            />
             <Checkbox
               label="On-duty requires punch"
               checked={values.onDutyRequiresPunch}
@@ -297,18 +208,6 @@ export function AttendancePolicyVersionForm({
       <section>
         <h3 className="text-sm font-medium text-foreground">Breaks, caps &amp; lock behaviour</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="excess-break" label="Excess break behaviour">
-            <NativeSelect
-              value={values.excessBreakBehaviour}
-              onChange={(e) => update("excessBreakBehaviour", e.target.value)}
-            >
-              {EXCESS_BREAK_BEHAVIOURS.map((o) => (
-                <option key={o} value={o}>
-                  {o.replaceAll("_", " ")}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
           <FormField
             id="lates-to-half-day"
             label="Lates-to-half-day count (per month)"
@@ -376,7 +275,7 @@ export function AttendancePolicyVersionForm({
           errors={errors.lateBandRows}
           statusLabel="Classification"
           statusOptions={LATE_CLASSIFICATIONS}
-          showCountsTowardCap
+          showCountsTowardCap={false}
           idPrefix="late-band"
           onChange={(rows) => update("lateBands", rows)}
         />
@@ -390,7 +289,7 @@ export function AttendancePolicyVersionForm({
           errors={errors.earlyDepartureBandRows}
           statusLabel="Classification"
           statusOptions={EARLY_CLASSIFICATIONS}
-          showCountsTowardCap
+          showCountsTowardCap={false}
           idPrefix="early-band"
           onChange={(rows) => update("earlyDepartureBands", rows)}
         />

@@ -70,49 +70,49 @@ Note: an older, legacy "Shift" record type also stores grace-period and half-day
 
 ## 6. Attendance Policy
 
+PD-1 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`, 2026-09-23): settings the engine does not apply are **hidden from the policy screens** (the database columns stay, and a stored value is kept unchanged when a version is edited). They are listed at the end of each table as "Hidden".
+
 | Setting | Example | Currently consumed? |
 |---|---|---|
 | Grace-In minutes | 15 | Yes |
 | Grace-Out minutes | 10 | Yes |
-| Missing-punch behaviour | Incomplete (default) / Absent / Require Correction / Auto-Close | Yes for Incomplete/Absent/Require-Correction. **Auto-Close: No** — does not synthesize a clock-out; behaves like the default |
+| Missing-punch behaviour | Incomplete (default) / Absent / Require Correction | Yes. **Auto-Close** is hidden (it does not synthesize a clock-out); shown only on a version that already uses it |
 | Missing-shift behaviour | Absent / Incomplete | Yes |
 | Multi-punch mode | Sum all pairs / First-in-last-out | Yes |
 | Duplicate-punch window | 60 seconds | Yes |
+| Core-hours breach behaviour | Ignore / Flag / Half-Day / Absent | Yes |
 | Split-shift missed-block behaviour | Ignore / Half-Day / Absent / Require Correction | Yes |
-| Work-on-leave behaviour | Leave wins / Flag and keep punch status | Yes |
+| On-Duty requires punch | On/Off | Yes |
+| Lates-to-half-day / excess-break-days-to-half-day count | 3 lates in a month = 1 half-day | Yes — counted per calendar month (the only window supported) |
+| Early-departure requires approval | On/Off | Yes |
 | Incomplete-at-lock behaviour | Treat as Absent (default) / Treat as Present / Keep as Incomplete | Yes — applied only at period finalize |
 | Hour bands (worked minutes → status) | ≥480 = Present, 240–479 = Half-Day, <240 = Absent | Yes |
 | Late bands (late minutes → classification) | 30+ min = Half-Day | Yes |
 | Early-departure bands | 60+ min early = flag | Yes |
-| Band "counts toward cap" flag | On/Off | **No** — no feature currently converts repeated late/early events into an automatic half-day |
-| Punch rounding + rounding minutes | Round to nearest 15 min | **No** |
-| Half-day split method + boundary minutes | — | **No** |
-| Core-hours breach behaviour | — | **No** |
-| Early-out-uses-core-end | — | **No** |
-| Excess-break behaviour | — | **No** |
-| Auto-close-after-minutes / uses-shift-end | — | **No** |
-| Split-shift block mandatory / allow-hours-compensation | — | **No** |
-| WFH requires-punch / On-Duty requires-punch / WFH-uses-shift-hours | — | **No** |
-| Late-count window / lates-to-half-day count | "3 lates in 30 days = 1 half-day" | **No** |
-| Early-departure-requires-approval | — | **No** |
+| Band "counts toward cap" flag | — | **Hidden** — never read |
+| Punch rounding + rounding minutes | — | **Hidden** — never applied |
+| Auto-close-after-minutes / uses-shift-end | — | **Hidden** |
+| Half-day split method + boundary minutes | — | **Hidden** — half-day comes from hour bands only |
+| Excess-break behaviour | — | **Hidden** |
+| Early-out-uses-core-end | — | **Hidden** |
+| Split-shift block mandatory / allow-hours-compensation | — | **Hidden** |
+| WFH requires-punch / WFH-uses-shift-hours | — | **Hidden** |
+| Work-on-leave behaviour | — | **Hidden** — since decision 5, approved full-day leave always wins and the day is flagged for HR, whatever this says |
 
 ## 7. Overtime Policy
 
 | Setting | Example | Currently consumed? |
 |---|---|---|
-| Eligibility mode | Never / Shift decides / Always / By grade | Yes for Never/Shift/Always. **By-grade: behaves like Always — no actual grade check** |
+| Eligibility mode | Never / Shift decides / Always | Yes. **By-grade** is hidden (it behaves like Always — no grade check); shown only on a version that already uses it |
 | Minimum OT minutes | 30 min | Yes |
 | Rounding rule + minutes | Round up to nearest 30 min | Yes |
 | Daily / weekly / monthly caps | 120 / 600 / 2400 min | Yes |
 | Requires post-approval | On/Off | Yes |
 | Approval chain | Auto / Manager / HR / Manager-then-HR | Yes |
-| Comp-off instead of pay + expiry days | On, 90-day expiry | Yes (produces a fact; redemption is Leave's job — **FUTURE MODULE**) |
-| Rate rows (day-class → classification code + multiplier) | Holiday = 2x | Classification: Yes. Multiplier: reference/reporting only — **never turned into actual pay** |
-| Requires pre-approval | On/Off | **No** |
-| Night OT mode | Shift-flag / Window / Both | **Partial — see Known Limitation below** |
-| Night window start/end | 22:00–06:00 | **No** |
-
-**Known limitation on Night OT:** the default Night OT mode ("Shift decides") will **never** classify overtime as Night, regardless of whether the shift crosses midnight. Only the "Window" or "Both" modes check night classification at all — and even then, the specific night-window start/end times are not used; only the shift's cross-midnight flag is checked. See [Gaps document](./ATTENDANCE_V1_GAPS_AND_OPEN_DECISIONS.md) (ND-03).
+| Comp-off instead of pay + expiry days | On, 60-day default expiry | Yes — credited to the comp-off leave balance |
+| Rate rows (day-class → classification code + multiplier) | Holiday = 2x | Classification: Yes. Multiplier: reference only until the Payroll module exists |
+| Night OT mode + night window | Shift flag / Window 22:00–06:00 / Both | Yes (ATT-005, fixed 2026-09-23) |
+| Requires pre-approval | — | **Hidden** — never read |
 
 ## 8. Regularization Policy
 
@@ -125,7 +125,7 @@ Note: an older, legacy "Shift" record type also stores grace-period and half-day
 | Approval chain | Auto / Manager / HR / Manager-then-HR | Yes |
 | Blocked when period is locked | On (default) | Yes |
 | Allowed correction types | Missing Punch, Wrong Punch, Wrong Shift, Wrong Status, WFH, On-Duty, Full-Day | Yes — but note WFH/On-Duty types don't produce those specific statuses by themselves (see [Client Flow §12](./ATTENDANCE_V1_CLIENT_FLOW.md#12-regularization-flow)) |
-| Auto-approve-within-minutes | e.g., auto-approve corrections under 15 min | **No** |
+| Auto-approve-within-minutes | — | **Hidden** — never read |
 
 ## 9. Policy Assignment
 
@@ -158,11 +158,11 @@ Note: an older, legacy "Shift" record type also stores grace-period and half-day
 
 | Setting/action | Example | Who configures | Currently consumed? |
 |---|---|---|---|
-| Create an Open period | 01 Aug 2026 – 31 Aug 2026 | HR/Admin | Yes |
+| Create an Open period | A legal entity + a calendar month (default), or a custom range | HR/Admin | Yes |
 | Validate | Pre-check for blockers | HR/Admin | Yes |
 | Finalize (lock) | — | HR/Admin with lock permission | Yes |
 | Reopen (unlock) | — | HR/Admin with unlock permission | Yes — unlocks days, does **not** auto-recompute |
-| Legal-entity-level locking | — | — | **No** — locking currently operates at the whole-company level; a legal-entity-specific field exists but is not used |
+| Legal-entity-level locking | Close "Acme India" for August while "Acme Services" stays open | HR/Admin | Yes — every period belongs to one legal entity (decision 14) |
 
 ---
 

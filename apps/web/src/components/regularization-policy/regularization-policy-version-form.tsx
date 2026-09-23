@@ -124,13 +124,8 @@ export function RegularizationPolicyVersionForm({
               onChange={(e) => update("maxRequestsPerMonth", e.target.value)}
             />
           </FormField>
-          <FormField id="reg-auto-approve" label="Auto-approve within (minutes)">
-            <Input
-              type="number"
-              value={values.autoApproveWithinMinutes}
-              onChange={(e) => update("autoApproveWithinMinutes", e.target.value)}
-            />
-          </FormField>
+          {/* PD-1 — "auto-approve within" is not applied yet, so it is not shown; its stored
+              value still round-trips through the form state. */}
         </div>
         <div className="mt-3 flex flex-wrap gap-4">
           <Checkbox
