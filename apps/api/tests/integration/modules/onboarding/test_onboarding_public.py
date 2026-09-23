@@ -136,6 +136,9 @@ async def test_patch_personal_info_section_success(
             "blood_group": None,
             "marital_status": None,
             "nationality": None,
+            "father_or_husband_name": None,
+            "pan_number_enc": None,
+            "aadhaar_number_enc": None,
             "photo_url": None,
         }
     finally:
@@ -202,6 +205,110 @@ async def test_patch_unknown_section_rejected(
         )
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "INVALID_SECTION"
+    finally:
+        await _teardown_with_tokens(company_id=company_id, user_id=user_id)
+
+
+async def test_patch_nominee_info_percentage_exceeding_100_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The onboarding-layer half of the nominee-percentage-sums-to-<=100 rule
+    (`NomineeInfoSection`'s own validator) — checked across the *submitted* list, independent of
+    `EmployeeDependentService`'s own employee-service-layer check (`test_employee_dependent.py`)."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        case = await _create_case(client, headers)
+        token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]))
+
+        response = await client.patch(
+            f"/v1/public/onboarding/{token}/sections/nominee_info",
+            json={
+                "items": [
+                    {
+                        "full_name": "Sunita Rao",
+                        "relationship": "SPOUSE",
+                        "is_pf_nominee": True,
+                        "pf_nominee_share_percentage": 60,
+                    },
+                    {
+                        "full_name": "Arjun Rao",
+                        "relationship": "SON",
+                        "is_pf_nominee": True,
+                        "pf_nominee_share_percentage": 60,
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 422
+    finally:
+        await _teardown_with_tokens(company_id=company_id, user_id=user_id)
+
+
+async def test_patch_nominee_info_minor_without_guardian_rejected(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        case = await _create_case(client, headers)
+        token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]))
+
+        response = await client.patch(
+            f"/v1/public/onboarding/{token}/sections/nominee_info",
+            json={
+                "items": [
+                    {"full_name": "Arjun Rao", "relationship": "SON", "is_minor": True}
+                ]
+            },
+        )
+        assert response.status_code == 422
+    finally:
+        await _teardown_with_tokens(company_id=company_id, user_id=user_id)
+
+
+async def test_patch_nominee_info_decrypts_aadhaar_per_item(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Each item's `aadhaar_number_enc` is encrypted under its own index-bound AAD
+    (`NOMINEE_INFO_SENSITIVE_ITEM_KEY` docstring) — this proves both items round-trip correctly,
+    not just the first."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        case = await _create_case(client, headers)
+        token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]))
+
+        response = await client.patch(
+            f"/v1/public/onboarding/{token}/sections/nominee_info",
+            json={
+                "items": [
+                    {
+                        "full_name": "Sunita Rao",
+                        "relationship": "SPOUSE",
+                        "aadhaar_number_enc": "234567890123",
+                    },
+                    {
+                        "full_name": "Arjun Rao",
+                        "relationship": "SON",
+                        "aadhaar_number_enc": "345678901234",
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        items = response.json()["data"]["nominee_info"]["items"]
+        assert items[0]["aadhaar_number_enc"] == "234567890123"
+        assert items[1]["aadhaar_number_enc"] == "345678901234"
+
+        # Ciphertext at rest, not plaintext.
+        factory = get_session_factory()
+        async with factory() as session:
+            row = (
+                await session.execute(
+                    text("SELECT nominee_info FROM onboarding_case WHERE id = :id"),
+                    {"id": case["id"]},
+                )
+            ).scalar_one()
+            assert row["items"][0]["aadhaar_number_enc"] != "234567890123"
+            assert row["items"][0]["aadhaar_number_enc"].startswith("v1:")
     finally:
         await _teardown_with_tokens(company_id=company_id, user_id=user_id)
 

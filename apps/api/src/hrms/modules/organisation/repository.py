@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, delete, or_, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import (
@@ -42,6 +42,12 @@ from hrms.modules.organisation.models import (
 )
 
 _TERMINAL_SUBSCRIPTION_STATUSES = ("CANCELED", "EXPIRED")
+
+#: API-01 Tier 2 decision (docs/audits/) — `branches`/`departments`/`designations`/`shifts` are
+#: bounded, product-design configuration collections (not paginated: no UI page controls exist
+#: for them, and they're consumed as complete reference lists/dropdowns elsewhere). This is a
+#: defensive ceiling only, not a page size — a real tenant should never come close to it.
+TIER2_SAFETY_LIMIT = 1000
 
 
 class OrganisationRepository:
@@ -410,10 +416,16 @@ class OrganisationRepository:
         return row
 
     async def list_branches(self, session: AsyncSession, *, company_id: UUID) -> list[Branch]:
+        # API-01 Tier 2 decision (docs/audits/): branches is a bounded configuration collection
+        # (physical company locations), not paginated — but still capped with a defensive
+        # `LIMIT` so a data anomaly can't return an unbounded response. `TIER2_SAFETY_LIMIT`
+        # rows is far beyond any realistic tenant's branch count; hitting it is itself a signal
+        # something is wrong and worth investigating, not a page boundary to page past.
         stmt = (
             select(Branch)
             .where(Branch.company_id == company_id, Branch.deleted_at.is_(None))
             .order_by(Branch.created_at)
+            .limit(TIER2_SAFETY_LIMIT)
         )
         return list((await session.execute(stmt)).scalars().all())
 
@@ -481,10 +493,13 @@ class OrganisationRepository:
     async def list_departments(
         self, session: AsyncSession, *, company_id: UUID
     ) -> list[Department]:
+        # API-01 Tier 2 decision — see `list_branches`: bounded config collection, defensive
+        # `LIMIT` only, not real pagination.
         stmt = (
             select(Department)
             .where(Department.company_id == company_id, Department.deleted_at.is_(None))
             .order_by(Department.created_at)
+            .limit(TIER2_SAFETY_LIMIT)
         )
         return list((await session.execute(stmt)).scalars().all())
 
@@ -566,10 +581,13 @@ class OrganisationRepository:
     async def list_designations(
         self, session: AsyncSession, *, company_id: UUID
     ) -> list[Designation]:
+        # API-01 Tier 2 decision — see `list_branches`: bounded config collection, defensive
+        # `LIMIT` only, not real pagination.
         stmt = (
             select(Designation)
             .where(Designation.company_id == company_id, Designation.deleted_at.is_(None))
             .order_by(Designation.created_at)
+            .limit(TIER2_SAFETY_LIMIT)
         )
         return list((await session.execute(stmt)).scalars().all())
 
@@ -666,10 +684,13 @@ class OrganisationRepository:
         return row
 
     async def list_shifts(self, session: AsyncSession, *, company_id: UUID) -> list[Shift]:
+        # API-01 Tier 2 decision — see `list_branches`: bounded config collection (shift
+        # *definitions*, not roster instances), defensive `LIMIT` only, not real pagination.
         stmt = (
             select(Shift)
             .where(Shift.company_id == company_id, Shift.deleted_at.is_(None))
             .order_by(Shift.created_at)
+            .limit(TIER2_SAFETY_LIMIT)
         )
         return list((await session.execute(stmt)).scalars().all())
 
@@ -723,7 +744,13 @@ class ShiftVersionRepository:
         return row
 
     async def list_versions(
-        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        shift_id: UUID,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[ShiftVersion]:
         stmt = (
             select(ShiftVersion)
@@ -735,10 +762,29 @@ class ShiftVersionRepository:
             # `version` is per-row optimistic-concurrency (resets to 1 on every new row, same
             # as every other table in this module) — NOT a chronological sequence number, so
             # ordering by it would not put newer rows first. `created_at` is the actual
-            # creation order.
-            .order_by(ShiftVersion.created_at.desc())
+            # creation order; `id` is a stable secondary key for rows created in the same
+            # transaction (API-01 §6).
+            .order_by(ShiftVersion.created_at.desc(), ShiftVersion.id.desc())
         )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_versions(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+    ) -> int:
+        """Same predicates as `list_versions`, no `ORDER BY`/`LIMIT` — the paired COUNT query for
+        `GET /shifts/{shift_id}/versions`'s `pagination.total` (API-01 §6)."""
+        stmt = (
+            select(func.count())
+            .select_from(ShiftVersion)
+            .where(
+                ShiftVersion.company_id == company_id,
+                ShiftVersion.shift_id == shift_id,
+                ShiftVersion.deleted_at.is_(None),
+            )
+        )
+        return int((await session.execute(stmt)).scalar_one())
 
     async def get(
         self, session: AsyncSession, *, company_id: UUID, shift_id: UUID, version_id: UUID
@@ -1035,14 +1081,9 @@ class HolidayRepository:
         await session.flush()
         return row
 
-    async def list_holidays(
-        self,
-        session: AsyncSession,
-        *,
-        company_id: UUID,
-        calendar_id: UUID,
-        year: int | None = None,
-    ) -> list[Holiday]:
+    def _holiday_conditions(
+        self, *, company_id: UUID, calendar_id: UUID, year: int | None
+    ) -> list[Any]:
         conditions: list[Any] = [
             Holiday.company_id == company_id,
             Holiday.calendar_id == calendar_id,
@@ -1050,8 +1091,46 @@ class HolidayRepository:
         ]
         if year is not None:
             conditions.append(text("EXTRACT(YEAR FROM date) = :year").bindparams(year=year))
-        stmt = select(Holiday).where(*conditions).order_by(Holiday.date)
+        return conditions
+
+    async def list_holidays(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        calendar_id: UUID,
+        year: int | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[Holiday]:
+        """`year` (optional — API-01 §6) narrows the predicate but is never treated as
+        sufficient protection on its own: pagination applies whether or not it's supplied, so an
+        omitted `year` still can't return an unbounded result."""
+        conditions = self._holiday_conditions(
+            company_id=company_id, calendar_id=calendar_id, year=year
+        )
+        # `id` is a stable secondary key — `date` alone ties across multiple holidays entered
+        # for the same calendar date.
+        stmt = select(Holiday).where(*conditions).order_by(Holiday.date, Holiday.id)
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_holidays(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        calendar_id: UUID,
+        year: int | None = None,
+    ) -> int:
+        """Same predicates as `list_holidays`, no `ORDER BY`/`LIMIT` — the paired COUNT query for
+        `GET /holiday-calendars/{id}/holidays`'s `pagination.total` (API-01 §6)."""
+        conditions = self._holiday_conditions(
+            company_id=company_id, calendar_id=calendar_id, year=year
+        )
+        stmt = select(func.count()).select_from(Holiday).where(*conditions)
+        return int((await session.execute(stmt)).scalar_one())
 
     async def list_for_calendars(
         self,
@@ -1300,8 +1379,16 @@ class CalendarExceptionRepository:
         return row
 
     async def list_exceptions(
-        self, session: AsyncSession, *, company_id: UUID, work_calendar_id: UUID
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        work_calendar_id: UUID,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[CalendarException]:
+        # `id` is a stable secondary key — `exception_date` alone can tie when several
+        # exceptions are entered for the same calendar the same day (API-01 §6).
         stmt = (
             select(CalendarException)
             .where(
@@ -1309,9 +1396,27 @@ class CalendarExceptionRepository:
                 CalendarException.work_calendar_id == work_calendar_id,
                 CalendarException.deleted_at.is_(None),
             )
-            .order_by(CalendarException.exception_date)
+            .order_by(CalendarException.exception_date, CalendarException.id)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_exceptions(
+        self, session: AsyncSession, *, company_id: UUID, work_calendar_id: UUID
+    ) -> int:
+        """Same predicates as `list_exceptions`, no `ORDER BY`/`LIMIT` — the paired COUNT query
+        for `GET /work-calendars/{id}/exceptions`'s `pagination.total` (API-01 §6)."""
+        stmt = (
+            select(func.count())
+            .select_from(CalendarException)
+            .where(
+                CalendarException.company_id == company_id,
+                CalendarException.work_calendar_id == work_calendar_id,
+                CalendarException.deleted_at.is_(None),
+            )
+        )
+        return int((await session.execute(stmt)).scalar_one())
 
     async def list_active_for_calendars(
         self, session: AsyncSession, *, company_id: UUID, work_calendar_ids: list[UUID]
@@ -1407,15 +1512,14 @@ class PolicyAssignmentRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def list_assignments(
+    def _assignment_conditions(
         self,
-        session: AsyncSession,
         *,
         company_id: UUID,
-        policy_kind: str | None = None,
-        scope_type: str | None = None,
-        scope_id: UUID | None = None,
-    ) -> list[PolicyAssignment]:
+        policy_kind: str | None,
+        scope_type: str | None,
+        scope_id: UUID | None,
+    ) -> list[Any]:
         conditions = [
             PolicyAssignment.company_id == company_id,
             PolicyAssignment.deleted_at.is_(None),
@@ -1426,12 +1530,50 @@ class PolicyAssignmentRepository:
             conditions.append(PolicyAssignment.scope_type == scope_type)
         if scope_id is not None:
             conditions.append(PolicyAssignment.scope_id == scope_id)
+        return conditions
+
+    async def list_assignments(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        policy_kind: str | None = None,
+        scope_type: str | None = None,
+        scope_id: UUID | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[PolicyAssignment]:
+        conditions = self._assignment_conditions(
+            company_id=company_id, policy_kind=policy_kind, scope_type=scope_type, scope_id=scope_id
+        )
+        # `id` is a stable secondary key — `effective_from` (a plain `Date`) ties constantly
+        # across assignments created the same day, which would make page boundaries
+        # non-deterministic (API-01 §6 — this table is append-only/history-shaped).
         stmt = (
             select(PolicyAssignment)
             .where(*conditions)
-            .order_by(PolicyAssignment.effective_from.desc())
+            .order_by(PolicyAssignment.effective_from.desc(), PolicyAssignment.id.desc())
         )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_assignments(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        policy_kind: str | None = None,
+        scope_type: str | None = None,
+        scope_id: UUID | None = None,
+    ) -> int:
+        """Same predicates as `list_assignments`, no `ORDER BY`/`LIMIT` — the paired COUNT query
+        for `GET /policy-assignments`'s `pagination.total` (API-01 §6)."""
+        conditions = self._assignment_conditions(
+            company_id=company_id, policy_kind=policy_kind, scope_type=scope_type, scope_id=scope_id
+        )
+        stmt = select(func.count()).select_from(PolicyAssignment).where(*conditions)
+        return int((await session.execute(stmt)).scalar_one())
 
     async def find_effective(
         self,

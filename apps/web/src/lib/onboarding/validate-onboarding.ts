@@ -6,7 +6,6 @@ export interface OnboardingCaseFormValues {
   designationId: string;
   departmentId: string;
   branchId: string;
-  legalEntityId: string;
   proposedJoiningDate: string;
 }
 
@@ -20,7 +19,6 @@ export const EMPTY_ONBOARDING_CASE_FORM_VALUES: OnboardingCaseFormValues = {
   designationId: "",
   departmentId: "",
   branchId: "",
-  legalEntityId: "",
   proposedJoiningDate: "",
 };
 
@@ -56,7 +54,6 @@ export function buildCreatePayload(values: OnboardingCaseFormValues): Record<str
     designation_id: values.designationId || null,
     department_id: values.departmentId || null,
     branch_id: values.branchId || null,
-    legal_entity_id: values.legalEntityId || null,
     proposed_joining_date: values.proposedJoiningDate,
   };
 }

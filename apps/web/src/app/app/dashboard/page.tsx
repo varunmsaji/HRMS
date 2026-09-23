@@ -1,6 +1,16 @@
 "use client";
 
+import {
+  Building2,
+  CheckCircle2,
+  CreditCard,
+  Layers3,
+  ListChecks,
+  Users,
+  XCircle,
+} from "lucide-react";
 import Link from "next/link";
+import type { ComponentType, ReactNode } from "react";
 
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -8,16 +18,49 @@ import { PageHeader } from "@/components/common/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { useApiResource } from "@/hooks/use-api-resource";
 import { useAuth } from "@/lib/auth/auth-context";
+import { cn } from "@/lib/utils";
 import type { CompanyDashboardSummary, CompanyProfile, SubscriptionSummary } from "@/lib/company/types";
 
-function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function StatTile({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  emphasis = false,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  icon: ComponentType<{ className?: string }>;
+  emphasis?: boolean;
+}) {
   return (
-    <div className="rounded-md border border-border bg-surface p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-foreground">{value}</p>
+    <div className="group rounded-lg border border-border bg-surface p-4 transition-shadow duration-motion-fast hover:shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{label}</p>
+        <span
+          className={cn(
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+            emphasis ? "bg-primary-subtle text-primary" : "bg-muted text-foreground-secondary",
+          )}
+        >
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </span>
+      </div>
+      <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
       {hint ? <p className="mt-1 text-xs text-foreground-muted">{hint}</p> : null}
+    </div>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2">
+      <span className="text-foreground-muted">{label}</span>
+      <span className="font-medium text-foreground">{children}</span>
     </div>
   );
 }
@@ -76,6 +119,9 @@ export default function CompanyDashboardPage() {
   const setupHref =
     dashboard?.setup_progress.status === "COMPLETE" ? "/app/company" : "/app/setup";
 
+  const companyName =
+    profile?.name ?? session?.companies.find((c) => c.id === session.companyId)?.name ?? "Your company";
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -107,99 +153,116 @@ export default function CompanyDashboardPage() {
 
       {!loading && !error && dashboard ? (
         <>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-md">Company</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-lg font-semibold text-foreground">
-                  {profile?.name ?? session?.companies.find((c) => c.id === session.companyId)?.name ?? "Your company"}
-                </p>
-                <p className="text-sm text-foreground-muted">
-                  {profile?.id ?? session?.companyId ?? "—"}
-                </p>
-              </div>
-              <Badge variant="secondary" className="w-fit uppercase">
-                {profile?.status ?? "—"}
-              </Badge>
-            </CardContent>
-          </Card>
+          {setupIncomplete ? (
+            <Card className="border-primary/20 bg-primary-subtle/40">
+              <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary-subtle text-primary">
+                    <ListChecks className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground">Finish setting up {companyName}</p>
+                    <p className="mt-0.5 text-sm text-foreground-muted">
+                      {dashboard.setup_progress.steps_completed} of {dashboard.setup_progress.steps_total}{" "}
+                      steps complete
+                    </p>
+                    <Progress
+                      value={dashboard.setup_progress.steps_completed}
+                      max={dashboard.setup_progress.steps_total}
+                      className="mt-3 w-full max-w-xs"
+                    />
+                  </div>
+                </div>
+                <Button asChild size="sm" className="shrink-0">
+                  <Link href="/app/setup">Open setup</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-success/20 bg-success-subtle/40">
+              <CardContent className="flex items-center gap-3 p-5">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-success-subtle text-success">
+                  <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="font-semibold text-foreground">Setup complete</p>
+                  <p className="mt-0.5 text-sm text-foreground-muted">
+                    {companyName} is fully configured. Keep contact and locale details current in the
+                    company profile.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-md">Overview</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-                <StatTile
-                  label="Setup steps"
-                  value={`${dashboard.setup_progress.steps_completed}/${dashboard.setup_progress.steps_total}`}
-                  hint={dashboard.setup_progress.status.replaceAll("_", " ").toLowerCase()}
-                />
-                <StatTile
-                  label="Plan"
-                  value={dashboard.subscription?.plan_code ?? "—"}
-                  hint={dashboard.subscription?.status ?? "No live subscription"}
-                />
-                <StatTile
-                  label="Seat limit"
-                  value={formatSeatLimit(subscription?.seat_limit)}
-                />
-                <StatTile label="Branches" value={formatCount(dashboard.branch_count)} />
-                <StatTile label="Departments" value={formatCount(dashboard.department_count)} />
-                <StatTile label="Employees" value={formatCount(dashboard.employee_count)} />
-              </div>
-            </CardContent>
-          </Card>
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-foreground-secondary">Overview</h2>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+              <StatTile
+                label="Employees"
+                value={formatCount(dashboard.employee_count)}
+                icon={Users}
+                emphasis
+              />
+              <StatTile label="Branches" value={formatCount(dashboard.branch_count)} icon={Building2} />
+              <StatTile
+                label="Departments"
+                value={formatCount(dashboard.department_count)}
+                icon={Layers3}
+              />
+              <StatTile
+                label="Seat limit"
+                value={formatSeatLimit(subscription?.seat_limit)}
+                icon={Users}
+              />
+              <StatTile
+                label="Plan"
+                value={dashboard.subscription?.plan_code ?? "—"}
+                hint={dashboard.subscription?.status ?? "No live subscription"}
+                icon={CreditCard}
+              />
+            </div>
+          </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle className="text-md">Subscription</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3 text-sm">
+              <CardContent className="text-sm">
                 {subscription ? (
                   <>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-foreground-muted">Plan</span>
-                      <span className="font-medium text-foreground">
+                    <div className="divide-y divide-border">
+                      <DetailRow label="Plan">
                         {subscription.plan.name} ({subscription.plan.code})
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-foreground-muted">Status</span>
-                      <Badge variant="secondary" className="uppercase">
-                        {subscription.status}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-foreground-muted">Trial ends</span>
-                      <span className="font-medium text-foreground">
-                        {formatTrial(subscription.trial_ends_at)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-foreground-muted">Seat limit</span>
-                      <span className="font-medium text-foreground">
-                        {formatSeatLimit(subscription.seat_limit)}
-                      </span>
+                      </DetailRow>
+                      <DetailRow label="Status">
+                        <Badge variant="secondary" className="uppercase">
+                          {subscription.status}
+                        </Badge>
+                      </DetailRow>
+                      <DetailRow label="Trial ends">{formatTrial(subscription.trial_ends_at)}</DetailRow>
+                      <DetailRow label="Seat limit">{formatSeatLimit(subscription.seat_limit)}</DetailRow>
                     </div>
                     {subscription.features.length > 0 ? (
-                      <div className="pt-2">
+                      <div className="pt-3">
                         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-foreground-muted">
                           Features
                         </p>
-                        <ul className="space-y-1">
+                        <ul className="space-y-2">
                           {subscription.features.map((feature) => (
-                            <li
-                              key={feature.code}
-                              className="flex items-center justify-between gap-3 text-foreground"
-                            >
-                              <span>
-                                {feature.code}
-                                <span className="ml-2 text-xs text-foreground-muted">
-                                  {feature.source.replaceAll("_", " ").toLowerCase()}
+                            <li key={feature.code} className="flex items-center justify-between gap-3">
+                              <span className="flex items-center gap-2 text-foreground">
+                                {feature.is_enabled ? (
+                                  <CheckCircle2 className="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 shrink-0 text-foreground-disabled" aria-hidden="true" />
+                                )}
+                                <span>
+                                  {feature.code}
+                                  <span className="ml-2 text-xs text-foreground-muted">
+                                    {feature.source.replaceAll("_", " ").toLowerCase()}
+                                  </span>
                                 </span>
                               </span>
                               <span className="text-foreground-muted">
@@ -220,36 +283,31 @@ export default function CompanyDashboardPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-md">Next actions</CardTitle>
+                <CardTitle className="text-md">Company</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                {setupIncomplete ? (
-                  <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
-                    <div>
-                      <p className="font-medium text-foreground">Finish company setup</p>
-                      <p className="text-foreground-muted">
-                        {dashboard.setup_progress.steps_completed} of{" "}
-                        {dashboard.setup_progress.steps_total} steps complete
-                      </p>
-                    </div>
-                    <Button asChild size="sm">
-                      <Link href="/app/setup">Open setup</Link>
-                    </Button>
+              <CardContent className="text-sm">
+                <div className="flex items-center gap-3 pb-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary-subtle text-sm font-semibold uppercase text-primary">
+                    {companyName.slice(0, 2)}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-foreground">{companyName}</p>
+                    <p className="truncate text-xs text-foreground-muted">
+                      {profile?.id ?? session?.companyId ?? "—"}
+                    </p>
                   </div>
-                ) : (
-                  <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
-                    <div>
-                      <p className="font-medium text-foreground">Review company profile</p>
-                      <p className="text-foreground-muted">Keep contact and locale details current.</p>
-                    </div>
-                    <Button asChild size="sm" variant="outline">
-                      <Link href="/app/company">Open profile</Link>
-                    </Button>
-                  </div>
-                )}
-                <p className="text-foreground-muted">
-                  Organisation structure, employees, attendance, leave, and payroll will appear
-                  here as those modules ship. Counts shown as "—" are not available yet.
+                  <Badge variant="secondary" className="ml-auto shrink-0 uppercase">
+                    {profile?.status ?? "—"}
+                  </Badge>
+                </div>
+                <div className="divide-y divide-border border-t border-border">
+                  <DetailRow label="Branches">{formatCount(dashboard.branch_count)}</DetailRow>
+                  <DetailRow label="Departments">{formatCount(dashboard.department_count)}</DetailRow>
+                  <DetailRow label="Employees">{formatCount(dashboard.employee_count)}</DetailRow>
+                </div>
+                <p className="pt-3 text-xs text-foreground-muted">
+                  Organisation structure, attendance, leave, and payroll will appear here as those
+                  modules ship. Counts shown as "—" are not available yet.
                 </p>
               </CardContent>
             </Card>

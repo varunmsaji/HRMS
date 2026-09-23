@@ -1,9 +1,16 @@
+import math
 from datetime import date
 from typing import Annotated, Generic, TypeVar
 
+from fastapi import Query
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
+
+# API-01 pagination contract (docs/audits/ — see final report): offset-based `page`/`per_page`,
+# 1-indexed, capped server-side so a caller can never request an arbitrarily large page.
+DEFAULT_PAGE_SIZE = 25
+MAX_PAGE_SIZE = 100
 
 
 class ResponseMeta(BaseModel):
@@ -17,6 +24,41 @@ class PaginationMeta(BaseModel):
     total: int = 0
     total_pages: int = 0
     next_cursor: str | None = None
+
+
+class PageParams(BaseModel):
+    """Resolved, validated `page`/`per_page` for one request — pass straight through to the
+    repository as `limit=per_page, offset=(page - 1) * per_page`."""
+
+    page: int = 1
+    per_page: int = DEFAULT_PAGE_SIZE
+
+    @property
+    def limit(self) -> int:
+        return self.per_page
+
+    @property
+    def offset(self) -> int:
+        return (self.page - 1) * self.per_page
+
+
+def pagination_params(
+    page: Annotated[int, Query(ge=1, description="1-indexed page number")] = 1,
+    per_page: Annotated[
+        int, Query(ge=1, le=MAX_PAGE_SIZE, description="Rows per page (server-capped)")
+    ] = DEFAULT_PAGE_SIZE,
+) -> PageParams:
+    """Shared FastAPI dependency for every paginated list endpoint (API-01). Out-of-range
+    `page`/`per_page` fail FastAPI's own query-param validation (422), before a route body ever
+    runs — never silently clamped."""
+    return PageParams(page=page, per_page=per_page)
+
+
+def build_pagination_meta(params: PageParams, *, total: int) -> PaginationMeta:
+    total_pages = math.ceil(total / params.per_page) if total > 0 else 0
+    return PaginationMeta(
+        page=params.page, per_page=params.per_page, total=total, total_pages=total_pages
+    )
 
 
 class DataEnvelope(BaseModel, Generic[T]):

@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "dept-1" }),
@@ -17,7 +17,7 @@ vi.mock("@/components/common/toast", () => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
-  apiClient: { get: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  apiClient: { get: vi.fn(), getList: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
 import DepartmentDetailPage from "@/app/app/departments/[id]/page";
@@ -27,6 +27,7 @@ import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 
 const mockedGet = vi.mocked(apiClient.get);
+const mockedGetList = vi.mocked(apiClient.getList);
 const mockedPatch = vi.mocked(apiClient.patch);
 const mockedDelete = vi.mocked(apiClient.delete);
 
@@ -74,14 +75,34 @@ function mockLoad(
     if (path === "/departments/dept-1") return Promise.resolve(department);
     if (path === "/branches") return Promise.resolve(branches);
     if (path === "/departments") return Promise.resolve(departments);
-    if (path === "/employees") return Promise.resolve([]);
+    return Promise.reject(new Error(`Unexpected path ${path}`));
+  });
+  mockedGetList.mockImplementation((path: string) => {
+    if (path === "/employees") {
+      return Promise.resolve({
+        data: [],
+        pagination: { page: 1, per_page: 100, total: 0, total_pages: 0 },
+        meta: { request_id: "r1" },
+      });
+    }
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
 }
 
 describe("DepartmentDetailPage", () => {
+  beforeEach(() => {
+    // Default so tests that don't call `mockLoad` (e.g. the 404 case, which only cares about
+    // the department fetch) don't crash on the unmocked employees dropdown fetch.
+    mockedGetList.mockResolvedValue({
+      data: [],
+      pagination: { page: 1, per_page: 100, total: 0, total_pages: 0 },
+      meta: { request_id: "r1" },
+    });
+  });
+
   afterEach(() => {
     mockedGet.mockReset();
+    mockedGetList.mockReset();
     mockedPatch.mockReset();
     mockedDelete.mockReset();
     toastMock.mockReset();

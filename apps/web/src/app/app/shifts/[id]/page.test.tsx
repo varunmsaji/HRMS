@@ -20,7 +20,7 @@ vi.mock("@/components/common/toast", () => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
 import ShiftDetailPage from "@/app/app/shifts/[id]/page";
@@ -29,6 +29,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { Shift, ShiftVersion } from "@/lib/shift/types";
 
 const mockedGet = vi.mocked(apiClient.get);
+const mockedGetList = vi.mocked(apiClient.getList);
 const mockedPost = vi.mocked(apiClient.post);
 const mockedPatch = vi.mocked(apiClient.patch);
 const mockedDelete = vi.mocked(apiClient.delete);
@@ -95,8 +96,22 @@ const draftVersion: ShiftVersion = {
 function mockLoad(shift: Shift, versions: ShiftVersion[] = [draftVersion]) {
   mockedGet.mockImplementation((path: string) => {
     if (path === "/shifts/shift-1") return Promise.resolve(shift);
-    if (path === "/shifts/shift-1/versions") return Promise.resolve(versions);
     if (path === "/weekly-off-patterns") return Promise.resolve([]);
+    return Promise.reject(new Error(`Unexpected path ${path}`));
+  });
+  mockedGetList.mockImplementation((path: string) => {
+    if (path === "/shifts/shift-1/versions") {
+      return Promise.resolve({
+        data: versions,
+        pagination: {
+          page: 1,
+          per_page: 25,
+          total: versions.length,
+          total_pages: versions.length > 0 ? 1 : 0,
+        },
+        meta: { request_id: "r1" },
+      });
+    }
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
 }
@@ -104,6 +119,7 @@ function mockLoad(shift: Shift, versions: ShiftVersion[] = [draftVersion]) {
 describe("ShiftDetailPage", () => {
   afterEach(() => {
     mockedGet.mockReset();
+    mockedGetList.mockReset();
     mockedPost.mockReset();
     mockedPatch.mockReset();
     mockedDelete.mockReset();

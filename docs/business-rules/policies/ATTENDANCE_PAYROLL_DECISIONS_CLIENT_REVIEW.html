@@ -1,0 +1,662 @@
+<style>
+  :root{
+    --paper: #f2f0ea;
+    --paper-raised: #fbfaf7;
+    --paper-sunken: #e9e6dd;
+    --ink: #1e2420;
+    --ink-soft: #4a534c;
+    --ink-faint: #7c8379;
+    --line: #dcd6c9;
+    --line-strong: #c7c0ae;
+    --accent: #2b4a4a;
+    --accent-soft: #dce6e3;
+    --accent-strong: #17302f;
+    --crit: #9c3b2c;
+    --crit-soft: #f3ddd6;
+    --high: #a56a1e;
+    --high-soft: #f2e3ca;
+    --med: #4c6a86;
+    --med-soft: #dee7ee;
+    --low: #55735a;
+    --low-soft: #dde8dd;
+    --gap-c: #7a4f9c;
+    --gap-soft: #e6def0;
+    --shadow: 0 1px 2px rgba(30,36,32,0.06), 0 8px 24px -12px rgba(30,36,32,0.18);
+  }
+  :root[data-theme="dark"]{
+    --paper: #161a17;
+    --paper-raised: #1e2420;
+    --paper-sunken: #101411;
+    --ink: #e9e6dd;
+    --ink-soft: #a9b0a6;
+    --ink-faint: #737d73;
+    --line: #333c34;
+    --line-strong: #414c42;
+    --accent: #7fada6;
+    --accent-soft: #223330;
+    --accent-strong: #b7d6cf;
+    --crit: #d98a72;
+    --crit-soft: #3a271f;
+    --high: #d9ac6a;
+    --high-soft: #3a3021;
+    --med: #91b0cc;
+    --med-soft: #22303c;
+    --low: #93b895;
+    --low-soft: #223226;
+    --gap-c: #b79bd6;
+    --gap-soft: #2c2438;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper: #161a17; --paper-raised: #1e2420; --paper-sunken: #101411;
+      --ink: #e9e6dd; --ink-soft: #a9b0a6; --ink-faint: #737d73;
+      --line: #333c34; --line-strong: #414c42;
+      --accent: #7fada6; --accent-soft: #223330; --accent-strong: #b7d6cf;
+      --crit: #d98a72; --crit-soft: #3a271f;
+      --high: #d9ac6a; --high-soft: #3a3021;
+      --med: #91b0cc; --med-soft: #22303c;
+      --low: #93b895; --low-soft: #223226;
+      --gap-c: #b79bd6; --gap-soft: #2c2438;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+
+  .prv-root{
+    --font-display: "Iowan Old Style", "Sitka Text", "Palatino Linotype", Palatino, "Source Serif Pro", Georgia, serif;
+    --font-body: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.65;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 1.25rem 6rem;
+  }
+  .prv-root *{ box-sizing: border-box; }
+  .prv-root ::selection{ background: var(--accent-soft); }
+  .prv-root h1, .prv-root h2, .prv-root h3, .prv-root h4{
+    font-family: var(--font-display); font-weight: 600; text-wrap: balance; color: var(--ink);
+  }
+  .prv-root p{ margin: 0 0 1rem; max-width: 68ch; }
+  .prv-root .wide p{ max-width: 74ch; }
+  .prv-root ul, .prv-root ol{ max-width: 70ch; }
+  .prv-root a{ color: var(--accent-strong); }
+  .prv-root :focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce){ .prv-root *{ scroll-behavior: auto !important; } }
+
+  /* ---------- running header ---------- */
+  .runhead{
+    position: sticky; top: 0; z-index: 5;
+    display:flex; align-items:center; justify-content:space-between; gap: 1rem;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+    padding: .55rem 0; margin: 0 0 1.6rem;
+    font-family: var(--font-mono); font-size: .68rem; letter-spacing: .06em;
+    color: var(--ink-faint); text-transform: uppercase;
+  }
+  .runhead .status-pill{ text-transform: none; letter-spacing: normal; }
+
+  /* ---------- cover ---------- */
+  .cover{ padding: 2.6rem 0 2.4rem; border-bottom: 1px solid var(--line); margin-bottom: 2.8rem; }
+  .cover-eyebrow{
+    display:inline-flex; align-items:center; gap:.5rem; font-family: var(--font-mono);
+    font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--accent);
+    background: var(--accent-soft); padding: .3rem .65rem; border-radius: 3px; margin-bottom: 1.4rem;
+  }
+  .cover h1{ font-size: clamp(2rem, 4vw, 2.85rem); line-height: 1.1; margin: 0 0 .5rem; max-width: 22ch; }
+  .cover h2.subtitle{
+    font-family: var(--font-display); font-weight: 400; font-style: italic; font-size: 1.25rem;
+    color: var(--ink-soft); margin: 0 0 1.3rem;
+  }
+  .cover p.lede{ font-size: 1.08rem; color: var(--ink-soft); max-width: 58ch; margin: 0 0 1.8rem; }
+  .cover-meta{
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1.2rem;
+    border-top: 1px solid var(--line); padding-top: 1.2rem;
+  }
+  .cover-meta dt{
+    font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft);
+    margin-bottom: .3rem; font-family: var(--font-mono);
+  }
+  .cover-meta dd{ margin:0; font-size: .95rem; }
+  .cover-stats{
+    display:flex; flex-wrap:wrap; gap: 1.8rem; margin-top: 2rem; padding-top: 1.6rem; border-top: 1px dashed var(--line);
+  }
+  .cover-stat .num{ font-family: var(--font-display); font-size: 1.9rem; color: var(--accent-strong); line-height:1; }
+  .cover-stat .lbl{ font-size: .74rem; color: var(--ink-soft); margin-top: .3rem; max-width: 14ch; }
+
+  /* ---------- TOC ---------- */
+  .toc-list{ list-style:none; margin:0; padding:0; columns: 1; }
+  @media (min-width: 680px){ .toc-list{ columns: 2; column-gap: 2.2rem; } }
+  .toc-list li{ break-inside: avoid; margin-bottom: .55rem; }
+  .toc-link{
+    display:flex; align-items:baseline; gap: .6rem; text-decoration:none; color: var(--ink);
+    font-size: .92rem; padding: .15rem 0; border-bottom: 1px dotted transparent;
+  }
+  .toc-link:hover{ border-bottom-color: var(--line-strong); color: var(--accent-strong); }
+  .toc-num{ font-family: var(--font-mono); color: var(--accent); font-size: .78rem; flex: 0 0 1.6rem; }
+
+  /* ---------- section rhythm ---------- */
+  section{ margin-bottom: 3.6rem; scroll-margin-top: 4rem; }
+  .section-head{
+    display:flex; align-items:baseline; gap: .85rem; margin-bottom: 1.3rem; padding-bottom: .6rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-head .eyebrow{
+    font-family: var(--font-mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent); white-space: nowrap;
+  }
+  .section-head h2{ font-size: 1.5rem; margin: 0; }
+  .section-sub{ font-size: .84rem; color: var(--ink-faint); margin: -.6rem 0 1.4rem; font-style: italic; }
+
+  .lead-stat{
+    font-size: 1.15rem; color: var(--accent-strong); border-left: 3px solid var(--accent);
+    padding-left: 1rem; margin: 1.4rem 0 1.8rem; max-width: 62ch;
+  }
+  .callout{
+    background: var(--paper-raised); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 4px; padding: .9rem 1.2rem; margin: 1.2rem 0; font-size: .92rem;
+  }
+  .callout.note{ border-left-color: var(--med); }
+  .callout.warn{ border-left-color: var(--high); }
+  .callout p:last-child{ margin-bottom: 0; }
+
+  /* ---------- connection / flow diagram ---------- */
+  .connect{ display:flex; align-items:stretch; gap: 0; margin: 1.6rem 0 2rem; flex-wrap: wrap; }
+  .connect-box{
+    flex: 1 1 220px; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 6px;
+    padding: 1.3rem 1.4rem; box-shadow: var(--shadow);
+  }
+  .connect-box h4{ margin: 0 0 .4rem; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+  .connect-box p{ margin:0; font-size: .92rem; color: var(--ink-soft); max-width: 40ch;}
+  .connect-mid{
+    flex: 0 0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding: 0 1.2rem; min-width: 140px; text-align:center;
+  }
+  .connect-mid .arrow{ font-family: var(--font-mono); color: var(--accent); font-size: 1.3rem; line-height: 1; }
+  .connect-mid span.label{ display:block; font-size: .74rem; color: var(--ink-soft); margin-top:.35rem; letter-spacing: .02em; }
+
+  .pipeline{ display:flex; flex-direction:column; gap:0; margin: 1.6rem 0; border: 1px solid var(--line); border-radius: 8px; overflow:hidden; }
+  .pipe-row{ display:flex; align-items:center; gap: 1rem; padding: .85rem 1.1rem; background: var(--paper-raised); border-bottom: 1px solid var(--line); }
+  .pipe-row:last-child{ border-bottom: none; }
+  .pipe-row .pipe-owner{ flex: 0 0 128px; font-family: var(--font-mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .pipe-row .pipe-body{ font-size: .9rem; color: var(--ink-soft); }
+  .pipe-row .pipe-body strong{ color: var(--ink); font-weight: 600; }
+
+  /* ---------- flow steps ---------- */
+  .flow-step{
+    border: 1px solid var(--line); border-radius: 8px; margin: 0 0 1.1rem; overflow: hidden; background: var(--paper-raised);
+  }
+  .flow-step-head{
+    display:flex; align-items:center; gap: .8rem; padding: .8rem 1.1rem; background: var(--accent-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  .flow-step-id{ font-family: var(--font-mono); font-size: .74rem; color: var(--accent-strong); background: var(--paper-raised); padding: .15rem .5rem; border-radius: 3px; flex: 0 0 auto; }
+  .flow-step-head h4{ margin:0; font-size: 1.02rem; }
+  .flow-body{ padding: 1rem 1.1rem 1.1rem; }
+  .flow-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: .9rem 1.4rem; margin-bottom: .9rem; }
+  .flow-field dt{ font-family: var(--font-mono); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: .25rem; }
+  .flow-field dd{ margin: 0; font-size: .88rem; color: var(--ink-soft); }
+  .example-box{
+    background: var(--paper-sunken); border: 1px dashed var(--line-strong); border-radius: 6px;
+    padding: .8rem 1rem; margin-top: .7rem; font-size: .86rem;
+  }
+  .example-box .ex-label{ font-family: var(--font-mono); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: .4rem; }
+  .example-box code{ font-family: var(--font-mono); font-size: .84em; background: var(--paper-raised); padding: .05rem .3rem; border-radius: 2px; }
+
+  /* ---------- rule cards ---------- */
+  .rule-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap: 1rem; margin: 1.6rem 0; }
+  .rule-card{ background: var(--paper-raised); border: 1px solid var(--line); border-radius: 6px; padding: 1.1rem 1.2rem; }
+  .rule-card h4{ margin: 0 0 .4rem; font-size: .98rem; font-family: var(--font-display); font-weight: 600; }
+  .rule-card p{ margin:0; font-size: .89rem; color: var(--ink-soft); }
+
+  /* ---------- tables ---------- */
+  .table-scroll{ overflow-x: auto; margin: 1.4rem 0; border: 1px solid var(--line); border-radius: 6px; }
+  table{ width: 100%; border-collapse: collapse; min-width: 640px; background: var(--paper-raised); }
+  table.wide-table{ min-width: 900px; }
+  thead th{
+    text-align:left; font-family: var(--font-mono); font-size: .66rem; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-soft); font-weight: 600; padding: .75rem .85rem; border-bottom: 1px solid var(--line); background: var(--accent-soft);
+    position: sticky; top: 0;
+  }
+  tbody td{ padding: .8rem .85rem; border-bottom: 1px solid var(--line); font-size: .86rem; vertical-align: top; }
+  tbody tr:last-child td{ border-bottom: none; }
+  tbody tr:hover td{ background: var(--accent-soft); }
+  td code, .idcode{ font-family: var(--font-mono); font-size: .82em; color: var(--accent-strong); white-space: nowrap; }
+  .table-caption{ font-size: .78rem; color: var(--ink-faint); margin: -.9rem 0 1rem; }
+
+  /* ---------- status pills ---------- */
+  .status-pill{
+    display:inline-flex; align-items:center; gap:.35rem; font-family: var(--font-mono); font-size: .68rem;
+    letter-spacing: .03em; padding: .18rem .55rem; border-radius: 20px; white-space: nowrap; font-weight: 600;
+  }
+  .status-pill .dot{ width:.42rem; height:.42rem; border-radius:50%; display:inline-block; }
+  .status-impl{ background: var(--low-soft); color: var(--low); }
+  .status-impl .dot{ background: var(--low); }
+  .status-partial{ background: var(--high-soft); color: var(--high); }
+  .status-partial .dot{ background: var(--high); }
+  .status-gap{ background: var(--gap-soft); color: var(--gap-c); }
+  .status-gap .dot{ background: var(--gap-c); }
+  .status-decision{ background: var(--med-soft); color: var(--med); }
+  .status-decision .dot{ background: var(--med); }
+  .status-confirmed{ background: var(--accent-soft); color: var(--accent-strong); }
+  .status-confirmed .dot{ background: var(--accent); }
+  .status-conflict{ background: var(--crit-soft); color: var(--crit); }
+  .status-conflict .dot{ background: var(--crit); }
+  .status-notbuilt{ background: var(--crit-soft); color: var(--crit); }
+  .status-notbuilt .dot{ background: var(--crit); }
+  .status-progress{ background: var(--med-soft); color: var(--med); }
+  .status-progress .dot{ background: var(--med); }
+
+  .legend{ display:flex; flex-wrap:wrap; gap: .7rem 1.2rem; margin: 1rem 0 1.6rem; font-size: .82rem; color: var(--ink-soft); }
+  .legend span.k{ display:inline-flex; align-items:center; gap:.4rem; }
+
+  /* ---------- full decision cards ---------- */
+  .pd-card{ border: 1px solid var(--line-strong); border-radius: 10px; margin: 0 0 2.2rem; overflow: hidden; background: var(--paper-raised); box-shadow: var(--shadow); }
+  .pd-head{ padding: 1.1rem 1.4rem; border-bottom: 1px solid var(--line); display:flex; align-items:flex-start; justify-content:space-between; gap: 1rem; flex-wrap: wrap; }
+  .pd-head.pd-crit{ background: var(--crit-soft); }
+  .pd-head.pd-high{ background: var(--high-soft); }
+  .pd-id{ font-family: var(--font-mono); font-size: .72rem; letter-spacing: .06em; color: var(--ink-faint); text-transform: uppercase; margin-bottom: .3rem; }
+  .pd-head h3{ margin: 0; font-size: 1.25rem; }
+  .pd-body{ padding: 1.3rem 1.4rem; }
+  .pd-block{ margin-bottom: 1.3rem; }
+  .pd-block:last-child{ margin-bottom: 0; }
+  .pd-block h5{ font-family: var(--font-mono); font-size: .7rem; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); margin: 0 0 .5rem; }
+  .pd-block p{ margin: 0 0 .6rem; font-size: .93rem; }
+  .pd-block p:last-child{ margin-bottom: 0; }
+  .opt-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap: 1rem; margin-top: .6rem; }
+  .opt-card{ border: 1px solid var(--line); border-radius: 7px; padding: .95rem 1.05rem; background: var(--paper); }
+  .opt-card.is-rec{ border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .opt-card h6{ margin: 0 0 .4rem; font-size: .92rem; font-family: var(--font-display); }
+  .opt-card .opt-tag{ font-family: var(--font-mono); font-size: .62rem; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); padding: .12rem .4rem; border-radius: 3px; margin-left: .4rem; }
+  .opt-card dl{ margin: .5rem 0 0; }
+  .opt-card dt{ font-size: .68rem; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint); margin-top: .5rem; }
+  .opt-card dt:first-child{ margin-top: 0; }
+  .opt-card dd{ margin: .15rem 0 0; font-size: .84rem; color: var(--ink-soft); }
+  .rec-banner{
+    display:flex; align-items:center; gap: .6rem; background: var(--accent-soft); color: var(--accent-strong);
+    border-radius: 6px; padding: .55rem .9rem; font-size: .84rem; font-weight: 600; margin-bottom: .8rem;
+  }
+  .rec-banner .rb-tag{ font-family: var(--font-mono); font-size: .62rem; letter-spacing: .08em; background: var(--accent-strong); color: var(--paper-raised); padding: .15rem .5rem; border-radius: 3px; }
+  .signoff-row{
+    display:flex; flex-wrap:wrap; gap: 1.6rem; align-items:center; padding-top: 1rem; margin-top: 1rem; border-top: 1px dashed var(--line);
+    font-size: .84rem; color: var(--ink-soft);
+  }
+  .signoff-row label{ display:flex; align-items:center; gap: .4rem; }
+  .signoff-row input[type=checkbox]{ width: 1rem; height: 1rem; accent-color: var(--accent); }
+  .signoff-fill{ border: none; border-bottom: 1px solid var(--line-strong); background: transparent; color: var(--ink); font-family: var(--font-body); font-size: .84rem; padding: .1rem .2rem; min-width: 10rem; }
+
+  footer.doc-foot{
+    border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1.4rem; font-size: .8rem; color: var(--ink-soft);
+    display:flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem;
+  }
+
+  @media print{
+    .runhead{ position: static; }
+    section{ break-inside: avoid-page; }
+  }
+</style>
+
+<div class="prv-root">
+
+  <div class="runhead">
+    <span>HRMS &middot; Attendance &rarr; Payroll &middot; Fact Contract Guide</span>
+    <span class="status-pill status-decision"><span class="dot"></span>Client Review &middot; v1.0</span>
+  </div>
+
+  <div class="cover" id="cover">
+    <span class="cover-eyebrow">Attendance &rarr; Payroll &middot; Fact Contract &amp; Decision Guide</span>
+    <h1>How Attendance decides what Payroll will pay</h1>
+    <h2 class="subtitle">A module that's being built, and the module that already speaks its language</h2>
+    <p class="lede">Payroll is under active development. Attendance already computes, today, in running code, every fact the Payroll module will use to price a payslip &mdash; who was paid for a full day, a half day, or nothing; how much overtime was approved; what freezes at lock and why it can never quietly change afterward. This document is a companion to <code>HRMS_POLICY_CLIENT_REVIEW.html</code> (Attendance &amp; Leave): that document explains the rules that produce a day's status, this one explains what happens to that status once money is involved.</p>
+    <dl class="cover-meta">
+      <div><dt>Prepared for</dt><dd>HR Leadership &amp; Product Owner</dd></div>
+      <div><dt>Client organisation</dt><dd>&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;</dd></div>
+      <div><dt>Modules covered</dt><dd>Attendance (built) &rarr; Payroll (contract defined, in development)</dd></div>
+      <div><dt>Document version</dt><dd>v1.0</dd></div>
+      <div><dt>Prepared</dt><dd>8 September 2026</dd></div>
+      <div><dt>Status</dt><dd><span class="status-pill status-decision"><span class="dot"></span>Client Review</span></dd></div>
+    </dl>
+    <div class="cover-stats">
+      <div class="cover-stat"><div class="num">23</div><div class="lbl">payroll-facing fields published per day</div></div>
+      <div class="cover-stat"><div class="num">15</div><div class="lbl">facts rolled up per employee per pay period</div></div>
+      <div class="cover-stat"><div class="num">0</div><div class="lbl">rupee amounts computed by Attendance, ever</div></div>
+      <div class="cover-stat"><div class="num">1</div><div class="lbl">correction mechanism once a period is locked &mdash; a full reopen</div></div>
+    </div>
+  </div>
+
+  <!--COVER-->
+
+  <section id="toc">
+    <div class="section-head"><span class="eyebrow">Contents</span><h2>Table of Contents</h2></div>
+    <ol class="toc-list">
+      <li><a class="toc-link" href="#s02"><span class="toc-num">02</span>Executive Summary</a></li>
+      <li><a class="toc-link" href="#s03"><span class="toc-num">03</span>How to Use This Document</a></li>
+      <li><a class="toc-link" href="#s04"><span class="toc-num">04</span>Where Payroll Fits Today</a></li>
+      <li><a class="toc-link" href="#s05"><span class="toc-num">05</span>How Attendance Works &mdash; Recap</a></li>
+      <li><a class="toc-link" href="#s06"><span class="toc-num">06</span>The Daily Pay Facts Attendance Publishes</a></li>
+      <li><a class="toc-link" href="#s07"><span class="toc-num">07</span>How a Day Becomes Paid, Half-Paid, or Loss of Pay</a></li>
+      <li><a class="toc-link" href="#s08"><span class="toc-num">08</span>Overtime &rarr; Payroll</a></li>
+      <li><a class="toc-link" href="#s09"><span class="toc-num">09</span>Comp-Off: the Fork Between Pay and Leave</a></li>
+      <li><a class="toc-link" href="#s10"><span class="toc-num">10</span>Leave's Effect on the Pay Facts</a></li>
+      <li><a class="toc-link" href="#s11"><span class="toc-num">11</span>The Period Summary &mdash; Attendance's Handoff to Payroll</a></li>
+      <li><a class="toc-link" href="#s12"><span class="toc-num">12</span>Locking, Snapshots &amp; Why a Payslip Can't Change Retroactively</a></li>
+      <li><a class="toc-link" href="#s13"><span class="toc-num">13</span>What Payroll Will Never Get From Attendance</a></li>
+      <li><a class="toc-link" href="#s14"><span class="toc-num">14</span>Open Decisions Before Payroll Can Rely On This</a></li>
+      <li><a class="toc-link" href="#s15"><span class="toc-num">15</span>Implementation Status Summary</a></li>
+    </ol>
+  </section>
+
+  <!--TOC-->
+
+  <section id="s02" class="wide">
+    <div class="section-head"><span class="eyebrow">02</span><h2>Executive Summary</h2></div>
+    <p class="lead-stat">Payroll itself is under active development &mdash; the pay run, payslip, and salary formula engine are being built now. What is already built and running today is the entire fact contract Payroll will consume: a per-day paid/unpaid fraction, approved-only overtime minutes, a comp-off-earned flag, and a per-employee period summary that freezes permanently the moment its attendance period locks. Attendance never computes a rupee amount &mdash; that boundary is enforced by design (ADR-0006, ADR-0011), not by omission.</p>
+    <p>The one gap that matters most before this contract is trusted with real payroll runs: once a period is locked, the <strong>only</strong> way to fix a mistake is to reopen the entire period. There is no per-record correction, and the "arrears" object the architecture names as the intended long-term fix has not been designed or built (Section 14). Everything else in this document &mdash; the pay-fraction table, the overtime approval gate, the comp-off fork, the period-summary freeze &mdash; is already running code, verified directly against <code>apps/api/src/hrms/modules/attendance/</code>, not aspirational documentation.</p>
+  </section>
+
+  <!--S02-EXEC-->
+
+  <section id="s03">
+    <div class="section-head"><span class="eyebrow">03</span><h2>How to Use This Document</h2></div>
+    <h3>First pass</h3>
+    <p>Read Sections 4&ndash;12 as a straight explanation: what Attendance hands off, in what shape, at what moment, and why. No client decision is required to understand this part &mdash; it describes what the system already does.</p>
+    <h3>Second pass &mdash; decisions</h3>
+    <p>Section 14 is the only part of this document asking something of you. It carries forward the two payroll-relevant decisions already open in the Attendance &amp; Leave guide (fixing a locked mistake, and whether OT still pays on a leave day) and adds one new one specific to this boundary: the default that decides pay for an incomplete day nobody resolved before lock.</p>
+    <div class="callout note"><p>This document does not re-derive Attendance's own policy rules (grace minutes, late bands, half-day thresholds, leave sandwich rules, etc.) &mdash; those live in <code>HRMS_POLICY_CLIENT_REVIEW.html</code>. This document starts at the point those rules have already produced a day's status, and follows only what happens next on the way to Payroll.</p></div>
+  </section>
+
+  <!--S03-HOWTO-->
+
+  <section id="s04">
+    <div class="section-head"><span class="eyebrow">04</span><h2>Where Payroll Fits Today</h2></div>
+    <p>The product's own architecture (Doc 03 &sect;6, Workforce &amp; Attendance Architecture &sect;22) is explicit that Payroll is a future module and Attendance's job is to <strong>publish facts, not money</strong>. That boundary already shapes the code that exists today, even with no Payroll module to receive it.</p>
+    <div class="connect">
+      <div class="connect-box">
+        <h4>Attendance</h4>
+        <p><strong>Built.</strong> Punches, policies, overtime, regularization, locking, and a payroll-facing fact snapshot are all implemented and tested.</p>
+      </div>
+      <div class="connect-mid">
+        <span class="arrow">&#8594;&nbsp;&#8594;&nbsp;&#8594;</span>
+        <span class="label">facts only, no rupees<br/>(ADR-0006, ADR-0011)</span>
+      </div>
+      <div class="connect-box">
+        <h4>Payroll</h4>
+        <p><strong>Being built now.</strong> The pay run, payslip, salary formula builder, and statutory engine are in active development, against the contract this document describes.</p>
+      </div>
+    </div>
+    <p>Two architecture decisions already lock the shape of that future boundary, and are worth knowing before reading the rest of this document:</p>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>ADR-0006 &mdash; Money as integer minor units</h4><p>Wherever money eventually appears, it will be stored as integer paise/cents, never a float. Attendance never stores money at all, so this doesn't touch Attendance directly &mdash; but it is why Attendance's fields are always counts, minutes, and fractions, never currency.</p></div>
+      <div class="rule-card"><h4>ADR-0005 &mdash; Payroll inputs snapshotted; finalised runs immutable</h4><p>A pay run will copy Attendance's period-end facts into its own frozen snapshot before computing. Once a run is finalised, its numbers are permanent; any later fix is a new arrears entry in a future run, never an edit to history. Section 12 covers what this means for Attendance's own lock.</p></div>
+    </div>
+  </section>
+
+  <!--S04-WHERE-->
+
+  <section id="s05">
+    <div class="section-head"><span class="eyebrow">05</span><h2>How Attendance Works &mdash; Recap</h2></div>
+    <p class="section-sub">Full detail lives in <code>HRMS_POLICY_CLIENT_REVIEW.html</code> &sect;5. This is only the part that matters for what reaches Payroll.</p>
+    <p>Every employee, every calendar day, resolves to exactly one <code>attendance_status</code>, computed from punches, the assigned Attendance Policy's bands, and (where applicable) an approved leave day:</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Status</th><th>Meaning</th><th>Feeds Payroll as&hellip;</th></tr></thead>
+      <tbody>
+        <tr><td><code class="idcode">PRESENT</code></td><td>Followed schedule in full</td><td>Full day paid</td></tr>
+        <tr><td><code class="idcode">HALF_DAY</code></td><td>Half present (hours or AM/PM split)</td><td>Half day paid, half day loss-of-pay (unless a paid half-day leave covers the rest)</td></tr>
+        <tr><td><code class="idcode">ABSENT</code></td><td>Expected and not present; not covered by leave</td><td>Full loss-of-pay</td></tr>
+        <tr><td><code class="idcode">LEAVE</code></td><td>An approved leave application covers the expected portion</td><td>Paid or unpaid according to the leave type's own paid flag (Section 10)</td></tr>
+        <tr><td><code class="idcode">WFH</code> / <code class="idcode">ON_DUTY</code></td><td>Working, away from a fixed punch location</td><td>Full day paid, same as Present</td></tr>
+        <tr><td><code class="idcode">NOT_EXPECTED</code></td><td>Calendar says no work was due (holiday, weekly off, shutdown) and none occurred</td><td>Full day paid if the calendar day itself is a paid one</td></tr>
+        <tr><td><code class="idcode">INCOMPLETE</code></td><td>Missing punch, missing shift, or a config error &mdash; not yet a pay fact</td><td>Nothing, until resolved or forced at lock time (Section 7)</td></tr>
+      </tbody>
+    </table></div>
+    <p>Two dimensions are tracked in parallel and never conflated: <code>calendar_day_type</code> (what the calendar expected &mdash; working day, holiday, weekly off) and <code>attendance_status</code> (what actually happened). Payroll receives both, plus a set of boolean flags (<code>worked_on_holiday</code>, <code>is_late</code>, <code>is_regularized</code>, and so on) &mdash; see Section 6.</p>
+  </section>
+
+  <!--S05-RECAP-->
+
+  <section id="s06">
+    <div class="section-head"><span class="eyebrow">06</span><h2>The Daily Pay Facts Attendance Publishes</h2></div>
+    <p>This is the exact field list the architecture (&sect;22.1) commits Attendance to publishing per employee, per day, once that day is locked. Every field on this list already exists on the <code>AttendanceDay</code> record in the running system.</p>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Field</th><th>What it tells Payroll</th></tr></thead>
+      <tbody>
+        <tr><td><code>employee_id</code>, <code>attendance_date</code></td><td>Which employee, which day</td></tr>
+        <tr><td><code>calendar_day_type</code></td><td>Working / Weekly Off / Holiday / Special Working / Shutdown</td></tr>
+        <tr><td><code>attendance_status</code></td><td>The primary state from Section 5</td></tr>
+        <tr><td><code>paid_day_fraction</code>, <code>lop_fraction</code></td><td>How much of the day is paid vs. loss-of-pay &mdash; see Section 7</td></tr>
+        <tr><td><code>worked_minutes</code>, <code>unpaid_break_minutes</code>, <code>paid_break_minutes</code></td><td>Actual worked time, net of breaks, by paid/unpaid category</td></tr>
+        <tr><td><code>ot_minutes_detected</code>, <code>ot_minutes_approved</code></td><td>Overtime candidate vs. what an approver actually signed off &mdash; only the second is payable (Section 8)</td></tr>
+        <tr><td><code>ot_classification</code></td><td><code>NORMAL</code> / <code>WEEKLY_OFF</code> / <code>HOLIDAY</code> / <code>NIGHT</code> &mdash; which of Payroll's own rate rows should price this OT</td></tr>
+        <tr><td><code>configured_multiplier</code></td><td>Informational only &mdash; the multiplier this tenant configured on the Overtime Policy. Payroll may use it or price OT its own way; Attendance doesn't enforce it as money.</td></tr>
+        <tr><td><code>comp_off_minutes_earned</code></td><td>Minutes earned as time-off-in-lieu instead of OT pay &mdash; a Leave fact, not a Payroll one (Section 9)</td></tr>
+        <tr><td><code>worked_on_holiday</code>, <code>worked_on_weekly_off</code></td><td>Flags Payroll's bonus/premium rules may key off</td></tr>
+        <tr><td><code>late_minutes</code>, <code>early_out_minutes</code>, <code>late_count_contributed</code></td><td>Raw minutes and whether this occurrence counts toward a monthly late-to-half-day counter</td></tr>
+        <tr><td><code>penalty_codes[]</code>, <code>bonus_codes[]</code></td><td>Flags such as <code>LATE_TO_HALF</code> &mdash; codes only, never amounts. Pricing a code into rupees is a future Payroll salary-component job.</td></tr>
+        <tr><td><code>is_locked</code></td><td>Whether this day's facts are frozen</td></tr>
+        <tr><td><code>computation_snapshot_id</code> / version ids</td><td>Exactly which policy/shift/OT-policy versions produced this row, so a figure from six months ago stays explainable even after policies have since changed</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout"><p>Notice what is <strong>not</strong> on this list: no salary, no rate, no computed rupee penalty or bonus. Every field above is a count, a minute, a fraction, a code, or an identifier &mdash; consistent with ADR-0006 and ADR-0011 (Section 4).</p></div>
+  </section>
+
+  <!--S06-DAILYFACTS-->
+
+  <section id="s07">
+    <div class="section-head"><span class="eyebrow">07</span><h2>How a Day Becomes Paid, Half-Paid, or Loss of Pay</h2></div>
+    <p><code>paid_day_fraction</code> and <code>lop_fraction</code> always sum to 1.00, and are derived from <code>attendance_status</code> by a fixed table &mdash; verified directly in <code>calculation.py</code>'s <code>_paid_lop_fraction()</code>:</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Status</th><th>paid_day_fraction</th><th>lop_fraction</th></tr></thead>
+      <tbody>
+        <tr><td><code class="idcode">PRESENT</code></td><td>1.00</td><td>0.00</td></tr>
+        <tr><td><code class="idcode">HALF_DAY</code></td><td>0.50</td><td>0.50 (unless a paid half-day leave covers the other half)</td></tr>
+        <tr><td><code class="idcode">ABSENT</code></td><td>0.00</td><td>1.00</td></tr>
+        <tr><td><code class="idcode">NOT_EXPECTED</code> (paid shutdown / holiday / weekly off)</td><td>1.00</td><td>0.00</td></tr>
+        <tr><td><code class="idcode">LEAVE</code></td><td>From the leave type's own paid flag</td><td>The inverse</td></tr>
+        <tr><td><code class="idcode">INCOMPLETE</code> / <code class="idcode">CONFIG_ERROR</code>, still unresolved</td><td>0.00</td><td>0.00 &mdash; deliberately <strong>not</strong> sent to Payroll yet</td></tr>
+      </tbody>
+    </table></div>
+    <p>An <code>INCOMPLETE</code> day is the one case that can't simply carry a number all the way to lock &mdash; nobody yet knows whether it should be paid. Attendance Policy's own <code>incomplete_at_lock_behaviour</code> field decides what happens the moment the period is finalised:</p>
+    <div class="pipeline">
+      <div class="pipe-row"><span class="pipe-owner">KEEP_INCOMPLETE</span><span class="pipe-body">Blocks finalization outright &mdash; the period cannot close with this day unresolved. Someone must regularize it or otherwise resolve it first.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">TREAT_ABSENT</span><span class="pipe-body"><strong>The coded default.</strong> At the instant of finalize, an unresolved <code>INCOMPLETE</code> day is rewritten to <code>paid_day_fraction=0.00</code>, <code>lop_fraction=1.00</code> &mdash; full loss of pay, exactly as if the employee had been marked Absent.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">TREAT_PRESENT</span><span class="pipe-body">The opposite default: <code>paid_day_fraction=1.00</code>, <code>lop_fraction=0.00</code> &mdash; full pay for a day nobody ever confirmed what actually happened.</span></div>
+    </div>
+    <div class="callout warn"><p><strong>This is a real, money-moving default, not a cosmetic one.</strong> Every tenant ships with <code>TREAT_ABSENT</code> unless someone explicitly changes it on the Attendance Policy. An employee who forgets to punch out on the last day before lock, and never gets regularized in time, loses a full day's pay by default &mdash; not because anyone decided that for this company, but because that's the factory setting. See Decision 14.3.</p></div>
+  </section>
+
+  <!--S07-LOP-->
+
+  <section id="s08">
+    <div class="section-head"><span class="eyebrow">08</span><h2>Overtime &rarr; Payroll</h2></div>
+    <p>Overtime is a separate policy from Attendance Policy. Attendance Policy detects extra worked minutes; Overtime Policy decides whether they count, whether they need approval, and how they're classified for Payroll's own rate table.</p>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Detected vs. approved</h4><p><code>ot_minutes_detected</code> is recorded the moment extra minutes are worked. <code>ot_minutes_approved</code> stays at zero, and <code>ot_pending=true</code>, until an approver acts. <strong>Payroll only ever consumes approved minutes</strong> &mdash; OT is never auto-paid without an approval record on file.</p></div>
+      <div class="rule-card"><h4>Classification, not pricing</h4><p>Each OT minute is tagged <code>NORMAL</code>, <code>WEEKLY_OFF</code>, <code>HOLIDAY</code>, or <code>NIGHT</code>. A configured <code>multiplier_decimal</code> travels alongside as <code>configured_multiplier</code>, purely informational &mdash; Payroll may re-price using its own tables instead.</p></div>
+      <div class="rule-card"><h4>Not a statutory engine</h4><p>The multiplier is whatever a company typed in, not a coded assumption (no hardcoded "factory workers get 2&times;"). Statutory OT interpretation, PF-on-OT, and tax are explicitly out of scope for Attendance &mdash; Payroll/Statutory's job, per ADR-0011.</p></div>
+      <div class="rule-card"><h4>Night OT is shift-flag only, today</h4><p>A configurable night window exists on the Overtime Policy, but the running code only ever classifies OT as Night when the shift itself is flagged cross-midnight &mdash; actual clock time against the window is never checked. This is already an open decision in the Attendance &amp; Leave guide (Decision 7 / <code class="idcode">PD-ATT-002</code>); it matters here because <code>ot_classification</code> is exactly the field Payroll's rate table will key off.</p></div>
+    </div>
+  </section>
+
+  <!--S08-OT-->
+
+  <section id="s09">
+    <div class="section-head"><span class="eyebrow">09</span><h2>Comp-Off: the Fork Between Pay and Leave</h2></div>
+    <p>An Overtime Policy can be configured with <code>comp_off_instead_of_pay=true</code>. When it is, approved overtime on that day takes a completely different path &mdash; verified in the calculation engine, not just documented intent:</p>
+    <div class="connect">
+      <div class="connect-box">
+        <h4>comp_off_instead_of_pay = false</h4>
+        <p>Overtime minutes stay in <code>ot_minutes_approved</code> and travel toward Payroll as payable OT, classified and priced there.</p>
+      </div>
+      <div class="connect-mid">
+        <span class="arrow">&harr;</span>
+        <span class="label">policy switch on<br/>the OT policy version</span>
+      </div>
+      <div class="connect-box">
+        <h4>comp_off_instead_of_pay = true</h4>
+        <p>Attendance emits <code>comp_off_minutes_earned</code> instead. This is a Leave fact, not a Payroll one &mdash; it becomes a ledger credit once Leave picks it up, with a configurable expiry (default 90 days, itself data, not code).</p>
+      </div>
+    </div>
+    <p>Attendance never writes to a leave ledger directly (that boundary belongs to Leave, per ADR-0004) &mdash; it only stamps the earned-minutes fact onto the day so nothing is lost, exactly the same non-mutating, fact-publishing posture as everything else in this document.</p>
+  </section>
+
+  <!--S09-COMPOFF-->
+
+  <section id="s10">
+    <div class="section-head"><span class="eyebrow">10</span><h2>Leave's Effect on the Pay Facts</h2></div>
+    <p>Leave now exists as a real module (it did not when the original Attendance architecture was written &mdash; see the documentation-currency note in the Attendance &amp; Leave guide, <code class="idcode">PD-DOC-001</code>). The pay-fact contract between the two modules is unchanged from what was originally designed:</p>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Situation</th><th>Effect on the pay facts</th></tr></thead>
+      <tbody>
+        <tr><td>Unpaid leave approved for the day</td><td><code>attendance_status=LEAVE</code>, the leave type's <code>is_paid=false</code> &rarr; <code>lop_fraction</code> increases by that leave's fraction, exactly as if the day were partly Absent</td></tr>
+        <tr><td>Half-day leave + half-day attendance</td><td>Fractions add; the day can still land on <code>paid_day_fraction=1.00</code> if the worked half plus the paid leave half cover the whole day</td></tr>
+        <tr><td>Leave and overtime on the same day</td><td>The engine does not clear detected OT just because the day is also Leave &mdash; a day can carry both a <code>LEAVE</code> status <em>and</em> a nonzero OT record. This is an open decision in the Attendance &amp; Leave guide (Decision 1 / <code class="idcode">HD-006</code>); it is repeated here because it directly decides whether Payroll would ever be asked to pay OT on a day someone was also on leave.</td></tr>
+        <tr><td>Leave approved after the attendance period is already locked</td><td>Leave's approval currently does not check the attendance lock at all &mdash; verified: no lock/period check exists anywhere in <code>leave/service.py</code>'s approval path. The architecture's stated intent (default refuse, HR exception creates arrears) is still being built on both sides. See Section 14.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!--S10-LEAVE-->
+
+  <section id="s11">
+    <div class="section-head"><span class="eyebrow">11</span><h2>The Period Summary &mdash; Attendance's Handoff to Payroll</h2></div>
+    <p>Daily facts are useful, but a pay run works in periods. <code>AttendancePeriodSummary</code> is the materialised, per-employee, per-period roll-up the architecture names as the actual payroll handoff (&sect;4.2, &sect;22.2, FR-ATT-018) &mdash; and it is real, implemented code today, not a future table.</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Field</th><th>What it rolls up</th></tr></thead>
+      <tbody>
+        <tr><td><code>present_days</code>, <code>absent_days</code>, <code>leave_days</code>, <code>holiday_days</code>, <code>weekly_off_days</code>, <code>half_days</code></td><td>Day-count buckets for the period</td></tr>
+        <tr><td><code>lop_days</code></td><td>Total loss-of-pay days &mdash; the single number a simple payroll formula would multiply against a per-day rate</td></tr>
+        <tr><td><code>ot_minutes_normal</code>, <code>ot_minutes_weekly_off</code>, <code>ot_minutes_holiday</code>, <code>ot_minutes_night</code></td><td>Approved OT minutes, already split by the classification Payroll's rate table needs</td></tr>
+        <tr><td><code>comp_off_minutes_earned</code></td><td>Total comp-off minutes earned this period (Section 9)</td></tr>
+        <tr><td><code>late_count</code></td><td>How many late occurrences counted toward the period, for any late-linked salary rule</td></tr>
+        <tr><td><code>worked_minutes_total</code></td><td>Raw total worked time for the period</td></tr>
+        <tr><td><code>generated_at</code></td><td>When this snapshot was produced</td></tr>
+      </tbody>
+    </table></div>
+    <p><strong>Never regenerated after lock.</strong> While the period is <code>OPEN</code>, a live aggregate is computed on every request and nothing is stored. The instant the period is finalised (<code>status='CLOSED'</code>), exactly one row is written to this table, inside the same transaction &mdash; and it is never touched again. This is the frozen snapshot a future Payroll module will read (ADR-0005). It never carries rupees; penalty and bonus amounts remain entirely Payroll's, referencing the day-level <code>penalty_codes</code>/<code>bonus_codes</code> against salary components that don't exist yet.</p>
+  </section>
+
+  <!--S11-PERIODSUMMARY-->
+
+  <section id="s12">
+    <div class="section-head"><span class="eyebrow">12</span><h2>Locking, Snapshots &amp; Why a Payslip Can't Change Retroactively</h2></div>
+    <p>ADR-0005 describes the payroll pipeline this system is committing to, even before Payroll is built:</p>
+    <div class="pipeline">
+      <div class="pipe-row"><span class="pipe-owner">1&middot; Create run</span><span class="pipe-body">Lock the period, snapshot the employee list.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">2&middot; Snapshot inputs</span><span class="pipe-body">Copy compensation, <strong>Attendance's period summary</strong>, leave, arrears, loans and statutory master versions into an immutable <code>payrun_input_snapshot</code>.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">3&middot; Compute</span><span class="pipe-body">A pure function of the snapshot &mdash; a later change to any master record cannot retroactively alter a run already computed.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">4&ndash;5&middot; Validate &amp; Review</span><span class="pipe-body">Automated checks, variance against the previous run, and a mandatory human approval gate.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">6&middot; Finalise</span><span class="pipe-body">Payslips written, the run frozen permanently. Any later error becomes an arrears/adjustment component in a <em>subsequent</em> run &mdash; never an edit to this one.</span></div>
+    </div>
+    <p>Attendance's own lock is the piece of this pipeline that already exists and is enforced today. When an HR user with <code>ATTENDANCE.LOCK</code> finalises a period:</p>
+    <ul>
+      <li>Finalize fails closed on six typed blocking conditions (unresolved <code>INCOMPLETE</code> days under <code>KEEP_INCOMPLETE</code>, pending regularizations, pending OT approvals, unpublished rosters, config errors, and missing days) &mdash; nothing half-finished is ever locked.</li>
+      <li>Every remaining <code>INCOMPLETE</code> day is resolved per Section 7's table, in the same transaction that closes the period.</li>
+      <li><code>AttendancePeriodSummary</code> is written once, frozen, ready for a future pay run to snapshot.</li>
+      <li>From that moment, <strong>no punch, regularization, OT approval, roster change, or leave sync can touch a date inside the closed period</strong> &mdash; the one rule the Attendance &amp; Leave guide calls out as outranking everything else in the system.</li>
+    </ul>
+    <div class="callout warn"><p><strong>The only way back to mutability is reopening the whole period</strong> (<code>ATTENDANCE.UNLOCK</code>, a separate, higher-permission, mandatory-reason action). Reopening does not itself recompute anything &mdash; a day someone forgets to manually recompute keeps whatever numbers it had at lock time, indefinitely. There is no per-record correction path, and no "arrears" object connecting a post-lock fix to a future payroll run has been built. See Section 14, Decision 14.1.</p></div>
+  </section>
+
+  <!--S12-LOCKING-->
+
+  <section id="s13">
+    <div class="section-head"><span class="eyebrow">13</span><h2>What Payroll Will Never Get From Attendance</h2></div>
+    <p>Just as important as what Attendance publishes is what it deliberately never will. This boundary is architectural, not incidental:</p>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Any rupee amount</h4><p>Not a penalty, not a bonus, not a priced OT hour. Attendance emits codes and fractions; pricing them is Payroll's future formula-builder job.</p></div>
+      <div class="rule-card"><h4>26-day vs. 30-day vs. calendar-day basis</h4><p>Attendance's <code>lop_fraction</code> is basis-agnostic. Converting a fraction of a day into a fraction of a month's salary (FR-PAY-008) is entirely Payroll's decision to make.</p></div>
+      <div class="rule-card"><h4>Statutory OT, PF-on-OT, tax</h4><p>Explicitly named as Payroll/Statutory's job in the architecture (&sect;22.2), never Attendance's, regardless of how OT is classified.</p></div>
+      <div class="rule-card"><h4>A leave ledger entry</h4><p>Attendance may emit a comp-off-earned fact (Section 9), but it never writes to any leave balance itself &mdash; that boundary belongs to Leave (ADR-0004).</p></div>
+    </div>
+  </section>
+
+  <!--S13-NEVER-->
+
+  <section id="s14">
+    <div class="section-head"><span class="eyebrow">14</span><h2>Open Decisions Before Payroll Can Rely On This</h2></div>
+    <p class="section-sub">Three items. Two are already recorded, unresolved, in the Attendance &amp; Leave guide, repeated here specifically because of their payroll impact. One is new, surfaced by this review.</p>
+
+    <div class="pd-card">
+      <div class="pd-head pd-high"><div><div class="pd-id">Carried forward &middot; PD-LOCK-2 &middot; High</div><h3>Decision 14.1 &mdash; Fixing a mistake after a period is locked</h3></div><span class="status-pill status-conflict"><span class="dot"></span>Unresolved</span></div>
+      <div class="pd-body">
+        <div class="pd-block"><h5>Why it matters here specifically</h5><p>Once Payroll exists, this becomes a payroll question, not just an attendance one: a full reopen after a pay run has already snapshotted the period's facts doesn't just risk stale attendance numbers, it risks a payslip computed from data that later turned out to be wrong, with no defined path for how the correction reaches pay.</p></div>
+        <div class="pd-block"><h5>Current behaviour</h5><p>No per-record correction path exists. The only remedy is a full period reopen, manual identification of affected days, manual recompute, and re-lock &mdash; entirely independent of whether a payroll run has already read the old numbers.</p></div>
+        <div class="pd-block"><h5>Recommendation</h5><div class="rec-banner"><span class="rb-tag">Recommended</span>Design a scoped correction/arrears object jointly with Payroll, before Payroll go-live</div><p>The Attendance &amp; Leave guide already recommends this (its Decision 2); we'd add that it cannot be designed on the Attendance side alone &mdash; "which pay cycle absorbs a late correction" is inherently a Payroll rule, and ADR-0005 already commits to arrears-only correction once a run is finalised. These two designs need to agree with each other before either ships.</p></div>
+        <div class="signoff-row">
+          <label><input type="checkbox" disabled/> Approve recommended approach</label>
+          <label>Comments:<input class="signoff-fill" type="text" style="min-width:16rem"/></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="pd-card">
+      <div class="pd-head pd-high"><div><div class="pd-id">Carried forward &middot; HD-006 &middot; High</div><h3>Decision 14.2 &mdash; Does overtime still pay on a day someone was also on leave?</h3></div><span class="status-pill status-conflict"><span class="dot"></span>Unresolved</span></div>
+      <div class="pd-body">
+        <div class="pd-block"><h5>Why it matters here specifically</h5><p>The system will happily produce a day with <code>attendance_status=LEAVE</code> and a nonzero <code>ot_minutes_approved</code>. If that's sent to Payroll unchanged, an employee could be paid a full leave day <em>and</em> overtime pay for the same 24 hours. Nothing today stops that combination from reaching the period summary.</p></div>
+        <div class="pd-block"><h5>Current behaviour</h5><p>Leave approval does not clear or adjust any already-recorded OT minutes for the same day.</p></div>
+        <div class="pd-block"><h5>Recommendation</h5><div class="rec-banner"><span class="rb-tag">Needs your answer</span>Confirm the intended interaction before this reaches a real pay run</div><p>This is the Attendance &amp; Leave guide's Decision 1 &mdash; genuinely ambiguous, not a bug, since some companies do intend to pay both (e.g. a half-day leave in the morning, verified overtime in the evening). We surface it here because it's the one open Attendance/Leave decision with a direct rupee consequence.</p></div>
+        <div class="signoff-row">
+          <label><input type="checkbox" disabled/> OT should still pay on a leave day</label>
+          <label><input type="checkbox" disabled/> OT should be suppressed on a leave day</label>
+          <label>Comments:<input class="signoff-fill" type="text" style="min-width:16rem"/></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="pd-card">
+      <div class="pd-head pd-high"><div><div class="pd-id">New &middot; High &middot; Attendance/Payroll boundary</div><h3>Decision 14.3 &mdash; Should "incomplete at lock" default to full loss-of-pay?</h3></div><span class="status-pill status-conflict"><span class="dot"></span>Unresolved</span></div>
+      <div class="pd-body">
+        <div class="pd-block"><h5>The question</h5><p>Every Attendance Policy ships with <code>incomplete_at_lock_behaviour=TREAT_ABSENT</code> unless someone changes it. Should a company-wide, money-moving default like this ship silently, or should every tenant be required to explicitly confirm it during setup?</p></div>
+        <div class="pd-block"><h5>Why this needs your answer</h5><p>This is not a hypothetical edge case &mdash; it fires every time an employee has an unresolved missing punch that nobody regularizes before the period locks. Under the default, that day becomes full loss-of-pay automatically, with no separate notification step beyond whatever the finalize validation surfaces. The alternative default, <code>TREAT_PRESENT</code>, has the opposite risk: an employee could be paid in full for a day with no confirmed record of what happened.</p></div>
+        <div class="pd-block"><h5>Current system behaviour</h5><p>Silent factory default of <code>TREAT_ABSENT</code>, configurable per Attendance Policy, but not surfaced as a decision anyone is asked to confirm during company setup or policy publish.</p></div>
+        <div class="pd-block">
+          <h5>Options</h5>
+          <div class="opt-grid">
+            <div class="opt-card"><h6>A &mdash; Keep silent default (current)</h6><dl><dt>Advantages</dt><dd>No workflow change.</dd><dt>Risks</dt><dd>A company may not realise this default exists until an employee disputes a pay deduction traced back to an unresolved punch.</dd></dl></div>
+            <div class="opt-card is-rec"><h6>B &mdash; Require explicit confirmation at policy publish<span class="opt-tag">Recommended</span></h6><dl><dt>Impact</dt><dd>Publishing an Attendance Policy version surfaces this field with its consequence spelled out, rather than leaving it at whatever the form's default happens to be.</dd><dt>Advantages</dt><dd>Matches this system's existing philosophy of surfacing rather than silently resolving ambiguous defaults (see the Attendance &amp; Leave guide's Hidden Policy Decisions section).</dd><dt>Risks</dt><dd>Minor UX/copy work only; no engine change needed since the field and its behaviour already exist.</dd></dl></div>
+          </div>
+        </div>
+        <div class="pd-block"><h5>Recommendation</h5><div class="rec-banner"><span class="rb-tag">Recommended</span>Option B &mdash; keep the default, but stop leaving it silent</div><p>We are not recommending a behaviour change to the engine, which already does something reasonable and configurable. We are recommending that "an unresolved punch costs the employee a day's pay by default" stop being something a client discovers after the fact.</p></div>
+        <div class="signoff-row">
+          <label><input type="checkbox" disabled/> Approve recommended option</label>
+          <label><input type="checkbox" disabled/> Choose another option:<input class="signoff-fill" type="text" placeholder="A / custom"/></label>
+          <label>Comments:<input class="signoff-fill" type="text" style="min-width:16rem"/></label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!--S14-DECISIONS-->
+
+  <section id="s15">
+    <div class="section-head"><span class="eyebrow">15</span><h2>Implementation Status Summary</h2></div>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Piece of the contract</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Per-day pay fraction (<code>paid_day_fraction</code> / <code>lop_fraction</code>)</td><td><span class="status-pill status-impl"><span class="dot"></span>Implemented</span></td><td><code>attendance/calculation.py</code> &mdash; <code>_paid_lop_fraction()</code></td></tr>
+        <tr><td>Incomplete-day resolution at lock</td><td><span class="status-pill status-impl"><span class="dot"></span>Implemented</span></td><td><code>attendance/service.py</code> &mdash; <code>_apply_incomplete_lock_resolution()</code></td></tr>
+        <tr><td>OT detected vs. approved gating</td><td><span class="status-pill status-impl"><span class="dot"></span>Implemented</span></td><td><code>OvertimeRecordService.approve/reject</code>; only approved minutes roll up</td></tr>
+        <tr><td>Comp-off-instead-of-pay fork</td><td><span class="status-pill status-impl"><span class="dot"></span>Implemented</span></td><td><code>attendance/calculation.py</code> &mdash; <code>comp_off_instead_of_pay</code> branch</td></tr>
+        <tr><td>Per-period frozen summary (<code>AttendancePeriodSummary</code>)</td><td><span class="status-pill status-impl"><span class="dot"></span>Implemented</span></td><td><code>attendance/models.py</code>; written once at finalize</td></tr>
+        <tr><td>Period lock blocking all mutation paths</td><td><span class="status-pill status-impl"><span class="dot"></span>Implemented</span></td><td>W8 Implementation Report &sect;9</td></tr>
+        <tr><td>Night OT by actual clock time (vs. shift flag only)</td><td><span class="status-pill status-gap"><span class="dot"></span>Gap</span></td><td>Field exists, never compared against punch time &mdash; Decision 7 in the Attendance &amp; Leave guide</td></tr>
+        <tr><td>Leave approval consulting the attendance lock</td><td><span class="status-pill status-gap"><span class="dot"></span>Gap</span></td><td>No lock/period check found anywhere in <code>leave/service.py</code>'s approval path</td></tr>
+        <tr><td>Per-record correction / arrears object</td><td><span class="status-pill status-notbuilt"><span class="dot"></span>Not started</span></td><td>W8 Implementation Report &sect;21.2 &mdash; explicitly documented as out of scope, open decision <code class="idcode">PD-LOCK-2</code></td></tr>
+        <tr><td>Payroll module (pay run, payslip, salary formulas)</td><td><span class="status-pill status-progress"><span class="dot"></span>In development</span></td><td>Building against the contract this document describes; ADR-0005 defines the intended pipeline</td></tr>
+        <tr><td><code>payrun_input_snapshot</code> (ADR-0005)</td><td><span class="status-pill status-notbuilt"><span class="dot"></span>Not started</span></td><td>Named by the ADR; scheduled as part of the in-progress Payroll build</td></tr>
+      </tbody>
+    </table></div>
+    <p class="table-caption" style="margin-top:1.4rem;">Companion to <code>docs/business-rules/policies/HRMS_POLICY_CLIENT_REVIEW.html</code> (Attendance &amp; Leave). Source references for this document: <code>docs/architecture/WORKFORCE_ATTENDANCE_ARCHITECTURE.md</code> &sect;4, &sect;11&ndash;13, &sect;18, &sect;21&ndash;22; <code>docs/adr/0005-payroll-snapshot-immutability.md</code>; <code>docs/adr/0006-money-as-integer-minor-units.md</code>; <code>docs/adr/0011-statutory-rates-as-data.md</code>; <code>docs/modules/attendance-lock/00_W8_ATTENDANCE_LOCK_IMPLEMENTATION_REPORT.md</code>; and direct verification against <code>apps/api/src/hrms/modules/attendance/{calculation,models,service}.py</code> and <code>apps/api/src/hrms/modules/leave/service.py</code>.</p>
+  </section>
+
+  <!--S15-STATUS-->
+
+  <footer class="doc-foot">
+    <span>HRMS &mdash; Attendance &rarr; Payroll Fact Contract &amp; Decision Guide &middot; v1.0</span>
+    <span>Prepared 8 September 2026 &middot; Client Review Edition</span>
+  </footer>
+
+</div>

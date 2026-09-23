@@ -103,6 +103,35 @@ Account Provisioning (`docs/modules/employee/41_...AUDIT_AND_PLAN.md`, Phase 2) 
 `modules/account_invite/`. Defined here for the same reason `.BULK_IMPORT` is: automatic pickup
 by `register_company`'s grant loop (`COMPANY_ADMIN` and `HR_ADMIN` both get it; `EMPLOYEE` does
 not — an ordinary employee cannot invite anyone, per Decision H).
+
+Employee Identity (market-parity onboarding-data pass, "E-02" — the exact future slice `.
+UPDATE_SENSITIVE`'s own description above was already written anticipating) adds
+`EMPLOYEE.VIEW_SENSITIVE` (**new**), following the `.VIEW_STATUTORY`/`.VIEW_BANKING` precedent
+of "one new view code per newly-visible sub-resource." Gates `GET /employees/{id}/identity`
+(PAN/Aadhaar/UAN); the paired write route, `PATCH /employees/{id}/identity`, reuses
+`EMPLOYEE.UPDATE_SENSITIVE` rather than minting a second write code, exactly as Banking (E-08)
+already reused it for its own write route. `SELF`-scoped for the base `EMPLOYEE` role (an
+employee can see their own PAN/Aadhaar/UAN), matching Banking's locked Decision E rather than
+Statutory's more conservative `COMPANY`-only posture — an employee already expects to be able to
+verify their own identity documents, same as their own bank account.
+
+Employee Experience (market-parity onboarding-data pass, part 4) adds
+`EMPLOYEE.VIEW_EXPERIENCE` (**new**) — gates the previous-employment/PF-continuity sub-resource
+(`GET /employees/{id}/experience`), same "one new view code per newly-visible sub-resource"
+precedent as `.VIEW_SENSITIVE` above. Writes reuse `EMPLOYEE.UPDATE_SENSITIVE`: previous-UAN/
+PF-account-number data is at least as sensitive as current statutory data, not the lighter
+`EMPLOYEE.UPDATE`-gated tier `02_EMPLOYEE_DATA_MODEL.md` §2 suggested for the plain
+company-name/designation/dates fields alone — this module treats the whole row as one unit
+rather than splitting permission checks per-column. `SELF`-scoped for the base `EMPLOYEE` role,
+same posture as `.VIEW_SENSITIVE`/`.VIEW_BANKING`.
+
+Employee Dependent (market-parity onboarding-data pass, part 6 — PF/Gratuity nominee + ESI
+family details) adds `EMPLOYEE.VIEW_NOMINEE` (**new**) — gates the dependent sub-resource
+(`GET /employees/{id}/dependents`), same "one new view code per newly-visible sub-resource"
+precedent as `.VIEW_SENSITIVE`/`.VIEW_EXPERIENCE` above. Writes reuse `EMPLOYEE.UPDATE_SENSITIVE`:
+a dependent's Aadhaar number is PAN/Aadhaar-grade PII, at least as sensitive as anything else
+gated by that code. `SELF`-scoped for the base `EMPLOYEE` role, same posture as
+`.VIEW_SENSITIVE`/`.VIEW_BANKING`/`.VIEW_EXPERIENCE`.
 """
 
 EMPLOYEE_VIEW_ALL = "EMPLOYEE.VIEW_ALL"
@@ -120,6 +149,9 @@ EMPLOYEE_VIEW_BANKING = "EMPLOYEE.VIEW_BANKING"
 EMPLOYEE_BULK_IMPORT = "EMPLOYEE.BULK_IMPORT"
 EMPLOYEE_CONFIRM = "EMPLOYEE.CONFIRM"
 EMPLOYEE_INVITE = "EMPLOYEE.INVITE"
+EMPLOYEE_VIEW_SENSITIVE = "EMPLOYEE.VIEW_SENSITIVE"
+EMPLOYEE_VIEW_EXPERIENCE = "EMPLOYEE.VIEW_EXPERIENCE"
+EMPLOYEE_VIEW_NOMINEE = "EMPLOYEE.VIEW_NOMINEE"
 
 EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_VIEW_ALL, "EMPLOYEE", "View all employees in the company"),
@@ -137,4 +169,15 @@ EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_BULK_IMPORT, "EMPLOYEE", "Bulk-import employees from a CSV file"),
     (EMPLOYEE_CONFIRM, "EMPLOYEE", "Confirm an employee from probation to active"),
     (EMPLOYEE_INVITE, "EMPLOYEE", "Invite an employee to create their login account"),
+    (EMPLOYEE_VIEW_SENSITIVE, "EMPLOYEE", "View an employee's PAN/Aadhaar/UAN"),
+    (
+        EMPLOYEE_VIEW_EXPERIENCE,
+        "EMPLOYEE",
+        "View an employee's previous-employment / education history",
+    ),
+    (
+        EMPLOYEE_VIEW_NOMINEE,
+        "EMPLOYEE",
+        "View an employee's PF/Gratuity nominee and ESI family details",
+    ),
 ]

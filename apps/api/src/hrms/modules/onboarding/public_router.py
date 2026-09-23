@@ -17,6 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError as PydanticValidationError
 
 from hrms.core.tenancy.context import current_request_id
+from hrms.core.uploads import read_upload_bounded
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.onboarding.dependencies import (
     get_onboarding_case_from_token,
@@ -25,6 +26,7 @@ from hrms.modules.onboarding.dependencies import (
 )
 from hrms.modules.onboarding.exceptions import InvalidOnboardingSectionError
 from hrms.modules.onboarding.schemas import (
+    ONBOARDING_DOCUMENT_MAX_SIZE_BYTES,
     SECTION_SCHEMAS,
     OnboardingDocumentRead,
     PublicOnboardingCaseRead,
@@ -91,7 +93,11 @@ async def upload_onboarding_document(
     document_type: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
 ) -> DataEnvelope[OnboardingDocumentRead]:
-    body = await file.read()
+    # SEC-03 — bounded read, not one unbounded `await file.read()`; `MaxUploadSizeMiddleware`
+    # (hrms.core.uploads, wired in app.py) is the primary defense stopping an oversized body
+    # during transport, this is the defense-in-depth layer that also stops the handler itself
+    # from ever materializing more than the size cap into one `bytes` object.
+    body = await read_upload_bounded(file, max_bytes=ONBOARDING_DOCUMENT_MAX_SIZE_BYTES)
     data = await service.upload_document(
         ctx.company_id,
         ctx.case_id,

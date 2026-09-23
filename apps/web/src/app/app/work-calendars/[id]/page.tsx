@@ -9,6 +9,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { HolidayCalendar } from "@/lib/holiday-calendar/types";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
@@ -64,6 +66,8 @@ export default function WorkCalendarDetailPage() {
   const [holidayCalendars, setHolidayCalendars] = useState<HolidayCalendar[]>([]);
   const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<WeeklyOffPattern[]>([]);
   const [exceptions, setExceptions] = useState<CalendarException[] | null>(null);
+  const [exceptionsPagination, setExceptionsPagination] = useState<PaginationMeta | null>(null);
+  const [exceptionsPage, setExceptionsPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -88,37 +92,44 @@ export default function WorkCalendarDetailPage() {
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [calendarData, holidayCalendarData, patternData, exceptionData] = await Promise.all([
-        apiClient.get<WorkCalendar>(`/work-calendars/${params.id}`),
-        apiClient.get<HolidayCalendar[]>("/holiday-calendars"),
-        apiClient.get<WeeklyOffPattern[]>("/weekly-off-patterns"),
-        apiClient.get<CalendarException[]>(`/work-calendars/${params.id}/exceptions`),
-      ]);
-      setCalendar(calendarData);
-      setHolidayCalendars(holidayCalendarData);
-      setWeeklyOffPatterns(patternData);
-      setExceptions(exceptionData);
-      return calendarData;
-    } catch (err) {
-      setCalendar(null);
-      setError(
-        err instanceof ApiError
-          ? err
-          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
-      );
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [params.id]);
+  const load = useCallback(
+    async (targetExceptionsPage: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [calendarData, holidayCalendarData, patternData, exceptionResult] = await Promise.all([
+          apiClient.get<WorkCalendar>(`/work-calendars/${params.id}`),
+          apiClient.get<HolidayCalendar[]>("/holiday-calendars"),
+          apiClient.get<WeeklyOffPattern[]>("/weekly-off-patterns"),
+          apiClient.getList<CalendarException>(`/work-calendars/${params.id}/exceptions`, {
+            page: targetExceptionsPage,
+          }),
+        ]);
+        setCalendar(calendarData);
+        setHolidayCalendars(holidayCalendarData);
+        setWeeklyOffPatterns(patternData);
+        setExceptions(exceptionResult.data);
+        setExceptionsPagination(exceptionResult.pagination);
+        return calendarData;
+      } catch (err) {
+        setCalendar(null);
+        setError(
+          err instanceof ApiError
+            ? err
+            : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
+        );
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [params.id],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(exceptionsPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exceptionsPage]);
 
   function startEditing() {
     if (!calendar) return;
@@ -183,7 +194,7 @@ export default function WorkCalendarDetailPage() {
   }
 
   async function reloadLatest() {
-    const latest = await load();
+    const latest = await load(exceptionsPage);
     if (latest) {
       setEditing(false);
       setFormValues(null);
@@ -253,10 +264,14 @@ export default function WorkCalendarDetailPage() {
       );
       setAddExceptionOpen(false);
       toast({ title: "Exception added", variant: "success" });
-      const data = await apiClient.get<CalendarException[]>(
+      // Reloads whichever page the user is currently viewing — exceptions are ordered by
+      // date, not recency, so the newly-added row isn't guaranteed to land on page 1.
+      const { data, pagination: meta } = await apiClient.getList<CalendarException>(
         `/work-calendars/${params.id}/exceptions`,
+        { page: exceptionsPage },
       );
       setExceptions(data);
+      setExceptionsPagination(meta);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setExceptionErrors({
@@ -357,7 +372,7 @@ export default function WorkCalendarDetailPage() {
                     ? "This work calendar could not be found."
                     : error.message
               }
-              onRetry={error.status === 404 ? undefined : () => void load()}
+              onRetry={error.status === 404 ? undefined : () => void load(exceptionsPage)}
             />
           </CardContent>
         </Card>
@@ -544,6 +559,14 @@ export default function WorkCalendarDetailPage() {
                         </li>
                       ))}
                   </ul>
+                ) : null}
+
+                {exceptionsPagination ? (
+                  <PaginationControls
+                    pagination={exceptionsPagination}
+                    onPageChange={setExceptionsPage}
+                    disabled={loading}
+                  />
                 ) : null}
               </CardContent>
             </Card>

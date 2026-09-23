@@ -8,6 +8,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -68,6 +70,8 @@ export default function LeaveBalancesPage() {
 
   const [balances, setBalances] = useState<LeaveBalance[] | null>(null);
   const [ledger, setLedger] = useState<LeaveLedgerEntry[] | null>(null);
+  const [ledgerPagination, setLedgerPagination] = useState<PaginationMeta | null>(null);
+  const [ledgerPage, setLedgerPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -88,43 +92,59 @@ export default function LeaveBalancesPage() {
 
   useEffect(() => {
     if (view !== "TEAM") return;
+    // Reference-data dropdown, not a paginated table — request the server's max page size.
+    // Companies with >100 employees will see a truncated list here (known limitation).
     void apiClient
-      .get<EmployeeOption[]>("/employees")
-      .then(setEmployees)
+      .getList<EmployeeOption>("/employees", { per_page: 100 })
+      .then(({ data }) => setEmployees(data))
       .catch(() => setEmployees([]));
   }, [view]);
 
-  const load = useCallback(async () => {
-    if (!targetEmployeeId) {
-      setBalances(null);
-      setLedger(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const [balanceData, ledgerData] = await Promise.all([
-        apiClient.get<LeaveBalance[]>(`/leave-balances?employee_id=${targetEmployeeId}`),
-        apiClient.get<LeaveLedgerEntry[]>(`/leave-ledger?employee_id=${targetEmployeeId}`),
-      ]);
-      setBalances(balanceData);
-      setLedger(ledgerData);
-    } catch (err) {
-      setBalances(null);
-      setLedger(null);
-      setError(
-        err instanceof ApiError
-          ? err
-          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
-      );
-    } finally {
-      setLoading(false);
-    }
+  // Switching employee invalidates whatever ledger page we were on.
+  useEffect(() => {
+    setLedgerPage(1);
   }, [targetEmployeeId]);
 
+  const load = useCallback(
+    async (targetLedgerPage: number) => {
+      if (!targetEmployeeId) {
+        setBalances(null);
+        setLedger(null);
+        setLedgerPagination(null);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const [balanceData, ledgerResult] = await Promise.all([
+          apiClient.get<LeaveBalance[]>(`/leave-balances?employee_id=${targetEmployeeId}`),
+          apiClient.getList<LeaveLedgerEntry>("/leave-ledger", {
+            employee_id: targetEmployeeId,
+            page: targetLedgerPage,
+          }),
+        ]);
+        setBalances(balanceData);
+        setLedger(ledgerResult.data);
+        setLedgerPagination(ledgerResult.pagination);
+      } catch (err) {
+        setBalances(null);
+        setLedger(null);
+        setLedgerPagination(null);
+        setError(
+          err instanceof ApiError
+            ? err
+            : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [targetEmployeeId],
+  );
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(ledgerPage);
+  }, [load, ledgerPage]);
 
   function openEncash(balance: LeaveBalance) {
     setEncashingType(balance);
@@ -150,7 +170,7 @@ export default function LeaveBalancesPage() {
       });
       setEncashingType(null);
       toast({ title: "Encashment recorded", variant: "success" });
-      await load();
+      await load(ledgerPage);
     } catch (err) {
       setEncashmentError(describeApiError(err));
     } finally {
@@ -234,7 +254,7 @@ export default function LeaveBalancesPage() {
                       ? "You do not have permission to view this balance."
                       : error.message
                   }
-                  onRetry={() => void load()}
+                  onRetry={() => void load(ledgerPage)}
                 />
               ) : null}
               {!loading && !error && balances && balances.length === 0 ? (
@@ -322,6 +342,14 @@ export default function LeaveBalancesPage() {
                     </tbody>
                   </table>
                 </div>
+              ) : null}
+
+              {!loading && !error && ledgerPagination ? (
+                <PaginationControls
+                  pagination={ledgerPagination}
+                  onPageChange={setLedgerPage}
+                  disabled={loading}
+                />
               ) : null}
             </CardContent>
           </Card>

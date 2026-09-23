@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Employee } from "@/lib/employee/types";
 import {
@@ -43,6 +45,8 @@ export default function EmployeesPage() {
   const { can } = usePermissions();
   const router = useRouter();
   const [employees, setEmployees] = useState<Employee[] | null>(null);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -51,16 +55,19 @@ export default function EmployeesPage() {
   const [formErrors, setFormErrors] = useState<EmployeeFormErrors>({});
   const [saving, setSaving] = useState(false);
 
-  const loadEmployees = useCallback(async () => {
+  const loadEmployees = useCallback(async (targetPage: number) => {
     setLoading(true);
     setError(null);
     try {
-      // GET /v1/employees has no pagination/filter/search query params today — this is the
-      // full, data-scope-filtered result set (see `EmployeeService.list_employees`).
-      const data = await apiClient.get<Employee[]>("/employees");
+      // GET /v1/employees is paginated (API-01) — data-scope-filtered, then paged server-side.
+      const { data, pagination: meta } = await apiClient.getList<Employee>("/employees", {
+        page: targetPage,
+      });
       setEmployees(data);
+      setPagination(meta);
     } catch (err) {
       setEmployees(null);
+      setPagination(null);
       setError(
         err instanceof ApiError
           ? err
@@ -72,8 +79,8 @@ export default function EmployeesPage() {
   }, []);
 
   useEffect(() => {
-    void loadEmployees();
-  }, [loadEmployees]);
+    void loadEmployees(page);
+  }, [loadEmployees, page]);
 
   function openCreate() {
     setFormValues(EMPTY_EMPLOYEE_FORM_VALUES);
@@ -134,7 +141,7 @@ export default function EmployeesPage() {
         title="Employees"
         description="Everyone in your organisation, from pre-joining through exit."
         actions={
-          employees && employees.length > 0 && canCreate ? (
+          employees && (pagination?.total ?? employees.length) > 0 && canCreate ? (
             <Button type="button" onClick={openCreate}>
               Add Employee
             </Button>
@@ -153,7 +160,7 @@ export default function EmployeesPage() {
                   ? "You do not have permission to view the employee directory."
                   : error.message
               }
-              onRetry={() => void loadEmployees()}
+              onRetry={() => void loadEmployees(page)}
             />
           ) : null}
 
@@ -212,6 +219,10 @@ export default function EmployeesPage() {
                 </tbody>
               </table>
             </div>
+          ) : null}
+
+          {!loading && !error && pagination ? (
+            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
           ) : null}
         </CardContent>
       </Card>

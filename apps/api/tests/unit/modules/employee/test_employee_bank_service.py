@@ -7,6 +7,11 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from hrms.core.config.settings import get_settings
+from hrms.core.crypto.aad import build_column_aad
+from hrms.core.crypto.errors import DecryptionFailedError
+from hrms.core.crypto.field import encrypt_value
+from hrms.core.crypto.keys import DEV_KEY_VERSION, derive_dev_dek
 from hrms.core.errors.base import NotFoundError
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.employee.exceptions import (
@@ -37,8 +42,25 @@ def _employee(**overrides: object) -> Employee:
         "blood_group": None,
         "marital_status": None,
         "nationality": None,
+        "father_or_husband_name": None,
         "personal_email": None,
         "personal_mobile": None,
+        "present_address_line1": None,
+        "present_address_line2": None,
+        "present_city": None,
+        "present_state_code": None,
+        "present_pincode": None,
+        "present_country_code": None,
+        "permanent_address_line1": None,
+        "permanent_address_line2": None,
+        "permanent_city": None,
+        "permanent_state_code": None,
+        "permanent_pincode": None,
+        "permanent_country_code": None,
+        "permanent_same_as_present": True,
+        "emergency_contact_name": None,
+        "emergency_contact_relationship": None,
+        "emergency_contact_phone": None,
         "photo_url": None,
         "pan_number_enc": None,
         "aadhaar_number_enc": None,
@@ -75,16 +97,32 @@ def _employment(**overrides: object) -> Employment:
     return Employment(**defaults)  # type: ignore[arg-type]
 
 
+#: DATA-01 — `EmployeeBank.account_number_enc` now always holds ciphertext at rest (plan §2.5);
+#: a unit-test fixture directly constructing an ORM row must seed a *real*, decryptable ciphertext
+#: value, not the plaintext account number, or `EmployeeBankService`'s explicit decrypt call
+#: (`_decrypt_bank`) correctly raises `MalformedCiphertextError` on it. Uses the same
+#: development-mode DEK `DekCache` derives from `Settings.dev_encryption_key` (tests run with
+#: `environment=development`, the suite's default) so the service's own decrypt call resolves it
+#: identically to how `create_bank` would have encrypted it.
+_TEST_DEV_DEK = derive_dev_dek(get_settings().dev_encryption_key)
+
+
+def _encrypted_account_number(plaintext: str, *, record_id: object) -> str:
+    aad = build_column_aad(table="employee_bank", column="account_number_enc", record_id=record_id)
+    return encrypt_value(plaintext, dek=_TEST_DEV_DEK, key_version=DEV_KEY_VERSION, aad=aad)
+
+
 def _bank(**overrides: object) -> EmployeeBank:
     now = datetime.now(UTC)
+    bank_id = overrides.get("id", uuid4())
     defaults: dict[str, object] = {
-        "id": uuid4(),
+        "id": bank_id,
         "company_id": uuid4(),
         "employee_id": uuid4(),
         "effective_from": date(2027, 6, 1),
         "effective_to": None,
         "account_holder_name": "Meera Iyer",
-        "account_number_enc": "1234567890",
+        "account_number_enc": _encrypted_account_number("1234567890", record_id=bank_id),
         "bank_name": "State Bank",
         "ifsc": "SBIN0001234",
         "branch_name": "MG Road",
@@ -529,3 +567,87 @@ async def test_get_bank_with_self_scope_own_record_visible(
     )
 
     assert result.employee_id == employee_id
+
+
+# --- DATA-01: encryption boundary and AAD ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_bank_persists_ciphertext_not_plaintext(
+    service: EmployeeBankService,
+) -> None:
+    """`insert_bank` (the mocked repo call) must receive a `v1:`-shaped ciphertext for
+    `account_number_enc`, never the plaintext value the caller submitted."""
+    company_id = uuid4()
+    employee_id = uuid4()
+    service._employee_repo.get_employee.return_value = _employee(
+        id=employee_id, company_id=company_id
+    )
+    service._employment_repo.get_employment_as_of.return_value = _employment(
+        company_id=company_id, employee_id=employee_id
+    )
+    service._repo.get_current_bank.return_value = None
+    service._repo.insert_bank.side_effect = lambda _session, *, data: EmployeeBank(**data)
+
+    await service.create_bank(
+        company_id,
+        employee_id,
+        _create_body(account_number_enc="9876543210"),
+        expected_version=None,
+        actor_user_id=uuid4(),
+    )
+
+    inserted_data = service._repo.insert_bank.call_args.kwargs["data"]
+    assert inserted_data["account_number_enc"] != "9876543210"
+    assert inserted_data["account_number_enc"].startswith("v1:")
+
+
+@pytest.mark.asyncio
+async def test_get_bank_never_returns_ciphertext_as_the_account_number(
+    service: EmployeeBankService,
+) -> None:
+    """Regression against plan §2.5's corrected boundary: the response must be the decrypted
+    plaintext, not the raw ORM ciphertext, for an authorized read."""
+    company_id = uuid4()
+    employee_id = uuid4()
+    bank_id = uuid4()
+    plaintext = "5555566666"
+    ciphertext = _encrypted_account_number(plaintext, record_id=bank_id)
+    service._repo.get_bank.return_value = _bank(
+        id=bank_id,
+        company_id=company_id,
+        employee_id=employee_id,
+        account_number_enc=ciphertext,
+    )
+
+    result = await service.get_bank(company_id, employee_id, bank_id)
+
+    assert result.account_number_enc == plaintext
+    assert result.account_number_enc != ciphertext
+
+
+@pytest.mark.asyncio
+async def test_two_bank_rows_cannot_decrypt_each_others_ciphertext(
+    service: EmployeeBankService,
+) -> None:
+    """Plan §2.4/§11 — the concrete cross-record ciphertext-substitution scenario, exercised
+    through the real service method a router would call, not just the crypto primitive
+    directly (§1's unit test already covers the primitive in isolation)."""
+    company_id = uuid4()
+    employee_id_a = uuid4()
+    bank_id_a = uuid4()
+    bank_id_b = uuid4()
+    ciphertext_for_a = _encrypted_account_number("1111122222", record_id=bank_id_a)
+
+    # Simulate the ciphertext for row A's account number having ended up on row B (a copy, a
+    # tampered migration, a replication anomaly) — row B's own id is different, so its AAD does
+    # not match what was used to encrypt this value.
+    service._repo.get_bank.return_value = _bank(
+        id=bank_id_b,
+        company_id=company_id,
+        employee_id=employee_id_a,
+        account_number_enc=ciphertext_for_a,
+    )
+
+    with pytest.raises(DecryptionFailedError):
+        await service.get_bank(company_id, employee_id_a, bank_id_b)

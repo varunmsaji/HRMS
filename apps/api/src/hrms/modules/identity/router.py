@@ -22,7 +22,7 @@ from hrms.modules.identity.schemas import (
 )
 from hrms.modules.identity.service import IdentityService
 from hrms.shared.pagination import DataEnvelope
-from hrms.shared.rate_limit import rate_limit
+from hrms.shared.rate_limit import rate_limit, rate_limit_by_ip_and_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -30,11 +30,27 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # publicly reachable, account-affecting endpoints (Phase 5 hardening, doc 41 §8).
 _password_rate_limit = rate_limit("auth", limit=10, window_seconds=60)
 
+# SEC-02 (PLATFORM_READINESS_SECURITY_AUDIT_2026-09-17) — login is the one endpoint that
+# actually validates credentials, so it gets its own bucket rather than sharing "auth" with
+# registration/forgot/reset/invite-accept: a shared bucket would mean a legitimate user's
+# repeated login attempts could exhaust the counter registration relies on (and vice versa).
+# That coarseness is exactly what SEC-11 tracks separately for the existing "auth" bucket —
+# this deliberately doesn't extend it to a fourth endpoint. Keyed on IP *and* email so neither
+# a single spammed account nor a single spraying IP escapes the limit (10/min matches the
+# project's existing auth rate-limit convention; the audit does not specify a different value).
+_login_rate_limit = rate_limit_by_ip_and_email("login", limit=10, window_seconds=60)
+
+# Refresh has no email in its body (it authenticates via the refresh token itself), so an
+# IP-only bucket — same mechanism, its own namespace so a stolen-token replay burst can't also
+# lock out that IP's login attempts.
+_refresh_rate_limit = rate_limit("token_refresh", limit=10, window_seconds=60)
+
 
 @router.post("/login", status_code=status.HTTP_200_OK)
 async def login(
     body: LoginRequest,
     request: Request,
+    _rate_limit: Annotated[None, Depends(_login_rate_limit)],
     service: Annotated[IdentityService, Depends(get_identity_service)],
 ) -> DataEnvelope[TokenResponseData]:
     data = await service.login(
@@ -49,6 +65,7 @@ async def login(
 async def refresh_token(
     body: RefreshRequest,
     request: Request,
+    _rate_limit: Annotated[None, Depends(_refresh_rate_limit)],
     service: Annotated[IdentityService, Depends(get_identity_service)],
 ) -> DataEnvelope[TokenResponseData]:
     raw = body.refresh_token or request.cookies.get("hrms_refresh")

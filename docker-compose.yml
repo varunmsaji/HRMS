@@ -58,6 +58,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # Upload Security Batch A (docs/audits/UPLOAD_BATCH_A_STORAGE_ARCHITECTURE.md) — creates the
+  # `hrms-documents` bucket the API expects (apps/api/.env.example's `S3_BUCKET_DOCUMENTS`) and
+  # locks it to no anonymous access, then exits. Previously a manual, undocumented step; both
+  # commands are idempotent (`--ignore-existing`, `anonymous set none` is MinIO's already-private
+  # default) so re-running this on every `docker compose up` is a no-op once the bucket exists.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: hrms-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 hrms_minio hrms_minio_dev_password &&
+      mc mb --ignore-existing local/hrms-documents &&
+      mc anonymous set none local/hrms-documents
+      "
+    restart: "no"
+
 volumes:
   postgres_data:
   redis_data:

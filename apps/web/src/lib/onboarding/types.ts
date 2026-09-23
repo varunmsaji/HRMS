@@ -46,9 +46,17 @@ export interface OnboardingInvite {
 }
 
 /** Statuses `send-invite` may act on — mirrors `ONBOARDING_CASE_INVITABLE_STATUSES`
- * (`hrms.modules.onboarding.service`). Used only to decide whether to show
- * "Send invite" vs "Resend invite" as the button label. */
-export const ONBOARDING_CASE_INVITABLE_STATUSES = ["DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS"];
+ * (`hrms.modules.onboarding.service`). Used to decide whether to show the invite button at all,
+ * and which label it gets. `ACTIVATED` is included even though the case is otherwise terminal —
+ * the resulting link resolves read-only (the backend's `ONBOARDING_CASE_WRITABLE_STATUSES`
+ * excludes `ACTIVATED`), it just lets HR hand back a working link post-activation. */
+export const ONBOARDING_CASE_INVITABLE_STATUSES = [
+  "DRAFT",
+  "EXPIRED",
+  "INVITED",
+  "IN_PROGRESS",
+  "ACTIVATED",
+];
 
 /** Mirrors `OnboardingSectionReviewRead` (O6) — `section` is one of `ONBOARDING_SECTION_NAMES`. */
 export interface OnboardingSectionReview {
@@ -63,6 +71,10 @@ export const ONBOARDING_SECTION_NAMES = [
   "emergency_contact",
   "bank_info",
   "statutory_info",
+  "compensation_info",
+  "previous_employment_info",
+  "education_info",
+  "nominee_info",
 ] as const;
 export type OnboardingSectionName = (typeof ONBOARDING_SECTION_NAMES)[number];
 
@@ -72,6 +84,10 @@ export const ONBOARDING_SECTION_LABELS: Record<OnboardingSectionName, string> = 
   emergency_contact: "Emergency Contact",
   bank_info: "Bank Details",
   statutory_info: "Statutory Details",
+  compensation_info: "Compensation",
+  previous_employment_info: "Previous Employment",
+  education_info: "Education",
+  nominee_info: "Nominees & Family Details",
 };
 
 /** `GET /public/onboarding/{token}` response (O2/O4/O6) — mirrors `PublicOnboardingCaseRead`.
@@ -89,18 +105,28 @@ export interface PublicOnboardingCase {
   emergency_contact: Record<string, unknown>;
   bank_info: Record<string, unknown>;
   statutory_info: Record<string, unknown>;
+  compensation_info: Record<string, unknown>;
+  previous_employment_info: Record<string, unknown>;
+  education_info: Record<string, unknown>;
+  nominee_info: Record<string, unknown>;
   section_reviews: OnboardingSectionReview[];
 }
 
 /** `GET /onboarding-cases/{id}` (admin, O6) — mirrors `OnboardingCaseDetailRead`: the case
- * fields plus the five section JSON blobs and their review status. */
+ * fields plus the seven section JSON blobs and their review status. */
 export interface OnboardingCaseDetail extends OnboardingCase {
   personal_info: Record<string, unknown>;
   address_info: Record<string, unknown>;
   emergency_contact: Record<string, unknown>;
   bank_info: Record<string, unknown>;
   statutory_info: Record<string, unknown>;
+  compensation_info: Record<string, unknown>;
+  previous_employment_info: Record<string, unknown>;
+  education_info: Record<string, unknown>;
+  nominee_info: Record<string, unknown>;
   section_reviews: OnboardingSectionReview[];
+  token_status: "ACTIVE" | "EXPIRED" | "REVOKED" | null;
+  token_expires_at: string | null;
 }
 
 // --- O5: documents ---------------------------------------------------------------------------

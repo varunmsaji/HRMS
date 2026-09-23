@@ -217,6 +217,74 @@ async def test_create_first_bank_success(client: AsyncClient, seeded_plan_catalo
         await _teardown(company_id=company_id, user_id=user_id)
 
 
+async def test_bank_account_number_is_encrypted_at_rest(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """DATA-01 (`docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md`) — the core
+    proof-of-encryption test for the one field with a live, shipped write path: a direct raw-SQL
+    read of `employee_bank.account_number_enc` after `POST .../bank` must return `v1:`-prefixed
+    ciphertext, never the submitted plaintext; the API round-trip must still return the original
+    plaintext to an authorized caller."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, _legal_entity, _employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        bank = await _create_bank(client, headers, employee_id=employee["id"], **_bank_payload())
+        assert bank["account_number_enc"] == "1234567890"
+
+        factory = get_session_factory()
+        async with factory() as session:
+            raw = (
+                await session.execute(
+                    text("SELECT account_number_enc FROM employee_bank WHERE id = :id"),
+                    {"id": bank["id"]},
+                )
+            ).scalar_one()
+        assert raw != "1234567890"
+        assert raw.startswith("v1:")
+
+        read_back = await client.get(f"/v1/employees/{employee['id']}/bank", headers=headers)
+        assert read_back.status_code == 200, read_back.text
+        assert read_back.json()["data"][0]["account_number_enc"] == "1234567890"
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_bank_audit_log_row_never_contains_the_plaintext_account_number(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """DATA-01 §7 (mandatory audit-log redaction) — regression against inventory §3 item 13's
+    original finding: `bank_to_audit_dict()` used to pass the full plaintext account number into
+    `audit_log.after_json`. It must now be masked, last-four-digit form only."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, _legal_entity, _employment = await _setup_employee_with_employment(
+            client, headers
+        )
+        await _create_bank(client, headers, employee_id=employee["id"], **_bank_payload())
+
+        factory = get_session_factory()
+        async with factory() as session:
+            audit_row = (
+                (
+                    await session.execute(
+                        select(AuditLog).where(
+                            AuditLog.company_id == company_id,
+                            AuditLog.entity_type == "employee_bank",
+                        )
+                    )
+                )
+                .scalars()
+                .one()
+            )
+        assert audit_row.after_json is not None
+        assert audit_row.after_json["account_number_enc"] == "******7890"
+        assert "1234567890" not in str(audit_row.after_json)
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
 async def test_create_bank_without_covering_employment_rejected(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:

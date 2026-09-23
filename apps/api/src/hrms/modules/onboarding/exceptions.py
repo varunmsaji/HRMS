@@ -114,9 +114,10 @@ class OnboardingSectionNotWritableError(ConflictError):
 class OnboardingCaseNotInvitableError(ConflictError):
     """Raised by `send-invite` when the case is not in a status that a link can meaningfully be
     (re)sent for — once the candidate has submitted (`SUBMITTED`/`UNDER_REVIEW`/`VERIFIED`) a
-    fresh link would let them bypass HR's review, and a terminal case (`ACTIVATED`/`EXPIRED`/
-    `CANCELLED`) has nothing left to invite. `CHANGES_REQUESTED`'s own reopen-and-resend flow
-    belongs to O6, not this generic endpoint."""
+    fresh link would let them bypass HR's review, and `EXPIRED`/`CANCELLED` cases have nothing
+    left to invite. `CHANGES_REQUESTED`'s own reopen-and-resend flow belongs to O6, not this
+    generic endpoint. `ACTIVATED` is *not* raised here — see `ONBOARDING_CASE_INVITABLE_STATUSES`
+    for why a link is still issuable (read-only) after activation."""
 
     code = "ONBOARDING_CASE_NOT_INVITABLE"
 
@@ -209,6 +210,22 @@ class OnboardingDocumentTooLargeError(ValidationError):
         super().__init__(
             message,
             details=[{"field": "file", "code": "DOCUMENT_TOO_LARGE", "message": message}],
+        )
+
+
+class UnsupportedDocumentContentError(ValidationError):
+    """Raised when an uploaded file's own bytes don't match any allowed document signature
+    (SEC-04, `hrms.modules.onboarding.document_validation.sniff_document_content_type`) —
+    covers an empty file, random binary data, and content (HTML/JS/executables/etc.) that doesn't
+    match its claimed type, regardless of what `Content-Type` header or filename the client sent."""
+
+    code = "UNSUPPORTED_DOCUMENT_CONTENT"
+
+    def __init__(self) -> None:
+        message = "File content is not a supported document type (PDF, JPEG, or PNG)"
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "UNSUPPORTED_DOCUMENT_CONTENT", "message": message}],
         )
 
 

@@ -27,6 +27,9 @@ export interface PersonalInfoFormValues {
   bloodGroup: string;
   maritalStatus: string;
   nationality: string;
+  fatherOrHusbandName: string;
+  panNumber: string;
+  aadhaarNumber: string;
   photoUrl: string;
 }
 
@@ -39,6 +42,9 @@ export const EMPTY_PERSONAL_INFO: PersonalInfoFormValues = {
   bloodGroup: "",
   maritalStatus: "",
   nationality: "",
+  fatherOrHusbandName: "",
+  panNumber: "",
+  aadhaarNumber: "",
   photoUrl: "",
 };
 
@@ -52,6 +58,9 @@ export function personalInfoFromSection(section: Record<string, unknown>): Perso
     bloodGroup: (section.blood_group as string | undefined) ?? "",
     maritalStatus: (section.marital_status as string | undefined) ?? "",
     nationality: (section.nationality as string | undefined) ?? "",
+    fatherOrHusbandName: (section.father_or_husband_name as string | undefined) ?? "",
+    panNumber: (section.pan_number_enc as string | undefined) ?? "",
+    aadhaarNumber: (section.aadhaar_number_enc as string | undefined) ?? "",
     photoUrl: (section.photo_url as string | undefined) ?? "",
   };
 }
@@ -66,15 +75,29 @@ export function personalInfoToPayload(values: PersonalInfoFormValues): Record<st
     blood_group: values.bloodGroup.trim() || null,
     marital_status: values.maritalStatus.trim() || null,
     nationality: values.nationality.trim() || null,
+    father_or_husband_name: values.fatherOrHusbandName.trim() || null,
+    pan_number_enc: values.panNumber.trim().toUpperCase() || null,
+    aadhaar_number_enc: values.aadhaarNumber.trim().replace(/\s+/g, "") || null,
     photo_url: values.photoUrl.trim() || null,
   };
 }
+
+const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const AADHAAR_PATTERN = /^[0-9]{12}$/;
 
 export function validatePersonalInfo(
   values: PersonalInfoFormValues,
 ): Partial<Record<keyof PersonalInfoFormValues, string>> {
   const errors: Partial<Record<keyof PersonalInfoFormValues, string>> = {};
   if (!values.firstName.trim()) errors.firstName = "First name is required.";
+  const pan = values.panNumber.trim().toUpperCase();
+  if (pan && !PAN_PATTERN.test(pan)) {
+    errors.panNumber = "Enter a valid 10-character PAN (e.g. ABCDE1234F).";
+  }
+  const aadhaar = values.aadhaarNumber.trim().replace(/\s+/g, "");
+  if (aadhaar && !AADHAAR_PATTERN.test(aadhaar)) {
+    errors.aadhaarNumber = "Enter a valid 12-digit Aadhaar number.";
+  }
   return errors;
 }
 
@@ -87,6 +110,13 @@ export interface AddressInfoFormValues {
   stateCode: string;
   pincode: string;
   countryCode: string;
+  permanentSameAsPresent: boolean;
+  permanentAddressLine1: string;
+  permanentAddressLine2: string;
+  permanentCity: string;
+  permanentStateCode: string;
+  permanentPincode: string;
+  permanentCountryCode: string;
 }
 
 export const EMPTY_ADDRESS_INFO: AddressInfoFormValues = {
@@ -96,6 +126,13 @@ export const EMPTY_ADDRESS_INFO: AddressInfoFormValues = {
   stateCode: "",
   pincode: "",
   countryCode: "",
+  permanentSameAsPresent: true,
+  permanentAddressLine1: "",
+  permanentAddressLine2: "",
+  permanentCity: "",
+  permanentStateCode: "",
+  permanentPincode: "",
+  permanentCountryCode: "",
 };
 
 export function addressInfoFromSection(section: Record<string, unknown>): AddressInfoFormValues {
@@ -106,6 +143,16 @@ export function addressInfoFromSection(section: Record<string, unknown>): Addres
     stateCode: (section.state_code as string | undefined) ?? "",
     pincode: (section.pincode as string | undefined) ?? "",
     countryCode: (section.country_code as string | undefined) ?? "",
+    permanentSameAsPresent:
+      section.permanent_same_as_present === undefined
+        ? true
+        : Boolean(section.permanent_same_as_present),
+    permanentAddressLine1: (section.permanent_address_line1 as string | undefined) ?? "",
+    permanentAddressLine2: (section.permanent_address_line2 as string | undefined) ?? "",
+    permanentCity: (section.permanent_city as string | undefined) ?? "",
+    permanentStateCode: (section.permanent_state_code as string | undefined) ?? "",
+    permanentPincode: (section.permanent_pincode as string | undefined) ?? "",
+    permanentCountryCode: (section.permanent_country_code as string | undefined) ?? "",
   };
 }
 
@@ -117,6 +164,23 @@ export function addressInfoToPayload(values: AddressInfoFormValues): Record<stri
     state_code: values.stateCode.trim() || null,
     pincode: values.pincode.trim() || null,
     country_code: values.countryCode.trim() || null,
+    permanent_same_as_present: values.permanentSameAsPresent,
+    permanent_address_line1: values.permanentSameAsPresent
+      ? null
+      : values.permanentAddressLine1.trim() || null,
+    permanent_address_line2: values.permanentSameAsPresent
+      ? null
+      : values.permanentAddressLine2.trim() || null,
+    permanent_city: values.permanentSameAsPresent ? null : values.permanentCity.trim() || null,
+    permanent_state_code: values.permanentSameAsPresent
+      ? null
+      : values.permanentStateCode.trim() || null,
+    permanent_pincode: values.permanentSameAsPresent
+      ? null
+      : values.permanentPincode.trim() || null,
+    permanent_country_code: values.permanentSameAsPresent
+      ? null
+      : values.permanentCountryCode.trim() || null,
   };
 }
 
@@ -216,6 +280,7 @@ export function validateBankInfo(
 export interface StatutoryInfoFormValues {
   isPfApplicable: boolean;
   pfNumber: string;
+  uanNumber: string;
   pfWageCeilingOptOut: boolean;
   vpfAmount: string;
   vpfPercentage: string;
@@ -231,6 +296,7 @@ export interface StatutoryInfoFormValues {
 export const EMPTY_STATUTORY_INFO: StatutoryInfoFormValues = {
   isPfApplicable: false,
   pfNumber: "",
+  uanNumber: "",
   pfWageCeilingOptOut: false,
   vpfAmount: "",
   vpfPercentage: "",
@@ -251,6 +317,7 @@ export function statutoryInfoFromSection(section: Record<string, unknown>): Stat
   return {
     isPfApplicable: Boolean(section.is_pf_applicable),
     pfNumber: (section.pf_number as string | undefined) ?? "",
+    uanNumber: (section.uan_number as string | undefined) ?? "",
     pfWageCeilingOptOut: Boolean(section.pf_wage_ceiling_opt_out),
     vpfAmount: numberToFormString(section.vpf_amount),
     vpfPercentage: numberToFormString(section.vpf_percentage),
@@ -282,6 +349,7 @@ export function statutoryInfoToPayload(values: StatutoryInfoFormValues): Record<
   return {
     is_pf_applicable: values.isPfApplicable,
     pf_number: values.pfNumber.trim() || null,
+    uan_number: values.uanNumber.trim() || null,
     pf_wage_ceiling_opt_out: values.pfWageCeilingOptOut,
     vpf_amount: intOrNull(values.vpfAmount),
     vpf_percentage: floatOrNull(values.vpfPercentage),
@@ -300,5 +368,348 @@ export function validateStatutoryInfo(
 ): Partial<Record<keyof StatutoryInfoFormValues, string>> {
   const errors: Partial<Record<keyof StatutoryInfoFormValues, string>> = {};
   if (!values.taxRegime) errors.taxRegime = "Tax regime is required.";
+  return errors;
+}
+
+// --- Compensation info (E-02 part 3) --------------------------------------------------------
+
+export interface CompensationInfoFormValues {
+  annualCtc: string;
+  currency: string;
+}
+
+export const EMPTY_COMPENSATION_INFO: CompensationInfoFormValues = {
+  annualCtc: "",
+  currency: "INR",
+};
+
+/** `annual_ctc_minor` is integer minor units on the wire (e.g. paise) — matches
+ * `lib/employee/validate-compensation.ts`'s own money-field convention exactly; the form works
+ * in whole currency units and converts at the boundary. */
+function ctcUnitsToMinor(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const amount = Number(trimmed);
+  if (Number.isNaN(amount)) return null;
+  return Math.round(amount * 100);
+}
+
+function ctcMinorToUnits(value: unknown): string {
+  return typeof value === "number" ? String(value / 100) : "";
+}
+
+export function compensationInfoFromSection(
+  section: Record<string, unknown>,
+): CompensationInfoFormValues {
+  return {
+    annualCtc: ctcMinorToUnits(section.annual_ctc_minor),
+    currency: (section.currency as string | undefined) ?? "INR",
+  };
+}
+
+export function compensationInfoToPayload(
+  values: CompensationInfoFormValues,
+): Record<string, unknown> {
+  return {
+    annual_ctc_minor: ctcUnitsToMinor(values.annualCtc),
+    currency: values.currency.trim().toUpperCase() || "INR",
+  };
+}
+
+export function validateCompensationInfo(
+  values: CompensationInfoFormValues,
+): Partial<Record<keyof CompensationInfoFormValues, string>> {
+  const errors: Partial<Record<keyof CompensationInfoFormValues, string>> = {};
+  const minor = ctcUnitsToMinor(values.annualCtc);
+  if (minor === null || minor < 0) errors.annualCtc = "Enter a valid annual CTC.";
+  if (values.currency.trim().length !== 3) {
+    errors.currency = "Enter a 3-letter currency code (e.g. INR).";
+  }
+  return errors;
+}
+
+// --- Previous employment info (E-02 part 4) -------------------------------------------------
+
+export interface PreviousEmploymentRowValues {
+  companyName: string;
+  designation: string;
+  fromDate: string;
+  toDate: string;
+  lastCtc: string;
+  reasonForLeaving: string;
+  hadPriorPfMembership: boolean;
+  previousUan: string;
+  previousPfAccountNumber: string;
+  previousEsiIpNumber: string;
+}
+
+export const EMPTY_PREVIOUS_EMPLOYMENT_ROW: PreviousEmploymentRowValues = {
+  companyName: "",
+  designation: "",
+  fromDate: "",
+  toDate: "",
+  lastCtc: "",
+  reasonForLeaving: "",
+  hadPriorPfMembership: false,
+  previousUan: "",
+  previousPfAccountNumber: "",
+  previousEsiIpNumber: "",
+};
+
+export interface PreviousEmploymentFormValues {
+  items: PreviousEmploymentRowValues[];
+}
+
+export const EMPTY_PREVIOUS_EMPLOYMENT_INFO: PreviousEmploymentFormValues = { items: [] };
+
+function rowFromItem(item: Record<string, unknown>): PreviousEmploymentRowValues {
+  return {
+    companyName: (item.company_name as string | undefined) ?? "",
+    designation: (item.designation as string | undefined) ?? "",
+    fromDate: (item.from_date as string | undefined) ?? "",
+    toDate: (item.to_date as string | undefined) ?? "",
+    lastCtc: ctcMinorToUnits(item.last_ctc_minor),
+    reasonForLeaving: (item.reason_for_leaving as string | undefined) ?? "",
+    hadPriorPfMembership: Boolean(item.had_prior_pf_membership),
+    previousUan: (item.previous_uan as string | undefined) ?? "",
+    previousPfAccountNumber: (item.previous_pf_account_number as string | undefined) ?? "",
+    previousEsiIpNumber: (item.previous_esi_ip_number as string | undefined) ?? "",
+  };
+}
+
+export function previousEmploymentFromSection(
+  section: Record<string, unknown>,
+): PreviousEmploymentFormValues {
+  const items = Array.isArray(section.items) ? section.items : [];
+  return { items: items.map((item) => rowFromItem(item as Record<string, unknown>)) };
+}
+
+function rowToPayload(row: PreviousEmploymentRowValues): Record<string, unknown> {
+  return {
+    company_name: row.companyName.trim(),
+    designation: row.designation.trim() || null,
+    from_date: row.fromDate || null,
+    to_date: row.toDate || null,
+    last_ctc_minor: ctcUnitsToMinor(row.lastCtc),
+    reason_for_leaving: row.reasonForLeaving.trim() || null,
+    had_prior_pf_membership: row.hadPriorPfMembership,
+    previous_uan: row.previousUan.trim() || null,
+    previous_pf_account_number: row.previousPfAccountNumber.trim() || null,
+    previous_esi_ip_number: row.previousEsiIpNumber.trim() || null,
+  };
+}
+
+export function previousEmploymentToPayload(
+  values: PreviousEmploymentFormValues,
+): Record<string, unknown> {
+  return { items: values.items.map(rowToPayload) };
+}
+
+export function validatePreviousEmployment(
+  values: PreviousEmploymentFormValues,
+): Partial<Record<"items", string>> {
+  const errors: Partial<Record<"items", string>> = {};
+  const hasIncompleteRow = values.items.some(
+    (row) => !row.companyName.trim() || !row.fromDate,
+  );
+  if (hasIncompleteRow) {
+    errors.items = "Each entry needs at least a company name and a from date.";
+  }
+  return errors;
+}
+
+// --- Education info (E-02 part 5) -----------------------------------------------------------
+
+export interface EducationRowValues {
+  qualification: string;
+  institutionName: string;
+  yearOfPassing: string;
+}
+
+export const EMPTY_EDUCATION_ROW: EducationRowValues = {
+  qualification: "",
+  institutionName: "",
+  yearOfPassing: "",
+};
+
+export interface EducationFormValues {
+  items: EducationRowValues[];
+}
+
+export const EMPTY_EDUCATION_INFO: EducationFormValues = { items: [] };
+
+function educationRowFromItem(item: Record<string, unknown>): EducationRowValues {
+  return {
+    qualification: (item.qualification as string | undefined) ?? "",
+    institutionName: (item.institution_name as string | undefined) ?? "",
+    yearOfPassing:
+      item.year_of_passing === null || item.year_of_passing === undefined
+        ? ""
+        : String(item.year_of_passing),
+  };
+}
+
+export function educationFromSection(section: Record<string, unknown>): EducationFormValues {
+  const items = Array.isArray(section.items) ? section.items : [];
+  return { items: items.map((item) => educationRowFromItem(item as Record<string, unknown>)) };
+}
+
+function educationRowToPayload(row: EducationRowValues): Record<string, unknown> {
+  return {
+    qualification: row.qualification.trim(),
+    institution_name: row.institutionName.trim() || null,
+    year_of_passing: row.yearOfPassing ? Number(row.yearOfPassing) : null,
+  };
+}
+
+export function educationToPayload(values: EducationFormValues): Record<string, unknown> {
+  return { items: values.items.map(educationRowToPayload) };
+}
+
+export function validateEducation(
+  values: EducationFormValues,
+): Partial<Record<"items", string>> {
+  const errors: Partial<Record<"items", string>> = {};
+  const hasIncompleteRow = values.items.some((row) => !row.qualification.trim());
+  if (hasIncompleteRow) {
+    errors.items = "Each entry needs at least a qualification.";
+  }
+  return errors;
+}
+
+// --- Nominee info (market-parity onboarding-data pass, part 6) ------------------------------
+//
+// PF/Gratuity nominee declaration + ESI family details — mirrors `PreviousEmploymentFormValues`/
+// `EducationFormValues`'s exact repeatable-rows shape, plus a minor/guardian conditional block
+// and two independent nominee-scheme percentages, each validated to sum to <=100 across the
+// submitted list (mirroring `apps.api.../onboarding/schemas.py`'s `NomineeInfoSection` validator).
+
+export interface NomineeRowValues {
+  fullName: string;
+  relationship: string;
+  dateOfBirth: string;
+  gender: string;
+  isMinor: boolean;
+  guardianName: string;
+  guardianRelationship: string;
+  aadhaarNumber: string;
+  isPfNominee: boolean;
+  pfNomineeSharePercentage: string;
+  isGratuityNominee: boolean;
+  gratuityNomineeSharePercentage: string;
+  isEsiDependent: boolean;
+}
+
+export const EMPTY_NOMINEE_ROW: NomineeRowValues = {
+  fullName: "",
+  relationship: "",
+  dateOfBirth: "",
+  gender: "",
+  isMinor: false,
+  guardianName: "",
+  guardianRelationship: "",
+  aadhaarNumber: "",
+  isPfNominee: false,
+  pfNomineeSharePercentage: "",
+  isGratuityNominee: false,
+  gratuityNomineeSharePercentage: "",
+  isEsiDependent: false,
+};
+
+export interface NomineeFormValues {
+  items: NomineeRowValues[];
+}
+
+export const EMPTY_NOMINEE_INFO: NomineeFormValues = { items: [] };
+
+function nomineeRowFromItem(item: Record<string, unknown>): NomineeRowValues {
+  return {
+    fullName: (item.full_name as string | undefined) ?? "",
+    relationship: (item.relationship as string | undefined) ?? "",
+    dateOfBirth: (item.date_of_birth as string | undefined) ?? "",
+    gender: (item.gender as string | undefined) ?? "",
+    isMinor: Boolean(item.is_minor),
+    guardianName: (item.guardian_name as string | undefined) ?? "",
+    guardianRelationship: (item.guardian_relationship as string | undefined) ?? "",
+    aadhaarNumber: (item.aadhaar_number_enc as string | undefined) ?? "",
+    isPfNominee: Boolean(item.is_pf_nominee),
+    pfNomineeSharePercentage:
+      item.pf_nominee_share_percentage === null || item.pf_nominee_share_percentage === undefined
+        ? ""
+        : String(item.pf_nominee_share_percentage),
+    isGratuityNominee: Boolean(item.is_gratuity_nominee),
+    gratuityNomineeSharePercentage:
+      item.gratuity_nominee_share_percentage === null ||
+      item.gratuity_nominee_share_percentage === undefined
+        ? ""
+        : String(item.gratuity_nominee_share_percentage),
+    isEsiDependent: Boolean(item.is_esi_dependent),
+  };
+}
+
+export function nomineeFromSection(section: Record<string, unknown>): NomineeFormValues {
+  const items = Array.isArray(section.items) ? section.items : [];
+  return { items: items.map((item) => nomineeRowFromItem(item as Record<string, unknown>)) };
+}
+
+function nomineeRowToPayload(row: NomineeRowValues): Record<string, unknown> {
+  return {
+    full_name: row.fullName.trim(),
+    relationship: row.relationship.trim(),
+    date_of_birth: row.dateOfBirth || null,
+    gender: row.gender.trim() || null,
+    is_minor: row.isMinor,
+    guardian_name: row.isMinor ? row.guardianName.trim() || null : null,
+    guardian_relationship: row.isMinor ? row.guardianRelationship.trim() || null : null,
+    aadhaar_number_enc: row.aadhaarNumber.trim() || null,
+    is_pf_nominee: row.isPfNominee,
+    pf_nominee_share_percentage: row.isPfNominee ? Number(row.pfNomineeSharePercentage) : null,
+    is_gratuity_nominee: row.isGratuityNominee,
+    gratuity_nominee_share_percentage: row.isGratuityNominee
+      ? Number(row.gratuityNomineeSharePercentage)
+      : null,
+    is_esi_dependent: row.isEsiDependent,
+  };
+}
+
+export function nomineeToPayload(values: NomineeFormValues): Record<string, unknown> {
+  return { items: values.items.map(nomineeRowToPayload) };
+}
+
+/** Running totals across the submitted list — also what `NomineeInfoStep` renders as a live
+ * indicator next to each scheme's rows, so the candidate sees the 100% ceiling before submitting
+ * rather than only after a rejected PATCH. */
+export function nomineePfPercentageTotal(values: NomineeFormValues): number {
+  return values.items
+    .filter((row) => row.isPfNominee)
+    .reduce((sum, row) => sum + (Number(row.pfNomineeSharePercentage) || 0), 0);
+}
+
+export function nomineeGratuityPercentageTotal(values: NomineeFormValues): number {
+  return values.items
+    .filter((row) => row.isGratuityNominee)
+    .reduce((sum, row) => sum + (Number(row.gratuityNomineeSharePercentage) || 0), 0);
+}
+
+export function validateNominee(values: NomineeFormValues): Partial<Record<"items", string>> {
+  const errors: Partial<Record<"items", string>> = {};
+  const hasIncompleteRow = values.items.some((row) => {
+    if (!row.fullName.trim() || !row.relationship.trim()) return true;
+    if (row.isMinor && !row.guardianName.trim()) return true;
+    if (row.isPfNominee && !row.pfNomineeSharePercentage) return true;
+    if (row.isGratuityNominee && !row.gratuityNomineeSharePercentage) return true;
+    return false;
+  });
+  if (hasIncompleteRow) {
+    errors.items =
+      "Each entry needs a name and relationship; minors need a guardian name, and a " +
+      "nominee scheme needs its share percentage.";
+    return errors;
+  }
+  if (nomineePfPercentageTotal(values) > 100) {
+    errors.items = "PF nominee share percentages add up to more than 100%.";
+  } else if (nomineeGratuityPercentageTotal(values) > 100) {
+    errors.items = "Gratuity nominee share percentages add up to more than 100%.";
+  }
   return errors;
 }

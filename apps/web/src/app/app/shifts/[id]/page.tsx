@@ -11,6 +11,7 @@ import { ShiftVersionForm } from "@/components/shift/shift-version-form";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Shift, ShiftVersion } from "@/lib/shift/types";
 import {
@@ -90,6 +92,9 @@ export default function ShiftDetailPage() {
 
   // --- Versions tab state ---
   const [versions, setVersions] = useState<ShiftVersion[] | null>(null);
+  const [latestVersions, setLatestVersions] = useState<ShiftVersion[] | null>(null);
+  const [versionsPagination, setVersionsPagination] = useState<PaginationMeta | null>(null);
+  const [versionsPage, setVersionsPage] = useState(1);
   const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<WeeklyOffPattern[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
@@ -103,9 +108,15 @@ export default function ShiftDetailPage() {
   const [discarding, setDiscarding] = useState(false);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
 
-  const draft = versions?.find((v) => v.status === "DRAFT") ?? null;
+  // `latestVersions` is always page 1 (newest-first) — the open DRAFT and the currently
+  // PUBLISHED version, if either exists, are always more recent than every superseded
+  // historical row, so they're guaranteed to land on page 1 regardless of how many versions
+  // this shift has accumulated (API-01 §6). `versions` is whichever page the "History" list
+  // below is currently browsing — never used to derive these two, so paging through history
+  // can't make the draft/current-published sections flicker or disappear.
+  const draft = latestVersions?.find((v) => v.status === "DRAFT") ?? null;
   const currentPublished =
-    versions?.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
+    latestVersions?.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
   const historical =
     versions
       ?.filter((v) => v.id !== draft?.id && v.id !== currentPublished?.id)
@@ -131,37 +142,47 @@ export default function ShiftDetailPage() {
     }
   }, [params.id]);
 
-  const loadVersions = useCallback(async () => {
-    setVersionsLoading(true);
-    try {
-      const [versionData, patternData] = await Promise.all([
-        apiClient.get<ShiftVersion[]>(`/shifts/${params.id}/versions`),
-        apiClient.get<WeeklyOffPattern[]>("/weekly-off-patterns"),
-      ]);
-      setVersions(versionData);
-      setWeeklyOffPatterns(patternData);
-      return versionData;
-    } catch (err) {
-      toast({
-        title: "Could not load shift versions",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-      return null;
-    } finally {
-      setVersionsLoading(false);
-    }
-  }, [params.id, toast]);
+  const loadVersions = useCallback(
+    async (targetPage: number) => {
+      setVersionsLoading(true);
+      try {
+        const [versionResult, patternData] = await Promise.all([
+          apiClient.getList<ShiftVersion>(`/shifts/${params.id}/versions`, { page: targetPage }),
+          apiClient.get<WeeklyOffPattern[]>("/weekly-off-patterns"),
+        ]);
+        setVersions(versionResult.data);
+        setVersionsPagination(versionResult.pagination);
+        if (targetPage === 1) setLatestVersions(versionResult.data);
+        setWeeklyOffPatterns(patternData);
+        return versionResult.data;
+      } catch (err) {
+        toast({
+          title: "Could not load shift versions",
+          description: describeApiError(err),
+          variant: "danger",
+        });
+        return null;
+      } finally {
+        setVersionsLoading(false);
+      }
+    },
+    [params.id, toast],
+  );
 
   useEffect(() => {
     void loadShift();
   }, [loadShift]);
 
   useEffect(() => {
-    if (tab === "versions" && versions === null) {
-      void loadVersions();
-    }
-  }, [tab, versions, loadVersions]);
+    if (tab !== "versions") return;
+    // Fires on first opening the tab, and again whenever the "History" pager below changes
+    // `versionsPage` — the draft/current-published sections stay pinned to `latestVersions`
+    // (always page 1) regardless of which history page this loads.
+    void loadVersions(versionsPage);
+    // `versions`/`loadVersions` intentionally excluded — including them would refire this on
+    // every load, not just on tab-open/page-change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, versionsPage]);
 
   // --- Identity (Overview) editing ---
 
@@ -294,7 +315,8 @@ export default function ShiftDetailPage() {
     try {
       await apiClient.post(`/shifts/${params.id}/versions`, {});
       toast({ title: "Draft created", variant: "success" });
-      await loadVersions();
+      setVersionsPage(1);
+      await loadVersions(1);
     } catch (err) {
       toast({
         title: "Could not create a new draft",
@@ -326,6 +348,9 @@ export default function ShiftDetailPage() {
         { ifMatch: String(draft.version) },
       );
       setVersions((prev) => (prev ? prev.map((v) => (v.id === updated.id ? updated : v)) : prev));
+      setLatestVersions((prev) =>
+        prev ? prev.map((v) => (v.id === updated.id ? updated : v)) : prev,
+      );
       setDraftValues(shiftVersionToFormValues(updated));
       toast({ title: "Draft saved", variant: "success" });
     } catch (err) {
@@ -350,7 +375,8 @@ export default function ShiftDetailPage() {
   }
 
   async function reloadDraftLatest() {
-    const latest = await loadVersions();
+    setVersionsPage(1);
+    const latest = await loadVersions(1);
     if (latest) {
       setDraftStaleMessage(null);
       const latestDraft = latest.find((v) => v.status === "DRAFT") ?? null;
@@ -369,7 +395,8 @@ export default function ShiftDetailPage() {
       setDiscardConfirmOpen(false);
       setDraftValues(null);
       toast({ title: "Draft discarded", variant: "success" });
-      await loadVersions();
+      setVersionsPage(1);
+      await loadVersions(1);
     } catch (err) {
       toast({
         title: "Could not discard draft",
@@ -386,7 +413,8 @@ export default function ShiftDetailPage() {
     // whole list rather than approximating it here.
     setDraftValues(null);
     toast({ title: "Schedule published", variant: "success" });
-    void loadVersions();
+    setVersionsPage(1);
+    void loadVersions(1);
     void loadShift();
   }
 
@@ -690,6 +718,13 @@ export default function ShiftDetailPage() {
                             </li>
                           ))}
                         </ul>
+                        {versionsPagination ? (
+                          <PaginationControls
+                            pagination={versionsPagination}
+                            onPageChange={setVersionsPage}
+                            disabled={versionsLoading}
+                          />
+                        ) : null}
                       </CardContent>
                     </Card>
                   ) : null}

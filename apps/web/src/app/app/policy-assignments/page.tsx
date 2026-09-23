@@ -8,6 +8,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import {
   POLICY_KIND_LABELS,
   POLICY_KIND_LIST_PATH,
@@ -79,6 +81,8 @@ export default function PolicyAssignmentsPage() {
   const { toast } = useToast();
   const [filterKind, setFilterKind] = useState<PolicyKind | "">("");
   const [assignments, setAssignments] = useState<PolicyAssignment[] | null>(null);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -95,15 +99,19 @@ export default function PolicyAssignmentsPage() {
     ? policyOptions.filter((option) => option.leave_type_id === form.leaveTypeId)
     : policyOptions;
 
-  const loadAssignments = useCallback(async (kind: PolicyKind | "") => {
+  const loadAssignments = useCallback(async (kind: PolicyKind | "", targetPage: number) => {
     setLoading(true);
     setError(null);
     try {
-      const query = kind ? `?policy_kind=${kind}` : "";
-      const data = await apiClient.get<PolicyAssignment[]>(`/policy-assignments${query}`);
+      const { data, pagination: meta } = await apiClient.getList<PolicyAssignment>(
+        "/policy-assignments",
+        { page: targetPage, policy_kind: kind || undefined },
+      );
       setAssignments(data);
+      setPagination(meta);
     } catch (err) {
       setAssignments(null);
+      setPagination(null);
       setError(
         err instanceof ApiError
           ? err
@@ -114,9 +122,14 @@ export default function PolicyAssignmentsPage() {
     }
   }, []);
 
+  // Changing the kind filter invalidates the current page — jump back to page 1.
   useEffect(() => {
-    void loadAssignments(filterKind);
-  }, [filterKind, loadAssignments]);
+    setPage(1);
+  }, [filterKind]);
+
+  useEffect(() => {
+    void loadAssignments(filterKind, page);
+  }, [filterKind, page, loadAssignments]);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -184,7 +197,7 @@ export default function PolicyAssignmentsPage() {
       });
       setCreateOpen(false);
       toast({ title: "Assignment created", variant: "success" });
-      await loadAssignments(filterKind);
+      await loadAssignments(filterKind, page);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 422 || err.status === 409)) {
         setFormError(describeApiError(err));
@@ -237,7 +250,7 @@ export default function PolicyAssignmentsPage() {
                   ? "You do not have permission to view policy assignments."
                   : error.message
               }
-              onRetry={() => void loadAssignments(filterKind)}
+              onRetry={() => void loadAssignments(filterKind, page)}
             />
           ) : null}
 
@@ -278,6 +291,10 @@ export default function PolicyAssignmentsPage() {
                 </li>
               ))}
             </ul>
+          ) : null}
+
+          {!loading && !error && pagination ? (
+            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
           ) : null}
         </CardContent>
       </Card>

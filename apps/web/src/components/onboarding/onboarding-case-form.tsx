@@ -4,7 +4,6 @@ import { NativeSelect } from "@/components/ui/native-select";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import type { Designation } from "@/lib/designation/types";
-import type { LegalEntity } from "@/lib/legal-entity/types";
 import {
   type OnboardingCaseFormErrors,
   type OnboardingCaseFormValues,
@@ -17,7 +16,6 @@ interface OnboardingCaseFormProps {
   branches: Branch[];
   departments: Department[];
   designations: Designation[];
-  legalEntities: LegalEntity[];
   idPrefix?: string;
 }
 
@@ -28,7 +26,6 @@ export function OnboardingCaseForm({
   branches,
   departments,
   designations,
-  legalEntities,
   idPrefix = "",
 }: OnboardingCaseFormProps) {
   function update<K extends keyof OnboardingCaseFormValues>(
@@ -101,19 +98,6 @@ export function OnboardingCaseForm({
               value={values.proposedJoiningDate}
               onChange={(e) => update("proposedJoiningDate", e.target.value)}
             />
-          </FormField>
-          <FormField id={id("legalEntityId")} label="Legal entity" error={errors.legalEntityId}>
-            <NativeSelect
-              value={values.legalEntityId}
-              onChange={(e) => update("legalEntityId", e.target.value)}
-            >
-              <option value="">Not set</option>
-              {legalEntities.map((entity) => (
-                <option key={entity.id} value={entity.id}>
-                  {entity.name}
-                </option>
-              ))}
-            </NativeSelect>
           </FormField>
           <FormField id={id("branchId")} label="Branch" error={errors.branchId}>
             <NativeSelect value={values.branchId} onChange={(e) => update("branchId", e.target.value)}>

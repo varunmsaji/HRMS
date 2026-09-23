@@ -81,7 +81,11 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
       let employees: Employee[] = [];
       let employeesLoadFailed = false;
       try {
-        employees = await apiClient.get<Employee[]>("/employees");
+        // Reference-data dropdown (manager picker), not a paginated table — request the
+        // server's max page size. Companies with >100 employees will see a truncated list here
+        // (known limitation, API-01 only paginates the /employees table itself).
+        const result = await apiClient.getList<Employee>("/employees", { per_page: 100 });
+        employees = result.data;
       } catch {
         employeesLoadFailed = true;
       }

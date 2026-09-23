@@ -279,6 +279,24 @@ async def test_registration_success_full_row_graph(
                 "EMPLOYEE.BULK_IMPORT",
                 # Added by Employee confirmation (minimal slice) — PROBATION -> ACTIVE.
                 "EMPLOYEE.CONFIRM",
+                # Added by Account Provisioning (doc 41 Phase 2) — gates
+                # `POST /employees/{id}/invite`; granted to COMPANY_ADMIN/HR_ADMIN, not EMPLOYEE
+                # (Decision H). Pre-existing gap in this assertion, not touched by this change.
+                "EMPLOYEE.INVITE",
+                # Added alongside the default-roles rollout (Decision H) — granted to
+                # COMPANY_ADMIN for managing users/roles. Pre-existing gap in this assertion.
+                "SETTINGS.USER.MANAGE",
+                "SETTINGS.ROLE.MANAGE",
+                # Added by the market-parity onboarding-data pass (E-02) — gates
+                # `GET /employees/{id}/identity` (PAN/Aadhaar/UAN); granted to HR_ADMIN via the
+                # standard EMPLOYEE_PERMISSIONS grant loop.
+                "EMPLOYEE.VIEW_SENSITIVE",
+                # Added by market-parity onboarding-data pass part 4 (previous employment / PF
+                # continuity) — gates `GET /employees/{id}/experience`.
+                "EMPLOYEE.VIEW_EXPERIENCE",
+                # Added by market-parity onboarding-data pass part 6 (PF/Gratuity nominee + ESI
+                # family details) — gates `GET /employees/{id}/dependents`.
+                "EMPLOYEE.VIEW_NOMINEE",
                 "LEAVE.TYPE_MANAGE",
                 "LEAVE.POLICY_MANAGE",
                 "LEAVE.BALANCE_VIEW",

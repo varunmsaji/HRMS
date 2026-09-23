@@ -1,0 +1,1148 @@
+<style>
+  :root{
+    --paper: #f2f0ea;
+    --paper-raised: #fbfaf7;
+    --paper-sunken: #e9e6dd;
+    --ink: #1e2420;
+    --ink-soft: #4a534c;
+    --ink-faint: #7c8379;
+    --line: #dcd6c9;
+    --line-strong: #c7c0ae;
+    --accent: #2b4a4a;
+    --accent-soft: #dce6e3;
+    --accent-strong: #17302f;
+    --crit: #9c3b2c;
+    --crit-soft: #f3ddd6;
+    --high: #a56a1e;
+    --high-soft: #f2e3ca;
+    --med: #4c6a86;
+    --med-soft: #dee7ee;
+    --low: #55735a;
+    --low-soft: #dde8dd;
+    --gap-c: #7a4f9c;
+    --gap-soft: #e6def0;
+    --shadow: 0 1px 2px rgba(30,36,32,0.06), 0 8px 24px -12px rgba(30,36,32,0.18);
+  }
+  :root[data-theme="dark"]{
+    --paper: #161a17;
+    --paper-raised: #1e2420;
+    --paper-sunken: #101411;
+    --ink: #e9e6dd;
+    --ink-soft: #a9b0a6;
+    --ink-faint: #737d73;
+    --line: #333c34;
+    --line-strong: #414c42;
+    --accent: #7fada6;
+    --accent-soft: #223330;
+    --accent-strong: #b7d6cf;
+    --crit: #d98a72;
+    --crit-soft: #3a271f;
+    --high: #d9ac6a;
+    --high-soft: #3a3021;
+    --med: #91b0cc;
+    --med-soft: #22303c;
+    --low: #93b895;
+    --low-soft: #223226;
+    --gap-c: #b79bd6;
+    --gap-soft: #2c2438;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper: #161a17; --paper-raised: #1e2420; --paper-sunken: #101411;
+      --ink: #e9e6dd; --ink-soft: #a9b0a6; --ink-faint: #737d73;
+      --line: #333c34; --line-strong: #414c42;
+      --accent: #7fada6; --accent-soft: #223330; --accent-strong: #b7d6cf;
+      --crit: #d98a72; --crit-soft: #3a271f;
+      --high: #d9ac6a; --high-soft: #3a3021;
+      --med: #91b0cc; --med-soft: #22303c;
+      --low: #93b895; --low-soft: #223226;
+      --gap-c: #b79bd6; --gap-soft: #2c2438;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+
+  .prv-root{
+    --font-display: "Iowan Old Style", "Sitka Text", "Palatino Linotype", Palatino, "Source Serif Pro", Georgia, serif;
+    --font-body: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.65;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 1.25rem 6rem;
+  }
+  .prv-root *{ box-sizing: border-box; }
+  .prv-root ::selection{ background: var(--accent-soft); }
+  .prv-root h1, .prv-root h2, .prv-root h3, .prv-root h4{
+    font-family: var(--font-display); font-weight: 600; text-wrap: balance; color: var(--ink);
+  }
+  .prv-root p{ margin: 0 0 1rem; max-width: 68ch; }
+  .prv-root .wide p{ max-width: 74ch; }
+  .prv-root ul, .prv-root ol{ max-width: 70ch; }
+  .prv-root a{ color: var(--accent-strong); }
+  .prv-root :focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce){ .prv-root *{ scroll-behavior: auto !important; } }
+
+  /* ---------- running header ---------- */
+  .runhead{
+    position: sticky; top: 0; z-index: 5;
+    display:flex; align-items:center; justify-content:space-between; gap: 1rem;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+    padding: .55rem 0; margin: 0 0 1.6rem;
+    font-family: var(--font-mono); font-size: .68rem; letter-spacing: .06em;
+    color: var(--ink-faint); text-transform: uppercase;
+  }
+  .runhead .status-pill{ text-transform: none; letter-spacing: normal; }
+
+  /* ---------- cover ---------- */
+  .cover{ padding: 2.6rem 0 2.4rem; border-bottom: 1px solid var(--line); margin-bottom: 2.8rem; }
+  .cover-eyebrow{
+    display:inline-flex; align-items:center; gap:.5rem; font-family: var(--font-mono);
+    font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--accent);
+    background: var(--accent-soft); padding: .3rem .65rem; border-radius: 3px; margin-bottom: 1.4rem;
+  }
+  .cover h1{ font-size: clamp(2rem, 4vw, 2.85rem); line-height: 1.1; margin: 0 0 .5rem; max-width: 20ch; }
+  .cover h2.subtitle{
+    font-family: var(--font-display); font-weight: 400; font-style: italic; font-size: 1.25rem;
+    color: var(--ink-soft); margin: 0 0 1.3rem;
+  }
+  .cover p.lede{ font-size: 1.08rem; color: var(--ink-soft); max-width: 58ch; margin: 0 0 1.8rem; }
+  .cover-meta{
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1.2rem;
+    border-top: 1px solid var(--line); padding-top: 1.2rem;
+  }
+  .cover-meta dt{
+    font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft);
+    margin-bottom: .3rem; font-family: var(--font-mono);
+  }
+  .cover-meta dd{ margin:0; font-size: .95rem; }
+  .cover-stats{
+    display:flex; flex-wrap:wrap; gap: 1.8rem; margin-top: 2rem; padding-top: 1.6rem; border-top: 1px dashed var(--line);
+  }
+  .cover-stat .num{ font-family: var(--font-display); font-size: 1.9rem; color: var(--accent-strong); line-height:1; }
+  .cover-stat .lbl{ font-size: .74rem; color: var(--ink-soft); margin-top: .3rem; max-width: 14ch; }
+
+  /* ---------- TOC ---------- */
+  .toc-list{ list-style:none; margin:0; padding:0; columns: 1; }
+  @media (min-width: 680px){ .toc-list{ columns: 2; column-gap: 2.2rem; } }
+  .toc-list li{ break-inside: avoid; margin-bottom: .55rem; }
+  .toc-link{
+    display:flex; align-items:baseline; gap: .6rem; text-decoration:none; color: var(--ink);
+    font-size: .92rem; padding: .15rem 0; border-bottom: 1px dotted transparent;
+  }
+  .toc-link:hover{ border-bottom-color: var(--line-strong); color: var(--accent-strong); }
+  .toc-num{ font-family: var(--font-mono); color: var(--accent); font-size: .78rem; flex: 0 0 1.6rem; }
+
+  /* ---------- section rhythm ---------- */
+  section{ margin-bottom: 3.6rem; scroll-margin-top: 4rem; }
+  .section-head{
+    display:flex; align-items:baseline; gap: .85rem; margin-bottom: 1.3rem; padding-bottom: .6rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-head .eyebrow{
+    font-family: var(--font-mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent); white-space: nowrap;
+  }
+  .section-head h2{ font-size: 1.5rem; margin: 0; }
+  .section-sub{ font-size: .84rem; color: var(--ink-faint); margin: -.6rem 0 1.4rem; font-style: italic; }
+
+  .lead-stat{
+    font-size: 1.15rem; color: var(--accent-strong); border-left: 3px solid var(--accent);
+    padding-left: 1rem; margin: 1.4rem 0 1.8rem; max-width: 62ch;
+  }
+  .callout{
+    background: var(--paper-raised); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 4px; padding: .9rem 1.2rem; margin: 1.2rem 0; font-size: .92rem;
+  }
+  .callout.note{ border-left-color: var(--med); }
+  .callout.warn{ border-left-color: var(--high); }
+  .callout p:last-child{ margin-bottom: 0; }
+
+  /* ---------- connection / flow diagram ---------- */
+  .connect{ display:flex; align-items:stretch; gap: 0; margin: 1.6rem 0 2rem; flex-wrap: wrap; }
+  .connect-box{
+    flex: 1 1 220px; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 6px;
+    padding: 1.3rem 1.4rem; box-shadow: var(--shadow);
+  }
+  .connect-box h4{ margin: 0 0 .4rem; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; }
+  .connect-box p{ margin:0; font-size: .92rem; color: var(--ink-soft); max-width: 40ch;}
+  .connect-mid{
+    flex: 0 0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding: 0 1.2rem; min-width: 140px; text-align:center;
+  }
+  .connect-mid .arrow{ font-family: var(--font-mono); color: var(--accent); font-size: 1.3rem; line-height: 1; }
+  .connect-mid span.label{ display:block; font-size: .74rem; color: var(--ink-soft); margin-top:.35rem; letter-spacing: .02em; }
+
+  .pipeline{ display:flex; flex-direction:column; gap:0; margin: 1.6rem 0; border: 1px solid var(--line); border-radius: 8px; overflow:hidden; }
+  .pipe-row{ display:flex; align-items:center; gap: 1rem; padding: .85rem 1.1rem; background: var(--paper-raised); border-bottom: 1px solid var(--line); }
+  .pipe-row:last-child{ border-bottom: none; }
+  .pipe-row .pipe-owner{ flex: 0 0 128px; font-family: var(--font-mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .pipe-row .pipe-body{ font-size: .9rem; color: var(--ink-soft); }
+  .pipe-row .pipe-body strong{ color: var(--ink); font-weight: 600; }
+
+  /* ---------- hierarchy staircase ---------- */
+  .stairs-wrap{ display:grid; grid-template-columns: 1fr 1fr; gap: 1.8rem; margin: 1.6rem 0; }
+  @media (max-width: 720px){ .stairs-wrap{ grid-template-columns: 1fr; } }
+  .stairs h3{
+    font-family: var(--font-body); font-weight: 700; font-size: .8rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--ink-soft); margin: 0 0 .9rem;
+  }
+  .stair{ list-style:none; margin:0; padding:0; counter-reset: step; }
+  .stair li{
+    counter-increment: step; position: relative; background: var(--paper-raised); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 4px; padding: .65rem .9rem .65rem 2.4rem;
+    margin-bottom: .5rem; font-size: .92rem;
+  }
+  .stair li::before{
+    content: counter(step); position: absolute; left: .75rem; top: 50%; transform: translateY(-50%);
+    font-family: var(--font-mono); font-size: .78rem; color: var(--accent);
+  }
+  .stair li:last-child{ margin-bottom: 0; }
+  .stair li .tag{
+    display:inline-block; margin-left:.5rem; font-family: var(--font-mono); font-size: .68rem; color: var(--accent);
+    background: var(--accent-soft); padding: .05rem .4rem; border-radius: 2px; letter-spacing: .03em;
+  }
+
+  /* ---------- flow steps (calculation walkthroughs) ---------- */
+  .flow-step{
+    border: 1px solid var(--line); border-radius: 8px; margin: 0 0 1.1rem; overflow: hidden; background: var(--paper-raised);
+  }
+  .flow-step-head{
+    display:flex; align-items:center; gap: .8rem; padding: .8rem 1.1rem; background: var(--accent-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  .flow-step-id{ font-family: var(--font-mono); font-size: .74rem; color: var(--accent-strong); background: var(--paper-raised); padding: .15rem .5rem; border-radius: 3px; flex: 0 0 auto; }
+  .flow-step-head h4{ margin:0; font-size: 1.02rem; }
+  .flow-body{ padding: 1rem 1.1rem 1.1rem; }
+  .flow-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: .9rem 1.4rem; margin-bottom: .9rem; }
+  .flow-field dt{ font-family: var(--font-mono); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: .25rem; }
+  .flow-field dd{ margin: 0; font-size: .88rem; color: var(--ink-soft); }
+  .example-box{
+    background: var(--paper-sunken); border: 1px dashed var(--line-strong); border-radius: 6px;
+    padding: .8rem 1rem; margin-top: .7rem; font-size: .86rem;
+  }
+  .example-box .ex-label{ font-family: var(--font-mono); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: .4rem; }
+  .example-box code{ font-family: var(--font-mono); font-size: .84em; background: var(--paper-raised); padding: .05rem .3rem; border-radius: 2px; }
+
+  /* ---------- rule cards ---------- */
+  .rule-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap: 1rem; margin: 1.6rem 0; }
+  .rule-card{ background: var(--paper-raised); border: 1px solid var(--line); border-radius: 6px; padding: 1.1rem 1.2rem; }
+  .rule-card h4{ margin: 0 0 .4rem; font-size: .98rem; font-family: var(--font-display); font-weight: 600; }
+  .rule-card p{ margin:0; font-size: .89rem; color: var(--ink-soft); }
+
+  /* ---------- tables ---------- */
+  .table-scroll{ overflow-x: auto; margin: 1.4rem 0; border: 1px solid var(--line); border-radius: 6px; }
+  table{ width: 100%; border-collapse: collapse; min-width: 640px; background: var(--paper-raised); }
+  table.wide-table{ min-width: 900px; }
+  thead th{
+    text-align:left; font-family: var(--font-mono); font-size: .66rem; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--ink-soft); font-weight: 600; padding: .75rem .85rem; border-bottom: 1px solid var(--line); background: var(--accent-soft);
+    position: sticky; top: 0;
+  }
+  tbody td{ padding: .8rem .85rem; border-bottom: 1px solid var(--line); font-size: .86rem; vertical-align: top; }
+  tbody tr:last-child td{ border-bottom: none; }
+  tbody tr:hover td{ background: var(--accent-soft); }
+  td code, .idcode{ font-family: var(--font-mono); font-size: .82em; color: var(--accent-strong); white-space: nowrap; }
+  .table-caption{ font-size: .78rem; color: var(--ink-faint); margin: -.9rem 0 1rem; }
+
+  /* ---------- status pills (product-guide taxonomy: 3 neutral tags only) ---------- */
+  .status-pill{
+    display:inline-flex; align-items:center; gap:.35rem; font-family: var(--font-mono); font-size: .68rem;
+    letter-spacing: .03em; padding: .18rem .55rem; border-radius: 20px; white-space: nowrap; font-weight: 600;
+  }
+  .status-pill .dot{ width:.42rem; height:.42rem; border-radius:50%; display:inline-block; }
+  .status-impl{ background: var(--low-soft); color: var(--low); }
+  .status-impl .dot{ background: var(--low); }
+  .status-partial{ background: var(--high-soft); color: var(--high); }
+  .status-partial .dot{ background: var(--high); }
+  .status-confirmed{ background: var(--accent-soft); color: var(--accent-strong); }
+  .status-confirmed .dot{ background: var(--accent); }
+
+  .legend{ display:flex; flex-wrap:wrap; gap: .7rem 1.2rem; margin: 1rem 0 1.6rem; font-size: .82rem; color: var(--ink-soft); }
+  .legend span.k{ display:inline-flex; align-items:center; gap:.4rem; }
+
+  footer.doc-foot{
+    border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1.4rem; font-size: .8rem; color: var(--ink-soft);
+    display:flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem;
+  }
+
+  @media print{
+    .runhead{ position: static; }
+    section{ break-inside: avoid-page; }
+  }
+</style>
+
+<div class="prv-root">
+
+  <div class="runhead">
+    <span>HRMS &middot; Attendance &amp; Leave &middot; Product Guide</span>
+    <span class="status-pill status-confirmed"><span class="dot"></span>Client Walkthrough &middot; v1.0</span>
+  </div>
+
+  <div class="cover" id="cover">
+    <span class="cover-eyebrow">Attendance &amp; Leave &middot; How the Product Works</span>
+    <h1>How attendance and leave actually work</h1>
+    <h2 class="subtitle">Policy setup, day-to-day behaviour, and what wins when two rules both apply</h2>
+    <p class="lede">A single, detailed walkthrough of both modules exactly as they run today: how a policy is configured and which one applies to a given employee, what happens minute-by-minute when a day is calculated or a leave application is submitted, and &mdash; wherever two rules could both have an opinion &mdash; which one wins. Every mechanism described here is traced to the running calculation engine, not an idealised design.</p>
+    <dl class="cover-meta">
+      <div><dt>Prepared for</dt><dd>Client walkthrough &amp; demo reference</dd></div>
+      <div><dt>Client organisation</dt><dd>&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;&#95;</dd></div>
+      <div><dt>Modules covered</dt><dd>Attendance, Leave Management</dd></div>
+      <div><dt>Document version</dt><dd>v1.0</dd></div>
+      <div><dt>Prepared</dt><dd>8 September 2026</dd></div>
+    </dl>
+    <div class="cover-stats">
+      <div class="cover-stat"><div class="num">91</div><div class="lbl">policies configurable across both modules</div></div>
+      <div class="cover-stat"><div class="num">8</div><div class="lbl">levels in the shared policy-scope hierarchy</div></div>
+      <div class="cover-stat"><div class="num">11</div><div class="lbl">attendance&ndash;leave interaction scenarios mapped</div></div>
+      <div class="cover-stat"><div class="num">36</div><div class="lbl">precedence rules documented, one seam between modules</div></div>
+    </div>
+  </div>
+
+  <!--COVER-->
+
+  <section id="toc">
+    <div class="section-head"><span class="eyebrow">Contents</span><h2>Table of Contents</h2></div>
+    <ol class="toc-list">
+      <li><a class="toc-link" href="#s02"><span class="toc-num">02</span>Executive Summary</a></li>
+      <li><a class="toc-link" href="#s03"><span class="toc-num">03</span>How to Read This Document</a></li>
+      <li><a class="toc-link" href="#s04"><span class="toc-num">04</span>System Overview</a></li>
+      <li><a class="toc-link" href="#s05"><span class="toc-num">05</span>How Attendance Calculates a Day</a></li>
+      <li><a class="toc-link" href="#s06"><span class="toc-num">06</span>How Leave Processes an Application</a></li>
+      <li><a class="toc-link" href="#s07"><span class="toc-num">07</span>Attendance Policy Reference</a></li>
+      <li><a class="toc-link" href="#s08"><span class="toc-num">08</span>Leave Policy Reference</a></li>
+      <li><a class="toc-link" href="#s09"><span class="toc-num">09</span>Precedence: What Wins When Two Rules Apply</a></li>
+      <li><a class="toc-link" href="#s10"><span class="toc-num">10</span>The Scope Hierarchy &mdash; How "Which Policy Applies" Is Decided</a></li>
+      <li><a class="toc-link" href="#s11"><span class="toc-num">11</span>Where Attendance and Leave Meet</a></li>
+      <li><a class="toc-link" href="#s12"><span class="toc-num">12</span>Overtime: From Detection to Approval</a></li>
+      <li><a class="toc-link" href="#s13"><span class="toc-num">13</span>Changing a Policy &mdash; What Happens to History</a></li>
+      <li><a class="toc-link" href="#s14"><span class="toc-num">14</span>Locking a Pay Period</a></li>
+      <li><a class="toc-link" href="#s15"><span class="toc-num">15</span>Quick-Reference Precedence Matrix</a></li>
+      <li><a class="toc-link" href="#s16"><span class="toc-num">16</span>A Month in Varun's Life &mdash; Every Scenario Walkthrough</a></li>
+      <li><a class="toc-link" href="#s17"><span class="toc-num">17</span>About This Document</a></li>
+    </ol>
+  </section>
+
+  <!--TOC-->
+
+  <section id="s02" class="wide">
+    <div class="section-head"><span class="eyebrow">02</span><h2>Executive Summary</h2></div>
+    <p class="lead-stat">Attendance and Leave share one foundation: a single 8-level scope-resolution engine that decides which policy applies to a given employee on a given date, reused identically by every policy type in both modules. The two modules meet at exactly one seam &mdash; Leave writes an approved day into a table Attendance owns, inside the same transaction as the approval &mdash; and stay otherwise independent.</p>
+    <p><strong>Attendance</strong> calculates a daily status &mdash; Present, Half-Day, Absent, Leave, On-Duty, or Incomplete &mdash; from punches, shift rules, holidays, weekly-offs, breaks and roster overrides, in a fixed eight-step evaluation order, and separately detects overtime from the same punches. <strong>Leave</strong> manages leave types, balances, accrual, carry-forward, multi-level approval, and comp-off, and hands its final decision to Attendance through that one narrow connection. Both modules refuse to guess when required configuration is missing, rather than silently defaulting an employee to Present or Working.</p>
+    <p><strong>How this document is organised.</strong> Sections 5&ndash;6 walk a single employee through exactly how a day's attendance status and a leave application are calculated, step by step, with a worked example each. Sections 7&ndash;8 catalogue every configurable policy in each module. Sections 9&ndash;11 show which rule wins whenever two policies could both apply to the same day, including every scenario where Attendance and Leave directly interact. Sections 12&ndash;14 cover overtime, what happens when a policy changes after records already exist, and what a locked pay period means in practice. Section 15 is a single reference matrix of every precedence rule in one place, for quick lookup during a demo or a later question.</p>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>91 policies configurable</h4><p>54 in Attendance, 37 in Leave, plus 4 foundational rules shared by both &mdash; every one traced to a specific, running code path.</p></div>
+      <div class="rule-card"><h4>One shared resolution engine</h4><p>Employee &gt; Shift &gt; Designation &gt; Grade &gt; Department &gt; Branch &gt; Legal Entity &gt; Company &mdash; the most specific configured rule always wins, for every policy type, in both modules.</p></div>
+      <div class="rule-card"><h4>One seam between modules</h4><p>Leave writes exactly one kind of record &mdash; an approved leave day &mdash; into Attendance's own mirror table, at final approval, in the same database transaction.</p></div>
+      <div class="rule-card"><h4>One rule outranks everything</h4><p>Once a pay period is locked, no punch, regularization, overtime approval, roster change, or leave sync can touch a date inside it &mdash; for any reason, by any role (Section 14).</p></div>
+    </div>
+  </section>
+
+  <!--S02-EXEC-->
+
+  <section id="s03" class="wide">
+    <div class="section-head"><span class="eyebrow">03</span><h2>How to Read This Document</h2></div>
+    <p>This document is written to be read start to finish once, then used as a reference afterward.</p>
+    <div class="stairs-wrap">
+      <div class="stairs">
+        <h3>For a client walkthrough or demo</h3>
+        <ol class="stair">
+          <li>Walk through <strong>Sections 5&ndash;6</strong> alongside a live demo &mdash; each step maps directly to something you can show on screen.</li>
+          <li>Use <strong>Section 11</strong> for the questions that come up most in practice: "what if someone is on leave and also worked overtime that day?"</li>
+          <li>Keep <strong>Section 15</strong> open as a lookup table for anything that comes up mid-conversation.</li>
+        </ol>
+      </div>
+      <div class="stairs">
+        <h3>For configuring the system</h3>
+        <ol class="stair">
+          <li>Use <strong>Sections 7&ndash;8</strong> as the master list of every policy you can set, grouped by theme.</li>
+          <li>Read <strong>Section 10</strong> before assigning any policy at a scope narrower than Company &mdash; it explains exactly how the resolver picks a winner.</li>
+          <li>Read <strong>Sections 13&ndash;14</strong> before your first payroll cycle &mdash; they describe what happens to history when a policy changes or a period locks.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="callout note">
+      <p>Every status tag in this document uses one of three plain labels: <span class="status-pill status-impl"><span class="dot"></span>Active</span> (this behaviour runs, exactly as described, today), <span class="status-pill status-confirmed"><span class="dot"></span>By design</span> (a deliberate choice, called out because it can otherwise surprise a new user), and <span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span> (the setting exists and can be changed in the UI, but the calculation engine doesn't act on it yet &mdash; worth knowing before you rely on it).</p>
+    </div>
+  </section>
+
+  <!--S03-HOWTOREAD-->
+
+  <section id="s04" class="wide">
+    <div class="section-head"><span class="eyebrow">04</span><h2>System Overview</h2></div>
+    <p>Both modules sit on the same foundation and meet at exactly one seam. Nothing below is aspirational &mdash; every box and arrow is a real, running code path, expanded in later sections.</p>
+    <div class="pipeline">
+      <div class="pipe-row"><span class="pipe-owner">Foundation</span><span class="pipe-body">An 8-level scope walk (<strong>Employee &gt; Shift &gt; Designation &gt; Grade &gt; Department &gt; Branch &gt; Legal Entity &gt; Company</strong>) resolves which policy version applies to a given employee, on a given date, for a given policy type. Both Attendance and Leave call the identical engine (Section 10).</span></div>
+      <div class="pipe-row"><span class="pipe-owner">Leave module</span><span class="pipe-body">Owns leave types, policies, the balance ledger, applications, and multi-level approval. On final approval, it writes one record &mdash; an approved day, half-day, or cancellation &mdash; into Attendance's own mirror table, inside the same database transaction as the approval itself.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">Attendance module</span><span class="pipe-body">Owns the calendar. Combines punches, shift rules, holidays, weekly-offs, roster overrides and the leave day it received from Leave into one daily status, then separately detects overtime from the same punches.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">Overtime</span><span class="pipe-body">Attendance detects, classifies, caps and routes overtime for approval &mdash; entitlement only. No monetary amount is calculated in either module (Section 12).</span></div>
+      <div class="pipe-row"><span class="pipe-owner">Approval &amp; lock</span><span class="pipe-body">Regularizations, overtime and leave each carry their own approval chain. Once a pay period is finalized and locked, it is read-only to every one of these paths &mdash; the single rule that outranks everything else in the system (Section 14).</span></div>
+      <div class="pipe-row"><span class="pipe-owner">Payroll</span><span class="pipe-body">A separate, future module. Attendance and Leave both stop at paid-day fractions, loss-of-pay days, and overtime entitlement minutes &mdash; converting those into money is that module's job, described in a companion document.</span></div>
+    </div>
+  </section>
+
+  <!--S04-SYSTEMOVERVIEW-->
+
+  <section id="s05">
+    <div class="section-head"><span class="eyebrow">05</span><h2>How Attendance Calculates a Day</h2></div>
+    <p class="section-sub">Transcribed directly from the calculation engine's actual evaluation order (<code class="idcode">attendance/calculation.py::evaluate_day</code>). Every step below runs, in this exact order, for every employee, every day.</p>
+    <div class="callout note">
+      <p>We follow one employee, <strong>Ananya Rao</strong>, through a working example across all eight steps. Where a step depends on policy numbers your company configures (grace minutes, late bands, hour bands), we've used illustrative figures &mdash; labelled as such &mdash; to show how the mechanism works. The one number below that <em>is</em> an actual system default, not an illustration, is called out explicitly.</p>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;01</span><h4>Is the employee even in scope today?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>Whether the date falls inside the employee's <code>Employment.joining_date</code>&ndash;<code>last_working_day</code> window. This reads the <em>Employment</em> record only &mdash; it deliberately does not look at whether the employee is on probation or confirmed.</dd></div>
+          <div class="flow-field"><dt>If not in scope</dt><dd>Nothing below runs at all. If the employee is <code>NOT_JOINED</code> or <code>EXITED</code> for the date, there is no attendance day to calculate.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Ananya joined on <code>2026-03-01</code> and has no exit date. For today's date, <code>2026-09-07</code>, she is <code>ACTIVE</code> &mdash; the day proceeds to Step A-02.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;02</span><h4>Is every setting needed to evaluate the day actually in place?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>That a work calendar resolves for the employee's branch/company, and that every policy type (attendance, overtime, regularization) resolves via the 8-level scope walk. If either is missing, the day is marked <code>CONFIG_ERROR</code> and stops there.</dd></div>
+          <div class="flow-field"><dt>Why it works this way</dt><dd>The system never silently assumes "Working" or "Present" when it doesn't actually know &mdash; a deliberate, fail-closed design used consistently throughout both modules.</dd></div>
+          <div class="flow-field"><dt>If configuration is missing</dt><dd>The day is left in <code>CONFIG_ERROR</code>, visible to HR as a data-quality problem to resolve &mdash; assign a calendar or a policy at some scope that resolves for this employee.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Ananya's branch has a holiday calendar assigned, and an Attendance Policy resolves for her at the Department scope. Configuration is complete &mdash; the day proceeds.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;03</span><h4>Has HR specifically scheduled this person differently today?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>Whether a <strong>published</strong> roster row exists for this employee and date marking it as a week-off override. If so, the day is <code>NOT_EXPECTED</code> &mdash; and this wins even if the calendar says it's an ordinary working day.</dd></div>
+          <div class="flow-field"><dt>Overrides</dt><dd>The calendar's default working-day classification (Step A-05) &mdash; a schedule fact HR entered by name beats the calendar's general pattern.</dd></div>
+          <div class="flow-field"><dt>Can be overridden further?</dt><dd>Only by a full-day approved leave later in the sequence (Step A-07).</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>No roster override exists for Ananya on 2026-09-07 &mdash; the day proceeds under the calendar's default classification.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;04</span><h4>Does a shift resolve for this employee today?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>Whether a <code>ShiftVersion</code> resolves from the employee's base assignment (or a roster override, for the day's actual worked schedule). If none resolves, the missing-shift policy decides between <code>ABSENT</code> and <code>INCOMPLETE</code>.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Ananya is assigned a Fixed shift, 09:30&ndash;18:30. The shift resolves &mdash; the day proceeds to the calendar check.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;05</span><h4>What does the calendar say &mdash; holiday, weekly off, or working day?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>The date against the assigned holiday calendar and weekly-off pattern. A calendar exception (shutdown, special-working, substitute or cancelled holiday) is checked first and can override the base pattern.</dd></div>
+          <div class="flow-field"><dt>When a holiday lands on a weekly off</dt><dd>The day <strong>stays classified as weekly-off</strong>, with a <code>holiday_on_weekly_off</code> flag raised for visibility. The holiday does not promote or substitute the day &mdash; there is no automatic day-in-lieu. This is a deliberate design choice, not an oversight.</dd></div>
+          <div class="flow-field"><dt>What can override this classification</dt><dd>A shift explicitly flagged to <code>operate_on_holiday</code>/<code>operate_on_weekly_off</code>, or a published roster override, both win over the calendar's default.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>2026-09-07 is an ordinary working Monday on Ananya's calendar &mdash; no holiday, no weekly-off. The day proceeds to punch evaluation.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;06</span><h4>What do the punches say?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>Raw punches are first paired (in/out), duplicate punches within a short window are collapsed, then worked minutes are run through the company's configured <strong>hour bands</strong> (Present / Half-Day / Absent by total minutes worked), <strong>late-arrival bands</strong> and <strong>early-departure bands</strong> (minutes late/early beyond a grace period), and, for flexible shifts, a core-hours breach check. None of these mutually suppress each other &mdash; any one can push the day to a worse status.</dd></div>
+          <div class="flow-field"><dt>Configurable</dt><dd>Grace-in/out minutes (system default: <strong>0 minutes</strong> unless your company sets otherwise), late/early bands, hour bands, duplicate-punch collapse window (default 60 seconds), core-hours breach handling.</dd></div>
+          <div class="flow-field"><dt>If a punch is missing</dt><dd>Governed by <code>missing_punch_behaviour</code> &mdash; the system default is <code>INCOMPLETE</code>, deliberately not <code>ABSENT</code>. A zero-punch day never silently becomes Absent unless HR explicitly configures that harsher handling.</dd></div>
+          <div class="flow-field"><dt>Result</dt><dd>A baseline <code>attendance_status</code>, worked minutes, late minutes, early-departure minutes, and any break/core-hours flags.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example configuration (illustrative, not a system default)</div>Suppose Ananya's shift starts 09:30 with a 10-minute grace-in, and her policy's late bands are: 0&ndash;15&nbsp;min late after grace &rarr; flagged only; 16&ndash;60&nbsp;min &rarr; Half-Day; &gt;60&nbsp;min &rarr; Absent. Ananya punches in at <code>09:47</code> &mdash; 7 minutes late <em>after</em> the 10-minute grace window. That falls in the 0&ndash;15 band: she is flagged late, but her baseline status from the hour band (she worked a full day) stays <strong>Present</strong>.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;07</span><h4>Is there approved leave for this day?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>Whether an active <em>Leave Day Projection</em> exists for the employee and date &mdash; a record Attendance owns but Leave writes, the moment a leave application clears its final approval stage.</dd></div>
+          <div class="flow-field"><dt>Overrides</dt><dd><strong>Everything above it</strong> &mdash; including the calendar's NOT_EXPECTED classification from Step A-05 and the roster override from Step A-03. Under the default policy setting (<code>KEEP_LEAVE</code>), leave wins outright regardless of what punches say; late/early minutes are zeroed. Under the alternate <code>PRESENT_CANCEL_LEAVE_HINT</code> setting, the punch-derived status from Step A-06 is kept instead, and a flag is raised for Leave to see &mdash; but the leave application itself is never auto-cancelled by Attendance.</dd></div>
+          <div class="flow-field"><dt>What it does <em>not</em> touch</dt><dd>The underlying <code>calendar_day_type</code> field is left exactly as Step A-05 set it. Overtime minutes detected in Step A-06 are <strong>not</strong> cleared &mdash; a day can carry both a Leave status and a nonzero overtime record (Section 11).</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>No leave is approved for Ananya on 2026-09-07, so this step makes no change &mdash; her day stays <strong>Present</strong>, with a late flag, from Step A-06.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step A&#8209;08</span><h4>Is there an approved on-duty record?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What the system checks</dt><dd>An approved <code>ON_DUTY</code> regularization (e.g. a client visit or official travel day) for the date.</dd></div>
+          <div class="flow-field"><dt>Overrides</dt><dd>The punch-derived status from Step A-06, but <strong>loses to leave</strong> if both an approved leave and an approved on-duty record somehow cover the same date.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>No on-duty record exists &mdash; no change. Ananya's final calculated status for the day is <strong>Present, flagged late</strong>, worked minutes and any detected overtime as computed in Step A-06.</div>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <p><strong>Regularization and Overtime are not steps in this chain.</strong> A regularization is never a "correction" applied on top of the sequence above &mdash; an approved regularization adds new, immutable punch records and the <em>entire</em> sequence A-01&ndash;A-08 re-runs against the new punch set. Overtime is a separate, parallel calculation that runs independently and is never itself overridden by any of the eight steps above (Section 12).</p>
+      <p><strong>One rule sits outside this entire chain and outranks it:</strong> once the pay period covering this date is locked, none of Steps A-01&ndash;A-08 can execute at all for that date &mdash; not punches, not roster, not regularization, not leave-projection sync (Section 14).</p>
+    </div>
+  </section>
+
+  <!--S05-HOWATTENDANCE-->
+
+  <section id="s06">
+    <div class="section-head"><span class="eyebrow">06</span><h2>How Leave Processes an Application</h2></div>
+    <p class="section-sub">Transcribed directly from <code class="idcode">LeaveApplicationService.submit()</code> and <code class="idcode">_approve_internal()</code> &mdash; the actual code order. We follow a second employee, <strong>Rahul Mehta</strong>, applying for three days of Sick Leave, through submission and approval.</p>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;01</span><h4>Which policy applies, and does the calendar resolve?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>The same 8-level scope walk used by Attendance resolves the <code>LeavePolicyVersion</code> for this employee, this leave type, this date. The work calendar is resolved for every date in the requested range.</dd></div>
+          <div class="flow-field"><dt>If information is missing</dt><dd>Fails closed &mdash; submission is rejected outright if either the policy or the calendar doesn't resolve. No guessing.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul's Sick Leave policy resolves at the Department scope. The calendar resolves for his branch. Submission proceeds.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;02</span><h4>Is the submitter allowed to submit this, for this person?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>Checks whether the actual submitter (the employee themselves, their manager, or HR) is permitted to submit on this employee's behalf, per the resolved policy's on-behalf flags.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul is submitting for himself &mdash; <code>allow_employee_request</code> is enabled. Proceeds.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;03</span><h4>Is the employee on probation, and does this leave type allow that?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>Checks <code>Employee.status</code> directly &mdash; if <code>PROBATION</code> and the resolved policy's <code>allowed_during_probation</code> is false, the application is blocked outright, regardless of who submitted it (self, manager-on-behalf, or HR-on-behalf).</dd></div>
+          <div class="flow-field"><dt>Cannot be bypassed by</dt><dd>An on-behalf submission &mdash; the check applies before that distinction matters. The only unblock path is confirming the employee to <code>ACTIVE</code>.</dd></div>
+          <div class="flow-field"><dt>Worth knowing</dt><dd>Leave reads <code>Employee.status</code> for this check; Attendance never does &mdash; the two modules use independent signals for "is this employee active."</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul was confirmed to <code>ACTIVE</code> six months ago. Proceeds.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;04</span><h4>Is the request itself well-formed?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>In order: half-day validity (only permitted for a single-date application), reason/attachment required if the policy demands it, the backdating window (<code>max_backdated_days</code>, unlimited if unset), and the monthly request cap (excluding cancelled applications).</dd></div>
+          <div class="flow-field"><dt>Worth knowing</dt><dd>The backdating window only limits how far back a request can be <em>submitted</em> &mdash; it does not check whether the attendance period for that date is already locked. That's only checked later, at final approval (Step L-09).</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul applies for three consecutive future dates, attaches no document (Sick Leave under 3 days doesn't require one under his company's policy), and this is his first request this month. All checks pass.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;05</span><h4>Which requested dates actually consume balance?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>Each date in the range is classified: <code>WORKING</code>/<code>SPECIAL_WORKING</code> days consume leave; <code>WEEKLY_OFF</code>/<code>HOLIDAY</code>/<code>SHUTDOWN</code> days do not &mdash; <strong>unless</strong> the sandwich rule applies (a non-consuming day bracketed on both sides by consuming leave days within the <em>same application</em> is pulled back into consumption).</dd></div>
+          <div class="flow-field"><dt>Configurable</dt><dd>Sandwich rule (<code>sandwich_rule_enabled</code>, default <strong>true</strong>). The look-back only ever considers dates within this one application &mdash; it never looks at a separately-submitted adjacent application.</dd></div>
+          <div class="flow-field"><dt>If nothing consumes</dt><dd>Fails closed &mdash; a request whose entire range resolves to zero consuming days is rejected as an invalid date range.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul's three requested days are all ordinary working days &mdash; no holiday or weekly-off inside the range, so the sandwich rule is irrelevant here. All 3 days consume balance.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;06</span><h4>Does this clash with another leave type already booked?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>Checked only against an explicit <code>LeaveCombinationRule</code> row with <code>allowed=False</code> between this leave type and another type the employee already has active on an overlapping date. Absence of a rule means the combination is allowed. This only ever governs <em>different</em> leave types &mdash; two overlapping applications of the <strong>same</strong> type are not blocked by any rule today (Section 9).</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul has no other active leave application on these dates. Proceeds.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;07</span><h4>Is there enough balance?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>Balance is not a stored number &mdash; it's the live sum of every entry in the employee's append-only leave ledger. If <code>reserve_balance_on_submission</code> is enabled, other pending (SUBMITTED) applications of the same type are netted first.</dd></div>
+          <div class="flow-field"><dt>Can be overridden?</dt><dd>No. The balance check is a hard block, unconditionally, for every submitter type &mdash; negative balance is never allowed.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul's Sick Leave ledger shows a running balance of 8.0 days. Requesting 3.0 leaves 5.0 remaining &mdash; sufficient. Proceeds to approval-chain resolution.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;08</span><h4>Who approves, and in what order?</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>The configured chain (<code>AUTO</code> / <code>MANAGER</code> / <code>MANAGER_THEN_HR</code> / <code>MANAGER_THEN_HOD_THEN_HR</code> / <code>HR</code>) resolves real identities as of the submission date. Any stage whose identity can't be resolved (no manager on file, employee is their own department head) is silently dropped; if every stage is unresolved, the chain falls back to a single HR stage.</dd></div>
+          <div class="flow-field"><dt>Always-on rule</dt><dd>Self-approval is blocked unconditionally at every stage &mdash; no policy setting can re-enable it.</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul's policy is <code>MANAGER_THEN_HR</code>. His manager is resolved &mdash; the application enters <code>SUBMITTED</code>, routed to his manager first.</div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="flow-step-head"><span class="flow-step-id">Step L&#8209;09</span><h4>Approval: staged vs. final</h4></div>
+      <div class="flow-body">
+        <div class="flow-grid">
+          <div class="flow-field"><dt>What happens</dt><dd>A non-final stage approval only advances <code>approval_stage</code> &mdash; no ledger or attendance effect yet. Only the <strong>final</strong> stage's approval triggers a ledger debit (unless the leave type doesn't require balance) and syncs the approved day(s) into Attendance's Leave Day Projection, inside the same database transaction as the approval write.</dd></div>
+          <div class="flow-field"><dt>What can block final approval</dt><dd>If the attendance period covering any of the dates is already <strong>closed</strong>, the sync is refused and the <em>entire</em> approval transaction rolls back &mdash; the application stays <code>SUBMITTED</code>, never partially approved (Section 14).</dd></div>
+        </div>
+        <div class="example-box"><div class="ex-label">Example</div>Rahul's manager approves &mdash; stage advances to HR, no ledger effect yet. HR then approves: this is the final stage. The attendance period for these dates is still open, so the ledger debits 3.0 days and the projection syncs into Attendance in one atomic step. Rahul's balance is now 5.0; Attendance will show those three dates as <code>LEAVE</code> the next time it calculates them.</div>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <p><strong>Rejection is terminal at every stage.</strong> If HR rejects after the manager already approved, the rejection stands &mdash; there is no "send it back" step, and no ledger or attendance effect occurs.</p>
+      <p><strong>Cancellation is the only reversal.</strong> There is no separate "withdraw" or "amend" action. The original submitter (only) can cancel a <code>SUBMITTED</code> application with no side effect, or an <code>APPROVED</code> one, which reverses the ledger debit and cancels the Attendance projection &mdash; but only while the attendance period is still open. If it's closed, cancellation is refused the same way approval is (Section 14).</p>
+    </div>
+  </section>
+
+  <!--S06-HOWLEAVE-->
+
+  <section id="s07">
+    <div class="section-head"><span class="eyebrow">07</span><h2>Attendance Policy Reference</h2></div>
+    <p class="section-sub">Every configurable attendance policy, grouped by theme.</p>
+    <div class="legend">
+      <span class="k"><span class="status-pill status-impl"><span class="dot"></span>Active</span> runs exactly as configured</span>
+      <span class="k"><span class="status-pill status-confirmed"><span class="dot"></span>By design</span> a deliberate choice worth knowing about</span>
+      <span class="k"><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span> settable in the UI, has no effect on calculation yet</span>
+    </div>
+
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Punch, time &amp; break rules</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Grace-in / grace-out minutes</td><td>Leeway before lateness/early-departure starts counting. System default: 0 minutes.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Late-arrival &amp; early-departure bands</td><td>Ordered minute ranges that classify how late/early counts (flag &rarr; Half-Day &rarr; Absent).</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Hour bands</td><td>Total worked minutes &rarr; Present / Half-Day / Absent.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Half-day split method</td><td>An alternate way to determine half-day. Half-day status is always driven by hour bands regardless of this setting.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Missing-punch behaviour</td><td>Incomplete / Absent / Auto-close / Require-regularization when a punch is unmatched. Default is Incomplete.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Missing-shift behaviour</td><td>Absent/Incomplete when no shift resolves for the day.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Multi-punch pairing mode</td><td>Pair every in/out (PAIR_ALL) vs. only the first-in and last-out.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Duplicate-punch collapse window</td><td>Merges same-direction punches within a short window (default 60s) &mdash; guards against double-taps on a biometric device.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Punch rounding</td><td>Round punch times before evaluation.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Split-shift missed-block handling</td><td>What happens when a block of a split shift is missed entirely (handled block-by-block).</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Core-hours (flex) breach behaviour</td><td>Mandatory presence window inside a Flexible shift.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Excess-break behaviour</td><td>Consequence of exceeding max break duration, both single-day and cumulative across a period.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Auto-close</td><td>Auto-insert a clock-out for a forgotten punch.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Cumulative late-count trigger</td><td>"N lates in a month &rArr; Half-Day" &mdash; monthly windows only.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Early-departure requires approval</td><td>Pre-approval gate before an employee can leave early.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>On-Duty</td><td>A first-class attendance status for client visits/official travel, fully wired end-to-end.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>WFH</td><td>A selectable status; the calculation engine doesn't yet assign it to a day automatically.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Break rules</td><td>Fixed-window or flexible-duration breaks, paid/unpaid, mandatory, capped duration.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Overtime</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>OT eligibility mode</td><td>Never / Shift-flagged / Always / Grade-based. Grade-based currently behaves the same as Always &mdash; no distinct grade check runs yet.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>OT minimum minutes &amp; rounding</td><td>Excess below a threshold is discarded; the remainder is rounded per policy.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>OT daily/weekly/monthly caps</td><td>Clamps detected OT to configured ceilings, before it ever reaches an approver.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>OT approval chain</td><td>Whether OT needs human sign-off. A pre-approval requirement field exists; OT is currently always detected and recorded after the fact regardless of its value.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Night-OT classification</td><td>Whether overnight OT is classified as Night-rate. Currently derives only from the shift being flagged as crossing midnight, not from actual punch clock-time.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>OT day-class + informational rate</td><td>Classifies OT (Normal/Holiday/Weekly-off/Night); the configured multiplier is informational only and never calculates money.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Comp-off (time off instead of pay)</td><td>Converts approved OT into a time-off fact for Leave to convert into balance.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Regularization &amp; corrections</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Who may request a correction</td><td>Employee / manager / HR submission gates.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Backdating &amp; volume limits</td><td>How far back a correction can be requested, and how many per month.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Reason / attachment required</td><td>Submission-content gates.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Allowed correction types</td><td>Missing punch, wrong punch, wrong shift, wrong status, WFH, On-Duty, excess break, full day, early-departure approval.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Approval chain</td><td>Auto / Manager / Manager-then-HR / HR.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Auto-approve small clock errors</td><td>A window under which a correction auto-approves.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>"Blocked when locked" flag</td><td>The period-level lock blocks submission on a locked date unconditionally, regardless of this flag's value.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Calendar, shift &amp; roster</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Work calendar / day-type resolution</td><td>Working / Weekly-off / Holiday / Special-working / Shutdown.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Holiday types</td><td>Public / Company / Optional / Restricted / Working-holiday.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Calendar exceptions</td><td>Shutdown, special-working, substitute-holiday, cancel-holiday &mdash; checked before the base pattern.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Optional/restricted holiday default</td><td>Whether these are treated as hard holidays by default. System default: <strong>not</strong> off by default.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Weekly-off patterns</td><td>Fixed weekdays / Nth weekday / Alternate / Custom.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Holiday vs. weekly-off precedence</td><td>A hard holiday landing on a weekly-off day stays classified weekly-off, flagged &mdash; no automatic substitute day.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Roster overrides</td><td>Per-employee, per-date schedule override; only published rows take effect.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Shift versioning</td><td>Draft &rarr; Published, effective-dated.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Shift types</td><td>Fixed / Flexible / Split.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Cross-midnight attribution</td><td>A duty that crosses midnight is attributed entirely to its start date.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Policy-assignment precedence</td><td>The 8-level scope chain (Employee&gt;Shift&gt;Designation&gt;Grade&gt;Department&gt;Branch&gt;Legal Entity&gt;Company), shared with Leave.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Timezone resolution</td><td>Shift &gt; Branch &gt; Company.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Lock, lifecycle &amp; leave interaction</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Period lock / finalize / reopen</td><td>Freezes a payroll cycle; open &harr; closed lifecycle.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Finalize validation blockers</td><td>Six typed blocking conditions; any one prevents finalize, atomically.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Leave Day Projection overlay</td><td>Attendance-owned mirror table that Leave writes into on approval.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Employment population gate</td><td>Not-joined / Active / Exited &mdash; derived from Employment dates, not confirmation status.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Paid / loss-of-pay fraction mapping</td><td>Converts attendance status into a payroll-facing paid/unpaid fraction.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Fail-closed configuration errors</td><td>No silent "Working"/"Present" default when configuration is missing.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!--S07-ATTPOLICIES-->
+
+  <section id="s08">
+    <div class="section-head"><span class="eyebrow">08</span><h2>Leave Policy Reference</h2></div>
+    <p class="section-sub">Every configurable leave policy, plus the four foundational policies shared across both modules. Same status legend as Section 7.</p>
+
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Leave type, eligibility &amp; probation</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Leave type identity</td><td>Paid-by-default, requires-balance, is-comp-off, statutory category.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Probation restrictions</td><td>Blocks application and/or accrual while an employee is on probation, per leave type.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>On-behalf submission</td><td>Whether an employee, their manager, or HR can submit for the employee.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Self-approval block</td><td>Unconditional &mdash; no policy setting can re-enable it.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Gender restriction on leave type</td><td>Maternity/Paternity are distinguished by a category label only, not checked against employee gender.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Tenure (minimum service) restriction</td><td>A minimum-service-days gate before a leave type can be used.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Department/designation/grade/location eligibility</td><td>Not a distinct field &mdash; inherited entirely from which policy resolves via the shared 8-level scope engine.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active (via scope engine)</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Balance, accrual &amp; comp-off</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Balance = live ledger sum</td><td>No stored balance column &mdash; always the running sum of an append-only ledger.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Monthly accrual + proration</td><td>Prorated by worked days over total days in the month; idempotent.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Yearly accrual + leave-year setting</td><td>Calendar / Financial / Custom / Anniversary year; flat credit, no proration, by design.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Carry-forward cap</td><td>A maximum days figure; unlimited if unset, use-it-or-lose-it if zero.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Encashment</td><td>Allowed flag, max days, minimum balance retained after encashing.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Encashment frequency / calculation basis</td><td>How often and how encashment is computed.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Comp-off credit &amp; expiry</td><td>Converts approved overtime minutes into leave days.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Statutory minimum enforcement</td><td>Blocks <em>publishing</em> a policy version below the strictest configured legal floor.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active (publish-time)</span></td></tr>
+        <tr><td>Negative balance</td><td>Hard-capped at current balance &mdash; never goes negative.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Reserved/pending balance</td><td>Optionally nets other pending applications of the same type against balance at submission. Default off.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Applications, overlap &amp; sandwich rule</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Combination rule</td><td>Blocks overlap between two <em>different</em> leave types only when an explicit deny rule exists.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Same-type overlap</td><td>Two overlapping applications of the <em>same</em> leave type can both be submitted and approved today.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active (unrestricted)</span></td></tr>
+        <tr><td>Half-day mechanics</td><td>Only valid for a single-date application.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Holiday/weekly-off + sandwich rule</td><td>Non-working days inside a range don't consume balance unless bracketed by leave days (same application only).</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Backdated &amp; future leave</td><td>A configurable backdating window; no restriction on future-dated leave &mdash; it's the expected case.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Monthly cap &amp; reason/attachment</td><td>Caps requests per month; can require a reason or attachment.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Cancellation &amp; rejection</td><td>Submitter-only cancellation; rejection is terminal at any stage, no ledger effect.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Withdrawal / modification</td><td>No separate "withdraw" verb and no amend/modify-in-place.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design (cancellation is the sole reversal)</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Approval, versioning &amp; sync to Attendance</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Multi-level approval chain</td><td>Auto / Manager / Manager-then-HR / Manager-then-HOD-then-HR / HR.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Resolution fallback &amp; self-head guard</td><td>Unresolved stages drop silently; an applicant who is their own department head is never routed to themselves.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Approval delegation</td><td>A delegate/out-of-office/acting-manager mechanism.</td><td><span class="status-pill status-partial"><span class="dot"></span>Configurable, not yet wired</span></td></tr>
+        <tr><td>Policy effective-dating + version snapshot</td><td>Insert-new/close-previous versioning; an application permanently records the policy version in force when it was submitted.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Leave&rarr;Attendance projection sync</td><td>Final-stage approval writes into Attendance's mirror table, same transaction.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Leave-specific period lock</td><td>All lock protection for a leave-affecting date is borrowed entirely from Attendance's period lock &mdash; there is no independent leave-side lock.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Shared across both modules</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Policy</th><th>What it controls</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>8-level policy-assignment engine</td><td>The single "most specific rule wins" scope walk both modules resolve every policy through.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Probation&rarr;Active confirmation</td><td>A single explicit transition, read directly by Leave; Attendance never reads it, using Employment dates instead.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+        <tr><td>Effective-dated modelling pattern</td><td>Insert-new/close-previous, used uniformly across nearly every policy and assignment table in the system.</td><td><span class="status-pill status-confirmed"><span class="dot"></span>By design</span></td></tr>
+        <tr><td>Joining date / last working day as anchors</td><td>Read by both modules for proration and population status.</td><td><span class="status-pill status-impl"><span class="dot"></span>Active</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!--S08-LEAVEPOLICIES-->
+
+  <section id="s09">
+    <div class="section-head"><span class="eyebrow">09</span><h2>Precedence: What Wins When Two Rules Apply</h2></div>
+    <p class="section-sub">Every meaningful place two rules could both apply to the same day or the same request, and which one currently wins.</p>
+
+    <h3 style="font-size:1.02rem;margin:1.4rem 0 .6rem;">Attendance &mdash; policy vs. policy</h3>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Situation</th><th>Current behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>A public holiday falls on a weekly-off day</td><td>Weekly Off classification stands, flagged; the holiday doesn't promote or substitute the day.</td></tr>
+        <tr><td>A shift is explicitly flagged to operate on a holiday/weekly-off</td><td>The shift's "operates" flag wins over the calendar's default.</td></tr>
+        <tr><td>Calendar says Weekly Off, but a published roster override says Working</td><td>Roster wins &mdash; a named schedule fact beats the calendar's general pattern.</td></tr>
+        <tr><td>Roster moves someone to a different shift for the day, and that shift has its own resolved policy</td><td>Roster wins for the actual worked schedule. Policy resolution (grace minutes, bands, etc.) still uses the employee's <em>base</em> shift assignment for that day, not the roster shift.</td></tr>
+        <tr><td>An employee-, branch-, or shift-scoped policy vs. a broader-scope policy</td><td>The more specific scope always wins (8-level walk).</td></tr>
+        <tr><td>An approved regularization vs. the original punches</td><td>Both persist &mdash; regularization adds new punch records, originals are never edited or deleted.</td></tr>
+        <tr><td>Approved leave and detected overtime, same day</td><td>Both are simply recorded as true, independently &mdash; leave does not clear detected OT minutes (Section 11).</td></tr>
+        <tr><td>Holiday/weekly-off vs. overtime rate classification</td><td>Classification only (sets the day-class used for rate lookup) &mdash; doesn't grant or deny OT itself.</td></tr>
+        <tr><td>Night OT vs. Normal OT classification</td><td>Derived only from the shift being flagged cross-midnight, never from actual punch clock-time.</td></tr>
+        <tr><td>OT cap vs. OT eligibility</td><td>Sequential, no conflict &mdash; eligibility gates detection first, the cap then clamps the result.</td></tr>
+        <tr><td>Period lock vs. a regularization submission or approval</td><td>Lock wins, unconditionally, regardless of any policy flag's value.</td></tr>
+        <tr><td>A locked historical record vs. a newly published policy version</td><td>The historical record stands untouched; only an explicit reopen + manual recompute can change it.</td></tr>
+        <tr><td>Two policy assignments accidentally configured at the same scope tier</td><td>Not structurally prevented; whichever the resolver's query returns first is the one applied &mdash; an edge case to avoid rather than a supported configuration.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Leave &mdash; policy vs. policy</h3>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Situation</th><th>Current behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>Employee-specific leave policy vs. company-wide default</td><td>Employee-specific wins (same 8-level engine as Attendance).</td></tr>
+        <tr><td>Leave-type policy vs. a "global" company leave policy</td><td>Not a real conflict &mdash; no separate global layer exists to compete with the type-level policy.</td></tr>
+        <tr><td>Eligibility restrictions (e.g. probation) vs. balance sufficiency</td><td>Eligibility is checked first, balance last (Step L-03 before L-07).</td></tr>
+        <tr><td>Probation restriction vs. leave already accrued</td><td>If accrual is also blocked during probation, balance stays literally zero &mdash; the two compound.</td></tr>
+        <tr><td>Negative-balance permission vs. the balance limit</td><td>Balance limit always wins; negative balance is never allowed.</td></tr>
+        <tr><td>Carry-forward cap vs. expiry, and vs. existing balance</td><td>Same mechanism &mdash; the cap enforced at year-end sweep <em>is</em> the expiry mechanism; anything above it is forfeited.</td></tr>
+        <tr><td>Two overlapping applications of the <em>same</em> leave type</td><td>Both can be approved and both consume balance independently &mdash; no rule blocks it today.</td></tr>
+        <tr><td>Leave cancellation vs. attendance already locked</td><td>Blocked entirely if the period is closed; the only remedy is reopening the whole attendance period (Section 11).</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Policy vs. approval action (can an approver bypass the policy?)</h3>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Situation</th><th>Which wins</th></tr></thead>
+      <tbody>
+        <tr><td>Regularization policy scope (allowed types, chain) vs. a manager/HR approval action</td><td>Policy wins &mdash; an approver can't approve a type outside policy or skip a configured stage.</td></tr>
+        <tr><td>OT cap vs. HR/Manager OT approval</td><td>Policy wins &mdash; approval only accepts/rejects the already-capped amount.</td></tr>
+        <tr><td>"Keep incomplete" lock behaviour vs. HR wanting to finalize anyway</td><td>Policy wins &mdash; finalize is blocked entirely until the incomplete day is resolved.</td></tr>
+        <tr><td>Probation restriction vs. a manager/HR submitting leave on the employee's behalf</td><td>Policy wins regardless of who submits.</td></tr>
+        <tr><td>Statutory minimum vs. HR publishing a leave policy version below it</td><td>Policy (statutory floor) wins &mdash; publish is blocked, no override path exists.</td></tr>
+        <tr><td>"Blocked when locked" flag vs. someone wanting to submit on a locked day</td><td>The unconditional period lock always applies &mdash; this flag has no independent effect.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="table-caption">Attendance&ndash;Leave cross-module scenarios are covered in Section 11. Override-authority detail (who, approval required, reversible) is in Section 10.</p>
+  </section>
+
+  <!--S09-OVERRIDESWHAT-->
+
+  <section id="s10">
+    <div class="section-head"><span class="eyebrow">10</span><h2>The Scope Hierarchy &mdash; How "Which Policy Applies" Is Decided</h2></div>
+    <p>There is exactly <strong>one</strong> scope-resolution hierarchy, reused by every policy in both modules, and it runs from most specific to least specific &mdash; not top-down by organisational seniority. There is no separate "Employment Category" scope tier; Grade and Designation are the closest equivalents.</p>
+
+    <div class="stairs-wrap">
+      <div class="stairs" style="grid-column: 1 / -1;">
+        <h3>The one hierarchy &mdash; most specific wins</h3>
+        <ol class="stair">
+          <li><strong>Employee-specific assignment</strong> &mdash; a policy set for this one person by name</li>
+          <li><strong>Shift</strong> &mdash; the policy tied to the employee's assigned shift</li>
+          <li><strong>Designation</strong></li>
+          <li><strong>Grade</strong></li>
+          <li><strong>Department</strong></li>
+          <li><strong>Branch</strong></li>
+          <li><strong>Legal Entity</strong></li>
+          <li><strong>Company</strong> (the fallback, least specific) <span class="tag">every policy type resolves through this exact order</span></li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="callout note">
+      <p><strong>Sitting outside this ladder entirely, in ascending order of authority:</strong></p>
+      <p>1. <strong>An approved transaction</strong> (a regularization or OT approval, a leave approval) is not a competing policy assignment &mdash; it's a one-time action that executes strictly within whatever the resolved policy already allows. It cannot approve an OT amount above the configured cap, or a regularization type outside the policy's allowed list.</p>
+      <p>2. <strong>HR manual actions</strong> (approving, rejecting, publishing a new policy version, reopening a period) are the same kind of transaction-level action as above &mdash; not a distinct "override" layer with its own precedence. The one place HR has unilateral, unscoped authority is publishing a more specific policy assignment, which is just the ladder above working as designed.</p>
+      <p>3. <strong>A locked, historical record beats every single thing above it, including HR manual actions.</strong> This is the one rule with no exception anywhere in either module (Section 14).</p>
+    </div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Override authority, condition by condition</h3>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>What can be changed</th><th>How</th><th>Who</th><th>Approval needed?</th><th>Reversible?</th></tr></thead>
+      <tbody>
+        <tr><td>Grace minutes, bands, missing-punch handling</td><td>Publish a higher-priority policy assignment</td><td>HR (publishing a more specific-scope version)</td><td>No &mdash; publishing itself is the change</td><td>Only forward (new version); old is preserved</td></tr>
+        <tr><td>OT caps</td><td>Republish the OT policy</td><td>HR, policy-level only</td><td>No</td><td>Same &mdash; no per-request cap waiver exists</td></tr>
+        <tr><td>Regularization approval chain</td><td>Approved transaction</td><td>The resolved manager (stage 1) / HR (final stage)</td><td>Yes, matching the configured chain</td><td>Not directly &mdash; only a further regularization or a reopen + recompute</td></tr>
+        <tr><td>Period lock / finalize</td><td>Admin action</td><td>HR with lock permission (close) / unlock permission (reopen, deliberately separate &amp; higher-risk)</td><td>Validation must pass to lock; a reason is required to reopen</td><td>Reopen is reversible (can re-lock), but does not restore prior state</td></tr>
+        <tr><td>Finalize validation blockers</td><td>Resolve the underlying condition</td><td>&mdash;</td><td>N/A</td><td>N/A &mdash; cannot be bypassed</td></tr>
+        <tr><td>Holiday vs. weekly-off classification for one specific date</td><td>A calendar exception row</td><td>HR</td><td>No</td><td>Yes, while the date is unlocked</td></tr>
+        <tr><td>Roster (shift/week-off for one date)</td><td>Employee-specific override</td><td>HR/Manager, but only <em>published</em> rows take effect</td><td>No (draft stage)</td><td>Yes, while period unlocked</td></tr>
+        <tr><td>Probation restriction on a leave type</td><td>Publish a higher-priority policy version</td><td>HR</td><td>No</td><td>Same as any policy version change</td></tr>
+        <tr><td>Self-approval (regularization, OT, <em>and</em> leave)</td><td>None &mdash; blocked unconditionally</td><td>N/A</td><td>N/A</td><td>N/A</td></tr>
+        <tr><td>Statutory minimum on a leave policy</td><td>None &mdash; publish is blocked outright</td><td>N/A (only remedy: raise the accrual rate or adjust the statutory minimum row itself)</td><td>N/A</td><td>N/A</td></tr>
+        <tr><td>Negative balance</td><td>None &mdash; hard business rule</td><td>N/A</td><td>N/A</td><td>N/A</td></tr>
+        <tr><td>Cancelling an approved leave application</td><td>Employee-specific action</td><td>Original submitter only &mdash; no manager/HR override path exists</td><td>N/A</td><td>Reverses ledger + projection, unless the period is locked</td></tr>
+        <tr><td>Rejecting after an earlier stage approved</td><td>Approved transaction</td><td>Whoever holds the current stage's authority</td><td>N/A</td><td>Terminal &mdash; no send-back</td></tr>
+        <tr><td>A closed attendance period, from Leave's side</td><td>System-level</td><td>Only Attendance's unlock-permission holder, by reopening the whole period</td><td>Reason required to reopen</td><td>Yes via reopen, but no automatic reconciliation on the Leave side</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!--S10-OVERRIDEHIERARCHY-->
+
+  <section id="s11">
+    <div class="section-head"><span class="eyebrow">11</span><h2>Where Attendance and Leave Meet</h2></div>
+    <p class="section-sub">What happens when Attendance and Leave both have an opinion about the same day. Every scenario below is backed by a passing test or an explicit, cited code path.</p>
+
+    <div class="connect">
+      <div class="connect-box"><h4>Leave</h4><p>Decides whether someone is approved to be away, for how much of the day, and whether it's paid.</p></div>
+      <div class="connect-mid"><span class="arrow">&#8594;</span><span class="label">writes once, at final approval, into one shared table &mdash; inside the same transaction</span></div>
+      <div class="connect-box"><h4>Attendance</h4><p>Owns the calendar. Combines that decision with punches, holidays and shift rules into the day's final record.</p></div>
+    </div>
+    <p>Leave never writes an Attendance table directly, and Attendance never writes a Leave table directly &mdash; the entire connection is this one seam, called the Leave Day Projection. If Attendance refuses the write (most commonly: the period is locked), the whole Leave-side transaction rolls back and the application is left exactly as it was before &mdash; never partially approved.</p>
+
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Scenario</th><th>Current behaviour</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Approved leave + a full day of punches</strong></td><td>Default policy (<code>KEEP_LEAVE</code>): status stays <strong>Leave</strong> regardless of the punches; late/early are zeroed. Alternate policy (<code>PRESENT_CANCEL_LEAVE_HINT</code>): status becomes Present, a flag is raised for Leave to see, but the leave application itself is never auto-cancelled.</td></tr>
+        <tr><td><strong>Day already calculated Absent, then leave is approved afterward</strong></td><td>Approval triggers a recompute of that date; the leave overlay re-applies on top, turning the day Leave (or Half-Day).</td></tr>
+        <tr><td><strong>Half-day unpaid leave + a full day of punches</strong></td><td>Status becomes Half-Day: the worked half stays paid/present-derived, the leave half is unpaid/leave-derived. Multiple half-day projections on one date sum their fractions. Half-day leave with <em>no</em> punches at all &rarr; status is Leave, not Half-Day.</td></tr>
+        <tr><td><strong>Leave + late arrival</strong></td><td>Under default <code>KEEP_LEAVE</code>, late minutes are explicitly zeroed once leave wins the day. Under <code>PRESENT_CANCEL_LEAVE_HINT</code>, punch-derived lateness is preserved.</td></tr>
+        <tr><td><strong>Half-day leave + early departure on the worked half</strong></td><td>No distinct rule beyond the general half-day fraction mechanics &mdash; early-departure bands apply to the punch-derived portion.</td></tr>
+        <tr><td><strong>Approved leave + overtime detected the same day</strong></td><td>Both are simply recorded as true, independently &mdash; the leave overlay does not clear detected OT minutes. A day can show <strong>Leave</strong> as its status and still carry a nonzero, approvable overtime record.</td></tr>
+        <tr><td><strong>Leave falls on a holiday</strong></td><td>At application time, the holiday date inside the range is skipped, not deducted, unless the sandwich rule pulls it in. At calculation time, if leave is somehow active on that date, it still wins the status slot, but the underlying holiday classification is never overwritten.</td></tr>
+        <tr><td><strong>Leave falls on a weekly off</strong></td><td>Identical mechanism to a leave-on-holiday.</td></tr>
+        <tr><td><strong>Sandwich rule &mdash; leave / holiday / weekly-off / consecutive leave</strong></td><td>A non-consuming day (holiday or weekly-off) bracketed on both sides by leave-consuming days <em>within the same application</em> is pulled back into consumption. A Friday&rarr;Monday application bracketing a Sunday consumes all 4 days; disabling the setting excludes the Sunday. The look-back never spans two separately-submitted applications.</td></tr>
+        <tr><td><strong>Leave reaches final approval, but the attendance period for that date is already locked</strong></td><td>The projection write is refused; because it happens inside the same transaction as the approval, the <em>entire</em> leave approval fails &mdash; the application stays Submitted, never partially approved. The only remedy today is reopening the whole attendance period.</td></tr>
+        <tr><td><strong>Approved leave is cancelled after the attendance period is already locked</strong></td><td>Refused the same way &mdash; the whole cancellation (ledger credit-back + projection cancel) rolls back; the application stays Approved, balance stays debited, until the period is reopened.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Further interactions worth knowing</h3>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Comp-off: Attendance emits, Leave decides</h4><p>Attendance records approved OT convertible to time-off as a read-only fact (minutes + expiry date). Leave's own sweep converts it to balance using its configured day-length &mdash; and skips entirely, rather than guessing, if that isn't configured. A clean one-directional handoff.</p></div>
+      <div class="rule-card"><h4>Re-syncing the same application is idempotent</h4><p>If Leave re-syncs the same application ID (e.g. after a correction), the existing projection row updates in place &mdash; no duplicates, and flipping paid/unpaid correctly flips the paid/LOP split.</p></div>
+      <div class="rule-card"><h4>Overlapping projections are rejected</h4><p>If active leave fractions for one employee-date would sum above 1.00, the sync is refused outright &mdash; fail-closed, not a silent overwrite.</p></div>
+      <div class="rule-card"><h4>Cancelling reverts to the punch-derived truth</h4><p>Cancel a projection on a day with real punches, and the status dynamically reverts to whatever the punches alone produce &mdash; the overlay is recomputed live, never cached.</p></div>
+      <div class="rule-card"><h4>PROBATION means different things to each module</h4><p>Attendance derives "is this person active" purely from Employment dates and never reads confirmation status; Leave reads confirmation status directly for probation checks. No conflict has been observed between the two.</p></div>
+      <div class="rule-card"><h4>Backdated leave can be submitted for an already-locked date</h4><p>Nothing checks the attendance lock at <em>submission</em> &mdash; only at final approval. An application can sit Submitted before failing at approval time.</p></div>
+    </div>
+    <p class="table-caption">Not an interaction: Leave never overwrites the underlying calendar day-type (holiday/weekly-off/working) &mdash; only the displayed attendance status and paid/LOP fractions change.</p>
+  </section>
+
+  <!--S11-INTERACTION-->
+
+  <section id="s12">
+    <div class="section-head"><span class="eyebrow">12</span><h2>Overtime: From Detection to Approval</h2></div>
+    <div class="callout">
+      <p><strong>Architectural boundary:</strong> Attendance determines and records overtime <em>entitlement</em> &mdash; duration, classification, and approval. Payroll is responsible for the final <em>monetary</em> overtime amount, using the employee's actual wage and statutory/company payroll rules. Attendance does not, and by design should not, calculate money. See the companion document on the Attendance&rarr;Payroll fact contract for full detail on that boundary.</p>
+    </div>
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Eligibility</h3>
+    <p>Governed by an eligibility mode: <em>Never</em> and <em>Shift-flagged</em> are both fully wired. <em>Always</em> and <em>Grade-based</em> currently both mean "always eligible" &mdash; a real grade check isn't wired in yet, so if grade-based OT eligibility matters to you, flag it before relying on that setting.</p>
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Calculation</h3>
+    <p>Worked minutes beyond the shift's scheduled end are the starting point. A configurable minimum-minutes threshold discards trivial excess; the remainder is rounded per policy, then clamped against daily, weekly and monthly caps. The weekly/monthly caps look at sibling records for the period, so recomputing one day's OT after the fact can shift slightly if neighbouring days have also changed &mdash; an expected characteristic of period-based capping, not a defect.</p>
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Classification</h3>
+    <p>Each OT record is classified by day-class &mdash; Normal, Holiday, Weekly-Off, or Night &mdash; which determines which informational rate row applies for later payroll reference. Holiday and Weekly-Off classification are driven directly by the calendar. Night classification currently comes only from the employee's shift being flagged as crossing midnight, not from the actual punch clock-time &mdash; overtime worked late at night on an ordinary day-shift is not classified as Night today.</p>
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Approval</h3>
+    <p>Follows the same manager/HR approval pattern as regularization, with self-approval blocked unconditionally at every stage. OT is detected and recorded after the fact; a "requires pre-approval" setting exists but doesn't change this yet.</p>
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Caps &amp; overrides</h3>
+    <p>Daily/weekly/monthly caps clamp the detected amount before it ever reaches an approver &mdash; there is no per-request waiver path around a configured cap. A terminal OT record (approved, auto-approved, or rejected) is never revised by a later recompute, even if the OT policy changes afterward.</p>
+    <h3 style="font-size:1.02rem;margin:1.6rem 0 .6rem;">Comp-off &mdash; the boundary with Leave</h3>
+    <p>When OT is approved as "time off instead of pay," Attendance emits the converted minutes and an expiry date as a read-only fact. Leave's own comp-off sweep converts that into leave balance days, using its own configured day-length &mdash; consistent with the fail-closed principle throughout this system, it skips the conversion entirely rather than guessing if that day-length isn't configured.</p>
+    <p class="table-caption">This document deliberately does not describe a universal statutory multiplier (such as "2&times;") &mdash; the informational rate rows in the system are configurable per company and are not tied to any specific jurisdiction's statutory requirement.</p>
+  </section>
+
+  <!--S12-OVERTIME-->
+
+  <section id="s13">
+    <div class="section-head"><span class="eyebrow">13</span><h2>Changing a Policy &mdash; What Happens to History</h2></div>
+    <p>Every versioned policy in the system &mdash; attendance, overtime, regularization, leave, shifts, and the scope assignments that connect them &mdash; follows one uniform pattern: publishing a change <strong>inserts a new row and closes the previous one</strong>. A published version's core fields are never edited in place. The one deliberate exception is employee bank details, kept open after exit for final settlement.</p>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Change scenario</th><th>Existing records</th><th>New records</th><th>Recalculation</th></tr></thead>
+      <tbody>
+        <tr><td>New attendance/OT/regularization policy published, effective today</td><td>Untouched &mdash; the old version still covers past days</td><td>Applies from today on the next calculation</td><td>Automatic only on next <code>calculate()</code> for affected dates; no bulk trigger</td></tr>
+        <tr><td>New policy published with a <strong>backdated</strong> effective date</td><td>Unlocked days in that range <em>will</em> change &mdash; version resolution is strictly by date</td><td>Same</td><td>Requires an explicit recompute call, treated as a privileged action requiring a stated reason</td></tr>
+        <tr><td>Period locked mid-cycle, then a policy changes</td><td>No effect &mdash; locked days are immune to any policy change</td><td>N/A, period is closed</td><td>None until reopened</td></tr>
+        <tr><td>New leave carry-forward cap published</td><td>Past ledger entries untouched (append-only)</td><td>Next year-end sweep uses the new cap</td><td>Automatic, only at the scheduled sweep</td></tr>
+        <tr><td>Leave policy's probation rule changes</td><td>In-flight/decided applications unaffected &mdash; each one snapshots its policy version at submission</td><td>New submissions checked against the new value</td><td>None, by design</td></tr>
+        <tr><td>Leave Year Setting changed mid-year</td><td>No explicit code guard for an in-flight leave year</td><td>New setting applies at the next resolution</td><td>Not automatic &mdash; treat a mid-year change with care</td></tr>
+        <tr><td>Period reopened after a policy already changed since the original lock</td><td>Days become mutable again but are <strong>not</strong> auto-recomputed &mdash; a day can reflect stale, pre-change values until someone explicitly recomputes it</td><td>N/A</td><td>Manual only</td></tr>
+      </tbody>
+    </table></div>
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">The ten-question checklist</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Question</th><th>Attendance</th><th>Leave</th></tr></thead>
+      <tbody>
+        <tr><td>Effective start date?</td><td>Yes, every policy version</td><td>Yes on Leave Policy Version; <strong>no</strong> on Leave Year Setting or Combination Rule</td></tr>
+        <tr><td>End date?</td><td>Yes, NULL = current</td><td>Same</td></tr>
+        <tr><td>Can two versions overlap?</td><td>No &mdash; database-enforced</td><td>Same constraint, reused</td></tr>
+        <tr><td>Can a new version replace an old one?</td><td>Yes, insert-new/close-previous</td><td>Same</td></tr>
+        <tr><td>Old version preserved?</td><td>Always</td><td>Always</td></tr>
+        <tr><td>Recalculation uses the new version automatically?</td><td>Only for unlocked days, only if explicitly recomputed</td><td>Each new accrual/sweep cycle naturally uses whatever's effective on its date</td></tr>
+        <tr><td>Existing approvals recalculated?</td><td>No &mdash; approved regularization/OT records are permanent</td><td>No &mdash; the policy version is fixed at submission</td></tr>
+        <tr><td>Balances recalculated?</td><td>N/A (locked paid/LOP fractions)</td><td>No &mdash; ledger is append-only; a change only affects entries generated after it</td></tr>
+        <tr><td>Locked records protected?</td><td>Yes, absolutely</td><td>Indirectly &mdash; entirely borrowed from Attendance's own lock</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!--S13-POLICYCHANGE-->
+
+  <section id="s14">
+    <div class="section-head"><span class="eyebrow">14</span><h2>Locking a Pay Period</h2></div>
+    <p>The record lifecycle is simpler than a typical Draft&rarr;Submitted&rarr;Approved&rarr;Processed&rarr;Finalized&rarr;Locked&rarr;Reopened&rarr;Adjusted chain. What exists is:</p>
+    <div class="pipeline">
+      <div class="pipe-row"><span class="pipe-owner">OPEN</span><span class="pipe-body">An attendance period's default state. Punches, regularizations, roster changes and leave-projection syncs all execute freely, subject only to their own individual policies.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">VALIDATED / VALIDATION_FAILED</span><span class="pipe-body">Finalize first runs a validation pass against six typed blocking conditions (e.g. unresolved <code>INCOMPLETE</code> days under a policy that requires them resolved). Any single blocker fails the whole attempt, atomically &mdash; nothing is left half-finalized.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">CLOSED</span><span class="pipe-body">The period is locked. <strong>This is the one rule that outranks everything else in the entire system.</strong> No punch, no regularization (submission <em>or</em> approval), no OT approval, no roster change, and no leave approval or cancellation can touch a date inside a closed period &mdash; not for any reason, not for any role.</span></div>
+      <div class="pipe-row"><span class="pipe-owner">REOPENED</span><span class="pipe-body">A deliberately separate, higher-permission action from closing, requiring a reason. Reopening only removes the lock &mdash; it does <strong>not</strong> restore anything or recompute anything automatically. Days become mutable again, but any day HR doesn't manually recompute keeps whatever numbers it had at the moment it was locked, even if a policy has since changed underneath it.</span></div>
+    </div>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Can a locked day be changed?</h4><p>Not without first reopening the whole period. There is no single-record "fix just this one day" mechanism &mdash; the unit of unlock is the entire period.</p></div>
+      <div class="rule-card"><h4>Who can lock / unlock?</h4><p>Two distinct, separately-grantable permissions. Locking requires passing validation; unlocking requires a stated reason. The separation is deliberate &mdash; reopening is treated as the riskier action.</p></div>
+      <div class="rule-card"><h4>Is there an audit trail?</h4><p>Yes &mdash; every lock-lifecycle transition (Opened, Validated, Validation Failed, Closed, Reopened) is logged, as is every regularization/OT/leave approval action and every calendar-exception or roster-override edit.</p></div>
+      <div class="rule-card"><h4>Does reopening trigger recompute?</h4><p>No. A reopened period can carry stale numbers indefinitely if nobody recomputes the affected days manually &mdash; there is no system-enforced "reopen checklist" today.</p></div>
+    </div>
+    <div class="callout warn">
+      <p><strong>Manual correction and regularization are the same feature.</strong> There is no distinct "manual correction" path separate from the regularization workflow &mdash; every correction to punches or status flows through regularization. An approved regularization doesn't edit anything; it adds new, immutable punch records and triggers a full recalculation of the day in the same transaction.</p>
+    </div>
+  </section>
+
+  <!--S14-LOCKING-->
+
+  <section id="s15">
+    <div class="section-head"><span class="eyebrow">15</span><h2>Quick-Reference Precedence Matrix</h2></div>
+    <p class="section-sub">A single lookup table of every precedence rule in this document, for quick reference during a demo, a policy-setup session, or a later question. Full explanations are in Sections 9&ndash;11.</p>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Rule, one line</th></tr></thead>
+      <tbody>
+        <tr><td>Holiday on a weekly-off day &rarr; stays Weekly Off, flagged</td></tr>
+        <tr><td>Shift flagged to operate on holiday/WO &rarr; shift wins</td></tr>
+        <tr><td>Published roster week-off override &rarr; roster wins over calendar</td></tr>
+        <tr><td>Roster wins for schedule; base shift still governs policy scope on that day</td></tr>
+        <tr><td>More specific policy scope always wins (8-level walk)</td></tr>
+        <tr><td>Regularization adds punches; originals never edited</td></tr>
+        <tr><td>Leave and OT coexist as independent facts on the same day</td></tr>
+        <tr><td>Holiday/WO set OT day-class only, don't grant/deny OT</td></tr>
+        <tr><td>Night OT only from shift flag, never actual clock time</td></tr>
+        <tr><td>Eligibility gates detection, cap clamps result &mdash; sequential</td></tr>
+        <tr><td>Period lock wins over regularization or leave-approval sync, unconditionally</td></tr>
+        <tr><td>Locked historical record stands over a newer policy version</td></tr>
+        <tr><td>Two overlapping policy assignments at the same scope &mdash; first-match wins, unconstrained</td></tr>
+        <tr><td>Employee-specific leave policy wins over org-level (same engine)</td></tr>
+        <tr><td>No global leave-policy layer exists to conflict with type-level policy</td></tr>
+        <tr><td>Eligibility checked before balance</td></tr>
+        <tr><td>Probation block + no accrual compound to a literal zero balance</td></tr>
+        <tr><td>Balance limit always wins; negative balance never allowed</td></tr>
+        <tr><td>Carry-forward cap enforcement <em>is</em> the expiry mechanism</td></tr>
+        <tr><td>Same-type leave overlap &mdash; not blocked, both can consume balance</td></tr>
+        <tr><td>Leave cancellation blocked outright if attendance period is closed</td></tr>
+        <tr><td>Approved leave beats punches for status, under default policy</td></tr>
+        <tr><td>Leave beats calendar NOT_EXPECTED for status; calendar type itself untouched</td></tr>
+        <tr><td>Sandwich rule pulls a bracketed non-consuming day into consumption, single-application scope</td></tr>
+        <tr><td>Regularization policy scope bounds what an approver can approve</td></tr>
+        <tr><td>OT approval can't exceed the pre-applied cap</td></tr>
+        <tr><td>"Keep incomplete" policy blocks finalize outright, no HR override</td></tr>
+        <tr><td>Probation restriction applies regardless of who submits</td></tr>
+        <tr><td>Statutory minimum blocks publish; no override path</td></tr>
+        <tr><td>"Blocked when locked" flag has no independent effect &mdash; lock is unconditional regardless</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Override vs. override</h3>
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Override A</th><th>Override B</th><th>Which wins</th></tr></thead>
+      <tbody>
+        <tr><td>Employee-specific policy assignment</td><td>HR manual override (e.g. correcting a record)</td><td>Not a real conflict &mdash; different kinds of "override" (policy-resolution vs. one-time action)</td></tr>
+        <tr><td>Approved regularization</td><td>Manual attendance correction</td><td>No distinct manual-correction feature exists &mdash; regularization is the only correction path</td></tr>
+        <tr><td>Approved leave</td><td>Attendance calculation</td><td>Leave wins the status slot, under default policy (Section 11)</td></tr>
+        <tr><td>Approved leave cancellation</td><td>Period lock</td><td>Period lock wins</td></tr>
+        <tr><td>Manager approval</td><td>HR rejection at a later stage</td><td>HR's later decision is final</td></tr>
+        <tr><td>Existing approval (regularization/leave/OT)</td><td>Policy change after approval</td><td>Existing approvals never retroactively affected</td></tr>
+        <tr><td>Manual correction (via regularization)</td><td>Automatic recalculation</td><td>Sequential &mdash; approval triggers recalculation as its final step, not competing</td></tr>
+        <tr><td>Locked record</td><td>New policy published after lock</td><td>Locked record wins, always</td></tr>
+        <tr><td>Reopened record</td><td>Historical snapshot (period summary)</td><td>Reopening restores nothing automatically &mdash; old summary stands until a fresh finalize</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!--S15-MATRIX-->
+
+  <section id="s16">
+    <div class="section-head"><span class="eyebrow">16</span><h2>A Month in Varun's Life &mdash; Every Scenario Walkthrough</h2></div>
+    <p class="section-sub">One employee, one calendar month, every mechanism in Sections 5&ndash;12 shown as something that actually happened to him &mdash; not a separate set of rules, just the same engine applied on different days.</p>
+    <div class="callout note">
+      <p><strong>Varun Iyer</strong> &mdash; Senior Analyst, joined <code>2024-01-15</code>, confirmed and active. Fixed shift 09:30&ndash;18:30, grace-in 10 minutes, weekly off Saturday &amp; Sunday. Late bands: 0&ndash;15&nbsp;min after grace &rarr; flagged only; 16&ndash;60&nbsp;min &rarr; Half-Day; &gt;60&nbsp;min &rarr; Absent (the same illustrative configuration used for Ananya in Section 5). Casual Leave chain: <code>MANAGER</code>. Sick Leave chain: <code>MANAGER_THEN_HR</code>. All dates below are September 2026.</p>
+    </div>
+
+    <div class="table-scroll"><table class="wide-table">
+      <thead><tr><th>Date</th><th>Day</th><th>What happened</th><th>System result</th></tr></thead>
+      <tbody>
+        <tr><td><code>Sep 1</code></td><td>Tue</td><td>Punches in 09:24, out 18:35. Nothing unusual.</td><td><strong>Present.</strong> The baseline &mdash; every later day in this table is a variation on this one.</td></tr>
+        <tr><td><code>Sep 2</code></td><td>Wed</td><td>Punches in 09:47 &mdash; 7 minutes late after the 10-minute grace window.</td><td>Falls in the 0&ndash;15 late band: flagged late, but the hour band still reads a full day. <strong>Present, flagged late.</strong> (Exactly Ananya's Step A-06 example, Section 5.)</td></tr>
+        <tr><td><code>Sep 3</code></td><td>Thu</td><td>Punches in 10:41 &mdash; 51 minutes late after grace.</td><td>Falls in the 16&ndash;60 band. <strong>Half-Day</strong> &mdash; the late band alone pushed the status down, independent of how many hours he went on to work.</td></tr>
+        <tr><td><code>Sep 4</code></td><td>Fri</td><td>Forgets to punch out at all. The day sits with only an IN punch. Varun notices the next morning and, using his own self-service access, submits a <code>MISSING_PUNCH</code> regularization for Sep 4, proposing an 18:40 out-time, with a reason.</td><td>Sep 4 itself is <strong>Incomplete</strong> until acted on (the system default &mdash; never silently Absent). His manager approves the request; Attendance adds a new, synthetic OUT punch (the original IN punch is never edited) and recalculates the whole day: <strong>Present.</strong> The regularization record itself is permanent audit history.</td></tr>
+        <tr><td><code>Sep 5&ndash;6</code></td><td>Sat&ndash;Sun</td><td>&mdash;</td><td><strong>Weekly Off</strong>, per his fixed Sat/Sun pattern.</td></tr>
+        <tr><td><code>Sep 7</code></td><td>Mon</td><td>Off-site the entire day for a client workshop. No punches. His manager has already logged an approved <code>ON_DUTY</code> regularization for the date in advance.</td><td><strong>On-Duty</strong> &mdash; treated as a full working day for pay purposes, exactly like Present, with no punch requirement.</td></tr>
+        <tr><td><code>Sep 8</code></td><td>Tue</td><td>Requests early-departure approval two days ahead for a medical appointment; his manager approves it before the day arrives. He punches out at 15:30, well before his early-departure band would otherwise trigger.</td><td><strong>Present.</strong> Because the approval is already on file, the early exit doesn't push the day down &mdash; early-departure approval is a pre-approval gate, not an after-the-fact excuse.</td></tr>
+        <tr><td><code>Sep 9</code></td><td>Wed</td><td>Stays until 20:05 finishing a release &mdash; 95 minutes past shift end. The extra time clears the configured minimum-OT-minutes threshold.</td><td><code>ot_minutes_detected</code> = 95 (rounded per policy), classified <strong>Normal</strong> day-class. It sits as <em>pending</em> until his manager approves it a day later &mdash; only then does <code>ot_minutes_approved</code> become nonzero. Unapproved OT is never auto-paid (Section 12).</td></tr>
+        <tr><td><code>Sep 10</code></td><td>Thu</td><td>Applies, the evening before, for a half-day Casual Leave covering the afternoon of Sep 10. His manager approves it that night. He works the morning as normal (in 09:28, out 13:30).</td><td><strong>Half-Day</strong> &mdash; the worked morning stays present-derived, the leave-covered afternoon is the other half. 0.5 day debited from his Casual Leave balance the moment his manager's approval (the only, final stage in his Casual chain) lands.</td></tr>
+        <tr><td><code>Sep 11</code></td><td>Fri</td><td>No punches, no regularization, no leave application &mdash; an unplanned, unexplained absence.</td><td>Stays <strong>Incomplete</strong> for the rest of the month. Nobody resolves it before the period locks (see Sep 30 below) &mdash; it is not the same as marking himself Absent, and it is not yet a pay fact either way.</td></tr>
+        <tr><td><code>Sep 12&ndash;13</code></td><td>Sat&ndash;Sun</td><td>&mdash;</td><td><strong>Weekly Off.</strong></td></tr>
+        <tr><td><code>Sep 14</code></td><td>Mon</td><td>A declared Company Holiday. Varun isn't required to come in, but comes in anyway to finish a deadline, punching 09:30&ndash;19:00.</td><td>Calendar type stays <strong>Holiday</strong> &mdash; a holiday is never silently reclassified as a working day just because someone showed up. <code>worked_on_holiday</code> is flagged true, and the extra hours are detected as overtime classified day-class <strong>Holiday</strong> (Section 9, CONF-010/011: the holiday only sets OT's rate classification, it doesn't grant or deny OT by itself). The day is still fully paid either way &mdash; holidays are paid whether or not he worked.</td></tr>
+        <tr><td><code>Sep 15</code></td><td>Tue</td><td>Wakes up with a fever and applies for one day of Sick Leave that same morning, before his shift would have started. No attachment required &mdash; his company's Sick Leave policy only requires one above 3 consecutive days.</td><td>His manager approves within the hour &mdash; <code>MANAGER</code> is the entire chain for Sick Leave at his company, so this is the final stage immediately. Ledger debits 1.0 day; Attendance recalculates the date to <strong>Leave</strong>, paid, the moment the projection syncs.</td></tr>
+        <tr><td><code>Sep 16</code></td><td>Wed</td><td>Works an extra 2 hours (120 minutes) helping a teammate hit a deadline. This particular overtime falls under his company's "project support" Overtime Policy, which is configured <code>comp_off_instead_of_pay=true</code>.</td><td>No payable OT minutes are recorded for this instance. Instead, Attendance stamps <code>comp_off_minutes_earned=120</code> on the day, with a 90-day expiry. It isn't in his Leave balance yet &mdash; that happens on the next scheduled comp-off sweep, typically overnight.</td></tr>
+        <tr><td><code>Sep 25</code></td><td>Fri</td><td>Applies for two days of Casual Leave: Friday Sep 25 and Monday Sep 28, bracketing the Sep 26&ndash;27 weekend, to get a four-day break.</td><td>The sandwich rule (enabled by default) pulls Saturday and Sunday back into consumption, because they're bracketed on both sides by leave-consuming days <em>within this one application</em>. All <strong>4 days</strong> &mdash; not 2 &mdash; are debited from his Casual Leave balance.</td></tr>
+        <tr><td><code>Sep 29</code></td><td>Tue</td><td>By now his Sep 16 comp-off has been swept into his Leave ledger as 0.25 day (2 hours against an 8-hour configured day-length). He applies for a half-day against the Comp-Off leave type for Sep 29 afternoon &mdash; through the exact same leave-application form as any other leave type. There is no separate "redeem comp-off" button; comp-off is just another balance in the same ledger.</td><td>Approved the same way as any half-day leave. <strong>Half-Day</strong>, 0.25 day debited from the Comp-Off balance specifically (not Casual or Sick).</td></tr>
+        <tr><td><code>Sep 30</code></td><td>Wed</td><td>HR runs finalize on the September attendance period. Validation passes &mdash; Sep 11's still-<code>Incomplete</code> day isn't a blocker, because his company's Attendance Policy uses the default <code>incomplete_at_lock_behaviour=TREAT_ABSENT</code>, not <code>KEEP_INCOMPLETE</code>.</td><td>Finalize itself rewrites Sep 11 to <code>paid_day_fraction=0.00</code>, <code>lop_fraction=1.00</code> &mdash; full loss-of-pay, decided automatically at the instant of lock, not before. The period closes. <strong>Every date in September, including Sep 11, is now frozen.</strong></td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">Two things that happen after the month closes</h3>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Varun tries to cancel his Sep 15 sick leave in October</h4><p>He realises he double-logged it against the wrong project code and wants to cancel and reapply. The cancellation is refused outright &mdash; the attendance period covering Sep 15 is locked, so the ledger credit-back and the projection cancel can't execute. His application stays Approved, balance stays debited. The only remedy is HR reopening the whole September period (Section 14) &mdash; not something either Varun or his manager can do themselves.</p></div>
+      <div class="rule-card"><h4>Varun asks HR to fix Sep 11 after all</h4><p>He can produce evidence he was in fact on-site that day. There is no per-record correction &mdash; HR's only path is reopening the entire September period, after which someone must remember to manually recompute Sep 11 specifically. Reopening itself does not restore or recompute anything automatically (Section 14).</p></div>
+    </div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">What Varun can do himself</h3>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Punch in / out</h4><p>For himself, at any time his own attendance permission is granted at SELF scope.</p></div>
+      <div class="rule-card"><h4>View his own attendance calendar &amp; punch history</h4><p>Every calculated day, and the raw punches behind it.</p></div>
+      <div class="rule-card"><h4>Submit a regularization request</h4><p>Missing punch, wrong punch, wrong shift, wrong status, WFH, On-Duty, excess break, full day, or early-departure approval &mdash; whichever types his company's Regularization Policy allows, subject to <code>allow_employee_request</code> (on by default).</p></div>
+      <div class="rule-card"><h4>View &amp; cancel his own regularization requests</h4><p>Cancellation only works before it's acted on by an approver; only the original submitter can cancel.</p></div>
+      <div class="rule-card"><h4>View his own overtime records</h4><p>Detected and approved minutes, though he cannot approve or reject them himself.</p></div>
+      <div class="rule-card"><h4>View attendance period / lock status</h4><p>He can see whether the current period is open or closed, though he cannot lock, unlock, or finalize it.</p></div>
+      <div class="rule-card"><h4>Apply for any leave type available to him</h4><p>Including half-day applications, subject to his leave type's own eligibility (e.g. not during probation, if restricted).</p></div>
+      <div class="rule-card"><h4>View his own leave balance &amp; ledger</h4><p>The live, running balance for every leave type &mdash; there's no separate "check my balance" report; the ledger itself is the balance.</p></div>
+      <div class="rule-card"><h4>Cancel his own leave application</h4><p>Submitted or already-approved, provided the attendance period covering the date is still open.</p></div>
+    </div>
+
+    <h3 style="font-size:1.02rem;margin:1.8rem 0 .6rem;">What Varun cannot do himself</h3>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Approve anything of his own</h4><p>Not his own regularization, not his own overtime, not his own leave &mdash; self-approval is blocked unconditionally everywhere in the system, with no policy setting able to re-enable it.</p></div>
+      <div class="rule-card"><h4>Redeem comp-off as a distinct action</h4><p>There's no dedicated "convert comp-off to leave" button &mdash; he applies for leave against the Comp-Off leave type exactly like any other type, once the automatic sweep has credited it to his ledger.</p></div>
+      <div class="rule-card"><h4>Lock, unlock, or finalize a pay period</h4><p>Company-level permissions, held by HR only.</p></div>
+      <div class="rule-card"><h4>Fix a locked day himself</h4><p>Not through regularization, not through a leave cancellation &mdash; both are refused outright once the covering period is closed. Only HR reopening the whole period can restore mutability.</p></div>
+      <div class="rule-card"><h4>Change any policy</h4><p>Grace minutes, bands, caps, approval chains, or anything else configurable in Sections 7&ndash;8 &mdash; policy management is a company-scoped HR/admin action everywhere in both modules.</p></div>
+    </div>
+
+    <div class="callout note">
+      <p>Every other leave type your company configures &mdash; Earned/Privilege Leave, Maternity, Paternity, Bereavement, Marriage, or anything else &mdash; goes through this exact same nine-step submission-and-approval flow (Section 6). Only the type-specific settings differ: which approval chain it uses, whether it requires balance at all, whether probation blocks it, and what its own eligibility category is.</p>
+    </div>
+  </section>
+
+  <!--S16-VARUNMONTH-->
+
+  <section id="s17">
+    <div class="section-head"><span class="eyebrow">17</span><h2>About This Document</h2></div>
+    <p>Every mechanism described here was traced directly to a running code path in <code>apps/api/src/hrms/modules/attendance/</code> and <code>apps/api/src/hrms/modules/leave/</code>, not inferred from design documentation alone. Where a number or example is illustrative rather than an actual system default, it is labelled as such at the point it's used.</p>
+    <p>This document intentionally covers only what the system does today. It does not list open engineering decisions, half-built features, or places where older documentation is out of date &mdash; that material exists separately, in an internal audit document, for the implementation team's own use. If a question comes up during a client conversation that this document doesn't resolve cleanly, it is very likely one of those internal items, and worth flagging back to the implementation team rather than guessing.</p>
+    <p>A companion document, covering how Attendance's daily and period-level facts feed a future Payroll module, is available separately.</p>
+  </section>
+
+  <!--S17-ABOUT-->
+
+  <footer class="doc-foot">
+    <span>HRMS &mdash; Attendance &amp; Leave Product Guide &middot; v1.0</span>
+    <span>Prepared 8 September 2026 &middot; Client Walkthrough Edition</span>
+  </footer>
+
+</div>

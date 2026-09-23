@@ -3,6 +3,7 @@ lifecycle), E-04 (employee assignment), E-06 (employee compensation), E-07 (empl
 statutory), and E-08 (employee banking)."""
 
 from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
+from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.errors.base import NotFoundError
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.employee.exceptions import (
@@ -35,6 +37,7 @@ from hrms.modules.employee.exceptions import (
     InvalidReportingManagerError,
     InvalidShiftReferenceError,
     NoActiveEmploymentError,
+    NomineePercentageExceededError,
     ShiftIdRequiredError,
     StaleResourceError,
     StatutoryDatesOverlapError,
@@ -45,6 +48,9 @@ from hrms.modules.employee.repository import (
     EmployeeAssignmentRepository,
     EmployeeBankRepository,
     EmployeeCompensationRepository,
+    EmployeeDependentRepository,
+    EmployeeEducationRepository,
+    EmployeeExperienceRepository,
     EmployeeRepository,
     EmployeeStatutoryRepository,
     EmploymentRepository,
@@ -58,6 +64,14 @@ from hrms.modules.employee.schemas import (
     CompensationRead,
     EmployeeConfirmInput,
     EmployeeCreate,
+    EmployeeDependentCreate,
+    EmployeeDependentRead,
+    EmployeeEducationCreate,
+    EmployeeEducationRead,
+    EmployeeExperienceCreate,
+    EmployeeExperienceRead,
+    EmployeeIdentityRead,
+    EmployeeIdentityUpdate,
     EmployeeRead,
     EmployeeUpdate,
     EmploymentCreate,
@@ -74,6 +88,14 @@ from hrms.modules.employee.schemas import (
     build_employment_update_values,
     compensation_to_audit_dict,
     compensation_to_read,
+    employee_dependent_to_audit_dict,
+    employee_dependent_to_read,
+    employee_education_to_audit_dict,
+    employee_education_to_read,
+    employee_experience_to_audit_dict,
+    employee_experience_to_read,
+    employee_identity_to_audit_dict,
+    employee_identity_to_read,
     employee_to_audit_dict,
     employee_to_read,
     employment_to_audit_dict,
@@ -81,6 +103,10 @@ from hrms.modules.employee.schemas import (
     statutory_to_audit_dict,
     statutory_to_read,
 )
+from hrms.shared.pagination import PageParams
+
+if TYPE_CHECKING:
+    from hrms.modules.employee.models import EmployeeBank, EmployeeDependent
 
 
 class EmployeeService:
@@ -90,6 +116,7 @@ class EmployeeService:
         self._repo = EmployeeRepository()
         self._assignment_repo = EmployeeAssignmentRepository()
         self._audit = AuditService()
+        self._crypto = PiiCryptoService(self._settings)
 
     async def resolve_visible_employee_ids(
         self,
@@ -245,8 +272,25 @@ class EmployeeService:
                     "blood_group": body.blood_group,
                     "marital_status": body.marital_status,
                     "nationality": body.nationality,
+                    "father_or_husband_name": body.father_or_husband_name,
                     "personal_email": body.personal_email,
                     "personal_mobile": body.personal_mobile,
+                    "present_address_line1": body.present_address_line1,
+                    "present_address_line2": body.present_address_line2,
+                    "present_city": body.present_city,
+                    "present_state_code": body.present_state_code,
+                    "present_pincode": body.present_pincode,
+                    "present_country_code": body.present_country_code,
+                    "permanent_address_line1": body.permanent_address_line1,
+                    "permanent_address_line2": body.permanent_address_line2,
+                    "permanent_city": body.permanent_city,
+                    "permanent_state_code": body.permanent_state_code,
+                    "permanent_pincode": body.permanent_pincode,
+                    "permanent_country_code": body.permanent_country_code,
+                    "permanent_same_as_present": body.permanent_same_as_present,
+                    "emergency_contact_name": body.emergency_contact_name,
+                    "emergency_contact_relationship": body.emergency_contact_relationship,
+                    "emergency_contact_phone": body.emergency_contact_phone,
                     "photo_url": body.photo_url,
                     "custom_fields": body.custom_fields,
                     "status": "PRE_JOINING",
@@ -279,20 +323,43 @@ class EmployeeService:
         *,
         scope: DataScope | None = None,
         caller_employee_id: UUID | None = None,
-    ) -> list[EmployeeRead]:
+        page: PageParams | None = None,
+    ) -> tuple[list[EmployeeRead], int]:
         """`scope=None` (every caller except `GET /employees`) preserves this module's
         pre-data-scope behavior exactly — company-wide, no filter. `GET /employees` passes its
         resolved `DataScope` (`router.py`), narrowing the result per
-        `resolve_visible_employee_ids`."""
+        `resolve_visible_employee_ids`.
+
+        `page=None` returns every visible row, unpaginated, and a `total` equal to `len(...)` of
+        that same list — the exact shape every pre-API-01 caller of this method still gets.
+        `GET /employees` (API-01) always passes `page`, so authorization narrows the visible-ID
+        set *before* the SQL-level `LIMIT`/`OFFSET` ever runs — a caller can only page through
+        rows already inside their own `DataScope`, never around it."""
         visible_ids = (
             await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
             if scope is not None
             else None
         )
+        if page is None:
+            employees = await self._repo.list_employees(
+                self._session, company_id=company_id, visible_employee_ids=visible_ids
+            )
+            reads = [employee_to_read(employee) for employee in employees]
+            return reads, len(reads)
+
+        # Sequential, not `asyncio.gather` — a single `AsyncSession` cannot run two statements
+        # concurrently.
         employees = await self._repo.list_employees(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=visible_ids,
+            limit=page.limit,
+            offset=page.offset,
+        )
+        total = await self._repo.count_employees(
             self._session, company_id=company_id, visible_employee_ids=visible_ids
         )
-        return [employee_to_read(employee) for employee in employees]
+        return [employee_to_read(employee) for employee in employees], total
 
     async def get_employee(
         self,
@@ -405,6 +472,184 @@ class EmployeeService:
             entity_id=employee_id,
             before=employee_to_audit_dict(before_read),
             after=employee_to_audit_dict(after_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after_read
+
+    async def get_identity(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> EmployeeIdentityRead:
+        """E-02 — `GET /employees/{id}/identity`. Decrypts `pan_number_enc`/`aadhaar_number_enc`
+        only after the caller's own permission check has already run (the router's
+        `require_permission(EMPLOYEE_VIEW_SENSITIVE)` dependency, resolved before this method is
+        ever called) — mirrors `EmployeeBankService._decrypt_bank`'s exact contract."""
+        visible_ids = (
+            await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
+            if scope is not None
+            else None
+        )
+        employee = await self._repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+        pan_number = await self._crypto.decrypt_column(
+            self._session,
+            ciphertext=employee.pan_number_enc,
+            table="employee",
+            column="pan_number_enc",
+            record_id=employee.id,
+        )
+        aadhaar_number = await self._crypto.decrypt_column(
+            self._session,
+            ciphertext=employee.aadhaar_number_enc,
+            table="employee",
+            column="aadhaar_number_enc",
+            record_id=employee.id,
+        )
+        return employee_identity_to_read(
+            employee, pan_number=pan_number, aadhaar_number=aadhaar_number
+        )
+
+    async def update_identity(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        patch: EmployeeIdentityUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeIdentityRead:
+        """E-02 — `PATCH /employees/{id}/identity`. Unlike Bank/Statutory/Compensation, this is
+        a plain update-in-place on `Employee` itself (like `update_employee`), not an
+        insert-a-new-row history write — PAN/Aadhaar/UAN are single current-value facts, not
+        effective-dated history. Only fields explicitly present in the request are applied,
+        mirroring `build_employee_update_values`; an omitted field leaves the existing
+        (possibly-encrypted) column untouched rather than clobbering it with `None`."""
+        visible_ids = (
+            await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
+            if scope is not None
+            else None
+        )
+        employee = await self._repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+        before_pan = await self._crypto.decrypt_column(
+            self._session,
+            ciphertext=employee.pan_number_enc,
+            table="employee",
+            column="pan_number_enc",
+            record_id=employee.id,
+        )
+        before_aadhaar = await self._crypto.decrypt_column(
+            self._session,
+            ciphertext=employee.aadhaar_number_enc,
+            table="employee",
+            column="aadhaar_number_enc",
+            record_id=employee.id,
+        )
+        before_read = employee_identity_to_read(
+            employee, pan_number=before_pan, aadhaar_number=before_aadhaar
+        )
+
+        fields_set = patch.model_fields_set
+        values: dict[str, object] = {}
+        if "pan_number" in fields_set:
+            values["pan_number_enc"] = await self._crypto.encrypt_column(
+                self._session,
+                plaintext=patch.pan_number,
+                table="employee",
+                column="pan_number_enc",
+                record_id=employee.id,
+            )
+        if "aadhaar_number" in fields_set:
+            values["aadhaar_number_enc"] = await self._crypto.encrypt_column(
+                self._session,
+                plaintext=patch.aadhaar_number,
+                table="employee",
+                column="aadhaar_number_enc",
+                record_id=employee.id,
+            )
+        if "uan_number" in fields_set:
+            values["uan_number"] = patch.uan_number
+        if "father_or_husband_name" in fields_set:
+            values["father_or_husband_name"] = patch.father_or_husband_name
+
+        if not values:
+            return before_read
+
+        now = datetime.now(UTC)
+        updated = await self._repo.update_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            values=values,
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            current = await self._repo.get_employee(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            if current is None:
+                raise NotFoundError("Resource not found")
+            current_pan = await self._crypto.decrypt_column(
+                self._session,
+                ciphertext=current.pan_number_enc,
+                table="employee",
+                column="pan_number_enc",
+                record_id=current.id,
+            )
+            current_aadhaar = await self._crypto.decrypt_column(
+                self._session,
+                ciphertext=current.aadhaar_number_enc,
+                table="employee",
+                column="aadhaar_number_enc",
+                record_id=current.id,
+            )
+            raise StaleResourceError(
+                "This employee has been modified by another request",
+                current=employee_identity_to_audit_dict(
+                    employee_identity_to_read(
+                        current, pan_number=current_pan, aadhaar_number=current_aadhaar
+                    )
+                ),
+            )
+
+        after_pan = patch.pan_number if "pan_number" in fields_set else before_pan
+        after_aadhaar = patch.aadhaar_number if "aadhaar_number" in fields_set else before_aadhaar
+        after_read = employee_identity_to_read(
+            updated, pan_number=after_pan, aadhaar_number=after_aadhaar
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_IDENTITY_UPDATED",
+            entity_type="employee",
+            entity_id=employee_id,
+            before=employee_identity_to_audit_dict(before_read),
+            after=employee_identity_to_audit_dict(after_read),
             ip=ip_address,
             user_agent=user_agent,
         )
@@ -1942,6 +2187,20 @@ class EmployeeBankService:
         self._employment_repo = EmploymentRepository()
         self._employee_service = EmployeeService(session, self._settings)
         self._audit = AuditService()
+        self._crypto = PiiCryptoService(self._settings)
+
+    async def _decrypt_bank(self, bank: "EmployeeBank") -> BankRead:
+        """DATA-01 (plan §2.5) — the one place `EmployeeBank.account_number_enc` ciphertext is
+        turned into plaintext, always after the caller's own permission check has already run
+        (every method below only reaches this after `_assert_employee_visible`)."""
+        plaintext = await self._crypto.decrypt_column(
+            self._session,
+            ciphertext=bank.account_number_enc,
+            table="employee_bank",
+            column="account_number_enc",
+            record_id=bank.id,
+        )
+        return bank_to_read(bank, decrypted_account_number=plaintext)
 
     async def _assert_employee_visible(
         self,
@@ -2006,7 +2265,7 @@ class EmployeeBankService:
                 raise BankVersionRequiredError()
 
         now = datetime.now(UTC)
-        before_read = bank_to_read(current) if current is not None else None
+        before_read = await self._decrypt_bank(current) if current is not None else None
 
         if current is not None:
             assert expected_version is not None  # narrowed above
@@ -2030,10 +2289,21 @@ class EmployeeBankService:
                     raise NotFoundError("Resource not found")
                 raise StaleResourceError(
                     "This employee's current bank record has been modified by another request",
-                    current=bank_to_audit_dict(bank_to_read(refreshed)),
+                    current=bank_to_audit_dict(await self._decrypt_bank(refreshed)),
                 )
 
+        # DATA-01 (plan §2.4/§2.5) — `bank_id` is generated up front (this codebase's own
+        # `id=uuid4()`-at-construction convention) specifically so it is available to bind the
+        # AAD before the row is ever persisted: encryption happens here, explicitly, in the
+        # authorized service method, never inside the ORM/repository layer.
         bank_id = uuid4()
+        encrypted_account_number = await self._crypto.encrypt_column(
+            self._session,
+            plaintext=body.account_number_enc,
+            table="employee_bank",
+            column="account_number_enc",
+            record_id=bank_id,
+        )
         try:
             bank = await self._repo.insert_bank(
                 self._session,
@@ -2044,7 +2314,7 @@ class EmployeeBankService:
                     "effective_from": body.effective_from,
                     "effective_to": None,
                     "account_holder_name": body.account_holder_name,
-                    "account_number_enc": body.account_number_enc,
+                    "account_number_enc": encrypted_account_number,
                     "bank_name": body.bank_name,
                     "ifsc": body.ifsc,
                     "branch_name": body.branch_name,
@@ -2062,7 +2332,9 @@ class EmployeeBankService:
             # backstop, mirroring `EmployeeStatutoryService.create_statutory`'s exact pattern.
             raise BankDatesOverlapError() from exc
 
-        after_read = bank_to_read(bank)
+        # Reuses the plaintext already in hand (`body.account_number_enc`) rather than issuing an
+        # immediate, redundant decrypt of what this same call just encrypted.
+        after_read = bank_to_read(bank, decrypted_account_number=body.account_number_enc)
         await self._audit.record(
             self._session,
             company_id=company_id,
@@ -2097,11 +2369,11 @@ class EmployeeBankService:
             bank = await self._repo.get_bank_as_of(
                 self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
             )
-            return [bank_to_read(bank)] if bank is not None else []
+            return [await self._decrypt_bank(bank)] if bank is not None else []
         banks = await self._repo.list_banks(
             self._session, company_id=company_id, employee_id=employee_id
         )
-        return [bank_to_read(bank) for bank in banks]
+        return [await self._decrypt_bank(bank) for bank in banks]
 
     async def get_bank(
         self,
@@ -2124,7 +2396,7 @@ class EmployeeBankService:
         )
         if bank is None:
             raise NotFoundError("Resource not found")
-        return bank_to_read(bank)
+        return await self._decrypt_bank(bank)
 
     async def get_bank_as_of(
         self, company_id: UUID, employee_id: UUID, as_of: date
@@ -2135,4 +2407,632 @@ class EmployeeBankService:
         bank = await self._repo.get_bank_as_of(
             self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
         )
-        return bank_to_read(bank) if bank is not None else None
+        return await self._decrypt_bank(bank) if bank is not None else None
+
+
+class EmployeeExperienceService:
+    """Previous employment / PF continuity (market-parity onboarding-data pass, part 4) — a
+    plain one-to-many list, not effective-dated history like Statutory/Bank/Compensation.
+    `create_experience` always inserts a new independent row (no "current row" to close, no
+    `expected_version` on create); `delete_experience` is the only mutation path after that,
+    gated by the row's own `version` for optimistic concurrency, mirroring `close_statutory`'s
+    shape but as a soft-delete rather than a field update. No covering-employment check (unlike
+    Bank/Statutory/Compensation) — a candidate's past-employer history has no relationship to
+    their own current employment period."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = EmployeeExperienceRepository()
+        self._employee_repo = EmployeeRepository()
+        self._employee_service = EmployeeService(session, self._settings)
+        self._audit = AuditService()
+
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
+        employee = await self._employee_repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+    async def create_experience(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: EmployeeExperienceCreate,
+        *,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeExperienceRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+
+        now = datetime.now(UTC)
+        experience_id = uuid4()
+        experience = await self._repo.insert_experience(
+            self._session,
+            data={
+                "id": experience_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "company_name": body.company_name,
+                "designation": body.designation,
+                "from_date": body.from_date,
+                "to_date": body.to_date,
+                "last_ctc_minor": body.last_ctc_minor,
+                "reason_for_leaving": body.reason_for_leaving,
+                "had_prior_pf_membership": body.had_prior_pf_membership,
+                "previous_uan": body.previous_uan,
+                "previous_pf_account_number": body.previous_pf_account_number,
+                "previous_esi_ip_number": body.previous_esi_ip_number,
+                "document_id": body.document_id,
+                "version": 1,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        read = employee_experience_to_read(experience)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_EXPERIENCE_CREATED",
+            entity_type="employee_experience",
+            entity_id=experience_id,
+            after=employee_experience_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_experiences(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> list[EmployeeExperienceRead]:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        experiences = await self._repo.list_experiences(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [employee_experience_to_read(e) for e in experiences]
+
+    async def get_experience(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        experience_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> EmployeeExperienceRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        experience = await self._repo.get_experience(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            experience_id=experience_id,
+        )
+        if experience is None:
+            raise NotFoundError("Resource not found")
+        return employee_experience_to_read(experience)
+
+    async def delete_experience(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        experience_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        current = await self._repo.get_experience(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            experience_id=experience_id,
+        )
+        if current is None:
+            raise NotFoundError("Resource not found")
+
+        now = datetime.now(UTC)
+        deleted = await self._repo.delete_experience(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            experience_id=experience_id,
+            expected_version=expected_version,
+            now=now,
+        )
+        if deleted is None:
+            refreshed = await self._repo.get_experience(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                experience_id=experience_id,
+            )
+            if refreshed is None:
+                raise NotFoundError("Resource not found")
+            raise StaleResourceError(
+                "This experience record has been modified by another request",
+                current=employee_experience_to_audit_dict(employee_experience_to_read(refreshed)),
+            )
+
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_EXPERIENCE_DELETED",
+            entity_type="employee_experience",
+            entity_id=experience_id,
+            before=employee_experience_to_audit_dict(employee_experience_to_read(current)),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+
+class EmployeeEducationService:
+    """Education history (market-parity onboarding-data pass, part 5) — mirrors
+    `EmployeeExperienceService`'s exact shape (plain one-to-many list, no covering-employment
+    check, soft-delete the only mutation path after insert)."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = EmployeeEducationRepository()
+        self._employee_repo = EmployeeRepository()
+        self._employee_service = EmployeeService(session, self._settings)
+        self._audit = AuditService()
+
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
+        employee = await self._employee_repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+    async def create_education(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: EmployeeEducationCreate,
+        *,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeEducationRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+
+        now = datetime.now(UTC)
+        education_id = uuid4()
+        education = await self._repo.insert_education(
+            self._session,
+            data={
+                "id": education_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "qualification": body.qualification,
+                "institution_name": body.institution_name,
+                "year_of_passing": body.year_of_passing,
+                "document_id": body.document_id,
+                "version": 1,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        read = employee_education_to_read(education)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_EDUCATION_CREATED",
+            entity_type="employee_education",
+            entity_id=education_id,
+            after=employee_education_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_educations(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> list[EmployeeEducationRead]:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        educations = await self._repo.list_educations(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [employee_education_to_read(e) for e in educations]
+
+    async def get_education(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        education_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> EmployeeEducationRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        education = await self._repo.get_education(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            education_id=education_id,
+        )
+        if education is None:
+            raise NotFoundError("Resource not found")
+        return employee_education_to_read(education)
+
+    async def delete_education(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        education_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        current = await self._repo.get_education(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            education_id=education_id,
+        )
+        if current is None:
+            raise NotFoundError("Resource not found")
+
+        now = datetime.now(UTC)
+        deleted = await self._repo.delete_education(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            education_id=education_id,
+            expected_version=expected_version,
+            now=now,
+        )
+        if deleted is None:
+            refreshed = await self._repo.get_education(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                education_id=education_id,
+            )
+            if refreshed is None:
+                raise NotFoundError("Resource not found")
+            raise StaleResourceError(
+                "This education record has been modified by another request",
+                current=employee_education_to_audit_dict(employee_education_to_read(refreshed)),
+            )
+
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_EDUCATION_DELETED",
+            entity_type="employee_education",
+            entity_id=education_id,
+            before=employee_education_to_audit_dict(employee_education_to_read(current)),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+
+class EmployeeDependentService:
+    """PF/Gratuity nominee declaration + ESI family details (market-parity onboarding-data
+    pass, part 6) — mirrors `EmployeeEducationService`'s exact shape (plain one-to-many list, no
+    covering-employment check, soft-delete the only mutation path after insert), plus two things
+    neither Experience nor Education need: `aadhaar_number_enc` is DATA-01-encrypted at create
+    time (same `create_bank`-style up-front-id-then-encrypt pattern), and each nominee scheme's
+    (`is_pf_nominee`/`is_gratuity_nominee`) share percentage is validated against the sum of the
+    employee's *other* nominee dependents in that same scheme before insert — a DB `CHECK` cannot
+    aggregate across sibling rows, so this is the one place that rule can live."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = EmployeeDependentRepository()
+        self._employee_repo = EmployeeRepository()
+        self._employee_service = EmployeeService(session, self._settings)
+        self._audit = AuditService()
+        self._crypto = PiiCryptoService(self._settings)
+
+    async def _decrypt_dependent(self, dependent: "EmployeeDependent") -> EmployeeDependentRead:
+        plaintext = await self._crypto.decrypt_column(
+            self._session,
+            ciphertext=dependent.aadhaar_number_enc,
+            table="employee_dependent",
+            column="aadhaar_number_enc",
+            record_id=dependent.id,
+        )
+        return employee_dependent_to_read(dependent, decrypted_aadhaar_number=plaintext)
+
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
+        employee = await self._employee_repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+    async def _assert_percentage_within_limit(
+        self, company_id: UUID, employee_id: UUID, body: EmployeeDependentCreate
+    ) -> None:
+        if body.is_pf_nominee:
+            existing = await self._repo.sum_pf_nominee_percentage(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            total = existing + (body.pf_nominee_share_percentage or 0)
+            if total > 100:
+                raise NomineePercentageExceededError(
+                    field="pf_nominee_share_percentage", scheme="PF", total=total
+                )
+        if body.is_gratuity_nominee:
+            existing = await self._repo.sum_gratuity_nominee_percentage(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            total = existing + (body.gratuity_nominee_share_percentage or 0)
+            if total > 100:
+                raise NomineePercentageExceededError(
+                    field="gratuity_nominee_share_percentage", scheme="Gratuity", total=total
+                )
+
+    async def create_dependent(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: EmployeeDependentCreate,
+        *,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeDependentRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        await self._assert_percentage_within_limit(company_id, employee_id, body)
+
+        now = datetime.now(UTC)
+        # DATA-01 (plan §2.4/§2.5) — `dependent_id` is generated up front, same convention
+        # `EmployeeBankService.create_bank` uses for `account_number_enc`, so it is available to
+        # bind the AAD before the row is ever persisted.
+        dependent_id = uuid4()
+        encrypted_aadhaar = await self._crypto.encrypt_column(
+            self._session,
+            plaintext=body.aadhaar_number_enc,
+            table="employee_dependent",
+            column="aadhaar_number_enc",
+            record_id=dependent_id,
+        )
+        dependent = await self._repo.insert_dependent(
+            self._session,
+            data={
+                "id": dependent_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "full_name": body.full_name,
+                "relationship": body.relationship,
+                "date_of_birth": body.date_of_birth,
+                "gender": body.gender,
+                "is_minor": body.is_minor,
+                "guardian_name": body.guardian_name,
+                "guardian_relationship": body.guardian_relationship,
+                "aadhaar_number_enc": encrypted_aadhaar,
+                "is_pf_nominee": body.is_pf_nominee,
+                "pf_nominee_share_percentage": body.pf_nominee_share_percentage,
+                "is_gratuity_nominee": body.is_gratuity_nominee,
+                "gratuity_nominee_share_percentage": body.gratuity_nominee_share_percentage,
+                "is_esi_dependent": body.is_esi_dependent,
+                "document_id": body.document_id,
+                "version": 1,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        # Reuses the plaintext already in hand (`body.aadhaar_number_enc`) rather than issuing an
+        # immediate, redundant decrypt of what this same call just encrypted.
+        read = employee_dependent_to_read(
+            dependent, decrypted_aadhaar_number=body.aadhaar_number_enc
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_DEPENDENT_CREATED",
+            entity_type="employee_dependent",
+            entity_id=dependent_id,
+            after=employee_dependent_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_dependents(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> list[EmployeeDependentRead]:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        dependents = await self._repo.list_dependents(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [await self._decrypt_dependent(d) for d in dependents]
+
+    async def get_dependent(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        dependent_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> EmployeeDependentRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        dependent = await self._repo.get_dependent(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            dependent_id=dependent_id,
+        )
+        if dependent is None:
+            raise NotFoundError("Resource not found")
+        return await self._decrypt_dependent(dependent)
+
+    async def delete_dependent(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        dependent_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        current = await self._repo.get_dependent(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            dependent_id=dependent_id,
+        )
+        if current is None:
+            raise NotFoundError("Resource not found")
+        current_read = await self._decrypt_dependent(current)
+
+        now = datetime.now(UTC)
+        deleted = await self._repo.delete_dependent(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            dependent_id=dependent_id,
+            expected_version=expected_version,
+            now=now,
+        )
+        if deleted is None:
+            refreshed = await self._repo.get_dependent(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                dependent_id=dependent_id,
+            )
+            if refreshed is None:
+                raise NotFoundError("Resource not found")
+            raise StaleResourceError(
+                "This dependent record has been modified by another request",
+                current=employee_dependent_to_audit_dict(await self._decrypt_dependent(refreshed)),
+            )
+
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_DEPENDENT_DELETED",
+            entity_type="employee_dependent",
+            entity_id=dependent_id,
+            before=employee_dependent_to_audit_dict(current_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )

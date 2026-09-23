@@ -19,6 +19,9 @@ from hrms.modules.employee.permissions import (
     EMPLOYEE_VIEW_ALL,
     EMPLOYEE_VIEW_BANKING,
     EMPLOYEE_VIEW_COMPENSATION,
+    EMPLOYEE_VIEW_EXPERIENCE,
+    EMPLOYEE_VIEW_NOMINEE,
+    EMPLOYEE_VIEW_SENSITIVE,
     EMPLOYEE_VIEW_STATUTORY,
 )
 from hrms.modules.identity.permissions import (
@@ -199,6 +202,7 @@ from hrms.modules.organisation.schemas import (
     work_calendar_to_read,
 )
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
+from hrms.shared.pagination import PageParams
 from hrms.shared.timezone import validate_iana_timezone
 
 # No explicit trial length is defined anywhere in the frozen Company docs — 14 days is an
@@ -709,7 +713,14 @@ class OrganisationService:
             permission_id=employee_view_perm.id,
             data_scope=DataScopeLevel.SELF,
         )
-        for code in (EMPLOYEE_VIEW_COMPENSATION, EMPLOYEE_VIEW_STATUTORY, EMPLOYEE_VIEW_BANKING):
+        for code in (
+            EMPLOYEE_VIEW_COMPENSATION,
+            EMPLOYEE_VIEW_STATUTORY,
+            EMPLOYEE_VIEW_BANKING,
+            EMPLOYEE_VIEW_SENSITIVE,
+            EMPLOYEE_VIEW_EXPERIENCE,
+            EMPLOYEE_VIEW_NOMINEE,
+        ):
             await self._repo.insert_role_permission(
                 self._session,
                 role_id=employee_role.id,
@@ -2657,13 +2668,25 @@ class OrganisationService:
         )
         return read
 
-    async def list_shift_versions(self, company_id: UUID, shift_id: UUID) -> list[ShiftVersionRead]:
+    async def list_shift_versions(
+        self, company_id: UUID, shift_id: UUID, *, page: PageParams
+    ) -> tuple[list[ShiftVersionRead], int]:
         shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
         if shift is None:
             raise NotFoundError("Resource not found")
         versions = await self._shift_version_repo.list_versions(
+            self._session,
+            company_id=company_id,
+            shift_id=shift_id,
+            limit=page.limit,
+            offset=page.offset,
+        )
+        total = await self._shift_version_repo.count_versions(
             self._session, company_id=company_id, shift_id=shift_id
         )
+        # Breaks/duty-blocks are fetched only for *this page's* version IDs — pagination narrows
+        # the parent query first, and the already-batched child fetch below (no N+1 here to
+        # begin with) composes correctly on top of it (API-01 §6).
         version_ids = [v.id for v in versions]
         all_breaks = await self._shift_version_repo.list_breaks_for_versions(
             self._session, company_id=company_id, version_ids=version_ids
@@ -2677,10 +2700,11 @@ class OrganisationService:
         blocks_by_version: dict[UUID, list[Any]] = {vid: [] for vid in version_ids}
         for d in all_duty_blocks:
             blocks_by_version[d.shift_version_id].append(d)
-        return [
+        reads = [
             shift_version_to_read(v, breaks_by_version[v.id], blocks_by_version[v.id])
             for v in versions
         ]
+        return reads, total
 
     async def get_shift_version(
         self, company_id: UUID, shift_id: UUID, version_id: UUID
@@ -3298,12 +3322,20 @@ class OrganisationService:
         return read
 
     async def list_holidays(
-        self, company_id: UUID, calendar_id: UUID, *, year: int | None = None
-    ) -> list[HolidayRead]:
+        self, company_id: UUID, calendar_id: UUID, *, year: int | None = None, page: PageParams
+    ) -> tuple[list[HolidayRead], int]:
         rows = await self._holiday_repo.list_holidays(
+            self._session,
+            company_id=company_id,
+            calendar_id=calendar_id,
+            year=year,
+            limit=page.limit,
+            offset=page.offset,
+        )
+        total = await self._holiday_repo.count_holidays(
             self._session, company_id=company_id, calendar_id=calendar_id, year=year
         )
-        return [holiday_to_read(row) for row in rows]
+        return [holiday_to_read(row) for row in rows], total
 
     async def get_holiday(self, company_id: UUID, holiday_id: UUID) -> HolidayRead:
         row = await self._holiday_repo.get(
@@ -3914,12 +3946,19 @@ class OrganisationService:
         return read
 
     async def list_calendar_exceptions(
-        self, company_id: UUID, work_calendar_id: UUID
-    ) -> list[CalendarExceptionRead]:
+        self, company_id: UUID, work_calendar_id: UUID, *, page: PageParams
+    ) -> tuple[list[CalendarExceptionRead], int]:
         rows = await self._calendar_exception_repo.list_exceptions(
+            self._session,
+            company_id=company_id,
+            work_calendar_id=work_calendar_id,
+            limit=page.limit,
+            offset=page.offset,
+        )
+        total = await self._calendar_exception_repo.count_exceptions(
             self._session, company_id=company_id, work_calendar_id=work_calendar_id
         )
-        return [calendar_exception_to_read(row) for row in rows]
+        return [calendar_exception_to_read(row) for row in rows], total
 
     async def update_calendar_exception(
         self,
@@ -4145,15 +4184,25 @@ class OrganisationService:
         policy_kind: str | None = None,
         scope_type: str | None = None,
         scope_id: UUID | None = None,
-    ) -> list[PolicyAssignmentRead]:
+        page: PageParams,
+    ) -> tuple[list[PolicyAssignmentRead], int]:
         rows = await self._policy_assignment_repo.list_assignments(
             self._session,
             company_id=company_id,
             policy_kind=policy_kind,
             scope_type=scope_type,
             scope_id=scope_id,
+            limit=page.limit,
+            offset=page.offset,
         )
-        return [policy_assignment_to_read(row) for row in rows]
+        total = await self._policy_assignment_repo.count_assignments(
+            self._session,
+            company_id=company_id,
+            policy_kind=policy_kind,
+            scope_type=scope_type,
+            scope_id=scope_id,
+        )
+        return [policy_assignment_to_read(row) for row in rows], total
 
     async def resolve_calendar_for_employee(
         self, company_id: UUID, employee_id: UUID, target_date: date

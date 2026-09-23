@@ -79,7 +79,13 @@ from hrms.modules.organisation.schemas import (
     WorkCalendarUpdate,
 )
 from hrms.modules.organisation.service import OrganisationService
-from hrms.shared.pagination import DataEnvelope, ListEnvelope
+from hrms.shared.pagination import (
+    DataEnvelope,
+    ListEnvelope,
+    PageParams,
+    build_pagination_meta,
+    pagination_params,
+)
 from hrms.shared.rate_limit import rate_limit
 
 router = APIRouter(tags=["organisation"])
@@ -696,9 +702,14 @@ async def list_shift_versions(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
     service: Annotated[OrganisationService, Depends(get_organisation_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
 ) -> ListEnvelope[ShiftVersionRead]:
-    data = await service.list_shift_versions(tenant.company_id, shift_id)
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    data, total = await service.list_shift_versions(tenant.company_id, shift_id, page=page)
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.post("/shifts/{shift_id}/versions", status_code=status.HTTP_201_CREATED)
@@ -929,10 +940,17 @@ async def list_holidays(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ORG_HOLIDAY_MANAGE))],
     service: Annotated[OrganisationService, Depends(get_organisation_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
     year: Annotated[int | None, Query()] = None,
 ) -> ListEnvelope[HolidayRead]:
-    data = await service.list_holidays(tenant.company_id, calendar_id, year=year)
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    data, total = await service.list_holidays(
+        tenant.company_id, calendar_id, year=year, page=page
+    )
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.post("/holiday-calendars/{calendar_id}/holidays", status_code=status.HTTP_201_CREATED)
@@ -1190,9 +1208,16 @@ async def list_calendar_exceptions(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ORG_CALENDAR_MANAGE))],
     service: Annotated[OrganisationService, Depends(get_organisation_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
 ) -> ListEnvelope[CalendarExceptionRead]:
-    data = await service.list_calendar_exceptions(tenant.company_id, work_calendar_id)
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    data, total = await service.list_calendar_exceptions(
+        tenant.company_id, work_calendar_id, page=page
+    )
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.post("/work-calendars/{work_calendar_id}/exceptions", status_code=status.HTTP_201_CREATED)
@@ -1278,15 +1303,24 @@ async def list_policy_assignments(
     user: Annotated["AuthenticatedUser", Depends(get_current_user)],
     rbac: Annotated["RbacService", Depends(get_rbac_service)],
     service: Annotated[OrganisationService, Depends(get_organisation_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
     policy_kind: Annotated[str | None, Query()] = None,
     scope_type: Annotated[str | None, Query()] = None,
     scope_id: Annotated[UUID | None, Query()] = None,
 ) -> ListEnvelope[PolicyAssignmentRead]:
     await _require_policy_assignment_permission(policy_kind, user, rbac)
-    data = await service.list_policy_assignments(
-        tenant.company_id, policy_kind=policy_kind, scope_type=scope_type, scope_id=scope_id
+    data, total = await service.list_policy_assignments(
+        tenant.company_id,
+        policy_kind=policy_kind,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.post("/policy-assignments", status_code=status.HTTP_201_CREATED)

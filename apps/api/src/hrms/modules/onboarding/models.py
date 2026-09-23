@@ -72,8 +72,34 @@ class OnboardingCase(Base, TimestampMixin):
     personal_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     address_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     emergency_contact: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # DATA-01 (`docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md` §2.5/§9) — the
+    # `account_number_enc` key inside this dict holds ciphertext once written via
+    # `OnboardingCaseService.update_section`; every other key is untouched plaintext (not
+    # sensitive, inventory §1). Decrypted explicitly, per read, via
+    # `OnboardingCaseService._decrypt_bank_info`/`OnboardingActivationService._decrypt_bank_info`
+    # — never automatically. This column is not cleared after activation in this batch (DATA-01
+    # implementation batch §9/§15 — gated on a product/compliance sign-off that has not been
+    # recorded; the retained ciphertext-copy alternative, plan §9.2, is what this batch ships).
     bank_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     statutory_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # E-02 (market-parity onboarding-data pass, part 3) — CTC, not encrypted (mirrors
+    # `EmployeeCompensation.annual_ctc_minor`'s own plain-column shape; RESTRICTED here means
+    # permission-gated, not encrypted-at-rest, same posture the employee module already uses).
+    compensation_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Market-parity onboarding-data pass, part 4 — `{"items": [...]}`, a list wrapped in a dict
+    # so this column fits the same shape every other section uses (see `PreviousEmploymentSection`
+    # docstring). Not encrypted — `previous_uan`/`previous_pf_account_number` are the same
+    # sensitivity tier as `Employee.uan_number`/`EmployeeStatutory.pf_number`, both plain.
+    previous_employment_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Market-parity onboarding-data pass, part 5 — same `{"items": [...]}` list shape.
+    education_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    # Market-parity onboarding-data pass, part 6 — PF/Gratuity nominee + ESI family details, same
+    # `{"items": [...]}` list shape. Each item's `aadhaar_number_enc` key holds ciphertext once
+    # written via `OnboardingCaseService.update_section`, keyed per list index (`NomineeItem`
+    # docstring) — decrypted explicitly, per read, via `OnboardingCaseService.
+    # _decrypt_nominee_info`/`OnboardingActivationService._decrypt_nominee_info`, never
+    # automatically.
+    nominee_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     policy_ack_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     policy_ack_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     employee_id: Mapped[UUID | None] = mapped_column(

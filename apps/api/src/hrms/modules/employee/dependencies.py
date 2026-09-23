@@ -11,6 +11,9 @@ from hrms.modules.employee.service import (
     EmployeeAssignmentService,
     EmployeeBankService,
     EmployeeCompensationService,
+    EmployeeDependentService,
+    EmployeeEducationService,
+    EmployeeExperienceService,
     EmployeeService,
     EmployeeStatutoryService,
     EmploymentService,
@@ -51,3 +54,21 @@ def get_employee_bank_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EmployeeBankService:
     return EmployeeBankService(session, get_settings())
+
+
+def get_employee_experience_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EmployeeExperienceService:
+    return EmployeeExperienceService(session, get_settings())
+
+
+def get_employee_education_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EmployeeEducationService:
+    return EmployeeEducationService(session, get_settings())
+
+
+def get_employee_dependent_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EmployeeDependentService:
+    return EmployeeDependentService(session, get_settings())

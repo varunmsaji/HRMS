@@ -1,0 +1,767 @@
+<title>HRMS Production Readiness & Security Audit</title>
+<style>
+  :root {
+    --paper: #f5f7f4;
+    --surface: #ffffff;
+    --surface-sunk: #eceeea;
+    --ink: #121a1b;
+    --ink-soft: #3c4a49;
+    --ink-mute: #68766f;
+    --rule: #d5dcd6;
+    --rule-strong: #b6c0b8;
+    --accent: #10605a;
+    --accent-soft: #e0eeeb;
+    --sev-p0: #a3282a;
+    --sev-p1: #b0621a;
+    --sev-p2: #7c6e24;
+    --sev-p3: #4a6472;
+    --pass: #2c6a4d;
+    --shadow: 0 1px 0 rgba(18,26,27,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d1213;
+      --surface: #131a1b;
+      --surface-sunk: #101617;
+      --ink: #e4eae6;
+      --ink-soft: #b9c4be;
+      --ink-mute: #85918b;
+      --rule: #263130;
+      --rule-strong: #384644;
+      --accent: #57b8ac;
+      --accent-soft: #16302e;
+      --sev-p0: #e2706b;
+      --sev-p1: #dc9a4c;
+      --sev-p2: #c3b263;
+      --sev-p3: #8fb0bf;
+      --pass: #66b98d;
+      --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0d1213;
+    --surface: #131a1b;
+    --surface-sunk: #101617;
+    --ink: #e4eae6;
+    --ink-soft: #b9c4be;
+    --ink-mute: #85918b;
+    --rule: #263130;
+    --rule-strong: #384644;
+    --accent: #57b8ac;
+    --accent-soft: #16302e;
+    --sev-p0: #e2706b;
+    --sev-p1: #dc9a4c;
+    --sev-p2: #c3b263;
+    --sev-p3: #8fb0bf;
+    --pass: #66b98d;
+    --shadow: none;
+  }
+  :root[data-theme="light"] {
+    --paper: #f5f7f4;
+    --surface: #ffffff;
+    --surface-sunk: #eceeea;
+    --ink: #121a1b;
+    --ink-soft: #3c4a49;
+    --ink-mute: #68766f;
+    --rule: #d5dcd6;
+    --rule-strong: #b6c0b8;
+    --accent: #10605a;
+    --accent-soft: #e0eeeb;
+    --sev-p0: #a3282a;
+    --sev-p1: #b0621a;
+    --sev-p2: #7c6e24;
+    --sev-p3: #4a6472;
+    --pass: #2c6a4d;
+    --shadow: 0 1px 0 rgba(18,26,27,.04);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px 96px; }
+
+  h1, h2, h3, h4 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    font-weight: 600;
+    text-wrap: balance;
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  .mono, code, .id, .num {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  code {
+    font-size: .855em;
+    background: var(--surface-sunk);
+    padding: .1em .35em;
+    color: var(--ink-soft);
+  }
+
+  .eyebrow {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+  }
+
+  /* ---- masthead ---- */
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 56px 0 20px;
+    margin-bottom: 0;
+  }
+  .masthead h1 { font-size: clamp(30px, 4.6vw, 48px); letter-spacing: -.015em; }
+  .masthead .sub { color: var(--ink-soft); max-width: 62ch; margin: 14px 0 0; }
+
+  .meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 28px;
+    border-bottom: 1px solid var(--rule);
+    padding: 12px 0;
+    font-size: 12.5px;
+  }
+  .meta-strip div { display: flex; gap: 8px; }
+  .meta-strip dt { color: var(--ink-mute); text-transform: uppercase; letter-spacing: .08em; font-size: 11px; align-self: center; }
+  .meta-strip dd { margin: 0; color: var(--ink-soft); }
+
+  /* ---- verdict ---- */
+  .verdict {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: 40px;
+    padding: 40px 0 36px;
+    border-bottom: 1px solid var(--rule);
+    align-items: start;
+  }
+  .verdict-stamp {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    border: 1.5px solid var(--sev-p0);
+    color: var(--sev-p0);
+    padding: 6px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .verdict h2 { font-size: 25px; margin: 18px 0 12px; }
+  .verdict p { margin: 0 0 12px; color: var(--ink-soft); max-width: 60ch; }
+
+  .tally { display: grid; grid-template-columns: repeat(2, 1fr); border-top: 1px solid var(--rule-strong); }
+  .tally div {
+    border-bottom: 1px solid var(--rule);
+    padding: 12px 14px 12px 0;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .tally div:nth-child(odd) { border-right: 1px solid var(--rule); padding-left: 0; }
+  .tally div:nth-child(even) { padding-left: 14px; }
+  .tally .n { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 30px; font-variant-numeric: tabular-nums; line-height: 1; }
+  .tally .l { font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-mute); }
+  .n.p0 { color: var(--sev-p0); }
+  .n.p1 { color: var(--sev-p1); }
+  .n.p2 { color: var(--sev-p2); }
+  .n.ok { color: var(--pass); }
+
+  /* ---- sections ---- */
+  section { padding-top: 52px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--ink); padding-bottom: 8px; margin-bottom: 8px; }
+  .sec-head h2 { font-size: 24px; }
+  .sec-head .eyebrow { margin-left: auto; }
+  .lede { color: var(--ink-soft); max-width: 68ch; margin: 18px 0 26px; }
+
+  /* ---- readiness matrix ---- */
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; padding: 11px 14px 11px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    font-weight: 400;
+    border-bottom: 1px solid var(--rule-strong);
+    white-space: nowrap;
+  }
+  td.area { font-weight: 600; white-space: nowrap; }
+  td.note { color: var(--ink-soft); }
+
+  .state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 12.5px; font-weight: 600; }
+  .dot { width: 9px; height: 9px; flex: 0 0 9px; }
+  .dot.blocked { background: var(--sev-p0); }
+  .dot.fix { background: var(--sev-p1); }
+  .dot.watch { background: var(--sev-p2); }
+  .dot.ready { background: var(--pass); }
+  .state.blocked { color: var(--sev-p0); }
+  .state.fix { color: var(--sev-p1); }
+  .state.watch { color: var(--sev-p2); }
+  .state.ready { color: var(--pass); }
+
+  /* ---- findings ledger ---- */
+  .ledger { border-top: 1px solid var(--rule-strong); }
+  .finding {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 0 20px;
+    border-bottom: 1px solid var(--rule);
+    padding: 22px 0;
+  }
+  .finding .idcol { display: flex; flex-direction: column; gap: 7px; }
+  .finding .id { font-size: 12px; letter-spacing: .04em; color: var(--ink); font-weight: 600; }
+  .sev {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  }
+  .sev.p0 { color: var(--sev-p0); }
+  .sev.p1 { color: var(--sev-p1); }
+  .sev.p2 { color: var(--sev-p2); }
+  .sev.p3 { color: var(--sev-p3); }
+  .sev .sq { width: 8px; height: 8px; flex: 0 0 8px; background: currentColor; }
+
+  .finding h3 { font-size: 18.5px; margin-bottom: 8px; }
+  .finding p { margin: 0 0 10px; color: var(--ink-soft); max-width: 72ch; }
+  .finding p:last-child { margin-bottom: 0; }
+  .evidence {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--ink-mute);
+    display: block;
+    margin: 0 0 10px;
+    word-break: break-word;
+  }
+  .fix-line { border-left: 2px solid var(--accent); padding-left: 12px; }
+  .fix-line strong { color: var(--accent); font-weight: 600; }
+
+  /* ---- solid list ---- */
+  .solid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0; border-top: 1px solid var(--rule-strong); }
+  .solid > div { border-bottom: 1px solid var(--rule); padding: 16px 20px 16px 0; }
+  .solid h4 { font-size: 15.5px; display: flex; align-items: baseline; gap: 9px; margin-bottom: 5px; }
+  .solid h4::before { content: ""; width: 8px; height: 8px; background: var(--pass); flex: 0 0 8px; }
+  .solid p { margin: 0; font-size: 14px; color: var(--ink-soft); }
+
+  /* ---- gate ---- */
+  ol.gate { list-style: none; counter-reset: gate; padding: 0; margin: 0; border-top: 1px solid var(--rule-strong); }
+  ol.gate li {
+    counter-increment: gate;
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 0 18px;
+    border-bottom: 1px solid var(--rule);
+    padding: 18px 0;
+  }
+  ol.gate li::before {
+    content: counter(gate, decimal-leading-zero);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--ink-mute);
+    padding-top: 2px;
+  }
+  ol.gate h4 { font-size: 16.5px; margin-bottom: 5px; }
+  ol.gate p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+  ol.gate .refs { font-size: 12px; color: var(--ink-mute); margin-top: 6px; }
+
+  .callout {
+    background: var(--surface-sunk);
+    border-left: 2px solid var(--accent);
+    padding: 16px 20px;
+    margin: 26px 0 0;
+  }
+  .callout p { margin: 0; color: var(--ink-soft); font-size: 14.5px; max-width: 72ch; }
+
+  footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--rule); font-size: 12.5px; color: var(--ink-mute); }
+
+  @media (max-width: 760px) {
+    .verdict { grid-template-columns: 1fr; gap: 28px; }
+    .finding { grid-template-columns: 1fr; gap: 12px; }
+    .finding .idcol { flex-direction: row; align-items: center; gap: 12px; }
+    ol.gate li { grid-template-columns: 1fr; gap: 6px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Staff Spectrum HRMS &middot; Platform Assessment</p>
+    <h1>Production readiness &amp; security audit</h1>
+    <p class="sub">A source-level review of authentication, registration, employee onboarding, attendance, leave, tenant isolation and the database schema — assessed against what it takes to run real customer payroll data in production.</p>
+  </header>
+
+  <dl class="meta-strip">
+    <div><dt>Date</dt><dd>17 Sep 2026</dd></div>
+    <div><dt>Commit</dt><dd class="mono">c3b8cec</dd></div>
+    <div><dt>Branch</dt><dd class="mono">main</dd></div>
+    <div><dt>Scope</dt><dd>apps/api (45.7k LoC) &middot; apps/web (44.9k LoC) &middot; 68 migrations</dd></div>
+    <div><dt>Method</dt><dd>Static source review. No exploitation attempted.</dd></div>
+  </dl>
+
+  <div class="verdict">
+    <div>
+      <span class="verdict-stamp">Not production-ready &middot; 5 blockers</span>
+      <h2>The domain is further along than the platform around it.</h2>
+      <p>The HR logic — tenant isolation, RBAC data scopes, attendance calculation, leave ledgers — is built to a genuinely high standard, with a real Postgres RLS backstop under a non-privileged runtime role and 1,220 tests behind it. That part is close.</p>
+      <p>What is not finished is the layer that makes it deployable and defensible: the API cannot be reached by a browser in production as configured, JWT signing secrets have working defaults with no guard, the login endpoint is unthrottled, government ID and bank numbers are stored in plaintext despite <code>_enc</code> column names, and no list endpoint in the entire API is paginated.</p>
+      <p>None of the five blockers is a deep architectural problem. All five are a focused week of work — but all five must land before a paying tenant's data goes in.</p>
+    </div>
+    <div class="tally">
+      <div><span class="n p0">5</span><span class="l">Blockers<br>P0</span></div>
+      <div><span class="n p1">9</span><span class="l">High<br>P1</span></div>
+      <div><span class="n p2">10</span><span class="l">Medium<br>P2</span></div>
+      <div><span class="n ok">67</span><span class="l">Tables under<br>forced RLS</span></div>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <h2>Readiness by area</h2>
+      <span class="eyebrow">Matrix</span>
+    </div>
+    <p class="lede">Each area is judged on whether it could carry live customer data today — not on how much of it is built. Several areas marked <em>blocked</em> are functionally complete and held back only by platform-level gaps shared across the whole API.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Area</th><th>State</th><th>What holds it back</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="area">Registration &amp; tenant bootstrap</td>
+            <td><span class="state blocked"><span class="dot blocked"></span>Blocked</span></td>
+            <td class="note">No email verification; a single POST creates a live tenant plus an authenticated admin session. Rate-limited by IP only.</td>
+          </tr>
+          <tr>
+            <td class="area">Login &amp; session</td>
+            <td><span class="state blocked"><span class="dot blocked"></span>Blocked</span></td>
+            <td class="note">No request-layer throttle on <code>/auth/login</code> or <code>/auth/token/refresh</code>. Rotation, reuse detection and revocation are otherwise excellent.</td>
+          </tr>
+          <tr>
+            <td class="area">Password reset</td>
+            <td><span class="state fix"><span class="dot fix"></span>Needs fix</span></td>
+            <td class="note">Correct token handling and anti-enumeration, but a reset does not revoke live sessions or refresh families.</td>
+          </tr>
+          <tr>
+            <td class="area">User invites &amp; role assignment</td>
+            <td><span class="state fix"><span class="dot fix"></span>Needs fix</span></td>
+            <td class="note">Accepting an invite for an email that already has an account issues that account a session with no password check.</td>
+          </tr>
+          <tr>
+            <td class="area">Employee onboarding (public wizard)</td>
+            <td><span class="state fix"><span class="dot fix"></span>Needs fix</span></td>
+            <td class="note">Unauthenticated upload path buffers the whole file before the size check, stores a caller-chosen content type, and is unthrottled.</td>
+          </tr>
+          <tr>
+            <td class="area">Attendance</td>
+            <td><span class="state watch"><span class="dot watch"></span>Ready with caveats</span></td>
+            <td class="note">Punch instants are now server-assigned and period locks are enforced on every write path. Limited by the API-wide pagination gap on day/punch listings.</td>
+          </tr>
+          <tr>
+            <td class="area">Leave</td>
+            <td><span class="state watch"><span class="dot watch"></span>Ready with caveats</span></td>
+            <td class="note">Ledger, approval chain, self-approval block and scope checks are sound. Same pagination gap; accrual cycles lack a natural-key unique constraint.</td>
+          </tr>
+          <tr>
+            <td class="area">Multi-tenancy &amp; RBAC</td>
+            <td><span class="state ready"><span class="dot ready"></span>Ready</span></td>
+            <td class="note">Strongest part of the system. One latent footgun: the RLS session variable is first set from an unverified request header.</td>
+          </tr>
+          <tr>
+            <td class="area">Database &amp; schema</td>
+            <td><span class="state fix"><span class="dot fix"></span>Needs fix</span></td>
+            <td class="note">Well-modelled and constrained, but PII columns named <code>_enc</code> hold plaintext and the base migration has no downgrade path.</td>
+          </tr>
+          <tr>
+            <td class="area">Deploy &amp; operations</td>
+            <td><span class="state blocked"><span class="dot blocked"></span>Blocked</span></td>
+            <td class="note">Production CORS resolves to no allowed origins, no security headers, no error tracking, no web container, root-user API image.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Blockers</h2>
+      <span class="eyebrow">P0 &middot; 5 findings</span>
+    </div>
+    <p class="lede">Each of these either prevents the product from functioning once deployed, or exposes customer data in a way that is not defensible to a client or a regulator.</p>
+
+    <div class="ledger">
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p0"><span class="sq"></span>P0</span><span class="id mono">OPS-01</span></div>
+        <div>
+          <h3>Production CORS allows no origins at all</h3>
+          <span class="evidence">apps/api/src/hrms/app.py:38 — allow_origins=["*"] if settings.is_development else []</span>
+          <p>Outside development the allowed-origin list is empty and there is no environment variable to populate it. The moment the API runs with <code>ENVIRONMENT=staging</code> or <code>production</code>, every browser request from the Next.js app is blocked by the preflight. The application is undeployable as configured — this fails on the first deploy, not later under load.</p>
+          <p>The development branch has its own defect: <code>allow_origins=["*"]</code> together with <code>allow_credentials=True</code> is an invalid combination that browsers reject, so the wildcard is providing less than it appears to.</p>
+          <p class="fix-line"><strong>Fix:</strong> add a <code>cors_allowed_origins</code> setting, read it per environment, and fail boot if it is empty outside development.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p0"><span class="sq"></span>P0</span><span class="id mono">SEC-01</span></div>
+        <div>
+          <h3>JWT signing secrets have working defaults and no production guard</h3>
+          <span class="evidence">apps/api/src/hrms/core/config/settings.py:27–30 — jwt_access_secret default "change-me-local-dev-only-min-16"</span>
+          <p>Both signing secrets carry defaults that satisfy the 16-character minimum, so an environment that forgets to inject them boots successfully and signs tokens with a value that is public in the repository. Anyone with the source can then mint a valid access token for any <code>user_id</code>/<code>company_id</code> pair — a complete authentication bypass across every tenant, with no log trace, because such a token verifies normally.</p>
+          <p>Nothing in the settings model, the app factory or the lifespan hook asserts that production is not running on defaults. The production env template correctly documents Secrets Manager injection, but that is documentation, not enforcement.</p>
+          <p class="fix-line"><strong>Fix:</strong> a Pydantic model validator that raises when <code>environment != "development"</code> and either secret matches the default or falls under a real entropy floor.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p0"><span class="sq"></span>P0</span><span class="id mono">SEC-02</span></div>
+        <div>
+          <h3>No rate limit on login or token refresh</h3>
+          <span class="evidence">apps/api/src/hrms/modules/identity/router.py:34–60 — neither route takes the _password_rate_limit dependency</span>
+          <p>Registration, forgot-password, reset-password and invite-acceptance all carry a 10-per-minute IP bucket. Login and refresh — the two endpoints that actually validate credentials — carry none. The only control is per-account lockout after five failures, which does not stop password spraying across many accounts, and which an attacker can aim at any known email address as a denial-of-service primitive against that user.</p>
+          <p>Refresh is also unthrottled, so a stolen refresh token can be exercised without friction.</p>
+          <p class="fix-line"><strong>Fix:</strong> apply the existing <code>rate_limit("auth", …)</code> dependency to both routes, keyed on email as well as IP, and make the limiter fail closed if Redis is unreachable.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p0"><span class="sq"></span>P0</span><span class="id mono">DATA-01</span></div>
+        <div>
+          <h3>Aadhaar, PAN and bank account numbers are stored in plaintext</h3>
+          <span class="evidence">apps/api/src/hrms/modules/employee/models.py:61–63 (pan_number_enc, aadhaar_number_enc) &middot; :272 (account_number_enc)</span>
+          <p>The <code>_enc</code> suffix implies encryption at rest; the columns are plain <code>String</code> and a search for any encryption primitive across the API — Fernet, KMS, pgcrypto, application-level envelope encryption — returns a single source comment acknowledging the gap. Government identifiers and salary-account numbers for every employee of every tenant sit in cleartext in one table.</p>
+          <p>This is the finding most likely to end a client security review. Under India's DPDP Act these are precisely the identifiers that attract the strictest handling expectations, and a database snapshot, a replica, a backup file or a support export leaks all of them at once. It also blocks payroll, which is where bank details become operationally necessary rather than optional.</p>
+          <p class="fix-line"><strong>Fix:</strong> envelope-encrypt these three columns with a KMS-managed data key, decrypt only in the narrow service paths that need the value, and mask in every read schema. Backfill before the first real tenant, not after.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p0"><span class="sq"></span>P0</span><span class="id mono">API-01</span></div>
+        <div>
+          <h3>No list endpoint in the API is paginated</h3>
+          <span class="evidence">apps/api/src/hrms/shared/pagination.py:14 — PaginationMeta defined, zero usages &middot; employee/router.py:97 list_employees takes no page parameters</span>
+          <p>Across 228 routes, not one list endpoint accepts a page, cursor or limit parameter; every one serialises the tenant's full result set. <code>GET /employees</code> returns every employee, attendance-day and punch listings return every row in range, and the users list additionally runs one role query per member.</p>
+          <p>At demo scale this is invisible. At a thousand-employee tenant with a year of attendance history it is a slow-query and memory problem on every page load, and an authenticated amplification vector: one cheap request forces an unbounded database read and JSON serialisation.</p>
+          <p class="fix-line"><strong>Fix:</strong> wire the already-defined <code>PaginationMeta</code> through <code>ListEnvelope</code>, add <code>page</code>/<code>per_page</code> with a hard server-side ceiling, and bound the date ranges on attendance and leave queries.</p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>High severity</h2>
+      <span class="eyebrow">P1 &middot; 9 findings</span>
+    </div>
+    <p class="lede">Not launch-stopping on their own, but each one materially widens the blast radius of an incident. Fix before onboarding customers, not before the first internal deploy.</p>
+
+    <div class="ledger">
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">SEC-03</span></div>
+        <div>
+          <h3>Public document upload buffers the entire request before checking size</h3>
+          <span class="evidence">apps/api/src/hrms/modules/onboarding/public_router.py:94 — body = await file.read() &middot; service.py:566 — size checked after</span>
+          <p>The 10 MB ceiling is enforced only after the whole file is resident in process memory, on a route reachable by anyone holding an onboarding link and with no rate limit attached. A handful of concurrent large uploads is enough to exhaust the API worker.</p>
+          <p class="fix-line"><strong>Fix:</strong> reject on <code>Content-Length</code> before reading, stream in bounded chunks, and add the auth rate-limit bucket to the public onboarding router.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">SEC-04</span></div>
+        <div>
+          <h3>Uploaded content type is caller-controlled and replayed on download</h3>
+          <span class="evidence">apps/api/src/hrms/modules/onboarding/service.py:564–572 — document_type validated, content_type is not; filename interpolated into the S3 key</span>
+          <p>Only the document category is validated against an allow-list. The MIME type comes straight from the client, is stored on the object, and is later served to an HR reviewer through a presigned GET with no <code>Content-Disposition: attachment</code> — so an uploaded <code>text/html</code> file executes in the browser on the bucket origin. The raw filename is also concatenated into the object key without sanitisation, and nothing scans uploads for malware.</p>
+          <p class="fix-line"><strong>Fix:</strong> allow-list MIME types, sniff the magic bytes rather than trusting the header, sanitise the key segment, and force an attachment disposition on presigned reads.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">SEC-05</span></div>
+        <div>
+          <h3>No security headers on either application</h3>
+          <span class="evidence">apps/api/src/hrms/app.py:36–43 — only CORS and tenancy middleware &middot; apps/web/next.config.mjs — no headers()</span>
+          <p>No Content-Security-Policy, HSTS, <code>X-Content-Type-Options</code>, frame-options or referrer policy is emitted anywhere. The missing CSP matters most because it is the layer that would contain the next finding.</p>
+          <p class="fix-line"><strong>Fix:</strong> a response-header middleware on the API and a <code>headers()</code> block in the Next config, CSP included.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">SEC-06</span></div>
+        <div>
+          <h3>Thirty-day refresh tokens live in localStorage</h3>
+          <span class="evidence">apps/web/src/lib/auth/token-storage.ts:1–13 — documented tradeoff, no HttpOnly cookie is set by the API</span>
+          <p>The module is honest about the tradeoff and correctly isolated for a later swap. The risk is the combination: any XSS on the app — with no CSP to blunt it — yields a long-lived refresh token, and therefore durable account takeover that survives a password change, since a reset does not revoke token families (SEC-07).</p>
+          <p class="fix-line"><strong>Fix:</strong> move the refresh token to an HttpOnly, Secure, SameSite cookie; the API already accepts one at <code>/auth/token/refresh</code>, it simply never sets it.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">SEC-07</span></div>
+        <div>
+          <h3>Password reset leaves existing sessions alive</h3>
+          <span class="evidence">apps/api/src/hrms/modules/identity/service.py:314–341 — updates the hash; no session or refresh-family revocation</span>
+          <p>The reset itself is well built — single-use hashed token, two-hour TTL, identical error for every failure mode. But the user's own reason for resetting is usually "someone else may have my account," and an attacker's existing session and refresh family both survive it. There is also no audit record for the credential change, by deliberate design, because the audit table requires a company context a reset does not have.</p>
+          <p class="fix-line"><strong>Fix:</strong> revoke all sessions and refresh tokens for the user inside the reset transaction, and give the audit log a nullable-tenant path for identity events.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">SEC-08</span></div>
+        <div>
+          <h3>Invite acceptance authenticates an existing account without its password</h3>
+          <span class="evidence">apps/api/src/hrms/modules/account_invite/service.py — existing-user branch, then issue_tokens_for(user_id=…)</span>
+          <p>When an invite is sent to an address that already has an account, acceptance adds the membership and immediately issues that user a session — the password supplied on the accept form is never checked against the existing hash. Whoever holds the emailed link gets an authenticated session as that person, scoped to the inviting company, and the response also enumerates the names of every other company that account belongs to.</p>
+          <p>The sensible behaviour is already implied by the code: it deliberately does not overwrite the existing password. It should likewise not grant a session.</p>
+          <p class="fix-line"><strong>Fix:</strong> for an existing user, require a normal login (or verify the submitted password) before attaching the membership, and drop other-company names from the public response.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">OPS-02</span></div>
+        <div>
+          <h3>Client IPs are not resolved behind a proxy</h3>
+          <span class="evidence">apps/api/src/hrms/shared/rate_limit.py:49 — request.client.host &middot; no ProxyHeadersMiddleware in app.py</span>
+          <p>Every rate-limit bucket is keyed on the socket peer. Behind a load balancer that is the balancer, so registration, forgot-password and invite-acceptance collapse into a single shared counter for all traffic — simultaneously trivial to exhaust for legitimate users and useless against an attacker. Logged IPs on sessions and audit records are wrong for the same reason.</p>
+          <p class="fix-line"><strong>Fix:</strong> enable proxy-header handling with an explicit trusted-hosts list; never trust <code>X-Forwarded-For</code> unconditionally.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">SEC-09</span></div>
+        <div>
+          <h3>Registration creates unverified tenants and signs the creator straight in</h3>
+          <span class="evidence">apps/api/src/hrms/modules/organisation/router.py:108 — public, IP-throttled, returns a token response</span>
+          <p>No email verification exists anywhere in the codebase. Any address — including one the registrant does not control — produces a live trial company with a COMPANY_ADMIN session, and the address is then permanently bound to that tenant under a global unique constraint on <code>user.email</code>, which lets a bad actor squat a real company's address. Combined with the shared IP bucket above, tenant creation is effectively unbounded.</p>
+          <p class="fix-line"><strong>Fix:</strong> require a verified email before the tenant leaves a pending state, and treat unverified tenants as disposable.</p>
+        </div>
+      </article>
+
+      <article class="finding">
+        <div class="idcol"><span class="sev p1"><span class="sq"></span>P1</span><span class="id mono">DEP-01</span></div>
+        <div>
+          <h3>JWT handling depends on an unmaintained library</h3>
+          <span class="evidence">apps/api/pyproject.toml — python-jose[cryptography]>=3.3.0 &middot; core/auth/jwt.py</span>
+          <p><code>python-jose</code> is effectively unmaintained and carries published algorithm-confusion and denial-of-service advisories (CVE-2024-33663, CVE-2024-33664). The application's own usage is careful — HS256 pinned on both encode and decode, token type asserted — so this is a supply-chain exposure rather than an exploitable bug today. No dependency scanning runs in CI to catch the next one.</p>
+          <p class="fix-line"><strong>Fix:</strong> migrate to PyJWT (a small, contained change given the pinned algorithm) and add <code>pip-audit</code> plus <code>npm audit</code> to the pipeline.</p>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Database &amp; tenant isolation</h2>
+      <span class="eyebrow">Schema review</span>
+    </div>
+    <p class="lede">68 linear migrations, 81 tables, timezone-aware timestamps throughout, money as integer minor units, GiST exclusion constraints preventing overlapping effective-dated rows, and no destructive cascade on any HR fact. The modelling is strong. The gaps are in coverage at the edges rather than in the core design.</p>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>Control</th><th>State</th><th>Detail</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="area">Runtime role</td>
+            <td><span class="state ready"><span class="dot ready"></span>Strong</span></td>
+            <td class="note">The app connects as <code>hrms_app</code> — NOSUPERUSER, NOBYPASSRLS, owns nothing. CI asserts those attributes before the security suite runs, so the RLS tests cannot pass vacuously.</td>
+          </tr>
+          <tr>
+            <td class="area">Policy coverage</td>
+            <td><span class="state ready"><span class="dot ready"></span>Strong</span></td>
+            <td class="note">67 tenant tables carry <code>ENABLE</code> + <code>FORCE ROW LEVEL SECURITY</code> with a <code>tenant_isolation</code> policy. An unset session variable yields zero rows — it fails closed.</td>
+          </tr>
+          <tr>
+            <td class="area">RLS on <code>company</code></td>
+            <td><span class="state watch"><span class="dot watch"></span>No-op</span></td>
+            <td class="note"><code>001_init_schema.sql:464</code> issues <code>FORCE</code> without <code>ENABLE</code>, which does nothing in Postgres. The table's comment reasons it away as the tenant root, but the practical effect is no backstop on company rows.</td>
+          </tr>
+          <tr>
+            <td class="area">Identity tables</td>
+            <td><span class="state watch"><span class="dot watch"></span>Uncovered</span></td>
+            <td class="note"><code>user</code>, <code>session</code>, <code>refresh_token</code>, <code>password_reset_token</code>, <code>user_role</code>, <code>role_permission</code> and <code>permission</code> have no policy. Cross-company by nature, so this is defensible — but it means application WHERE clauses are the only control there.</td>
+          </tr>
+          <tr>
+            <td class="area">Deliberate exemptions</td>
+            <td><span class="state ready"><span class="dot ready"></span>Documented</span></td>
+            <td class="note"><code>onboarding_token</code> and <code>account_invite</code> are explicitly exempt so a pre-tenant-context lookup can resolve them; both are hash-keyed and both set the GUC immediately after resolving.</td>
+          </tr>
+          <tr>
+            <td class="area">Pre-auth GUC</td>
+            <td><span class="state fix"><span class="dot fix"></span>Footgun</span></td>
+            <td class="note"><code>TenancyMiddleware</code> sets <code>app.company_id</code> from an unverified <code>X-Company-Id</code> header; <code>get_tenant_context</code> re-sets it from the verified JWT. Correct for every route today, fail-open for any future route that forgets the dependency.</td>
+          </tr>
+          <tr>
+            <td class="area">PII at rest</td>
+            <td><span class="state blocked"><span class="dot blocked"></span>Blocked</span></td>
+            <td class="note">See DATA-01 — <code>_enc</code> columns hold plaintext.</td>
+          </tr>
+          <tr>
+            <td class="area">Migration rollback</td>
+            <td><span class="state watch"><span class="dot watch"></span>Partial</span></td>
+            <td class="note">The chain is linear and unbroken with real <code>downgrade()</code> bodies, except the base revision, which raises <code>NotImplementedError</code>. No downgrade is exercised in CI.</td>
+          </tr>
+          <tr>
+            <td class="area">Backup &amp; restore</td>
+            <td><span class="state fix"><span class="dot fix"></span>Undefined</span></td>
+            <td class="note">No documented backup cadence, retention, restore drill or RPO/RTO target anywhere in the repository.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <p><strong>Worth stating plainly:</strong> tenant isolation here is better than most multi-tenant products reach before their first customer. The database itself — not a forgotten <code>WHERE</code> clause — is what stops a cross-tenant read, and there is a test suite that opens its own restricted connection to prove it. That foundation is why the remaining findings are fixable in days rather than months.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Medium severity</h2>
+      <span class="eyebrow">P2 &middot; 10 findings</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Finding</th><th>Evidence</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">OBS-01</td><td class="note">Unhandled exceptions are swallowed — the 500 handler discards the exception with <code>_ = exc</code> and a comment deferring Sentry to "a later sprint." Production errors leave no trace.</td><td class="mono">errors/handlers.py:74–81</td></tr>
+          <tr><td class="mono">OBS-02</td><td class="note">No request access log, no metrics endpoint, no tracing. <code>structlog</code> is configured and <code>get_logger</code> is never called from a request path.</td><td class="mono">observability/logging.py</td></tr>
+          <tr><td class="mono">OPS-03</td><td class="note">Health check reports <code>redis: "skipped"</code> and there is no liveness/readiness split — an orchestrator cannot tell "starting" from "broken," and a Redis outage surfaces as 500s on every rate-limited route.</td><td class="mono">health/service.py</td></tr>
+          <tr><td class="mono">OPS-04</td><td class="note">API image runs as root with no <code>USER</code>, no <code>HEALTHCHECK</code>, and a single-process uvicorn command — <code>gunicorn</code> is a declared dependency but never invoked.</td><td class="mono">apps/api/Dockerfile</td></tr>
+          <tr><td class="mono">OPS-05</td><td class="note">No Dockerfile, build step or deployment path exists for the web app at all; CI never runs <code>next build</code>, so a build-time failure reaches main undetected.</td><td class="mono">apps/web, .github/workflows/ci.yml</td></tr>
+          <tr><td class="mono">OPS-06</td><td class="note">Interactive API docs and the OpenAPI schema are served unconditionally in every environment, publishing the full route surface to unauthenticated callers.</td><td class="mono">app.py:30–32</td></tr>
+          <tr><td class="mono">QA-01</td><td class="note">The web app has no ESLint configuration or dependency; <code>npm run lint</code> would prompt interactively, so CI substitutes <code>tsc --noEmit</code>. No linting gate on 45k lines of TypeScript.</td><td class="mono">ci.yml, package.json</td></tr>
+          <tr><td class="mono">SEC-10</td><td class="note">Password policy is 8 characters with one letter and one digit — no breach-list check, no history, no rotation. No MFA anywhere in the product.</td><td class="mono">core/auth/passwords.py:20–31</td></tr>
+          <tr><td class="mono">SEC-11</td><td class="note">The rate limiter has no failure policy: if Redis is down the dependency raises and the endpoint 500s, and one shared <code>auth</code> bucket covers registration, password reset and invite acceptance together.</td><td class="mono">shared/rate_limit.py:48–56</td></tr>
+          <tr><td class="mono">AUD-01</td><td class="note">Audit coverage is uneven — 44 records in attendance and 30 in organisation, but zero in <code>employee_import</code>, which mutates employee records in bulk, and none for credential changes.</td><td class="mono">modules/*/service.py</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>What is already solid</h2>
+      <span class="eyebrow">Verified strengths</span>
+    </div>
+    <p class="lede">Assessed with the same scrutiny as the findings. These are load-bearing and should not be disturbed while fixing the rest.</p>
+    <div class="solid">
+      <div>
+        <h4>Refresh-token rotation with family revocation</h4>
+        <p>Every refresh revokes and reissues; replaying a spent token revokes the entire family and its sessions. Textbook.</p>
+      </div>
+      <div>
+        <h4>Per-request session validation</h4>
+        <p>Every authenticated request re-checks user status, session revocation and active company membership against the database — not just the token signature.</p>
+      </div>
+      <div>
+        <h4>Fail-closed permission resolution</h4>
+        <p>An empty data scope raises rather than defaulting to company-wide, and writes verify the <em>target</em> record's visibility, not merely that the caller holds the permission.</p>
+      </div>
+      <div>
+        <h4>404 instead of 403 across tenants</h4>
+        <p>Out-of-scope and nonexistent identifiers return identical responses, so the API cannot be used to probe for record existence.</p>
+      </div>
+      <div>
+        <h4>Server-assigned punch instants</h4>
+        <p>The self-punch schema has no <code>punch_time</code>, <code>source</code> or <code>employee_id</code> field and rejects extras outright — closing the clock-trust risk flagged in the September timezone audit.</p>
+      </div>
+      <div>
+        <h4>Anti-enumeration throughout</h4>
+        <p>Login, forgot-password, invite and onboarding token resolution all return one identical response for every failure mode.</p>
+      </div>
+      <div>
+        <h4>Enforced engineering gates</h4>
+        <p>1,220 tests, <code>mypy --strict</code>, ruff lint and format, import-linter module boundaries, and CI pinned to UTC so a host-clock regression fails the build.</p>
+      </div>
+      <div>
+        <h4>Period locks on every write path</h4>
+        <p>Closed attendance periods are checked at thirteen separate mutation sites, with unlocking gated behind a permission distinct from period management.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Go-live sequence</h2>
+      <span class="eyebrow">Ordered remediation</span>
+    </div>
+    <p class="lede">Ordered by dependency and risk, not by effort. Steps 1–5 clear the blockers; 6–8 are the minimum bar for handling a real customer's data; 9–10 are what make an incident survivable.</p>
+    <ol class="gate">
+      <li>
+        <h4>Make the API reachable and its secrets mandatory</h4>
+        <p>Environment-driven CORS origins, plus boot-time validation that refuses to start on default JWT secrets outside development.</p>
+        <p class="refs mono">OPS-01, SEC-01</p>
+      </li>
+      <li>
+        <h4>Throttle the credential endpoints</h4>
+        <p>Rate-limit login and refresh by IP and by email, and resolve the real client IP behind the proxy so every existing bucket starts working.</p>
+        <p class="refs mono">SEC-02, OPS-02</p>
+      </li>
+      <li>
+        <h4>Encrypt the identifiers</h4>
+        <p>Envelope-encrypt PAN, Aadhaar and bank account columns; mask them in read schemas. Do this before the first tenant, while backfill is still cheap.</p>
+        <p class="refs mono">DATA-01</p>
+      </li>
+      <li>
+        <h4>Paginate every list endpoint</h4>
+        <p>Wire the existing <code>PaginationMeta</code> through the list envelope with a server-side ceiling, and bound the attendance and leave date ranges.</p>
+        <p class="refs mono">API-01</p>
+      </li>
+      <li>
+        <h4>Harden the two public write surfaces</h4>
+        <p>Size-check before buffering, allow-list MIME types, sanitise object keys, force attachment disposition, and rate-limit the public onboarding router.</p>
+        <p class="refs mono">SEC-03, SEC-04</p>
+      </li>
+      <li>
+        <h4>Close the session-lifecycle gaps</h4>
+        <p>Revoke sessions and token families on password reset; require a real authentication before an invite attaches a membership to an existing account.</p>
+        <p class="refs mono">SEC-07, SEC-08</p>
+      </li>
+      <li>
+        <h4>Add security headers and move the refresh token to a cookie</h4>
+        <p>CSP, HSTS and the rest on both apps; an HttpOnly refresh cookie the API already knows how to read.</p>
+        <p class="refs mono">SEC-05, SEC-06</p>
+      </li>
+      <li>
+        <h4>Verify email before a tenant becomes real</h4>
+        <p>Hold new companies in a pending state until the admin address is confirmed, so unverified tenants are disposable rather than permanent.</p>
+        <p class="refs mono">SEC-09</p>
+      </li>
+      <li>
+        <h4>Turn on the lights</h4>
+        <p>Error tracking in the 500 handler, request access logging with the existing request id, a Redis-aware readiness probe, and a defined limiter failure policy.</p>
+        <p class="refs mono">OBS-01, OBS-02, OPS-03, SEC-11</p>
+      </li>
+      <li>
+        <h4>Finish the delivery pipeline</h4>
+        <p>A non-root API image with a health check, a web container and build step, dependency and container scanning, and a documented, rehearsed backup restore.</p>
+        <p class="refs mono">OPS-04, OPS-05, QA-01, DEP-01</p>
+      </li>
+    </ol>
+  </section>
+
+  <footer>
+    <p>Static source review at commit <span class="mono">c3b8cec</span>, 17 September 2026. Every finding cites the file and line it was read from; no exploitation was attempted and no running system was tested. Business-rule completeness for payroll inputs is tracked separately in <span class="mono">docs/audits/</span>.</p>
+  </footer>
+
+</div>

@@ -82,6 +82,9 @@ export function StatutoryInfoStep({ values, errors, onChange }: StatutoryInfoSte
           <FormField id="pfNumber" label="PF number" error={errors.pfNumber}>
             <Input value={values.pfNumber} onChange={(e) => update("pfNumber", e.target.value)} />
           </FormField>
+          <FormField id="uanNumber" label="UAN" error={errors.uanNumber}>
+            <Input value={values.uanNumber} onChange={(e) => update("uanNumber", e.target.value)} />
+          </FormField>
           <FormField id="vpfAmount" label="VPF amount" error={errors.vpfAmount}>
             <Input
               type="number"

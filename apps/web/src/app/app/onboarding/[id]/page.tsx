@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -38,6 +38,50 @@ function ReviewStatusBadge({ status }: { status: string }) {
   return <Badge variant="outline">Pending</Badge>;
 }
 
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function LinkStatus({
+  status,
+  expiresAt,
+}: {
+  status: OnboardingCaseDetail["token_status"];
+  expiresAt: string | null;
+}) {
+  if (!status) return null;
+  if (status === "ACTIVE") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant="success">Link active</Badge>
+        <span className="text-foreground-muted">
+          {expiresAt ? `Expires ${formatDateTime(expiresAt)}` : null}
+        </span>
+      </div>
+    );
+  }
+  if (status === "EXPIRED") {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Badge variant="danger">Link expired</Badge>
+        <span className="text-foreground-muted">
+          {expiresAt ? `Expired ${formatDateTime(expiresAt)} — ` : ""}Resend the invite to
+          generate a new one.
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <Badge variant="outline">Link revoked</Badge>
+      <span className="text-foreground-muted">A newer link has since been issued.</span>
+    </div>
+  );
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -51,7 +95,7 @@ function fieldLabel(key: string): string {
     .join(" ");
 }
 
-function SectionFields({ data }: { data: Record<string, unknown> }) {
+function FlatFields({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data).filter(([, value]) => value !== null && value !== "");
   if (entries.length === 0) {
     return <p className="text-sm text-foreground-muted">Not filled in yet.</p>;
@@ -70,6 +114,30 @@ function SectionFields({ data }: { data: Record<string, unknown> }) {
       ))}
     </dl>
   );
+}
+
+/** Most sections are a single flat object (`personal_info`, `bank_info`, ...); a few
+ * (`previous_employment_info`, and any future list-shaped section) are `{items: [...]}` — a
+ * candidate may have several past employers, all concurrently valid. Dispatches to a per-item
+ * card list for those, since flattening an array through `String(value)` would otherwise render
+ * as unreadable `"[object Object],[object Object]"`. */
+function SectionFields({ data }: { data: Record<string, unknown> }) {
+  if (Array.isArray(data.items)) {
+    const items = data.items as Record<string, unknown>[];
+    if (items.length === 0) {
+      return <p className="text-sm text-foreground-muted">None added.</p>;
+    }
+    return (
+      <div className="space-y-3">
+        {items.map((item, index) => (
+          <div key={index} className="rounded-md border border-border p-3">
+            <FlatFields data={item} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <FlatFields data={data} />;
 }
 
 interface ReferenceData {
@@ -165,6 +233,20 @@ export default function OnboardingCaseDetailPage() {
     void load();
     void loadDocuments();
   }, [load, loadDocuments]);
+
+  // TEST-ONLY convenience: auto-fetch the invite link on load instead of requiring a manual
+  // "Get Link"/"Resend Invite" click, so it's visible every time this page is opened. Remove
+  // this effect (and the `autoFetchedInviteRef` it relies on) once no longer needed — it
+  // re-issues a token on every page view, which isn't something a production flow should do
+  // silently.
+  const autoFetchedInviteRef = useRef(false);
+  useEffect(() => {
+    if (!onboardingCase || inviteUrl || autoFetchedInviteRef.current) return;
+    if (!can("ONBOARDING.CREATE")) return;
+    if (!ONBOARDING_CASE_INVITABLE_STATUSES.includes(onboardingCase.status)) return;
+    autoFetchedInviteRef.current = true;
+    void handleSendInvite();
+  }, [onboardingCase, inviteUrl, can]);
 
   async function handleVerifyDocument(document: OnboardingDocumentWithUrl) {
     setReviewingDocumentId(document.id);
@@ -314,7 +396,12 @@ export default function OnboardingCaseDetailPage() {
   const canActivate = can("ONBOARDING.ACTIVATE");
   const isInvitable = ONBOARDING_CASE_INVITABLE_STATUSES.includes(onboardingCase.status);
   const isReviewable = REVIEWABLE_CASE_STATUSES.includes(onboardingCase.status);
-  const inviteLabel = onboardingCase.status === "DRAFT" ? "Send Invite" : "Resend Invite";
+  const inviteLabel =
+    onboardingCase.status === "DRAFT"
+      ? "Send Invite"
+      : onboardingCase.status === "ACTIVATED"
+        ? "Get Link"
+        : "Resend Invite";
   const hasAnyRejection =
     onboardingCase.section_reviews.some((r) => r.status === "REJECTED") ||
     (documents ?? []).some((d) => d.status === "REJECTED");
@@ -372,12 +459,21 @@ export default function OnboardingCaseDetailPage() {
           {inviteUrl ? (
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-sm">
               <span className="text-foreground-muted">Invite link:</span>
-              <code className="truncate text-foreground">{inviteUrl}</code>
+              <a
+                href={inviteUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate text-foreground underline"
+              >
+                {inviteUrl}
+              </a>
               <Button type="button" variant="outline" size="sm" onClick={() => void handleCopyLink()}>
                 Copy link
               </Button>
             </div>
           ) : null}
+
+          <LinkStatus status={onboardingCase.token_status} expiresAt={onboardingCase.token_expires_at} />
 
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <DetailField label="Candidate first name" value={onboardingCase.candidate_first_name} />

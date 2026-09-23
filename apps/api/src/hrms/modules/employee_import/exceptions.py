@@ -25,6 +25,20 @@ class ImportRowLimitExceededError(ValidationError):
         )
 
 
+class ImportFileTooLargeError(ValidationError):
+    """Raised when the uploaded CSV exceeds `MAX_IMPORT_FILE_SIZE_BYTES` (SEC-03) — checked
+    before the file is parsed, mirroring `OnboardingDocumentTooLargeError`'s own posture."""
+
+    code = "IMPORT_FILE_TOO_LARGE"
+
+    def __init__(self, max_size_bytes: int) -> None:
+        message = f"File exceeds the {max_size_bytes // (1024 * 1024)}MB upload limit"
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "IMPORT_FILE_TOO_LARGE", "message": message}],
+        )
+
+
 class ImportHeaderInvalidError(ValidationError):
     """Raised when the CSV header row is missing required columns or contains unrecognized
     ones — checked once, up front, so a mistyped header produces one clear error instead of a

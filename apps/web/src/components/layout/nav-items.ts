@@ -12,7 +12,6 @@ import {
   ClipboardList,
   Clock,
   FileClock,
-  Landmark,
   LayoutDashboard,
   Layers,
   Link2,
@@ -25,6 +24,7 @@ import {
   Palmtree,
   Scale,
   Search,
+  Settings,
   Tag,
   Timer,
   UserCircle,
@@ -47,38 +47,77 @@ export interface NavItem {
   requiresEmployeeId?: boolean;
 }
 
+/** Day-to-day items, kept directly in the sidebar. Configuration/admin screens live under
+ * Settings (`SETTINGS_NAV_GROUPS` below) instead of crowding the primary nav. */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/me", label: "My Profile", icon: UserCircle, requiresEmployeeId: true },
-  { href: "/app/company", label: "Company", icon: Building2 },
   { href: "/app/employees", label: "Employees", icon: Users },
   { href: "/app/onboarding", label: "Onboarding", icon: UserPlus },
-  { href: "/app/legal-entities", label: "Legal Entities", icon: Landmark },
-  { href: "/app/branches", label: "Branches", icon: Building },
-  { href: "/app/departments", label: "Departments", icon: Network },
-  { href: "/app/designations", label: "Designations", icon: Briefcase },
-  { href: "/app/grades", label: "Grades", icon: Layers },
-  { href: "/app/shifts", label: "Shifts", icon: Clock },
   { href: "/app/rosters", label: "Shift Rosters", icon: CalendarCheck },
   { href: "/app/attendance", label: "Attendance", icon: CalendarClock },
   { href: "/app/regularizations", label: "Regularizations", icon: ClipboardEdit },
   { href: "/app/overtime", label: "Overtime", icon: AlarmClock },
   { href: "/app/leave-applications", label: "Leave", icon: Palmtree },
   { href: "/app/leave-balances", label: "Leave Balances", icon: Wallet },
-  { href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock },
-  { href: "/app/work-calendars", label: "Work Calendars", icon: CalendarRange },
-  { href: "/app/holiday-calendars", label: "Holiday Calendars", icon: CalendarDays },
-  { href: "/app/weekly-off-patterns", label: "Weekly-Off Patterns", icon: CalendarOff },
-  { href: "/app/attendance-policies", label: "Attendance Policies", icon: ClipboardList },
-  { href: "/app/overtime-policies", label: "Overtime Policies", icon: Timer },
-  { href: "/app/regularization-policies", label: "Regularization Policies", icon: FileClock },
-  { href: "/app/leave-types", label: "Leave Types", icon: Tag },
-  { href: "/app/leave-policies", label: "Leave Policies", icon: ClipboardCheck },
-  { href: "/app/leave-combination-rules", label: "Leave Combination Rules", icon: GitMerge },
-  { href: "/app/leave-year-setting", label: "Leave Year", icon: CalendarHeart },
-  { href: "/app/statutory-leave-minimums", label: "Statutory Minimums", icon: Scale },
-  { href: "/app/policy-assignments", label: "Policy Assignments", icon: Link2 },
-  { href: "/app/policy-resolution", label: "Policy Resolution", icon: Search },
-  { href: "/app/setup", label: "Setup", icon: ListChecks },
-  { href: "/app/users", label: "Users", icon: UserCog },
+  { href: "/app/settings", label: "Settings", icon: Settings },
 ];
+
+export interface SettingsNavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+/** Configuration/admin screens, reachable via the Settings hub (`/app/settings`) rather than the
+ * primary sidebar. Grouping mirrors the categories on that hub page. */
+export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
+  {
+    label: "Organisation",
+    items: [
+      { href: "/app/company", label: "Company", icon: Building2 },
+      { href: "/app/branches", label: "Branches", icon: Building },
+      { href: "/app/departments", label: "Departments", icon: Network },
+      { href: "/app/designations", label: "Designations", icon: Briefcase },
+      { href: "/app/grades", label: "Grades", icon: Layers },
+    ],
+  },
+  {
+    label: "Attendance & Time",
+    items: [
+      { href: "/app/shifts", label: "Shifts", icon: Clock },
+      { href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock },
+      { href: "/app/work-calendars", label: "Work Calendars", icon: CalendarRange },
+      { href: "/app/holiday-calendars", label: "Holiday Calendars", icon: CalendarDays },
+      { href: "/app/weekly-off-patterns", label: "Weekly-Off Patterns", icon: CalendarOff },
+      { href: "/app/attendance-policies", label: "Attendance Policies", icon: ClipboardList },
+      { href: "/app/overtime-policies", label: "Overtime Policies", icon: Timer },
+      { href: "/app/regularization-policies", label: "Regularization Policies", icon: FileClock },
+    ],
+  },
+  {
+    label: "Leave",
+    items: [
+      { href: "/app/leave-types", label: "Leave Types", icon: Tag },
+      { href: "/app/leave-policies", label: "Leave Policies", icon: ClipboardCheck },
+      { href: "/app/leave-combination-rules", label: "Leave Combination Rules", icon: GitMerge },
+      { href: "/app/leave-year-setting", label: "Leave Year", icon: CalendarHeart },
+      { href: "/app/statutory-leave-minimums", label: "Statutory Minimums", icon: Scale },
+    ],
+  },
+  {
+    label: "Policies",
+    items: [
+      { href: "/app/policy-assignments", label: "Policy Assignments", icon: Link2 },
+      { href: "/app/policy-resolution", label: "Policy Resolution", icon: Search },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      { href: "/app/setup", label: "Setup", icon: ListChecks },
+      { href: "/app/users", label: "Users", icon: UserCog },
+    ],
+  },
+];
+
+export const SETTINGS_ITEMS: NavItem[] = SETTINGS_NAV_GROUPS.flatMap((group) => group.items);

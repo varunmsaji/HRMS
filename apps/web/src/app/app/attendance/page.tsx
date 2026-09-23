@@ -109,8 +109,8 @@ export default function AttendanceDashboardPage() {
 
   useEffect(() => {
     void apiClient
-      .get<EmployeeOption[]>("/employees")
-      .then(setEmployees)
+      .getList<EmployeeOption>("/employees", { per_page: 100 })
+      .then(({ data }) => setEmployees(data))
       .catch(() => setEmployees([]));
   }, []);
 

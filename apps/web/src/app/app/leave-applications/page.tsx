@@ -9,6 +9,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { LeaveApplicationDialog } from "@/components/leave-application/leave-application-dialog";
 import { LeaveApplicationStatusBadge } from "@/components/leave-application/leave-application-status-badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -66,6 +68,8 @@ export default function LeaveApplicationsPage() {
   const [employeeFilter, setEmployeeFilter] = useState("");
 
   const [applications, setApplications] = useState<LeaveApplication[] | null>(null);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [page, setPage] = useState(1);
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,33 +88,52 @@ export default function LeaveApplicationsPage() {
     return map;
   }, [leaveTypes]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
-      if (statusFilter) params.set("application_status", statusFilter);
-      if (view === "MINE" && user?.employee_id) params.set("employee_id", user.employee_id);
-      if (view === "TEAM" && employeeFilter) params.set("employee_id", employeeFilter);
-      const data = await apiClient.get<LeaveApplication[]>(
-        `/leave-applications?${params.toString()}`,
-      );
-      setApplications(data);
-    } catch (err) {
-      setApplications(null);
-      setError(
-        err instanceof ApiError
-          ? err
-          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [dateFrom, dateTo, statusFilter, view, employeeFilter, user?.employee_id]);
+  const load = useCallback(
+    async (targetPage: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { data, pagination: meta } = await apiClient.getList<LeaveApplication>(
+          "/leave-applications",
+          {
+            page: targetPage,
+            date_from: dateFrom,
+            date_to: dateTo,
+            application_status: statusFilter || undefined,
+            employee_id:
+              view === "MINE"
+                ? (user?.employee_id ?? undefined)
+                : view === "TEAM"
+                  ? employeeFilter || undefined
+                  : undefined,
+          },
+        );
+        setApplications(data);
+        setPagination(meta);
+      } catch (err) {
+        setApplications(null);
+        setPagination(null);
+        setError(
+          err instanceof ApiError
+            ? err
+            : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [dateFrom, dateTo, statusFilter, view, employeeFilter, user?.employee_id],
+  );
+
+  // A filter change invalidates whatever page we were on — jump back to page 1 rather than
+  // re-requesting a page number that may no longer exist for the new filter set.
+  useEffect(() => {
+    setPage(1);
+  }, [dateFrom, dateTo, statusFilter, view, employeeFilter]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(page);
+  }, [load, page]);
 
   useEffect(() => {
     void apiClient
@@ -121,14 +144,17 @@ export default function LeaveApplicationsPage() {
 
   useEffect(() => {
     if (view !== "TEAM") return;
+    // Reference-data dropdown, not a paginated table — request the server's max page size.
+    // Companies with >100 employees will see a truncated list here (known limitation, not a
+    // correctness issue for the paginated list above).
     void apiClient
-      .get<EmployeeOption[]>("/employees")
-      .then(setEmployees)
+      .getList<EmployeeOption>("/employees", { per_page: 100 })
+      .then(({ data }) => setEmployees(data))
       .catch(() => setEmployees([]));
   }, [view]);
 
   function onCreated(_application: LeaveApplication) {
-    void load();
+    void load(page);
   }
 
   const canCreate = view === "MINE" ? canSubmitSelf : canSubmitOnBehalf;
@@ -214,7 +240,7 @@ export default function LeaveApplicationsPage() {
                   ? "You do not have permission to view these applications."
                   : error.message
               }
-              onRetry={() => void load()}
+              onRetry={() => void load(page)}
             />
           ) : null}
           {!loading && !error && applications && applications.length === 0 ? (
@@ -286,6 +312,10 @@ export default function LeaveApplicationsPage() {
                 </tbody>
               </table>
             </div>
+          ) : null}
+
+          {!loading && !error && pagination ? (
+            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
           ) : null}
         </CardContent>
       </Card>

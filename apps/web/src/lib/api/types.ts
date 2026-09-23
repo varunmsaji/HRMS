@@ -11,6 +11,21 @@ export interface DataEnvelope<T> {
   meta: ResponseMeta;
 }
 
+/** API-01 pagination contract — 1-indexed `page`, server-capped `per_page` (max 100). */
+export interface PaginationMeta {
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
+  next_cursor?: string | null;
+}
+
+export interface ListEnvelope<T> {
+  data: T[];
+  pagination: PaginationMeta | null;
+  meta: ResponseMeta;
+}
+
 export interface ErrorDetail {
   field?: string | null;
   code: string;

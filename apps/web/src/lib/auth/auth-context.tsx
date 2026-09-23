@@ -43,8 +43,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setState({ status: "authenticated", session, user: me.user });
       return me.user;
     } catch {
-      // /auth/me failing for a reason other than an expired session (network blip) shouldn't
-      // block the user from the app shell — permissions/email just won't be shown yet.
+      // A 401 whose refresh attempt also failed already cleared the session and dispatched
+      // SESSION_EXPIRED_EVENT (which set status "unauthenticated" so the /app layout guard
+      // redirects to /login) — don't clobber that back to "authenticated" here. Only a
+      // non-auth failure (network blip) should leave the user in the app shell with no
+      // profile loaded yet.
+      if (loadSession() === null) {
+        return null;
+      }
       setState({ status: "authenticated", session, user: null });
       return null;
     }

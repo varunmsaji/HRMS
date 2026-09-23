@@ -23,6 +23,25 @@ async def _reset_registration_rate_limit() -> None:
     await client.aclose()
 
 
+@pytest.fixture(autouse=True)
+async def _reset_onboarding_upload_rate_limit() -> None:
+    """Batch C's `OnboardingUploadRateLimitMiddleware` (SEC-03) shares one Redis instance across
+    the whole suite, and (like `_reset_registration_rate_limit` above) almost every test in this
+    directory that uploads a document does so from the same `ASGITransport` client IP —
+    `SCAN`-and-delete rather than a fixed key list because the token-keyed bucket's key changes
+    (a SHA-256 hash) with every test's freshly issued onboarding token."""
+    client = redis.from_url(get_settings().redis_url, decode_responses=True)
+
+    async def _clear() -> None:
+        async for key in client.scan_iter(match="ratelimit:onboarding_upload:*"):
+            await client.delete(key)
+
+    await _clear()
+    yield
+    await _clear()
+    await client.aclose()
+
+
 @pytest.fixture
 async def seeded_plan_catalogue() -> None:
     factory = get_session_factory()

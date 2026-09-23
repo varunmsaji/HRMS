@@ -8,9 +8,14 @@ from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 from hrms.core.rbac.dependencies import require_permission
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
+from hrms.core.uploads import read_upload_bounded
 from hrms.modules.employee_import.dependencies import get_employee_import_service
 from hrms.modules.employee_import.permissions import EMPLOYEE_BULK_IMPORT
-from hrms.modules.employee_import.schemas import EmployeeImportBatchRead, EmployeeImportRowErrorRead
+from hrms.modules.employee_import.schemas import (
+    MAX_IMPORT_FILE_SIZE_BYTES,
+    EmployeeImportBatchRead,
+    EmployeeImportRowErrorRead,
+)
 from hrms.modules.employee_import.service import EmployeeImportService
 from hrms.modules.identity.schemas import build_meta
 from hrms.shared.pagination import DataEnvelope, ListEnvelope
@@ -25,7 +30,10 @@ async def create_employee_import(
     _scope: Annotated[object, Depends(require_permission(EMPLOYEE_BULK_IMPORT))],
     service: Annotated[EmployeeImportService, Depends(get_employee_import_service)],
 ) -> DataEnvelope[EmployeeImportBatchRead]:
-    body = await file.read()
+    # SEC-03 — bounded read, mirroring the onboarding public upload fix; see
+    # hrms.core.uploads for why the actual early-rejection enforcement is the ASGI-level
+    # `MaxUploadSizeMiddleware` (app.py) rather than anything that can run inside this handler.
+    body = await read_upload_bounded(file, max_bytes=MAX_IMPORT_FILE_SIZE_BYTES)
     data = await service.create_batch(
         tenant.company_id,
         filename=file.filename or "upload.csv",

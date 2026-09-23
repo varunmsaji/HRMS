@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import redis.asyncio as redis
 from httpx import ASGITransport, AsyncClient
 
 os.environ.setdefault("ENVIRONMENT", "development")
@@ -25,6 +26,29 @@ async def reset_db_engine() -> None:
     await dispose_engine()
     await close_rate_limiter()
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+async def _reset_credential_rate_limits() -> None:
+    """`/auth/login` and `/auth/token/refresh` (SEC-02) are now rate-limited, and — unlike the
+    directory-scoped registration bucket reset in `tests/integration/auth/conftest.py` — both
+    endpoints are exercised from almost every integration test in the suite (most via an
+    `admin_tokens`/`viewer_tokens`-style login fixture), all through the same ASGITransport
+    client IP and a small set of reused seed emails. Without a reset between every test, those
+    shared "login"/"token_refresh" buckets would trip well before any single test intends to
+    exercise the limit itself. `SCAN`-and-delete (rather than a fixed key list) so this stays
+    correct regardless of which email or IP a given test happens to use."""
+    client = redis.from_url(get_settings().redis_url, decode_responses=True)
+
+    async def _clear() -> None:
+        for pattern in ("ratelimit:login:*", "ratelimit:token_refresh:*"):
+            async for key in client.scan_iter(match=pattern):
+                await client.delete(key)
+
+    await _clear()
+    yield
+    await _clear()
+    await client.aclose()
 
 
 @pytest.fixture

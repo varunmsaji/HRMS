@@ -19,7 +19,7 @@ vi.mock("@/components/common/toast", () => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
-  apiClient: { get: vi.fn(), post: vi.fn() },
+  apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn() },
 }));
 
 import AttendanceDashboardPage from "@/app/app/attendance/page";
@@ -28,6 +28,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { AttendanceDay } from "@/lib/attendance/types";
 
 const mockedGet = vi.mocked(apiClient.get);
+const mockedGetList = vi.mocked(apiClient.getList);
 
 const sampleDay: AttendanceDay = {
   id: "day-1",
@@ -92,10 +93,15 @@ const sampleDay: AttendanceDay = {
 function mockLoad(days: AttendanceDay[]) {
   mockedGet.mockImplementation((path: string) => {
     if (path.startsWith("/attendance/days?")) return Promise.resolve(days);
+    return Promise.reject(new Error(`Unexpected path ${path}`));
+  });
+  mockedGetList.mockImplementation((path: string) => {
     if (path === "/employees") {
-      return Promise.resolve([
-        { id: "emp-1", first_name: "Asha", last_name: null, employee_code: "EMP-001" },
-      ]);
+      return Promise.resolve({
+        data: [{ id: "emp-1", first_name: "Asha", last_name: null, employee_code: "EMP-001" }],
+        pagination: { page: 1, per_page: 100, total: 1, total_pages: 1 },
+        meta: { request_id: "r1" },
+      });
     }
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
@@ -104,11 +110,13 @@ function mockLoad(days: AttendanceDay[]) {
 describe("AttendanceDashboardPage", () => {
   afterEach(() => {
     mockedGet.mockReset();
+    mockedGetList.mockReset();
     toastMock.mockReset();
   });
 
   it("shows a loading state before data resolves", () => {
     mockedGet.mockReturnValue(new Promise(() => {}));
+    mockedGetList.mockReturnValue(new Promise(() => {}));
     render(<AttendanceDashboardPage />);
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
@@ -138,6 +146,11 @@ describe("AttendanceDashboardPage", () => {
         return Promise.reject(new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "nope" }));
       }
       return Promise.resolve([]);
+    });
+    mockedGetList.mockResolvedValue({
+      data: [],
+      pagination: { page: 1, per_page: 100, total: 0, total_pages: 0 },
+      meta: { request_id: "r1" },
     });
     render(<AttendanceDashboardPage />);
 

@@ -69,16 +69,20 @@ export default function DepartmentDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [data, branchData, departmentData, employeeData] = await Promise.all([
+      const [data, branchData, departmentData, employeeResult] = await Promise.all([
         apiClient.get<Department>(`/departments/${params.id}`),
         apiClient.get<Branch[]>("/branches"),
         apiClient.get<Department[]>("/departments"),
-        Promise.resolve(apiClient.get<Employee[]>("/employees")).catch(() => []),
+        // Reference-data dropdown (department head picker), not a paginated table — request
+        // the server's max page size (known limitation for >100-employee companies).
+        apiClient
+          .getList<Employee>("/employees", { per_page: 100 })
+          .catch(() => null),
       ]);
       setDepartment(data);
       setBranches(branchData);
       setDepartments(departmentData);
-      setEmployees(employeeData ?? []);
+      setEmployees(employeeResult?.data ?? []);
       return data;
     } catch (err) {
       setDepartment(null);

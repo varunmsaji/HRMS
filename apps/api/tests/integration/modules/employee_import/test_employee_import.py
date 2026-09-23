@@ -188,6 +188,50 @@ async def test_bulk_import_end_to_end(client: AsyncClient, seeded_plan_catalogue
 
 
 @pytest.mark.asyncio
+async def test_bulk_import_marks_batch_failed_when_storage_unavailable(
+    client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upload Security Batch A, Phase 8 — a storage outage while fetching the uploaded CSV
+    (MinIO down, bad credentials, missing bucket, ...) must leave the batch in a terminal FAILED
+    state rather than stuck at PROCESSING forever with no operator-visible outcome."""
+    from hrms.core.storage import DocumentStorageService
+
+    headers, company_id, user_id = await _register_tenant(client)
+    org = await _setup_org_structure(client, headers)
+    csv_bytes = _build_csv(org)
+
+    try:
+        upload_response = await client.post(
+            "/v1/employee-imports",
+            headers=headers,
+            files={"file": ("employees.csv", csv_bytes, "text/csv")},
+        )
+        assert upload_response.status_code == 201, upload_response.text
+        batch_id = UUID(upload_response.json()["data"]["id"])
+
+        async def _broken_get_object(self: DocumentStorageService, *, key: str) -> bytes:
+            raise RuntimeError("simulated MinIO outage")
+
+        monkeypatch.setattr(DocumentStorageService, "get_object", _broken_get_object)
+
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            with pytest.raises(RuntimeError):
+                await EmployeeImportService(session).process_batch(company_id, batch_id, user_id)
+
+        status_response = await client.get(f"/v1/employee-imports/{batch_id}", headers=headers)
+        assert status_response.status_code == 200
+        result = status_response.json()["data"]
+        assert result["status"] == "FAILED"
+        assert result["processed_rows"] == 0
+    finally:
+        await _cleanup_import_tables(company_id=company_id)
+        await _cleanup_org_structure(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
 async def test_cross_tenant_batch_not_visible(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:

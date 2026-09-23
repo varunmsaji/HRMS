@@ -15,9 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
+from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
 from hrms.core.storage import DocumentStorageService
+from hrms.modules.onboarding.document_validation import (
+    content_disposition_attachment,
+    safe_document_object_key,
+    sanitize_display_filename,
+    sniff_document_content_type,
+)
 from hrms.modules.onboarding.email_sender import get_email_sender
 from hrms.modules.onboarding.email_templates import (
     build_activated_email,
@@ -29,7 +36,6 @@ from hrms.modules.onboarding.exceptions import (
     InvalidBranchReferenceError,
     InvalidDepartmentReferenceError,
     InvalidDesignationReferenceError,
-    InvalidLegalEntityReferenceError,
     InvalidOnboardingDocumentTypeError,
     InvalidOnboardingSectionError,
     OnboardingCaseMissingLegalEntityError,
@@ -43,6 +49,7 @@ from hrms.modules.onboarding.exceptions import (
     OnboardingSectionAlreadyVerifiedError,
     OnboardingSectionNotWritableError,
     OnboardingTokenInvalidError,
+    UnsupportedDocumentContentError,
 )
 from hrms.modules.onboarding.repository import (
     OnboardingCaseRepository,
@@ -52,7 +59,6 @@ from hrms.modules.onboarding.repository import (
 )
 from hrms.modules.onboarding.schemas import (
     ONBOARDING_CASE_REVIEWABLE_STATUSES,
-    ONBOARDING_CASE_TERMINAL_STATUSES,
     ONBOARDING_CASE_WRITABLE_STATUSES,
     ONBOARDING_DOCUMENT_MAX_SIZE_BYTES,
     ONBOARDING_DOCUMENT_TYPES,
@@ -81,10 +87,13 @@ if TYPE_CHECKING:
 #: Statuses `send-invite` may act on (O3) — `DRAFT`/`EXPIRED` (first send / re-send after
 #: lapsing) and `INVITED`/`IN_PROGRESS` (plain resend, e.g. "candidate lost the email"; case
 #: status is unchanged in these last two — `issue_token` only transitions `DRAFT`/`EXPIRED`).
-#: Everything past `IN_PROGRESS` has either already submitted (a fresh link would let the
-#: candidate bypass review) or is terminal (nothing left to invite);
-#: `CHANGES_REQUESTED`'s own reopen-and-resend flow belongs to O6, not this endpoint.
-ONBOARDING_CASE_INVITABLE_STATUSES = ("DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS")
+#: `SUBMITTED`/`UNDER_REVIEW`/`VERIFIED` are deliberately excluded — a fresh link there would
+#: let the candidate bypass HR's review; `CHANGES_REQUESTED`'s own reopen-and-resend flow
+#: belongs to O6, not this endpoint. `ACTIVATED` *is* included even though the case itself is
+#: terminal: HR may still need to hand back a link so the (now-)employee can view what they
+#: submitted — `resolve_and_touch` resolves it read-only (`writable` is false past this point,
+#: `ONBOARDING_CASE_WRITABLE_STATUSES` below), so this can never reopen editing.
+ONBOARDING_CASE_INVITABLE_STATUSES = ("DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS", "ACTIVATED")
 
 #: Default public-link lifetime (plan §4.2: "default 7 days, HR-configurable per case at
 #: send/resend time" — the per-case override arrives with the O3 send-invite endpoint; this
@@ -143,13 +152,132 @@ async def _maybe_auto_verify_case(
     await case_repo.set_status(session, case=case, status="VERIFIED", now=now)
 
 
+#: DATA-01 (`docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md` §2.4/§9) — the one key
+#: inside `bank_info` (and, symmetrically, `BankInfoSection`/`BankCreate`) that DATA-01 encrypts.
+#: The other keys (`bank_name`, `branch_name`, `payment_mode`, `account_holder_name`, `ifsc`) are
+#: not sensitive (inventory §1) and are never touched by the calls below.
+BANK_INFO_SENSITIVE_KEY = "account_number_enc"
+
+#: E-02 (market-parity onboarding-data pass) — the two keys inside `personal_info` (and,
+#: symmetrically, `PersonalInfoSection`) DATA-01-style encryption now covers, mirroring
+#: `BANK_INFO_SENSITIVE_KEY` exactly. Every other key (`first_name`, `date_of_birth`,
+#: `father_or_husband_name`, etc.) is not sensitive enough to warrant field-level encryption and
+#: is never touched by the calls below.
+PERSONAL_INFO_SENSITIVE_KEYS = ("pan_number_enc", "aadhaar_number_enc")
+
+#: Market-parity onboarding-data pass, part 6 — the one key inside each `nominee_info["items"]`
+#: entry (and, symmetrically, `NomineeItem`) DATA-01-style encryption covers, mirroring
+#: `BANK_INFO_SENSITIVE_KEY`/`PERSONAL_INFO_SENSITIVE_KEYS` exactly. Unlike those two,
+#: `nominee_info` is a *list*, so each item's ciphertext is bound by a per-index `jsonb_key`
+#: (`items.<index>.aadhaar_number_enc`) rather than one fixed key — correct because the whole
+#: `nominee_info` column is always overwritten atomically by `update_section` (never a partial
+#: per-item patch), so a stale index never outlives the write that established it.
+NOMINEE_INFO_SENSITIVE_ITEM_KEY = "aadhaar_number_enc"
+
+
+def _address_info_to_employee_fields(address_info: dict[str, Any]) -> dict[str, Any]:
+    """E-02 (market-parity onboarding-data pass part 2) — `AddressInfoSection`'s unprefixed
+    `address_line1`/`.../country_code` keys (the present address) map onto `Employee`'s
+    `present_*`-prefixed columns; `permanent_*`/`permanent_same_as_present` map through
+    unchanged (same names on both sides). Closes the gap `onboarding/schemas.py`'s own module
+    docstring flagged: `address_info` previously had no activation-time consumer at all."""
+    return {
+        "present_address_line1": address_info.get("address_line1"),
+        "present_address_line2": address_info.get("address_line2"),
+        "present_city": address_info.get("city"),
+        "present_state_code": address_info.get("state_code"),
+        "present_pincode": address_info.get("pincode"),
+        "present_country_code": address_info.get("country_code"),
+        "permanent_address_line1": address_info.get("permanent_address_line1"),
+        "permanent_address_line2": address_info.get("permanent_address_line2"),
+        "permanent_city": address_info.get("permanent_city"),
+        "permanent_state_code": address_info.get("permanent_state_code"),
+        "permanent_pincode": address_info.get("permanent_pincode"),
+        "permanent_country_code": address_info.get("permanent_country_code"),
+        "permanent_same_as_present": address_info.get("permanent_same_as_present", True),
+    }
+
+
+def _emergency_contact_to_employee_fields(emergency_contact: dict[str, Any]) -> dict[str, Any]:
+    """E-02 — `EmergencyContactSection`'s `contact_name`/`relationship`/`phone` map onto
+    `Employee.emergency_contact_name`/`.emergency_contact_relationship`/`.emergency_contact_phone`.
+    Same "previously had no activation-time consumer" gap as address_info, above."""
+    return {
+        "emergency_contact_name": emergency_contact.get("contact_name"),
+        "emergency_contact_relationship": emergency_contact.get("relationship"),
+        "emergency_contact_phone": emergency_contact.get("phone"),
+    }
+
+
 class OnboardingCaseService:
     def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
         self._session = session
         self._settings = settings or get_settings()
         self._repo = OnboardingCaseRepository()
         self._section_review_repo = OnboardingSectionReviewRepository()
+        self._token_repo = OnboardingTokenRepository()
         self._audit = AuditService()
+        self._crypto = PiiCryptoService(self._settings)
+
+    async def _decrypt_bank_info(self, case: "OnboardingCase") -> dict[str, Any]:
+        """DATA-01 (plan §2.5/§7) — returns a copy of `case.bank_info` with the one sensitive key
+        decrypted; every other key passes through unchanged. Used at every read-back site
+        (`get_case_detail`, `get_public_case`, `update_section`'s own return value,
+        `submit_case`'s own return value) — never returns the raw dict directly."""
+        bank_info = dict(case.bank_info)
+        ciphertext = bank_info.get(BANK_INFO_SENSITIVE_KEY)
+        if isinstance(ciphertext, str):
+            bank_info[BANK_INFO_SENSITIVE_KEY] = await self._crypto.decrypt_jsonb_key(
+                self._session,
+                ciphertext=ciphertext,
+                table="onboarding_case",
+                column="bank_info",
+                jsonb_key=BANK_INFO_SENSITIVE_KEY,
+                record_id=case.id,
+            )
+        return bank_info
+
+    async def _decrypt_personal_info(self, case: "OnboardingCase") -> dict[str, Any]:
+        """E-02 — mirrors `_decrypt_bank_info` exactly, for `pan_number_enc`/`aadhaar_number_enc`
+        instead of `account_number_enc`. Used at every read-back site, same convention."""
+        personal_info = dict(case.personal_info)
+        for key in PERSONAL_INFO_SENSITIVE_KEYS:
+            ciphertext = personal_info.get(key)
+            if isinstance(ciphertext, str):
+                personal_info[key] = await self._crypto.decrypt_jsonb_key(
+                    self._session,
+                    ciphertext=ciphertext,
+                    table="onboarding_case",
+                    column="personal_info",
+                    jsonb_key=key,
+                    record_id=case.id,
+                )
+        return personal_info
+
+    async def _decrypt_nominee_info(self, case: "OnboardingCase") -> dict[str, Any]:
+        """Market-parity onboarding-data pass, part 6 — mirrors `_decrypt_bank_info`/
+        `_decrypt_personal_info`'s exact contract, but per list item (see
+        `NOMINEE_INFO_SENSITIVE_ITEM_KEY`'s docstring for why the AAD is index-bound)."""
+        nominee_info = dict(case.nominee_info)
+        items = nominee_info.get("items")
+        if not isinstance(items, list):
+            return nominee_info
+        decrypted_items = []
+        for index, item in enumerate(items):
+            item = dict(item)
+            ciphertext = item.get(NOMINEE_INFO_SENSITIVE_ITEM_KEY)
+            if isinstance(ciphertext, str):
+                item[NOMINEE_INFO_SENSITIVE_ITEM_KEY] = await self._crypto.decrypt_jsonb_key(
+                    self._session,
+                    ciphertext=ciphertext,
+                    table="onboarding_case",
+                    column="nominee_info",
+                    jsonb_key=f"items.{index}.{NOMINEE_INFO_SENSITIVE_ITEM_KEY}",
+                    record_id=case.id,
+                )
+            decrypted_items.append(item)
+        nominee_info["items"] = decrypted_items
+        return nominee_info
 
     async def _assert_designation_ownership(self, company_id: UUID, designation_id: UUID) -> None:
         """Cross-module reference check, mirroring `EmployeeAssignmentService.
@@ -173,23 +301,18 @@ class OnboardingCaseService:
         except NotFoundError as exc:
             raise InvalidDepartmentReferenceError() from exc
 
-    async def _assert_branch_ownership(self, company_id: UUID, branch_id: UUID) -> None:
+    async def _assert_branch_ownership(self, company_id: UUID, branch_id: UUID) -> UUID:
+        """Returns the branch's `legal_entity_id` — a company has exactly one legal entity
+        (`single_legal_entity_per_company` product decision), so the case's legal entity is
+        always derived from its branch rather than asked for separately."""
         from hrms.modules.organisation.service import OrganisationService
 
         organisation = OrganisationService(self._session, self._settings)
         try:
-            await organisation.get_branch(company_id, branch_id)
+            branch = await organisation.get_branch(company_id, branch_id)
         except NotFoundError as exc:
             raise InvalidBranchReferenceError() from exc
-
-    async def _assert_legal_entity_ownership(self, company_id: UUID, legal_entity_id: UUID) -> None:
-        from hrms.modules.organisation.service import OrganisationService
-
-        organisation = OrganisationService(self._session, self._settings)
-        try:
-            await organisation.get_legal_entity(company_id, legal_entity_id)
-        except NotFoundError as exc:
-            raise InvalidLegalEntityReferenceError() from exc
+        return branch.legal_entity_id
 
     async def create_case(
         self,
@@ -209,10 +332,9 @@ class OnboardingCaseService:
             await self._assert_designation_ownership(company_id, body.designation_id)
         if body.department_id is not None:
             await self._assert_department_ownership(company_id, body.department_id)
+        legal_entity_id: UUID | None = None
         if body.branch_id is not None:
-            await self._assert_branch_ownership(company_id, body.branch_id)
-        if body.legal_entity_id is not None:
-            await self._assert_legal_entity_ownership(company_id, body.legal_entity_id)
+            legal_entity_id = await self._assert_branch_ownership(company_id, body.branch_id)
 
         existing = await self._repo.get_active_case_by_email(
             self._session, company_id=company_id, personal_email=body.personal_email
@@ -235,7 +357,7 @@ class OnboardingCaseService:
                 "designation_id": body.designation_id,
                 "department_id": body.department_id,
                 "branch_id": body.branch_id,
-                "legal_entity_id": body.legal_entity_id,
+                "legal_entity_id": legal_entity_id,
                 "proposed_joining_date": body.proposed_joining_date,
                 "created_by_user_id": actor_user_id,
                 "personal_info": {},
@@ -243,6 +365,10 @@ class OnboardingCaseService:
                 "emergency_contact": {},
                 "bank_info": {},
                 "statutory_info": {},
+                "compensation_info": {},
+                "previous_employment_info": {},
+                "education_info": {},
+                "nominee_info": {},
                 "created_at": now,
                 "updated_at": now,
             },
@@ -284,7 +410,15 @@ class OnboardingCaseService:
         reviews = await self._section_review_repo.list_for_case(
             self._session, company_id=company_id, case_id=case_id
         )
-        return onboarding_case_to_detail_read(case, reviews)
+        latest_token = await self._token_repo.get_latest_for_case(self._session, case_id=case_id)
+        return onboarding_case_to_detail_read(
+            case,
+            reviews,
+            bank_info=await self._decrypt_bank_info(case),
+            personal_info=await self._decrypt_personal_info(case),
+            nominee_info=await self._decrypt_nominee_info(case),
+            latest_token=latest_token,
+        )
 
     async def get_public_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
         """Called only after `OnboardingTokenService.resolve_and_touch` has already proven the
@@ -297,7 +431,13 @@ class OnboardingCaseService:
         reviews = await self._section_review_repo.list_for_case(
             self._session, company_id=company_id, case_id=case_id
         )
-        return onboarding_case_to_public_read(case, reviews)
+        return onboarding_case_to_public_read(
+            case,
+            reviews,
+            bank_info=await self._decrypt_bank_info(case),
+            personal_info=await self._decrypt_personal_info(case),
+            nominee_info=await self._decrypt_nominee_info(case),
+        )
 
     async def update_section(
         self, company_id: UUID, case_id: UUID, section: str, data: dict[str, Any]
@@ -321,6 +461,59 @@ class OnboardingCaseService:
         if existing_review is not None and existing_review.status == "VERIFIED":
             raise OnboardingSectionAlreadyVerifiedError()
 
+        # DATA-01 (plan §2.4/§2.5) — encrypt the one sensitive key *before* the JSONB dict is
+        # persisted. `case.id` (not a freshly-generated id — this is an update to an existing
+        # row) is what AAD binds to; a wizard resubmission overwrites the value under the same
+        # AAD, which is correct (it is still the same case's bank_info column).
+        if section == "bank_info":
+            data = dict(data)
+            plaintext = data.get(BANK_INFO_SENSITIVE_KEY)
+            if isinstance(plaintext, str):
+                data[BANK_INFO_SENSITIVE_KEY] = await self._crypto.encrypt_jsonb_key(
+                    self._session,
+                    plaintext=plaintext,
+                    table="onboarding_case",
+                    column="bank_info",
+                    jsonb_key=BANK_INFO_SENSITIVE_KEY,
+                    record_id=case.id,
+                )
+        elif section == "personal_info":
+            data = dict(data)
+            for key in PERSONAL_INFO_SENSITIVE_KEYS:
+                plaintext = data.get(key)
+                if isinstance(plaintext, str):
+                    data[key] = await self._crypto.encrypt_jsonb_key(
+                        self._session,
+                        plaintext=plaintext,
+                        table="onboarding_case",
+                        column="personal_info",
+                        jsonb_key=key,
+                        record_id=case.id,
+                    )
+        elif section == "nominee_info":
+            # Market-parity onboarding-data pass, part 6 — encrypts each item's
+            # `aadhaar_number_enc` under its own index-bound AAD (`NOMINEE_INFO_SENSITIVE_ITEM_KEY`
+            # docstring). The whole `items` list is always resubmitted and overwritten atomically,
+            # so re-encrypting every item on every write (not just changed ones) is correct.
+            data = dict(data)
+            items = data.get("items")
+            if isinstance(items, list):
+                encrypted_items = []
+                for index, item in enumerate(items):
+                    item = dict(item)
+                    plaintext = item.get(NOMINEE_INFO_SENSITIVE_ITEM_KEY)
+                    if isinstance(plaintext, str):
+                        item[NOMINEE_INFO_SENSITIVE_ITEM_KEY] = await self._crypto.encrypt_jsonb_key(
+                            self._session,
+                            plaintext=plaintext,
+                            table="onboarding_case",
+                            column="nominee_info",
+                            jsonb_key=f"items.{index}.{NOMINEE_INFO_SENSITIVE_ITEM_KEY}",
+                            record_id=case.id,
+                        )
+                    encrypted_items.append(item)
+                data["items"] = encrypted_items
+
         now = datetime.now(UTC)
         updated = await self._repo.update_section(
             self._session,
@@ -341,7 +534,13 @@ class OnboardingCaseService:
         reviews = await self._section_review_repo.list_for_case(
             self._session, company_id=company_id, case_id=case_id
         )
-        return onboarding_case_to_public_read(updated, reviews)
+        return onboarding_case_to_public_read(
+            updated,
+            reviews,
+            bank_info=await self._decrypt_bank_info(updated),
+            personal_info=await self._decrypt_personal_info(updated),
+            nominee_info=await self._decrypt_nominee_info(updated),
+        )
 
     async def submit_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
         """`POST /public/onboarding/{token}/submit` (O4) — `IN_PROGRESS`/`CHANGES_REQUESTED` ->
@@ -372,7 +571,13 @@ class OnboardingCaseService:
         reviews = await self._section_review_repo.list_for_case(
             self._session, company_id=company_id, case_id=case_id
         )
-        return onboarding_case_to_public_read(case, reviews)
+        return onboarding_case_to_public_read(
+            case,
+            reviews,
+            bank_info=await self._decrypt_bank_info(case),
+            personal_info=await self._decrypt_personal_info(case),
+            nominee_info=await self._decrypt_nominee_info(case),
+        )
 
 
 @dataclass(frozen=True)
@@ -456,7 +661,12 @@ class OnboardingTokenService:
         case = await self._case_repo.get_case(
             self._session, company_id=token.company_id, case_id=token.onboarding_case_id
         )
-        if case is None or case.status in ONBOARDING_CASE_TERMINAL_STATUSES:
+        # `ACTIVATED` is intentionally *not* blocked here (unlike `EXPIRED`/`CANCELLED`, the rest
+        # of `ONBOARDING_CASE_TERMINAL_STATUSES`) — an activated case still resolves so HR can
+        # hand back a working link, but every write route below independently checks
+        # `ONBOARDING_CASE_WRITABLE_STATUSES` (`update_section`, `submit_case`, `upload_document`,
+        # `delete_document`), which excludes `ACTIVATED`, so resolving here never reopens editing.
+        if case is None or case.status in ("EXPIRED", "CANCELLED"):
             raise OnboardingTokenInvalidError()
 
         await self._token_repo.mark_used_first_at(self._session, token=token, now=now)
@@ -555,7 +765,16 @@ class OnboardingDocumentService:
         """`PENDING` on insert, always — verification is an admin-only action
         (`review_document`). The case must be in a writable status, same gate as
         `OnboardingCaseService.update_section` — uploading a document is just another kind of
-        write against the case."""
+        write against the case.
+
+        `content_type` (the client's `UploadFile.content_type`/form header) is accepted for
+        interface compatibility but never trusted or persisted (SEC-04) — the stored
+        `content_type`, the storage object's own S3 `ContentType`, and the object key's extension
+        are all derived from `sniff_document_content_type(data)` instead, which classifies the
+        upload from its own magic bytes. A caller claiming `image/jpeg` for an HTML payload (or
+        any other mismatch) is rejected outright, not "normalized" — see
+        `document_validation.py`'s module docstring for why no source document names an allowed
+        type list, and why PDF/JPEG/PNG is this task's own engineering decision."""
         case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
         if case is None:
             raise NotFoundError("Resource not found")
@@ -566,10 +785,18 @@ class OnboardingDocumentService:
         if len(data) > ONBOARDING_DOCUMENT_MAX_SIZE_BYTES:
             raise OnboardingDocumentTooLargeError(ONBOARDING_DOCUMENT_MAX_SIZE_BYTES)
 
+        sniffed = sniff_document_content_type(data)
+        if sniffed is None:
+            raise UnsupportedDocumentContentError()
+        sniffed_content_type, extension = sniffed
+        display_filename = sanitize_display_filename(filename)
+
         now = datetime.now(UTC)
         document_id = uuid4()
-        s3_key = f"onboarding/{company_id}/{case_id}/{document_id}/{filename}"
-        await self._storage.put_object(key=s3_key, body=data, content_type=content_type)
+        s3_key = safe_document_object_key(
+            company_id=company_id, case_id=case_id, document_id=document_id, extension=extension
+        )
+        await self._storage.put_object(key=s3_key, body=data, content_type=sniffed_content_type)
 
         document = await self._repo.insert_document(
             self._session,
@@ -579,8 +806,8 @@ class OnboardingDocumentService:
                 "onboarding_case_id": case_id,
                 "document_type": document_type,
                 "s3_key": s3_key,
-                "original_filename": filename,
-                "content_type": content_type,
+                "original_filename": display_filename,
+                "content_type": sniffed_content_type,
                 "size_bytes": len(data),
                 "status": "PENDING",
                 "uploaded_at": now,
@@ -611,7 +838,12 @@ class OnboardingDocumentService:
         )
         result = []
         for document in documents:
-            url = await self._storage.presigned_get_url(key=document.s3_key)
+            url = await self._storage.presigned_get_url(
+                key=document.s3_key,
+                response_content_disposition=content_disposition_attachment(
+                    document.original_filename
+                ),
+            )
             result.append(onboarding_document_to_read_with_url(document, url))
         return result
 
@@ -844,11 +1076,17 @@ class OnboardingActivationService:
     """O7 — the transaction that turns a fully-verified onboarding case into a real employee.
     Composes the employee module's own already-validated services
     (`EmployeeService`/`EmploymentService`/`EmployeeAssignmentService`/`EmployeeBankService`/
-    `EmployeeStatutoryService`) rather than writing to `hrms.modules.employee.repository`/
-    `.models` directly (Module Standard §2) — every field-level rule those services already
-    enforce (seat limits, employee codes, the assignment/employment/statutory/bank overlap
-    constraints, `AssignmentFieldsRequiredError` for a missing branch/department/designation) is
-    inherited for free, not re-implemented here (plan §8.6's own point).
+    `EmployeeStatutoryService`/`EmployeeCompensationService`/`EmployeeExperienceService`/
+    `EmployeeEducationService`) rather than writing to
+    `hrms.modules.employee.repository`/`.models` directly (Module Standard §2) —
+    every field-level rule those services already enforce (seat limits, employee codes, the
+    assignment/employment/statutory/bank/compensation overlap constraints,
+    `AssignmentFieldsRequiredError` for a missing branch/department/designation) is inherited
+    for free, not re-implemented here (plan §8.6's own point). Compensation was listed here from
+    the start but had no section to source CTC from until E-02 (market-parity onboarding-data
+    pass, part 3) added `compensation_info`; Experience is new as of part 4
+    (`previous_employment_info`) — unlike every other sub-resource composed here, it may create
+    zero, one, or several rows per activation, one per listed past employer.
 
     No explicit transaction management — `hrms.core.db.session.get_session` already commits only
     once the whole request succeeds and rolls back on any raised exception (every write below
@@ -860,6 +1098,69 @@ class OnboardingActivationService:
         self._settings = settings or get_settings()
         self._case_repo = OnboardingCaseRepository()
         self._audit = AuditService()
+        self._crypto = PiiCryptoService(self._settings)
+
+    async def _decrypt_bank_info(self, case: "OnboardingCase") -> dict[str, Any]:
+        """Same contract as `OnboardingCaseService._decrypt_bank_info` — duplicated rather than
+        shared across the two service classes (this module keeps each O-phase's service class
+        self-contained, matching the existing convention of `OnboardingCaseService`/
+        `OnboardingTokenService`/`OnboardingDocumentService`/`OnboardingReviewService`/
+        `OnboardingActivationService` never depending on each other's internals)."""
+        bank_info = dict(case.bank_info)
+        ciphertext = bank_info.get(BANK_INFO_SENSITIVE_KEY)
+        if isinstance(ciphertext, str):
+            bank_info[BANK_INFO_SENSITIVE_KEY] = await self._crypto.decrypt_jsonb_key(
+                self._session,
+                ciphertext=ciphertext,
+                table="onboarding_case",
+                column="bank_info",
+                jsonb_key=BANK_INFO_SENSITIVE_KEY,
+                record_id=case.id,
+            )
+        return bank_info
+
+    async def _decrypt_personal_info(self, case: "OnboardingCase") -> dict[str, Any]:
+        """Same contract as `OnboardingCaseService._decrypt_personal_info` — duplicated for the
+        same reason `_decrypt_bank_info` is duplicated above (each O-phase service class stays
+        self-contained)."""
+        personal_info = dict(case.personal_info)
+        for key in PERSONAL_INFO_SENSITIVE_KEYS:
+            ciphertext = personal_info.get(key)
+            if isinstance(ciphertext, str):
+                personal_info[key] = await self._crypto.decrypt_jsonb_key(
+                    self._session,
+                    ciphertext=ciphertext,
+                    table="onboarding_case",
+                    column="personal_info",
+                    jsonb_key=key,
+                    record_id=case.id,
+                )
+        return personal_info
+
+    async def _decrypt_nominee_info(self, case: "OnboardingCase") -> dict[str, Any]:
+        """Same contract as `OnboardingCaseService._decrypt_nominee_info` — duplicated for the
+        same reason `_decrypt_bank_info` is duplicated above (each O-phase service class stays
+        self-contained)."""
+        nominee_info = dict(case.nominee_info)
+        items = nominee_info.get("items")
+        if not isinstance(items, list):
+            return nominee_info
+        decrypted_items = []
+        for index, item in enumerate(items):
+            item = dict(item)
+            ciphertext = item.get(NOMINEE_INFO_SENSITIVE_ITEM_KEY)
+            if isinstance(ciphertext, str):
+                item[NOMINEE_INFO_SENSITIVE_ITEM_KEY] = await self._crypto.decrypt_jsonb_key(
+                    self._session,
+                    ciphertext=ciphertext,
+                    table="onboarding_case",
+                    column="nominee_info",
+                    jsonb_key=f"items.{index}.{NOMINEE_INFO_SENSITIVE_ITEM_KEY}",
+                    record_id=case.id,
+                )
+            decrypted_items.append(item)
+        nominee_info["items"] = decrypted_items
+        return nominee_info
 
     async def activate_case(
         self,
@@ -884,13 +1185,22 @@ class OnboardingActivationService:
         from hrms.modules.employee.schemas import (
             AssignmentCreate,
             BankCreate,
+            CompensationCreate,
             EmployeeCreate,
+            EmployeeDependentCreate,
+            EmployeeEducationCreate,
+            EmployeeExperienceCreate,
+            EmployeeIdentityUpdate,
             EmploymentCreate,
             StatutoryCreate,
         )
         from hrms.modules.employee.service import (
             EmployeeAssignmentService,
             EmployeeBankService,
+            EmployeeCompensationService,
+            EmployeeDependentService,
+            EmployeeEducationService,
+            EmployeeExperienceService,
             EmployeeService,
             EmployeeStatutoryService,
             EmploymentService,
@@ -900,22 +1210,68 @@ class OnboardingActivationService:
         employment_service = EmploymentService(self._session, self._settings)
         assignment_service = EmployeeAssignmentService(self._session, self._settings)
         bank_service = EmployeeBankService(self._session, self._settings)
+        compensation_service = EmployeeCompensationService(self._session, self._settings)
         statutory_service = EmployeeStatutoryService(self._session, self._settings)
+        experience_service = EmployeeExperienceService(self._session, self._settings)
+        education_service = EmployeeEducationService(self._session, self._settings)
+        dependent_service = EmployeeDependentService(self._session, self._settings)
+
+        # E-02 — `pan_number_enc`/`aadhaar_number_enc` are deliberately not `EmployeeCreate`
+        # fields (schemas.py module docstring: gated by `.UPDATE_SENSITIVE`/`.VIEW_SENSITIVE` via
+        # the dedicated identity sub-resource, never the general create/update surface), so they
+        # are stripped out here and handled separately, below, via `update_identity` — the same
+        # decrypt-then-re-encrypt handoff `bank_info` already uses for its own sensitive key.
+        personal_info_for_employee = {
+            key: value
+            for key, value in case.personal_info.items()
+            if key not in PERSONAL_INFO_SENSITIVE_KEYS
+        }
 
         # `personal_info` never carries `personal_email`/`personal_mobile` — those are owned by
         # the case record itself, set by HR at creation (schemas.py module docstring) — merged
         # back in only now, at the one point that actually needs the complete `EmployeeCreate`.
+        # `address_info`/`emergency_contact` (E-02 part 2) are folded in the same way — both are
+        # optional sections (an empty dict when the candidate never filled them in), so their
+        # mapped fields are simply all-`None`/default in that case, matching every other
+        # optional-section guard in this method (`if case.bank_info:` etc., below).
         employee = await employee_service.create_employee(
             company_id,
             EmployeeCreate(
-                **case.personal_info,
+                **personal_info_for_employee,
                 personal_email=case.personal_email,
                 personal_mobile=case.personal_mobile,
+                **_address_info_to_employee_fields(case.address_info),
+                **_emergency_contact_to_employee_fields(case.emergency_contact),
             ),
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
         )
+
+        # E-02 — PAN/Aadhaar (case-level ciphertext, decrypted here) and UAN (plain, sourced from
+        # `statutory_info` since Form 11's own KYC block is what collects it) land on the new
+        # `Employee` row via the same identity sub-resource a later HR edit would use. Skipped
+        # entirely when the candidate never entered any of the three — `update_identity` treats
+        # an all-`None` patch as a no-op, but there is no reason to even call it.
+        decrypted_personal_info = await self._decrypt_personal_info(case)
+        identity_patch: dict[str, str] = {}
+        if decrypted_personal_info.get("pan_number_enc"):
+            identity_patch["pan_number"] = decrypted_personal_info["pan_number_enc"]
+        if decrypted_personal_info.get("aadhaar_number_enc"):
+            identity_patch["aadhaar_number"] = decrypted_personal_info["aadhaar_number_enc"]
+        uan_number = case.statutory_info.get("uan_number") if case.statutory_info else None
+        if uan_number:
+            identity_patch["uan_number"] = uan_number
+        if identity_patch:
+            await employee_service.update_identity(
+                company_id,
+                employee.id,
+                EmployeeIdentityUpdate(**identity_patch),
+                expected_version=employee.version,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
         # `scope=None`/`caller_employee_id=None` throughout: activation is a system-initiated
         # action with no acting employee's own visibility to narrow against — the same
@@ -956,10 +1312,19 @@ class OnboardingActivationService:
         # sub-resource, which matches `OnboardingIncompleteSectionsError`'s own long-standing
         # "never made mandatory" stance.
         if case.bank_info:
+            # DATA-01 (plan §2.4/§9) — `case.bank_info["account_number_enc"]` is ciphertext,
+            # bound by AAD to `onboarding_case:bank_info.account_number_enc:{case.id}` (plan
+            # §2.4). It must be decrypted back to plaintext here, before `BankCreate` is built —
+            # never passed through as-is, which would hand `EmployeeBankService.create_bank` an
+            # already-encrypted string to re-encrypt as if it were plaintext (double-encryption,
+            # and a value nothing could ever decrypt correctly again). `create_bank` then
+            # re-encrypts it under the *new* `employee_bank` row's own AAD (plan §9's
+            # "decrypt-then-re-encrypt handoff").
+            decrypted_bank_info = await self._decrypt_bank_info(case)
             await bank_service.create_bank(
                 company_id,
                 employee.id,
-                BankCreate(effective_from=case.proposed_joining_date, **case.bank_info),
+                BankCreate(effective_from=case.proposed_joining_date, **decrypted_bank_info),
                 expected_version=None,
                 actor_user_id=actor_user_id,
                 ip_address=ip_address,
@@ -967,15 +1332,89 @@ class OnboardingActivationService:
             )
 
         if case.statutory_info:
+            # E-02 — `uan_number` lives on `Employee.uan_number` (handled above, via
+            # `update_identity`), never duplicated onto `EmployeeStatutory`
+            # (`EmployeeStatutory` model docstring's own "deliberately excludes uan" rule) — so
+            # it is stripped out here before `StatutoryCreate` is built, same reasoning as
+            # `personal_info_for_employee` above.
+            statutory_info_for_employee = {
+                key: value for key, value in case.statutory_info.items() if key != "uan_number"
+            }
             await statutory_service.create_statutory(
                 company_id,
                 employee.id,
                 StatutoryCreate(
                     effective_from=case.proposed_joining_date,
                     revision_reason="Initial statutory profile captured during onboarding",
-                    **case.statutory_info,
+                    **statutory_info_for_employee,
                 ),
                 expected_version=None,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        # E-02 (market-parity onboarding-data pass, part 3) — closes the gap this class's own
+        # docstring named: `EmployeeCompensation` was listed among the services composed here,
+        # but no call was ever wired up. Same guarded-optional-section shape as bank/statutory
+        # above; `revision_type`/`revision_reason` are activation's own fixed values, mirroring
+        # how `StatutoryCreate.revision_reason` is filled in above rather than sourced from the
+        # candidate.
+        if case.compensation_info:
+            await compensation_service.create_compensation(
+                company_id,
+                employee.id,
+                CompensationCreate(
+                    effective_from=case.proposed_joining_date,
+                    revision_type="JOINING",
+                    revision_reason="Initial compensation captured during onboarding",
+                    **case.compensation_info,
+                ),
+                expected_version=None,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        # Market-parity onboarding-data pass, part 4 — one `EmployeeExperience` row per past
+        # employer the candidate listed. `previous_employment_info` is `{"items": [...]}` (see
+        # `PreviousEmploymentSection`'s docstring); an empty or never-filled-in list yields zero
+        # rows, the same "optional section" posture as bank/statutory/compensation above.
+        for item in case.previous_employment_info.get("items", []):
+            await experience_service.create_experience(
+                company_id,
+                employee.id,
+                EmployeeExperienceCreate(**item),
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        # Market-parity onboarding-data pass, part 5 — one `EmployeeEducation` row per
+        # qualification the candidate listed, same optional-list shape as Experience above.
+        for item in case.education_info.get("items", []):
+            await education_service.create_education(
+                company_id,
+                employee.id,
+                EmployeeEducationCreate(**item),
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        # Market-parity onboarding-data pass, part 6 — one `EmployeeDependent` row per nominee/
+        # family member the candidate listed, same optional-list shape as Experience/Education
+        # above. `case.nominee_info["items"]` ciphertext is decrypted here (each item's own
+        # index-bound AAD, `NOMINEE_INFO_SENSITIVE_ITEM_KEY` docstring), then
+        # `EmployeeDependentService.create_dependent` re-encrypts it under the *new*
+        # `employee_dependent` row's own AAD — the same decrypt-then-re-encrypt handoff `bank_info`
+        # already uses.
+        decrypted_nominee_info = await self._decrypt_nominee_info(case)
+        for item in decrypted_nominee_info.get("items", []):
+            await dependent_service.create_dependent(
+                company_id,
+                employee.id,
+                EmployeeDependentCreate(**item),
                 actor_user_id=actor_user_id,
                 ip_address=ip_address,
                 user_agent=user_agent,

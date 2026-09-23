@@ -26,7 +26,19 @@ class Employee(Base, TimestampMixin):
     Employment, E-03), or pay (Compensation, E-06). `pan_number_enc`/`aadhaar_number_enc`/
     `uan_number` exist as columns (per `02_EMPLOYEE_DATA_MODEL.md` §3's ALTER TABLE target) but
     have no write path in this slice — `EMPLOYEE.UPDATE_SENSITIVE` is out of E-01's permission
-    scope (`01_EMPLOYEE_FOUNDATION_AUDIT.md` §2.2). `status` defaults to `PRE_JOINING`
+    scope (`01_EMPLOYEE_FOUNDATION_AUDIT.md` §2.2).
+
+    `pan_number_enc`/`aadhaar_number_enc` are plain `String` columns at the SQLAlchemy level —
+    **not** auto-encrypting (DATA-01,
+    `docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md` §2.5). Whenever a future write
+    path (E-02) populates them, it must call `hrms.core.crypto.service.PiiCryptoService.
+    encrypt_column(table="employee", column=<name>, record_id=employee.id)` explicitly before
+    persisting, and any read path must call `.decrypt_column(...)` explicitly, after its own
+    permission check, before returning a value to a caller — the ORM attribute itself is never
+    automatically decrypted, so an incidental load (a background job, an admin query) always sees
+    ciphertext, never plaintext.
+
+    `status` defaults to `PRE_JOINING`
     (FR-EMP-014, `docs/product/17_SRS_Phase1_Core_Modules.md:151`), DB `CHECK`-locked to the
     10-value enum as of the Employee confirmation feature — only two transitions exist:
     `EmploymentService.create_employment` moves `PRE_JOINING` -> `PROBATION` (guarded to only
@@ -55,8 +67,35 @@ class Employee(Base, TimestampMixin):
     blood_group: Mapped[str | None] = mapped_column(String(10), nullable=True)
     marital_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     nationality: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # E-02 (market-parity onboarding-data pass) — EPF Form 11 field 2. Plain, not `_enc`: same
+    # sensitivity tier as `first_name`/`last_name`, not PAN/Aadhaar-grade.
+    father_or_husband_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     personal_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     personal_mobile: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # E-02 (market-parity onboarding-data pass, part 2) — `address_info`/`emergency_contact`
+    # were collected during onboarding since O1 but never had an Employee-side column to land
+    # on; `OnboardingActivationService.activate_case` silently dropped them (schemas.py's own
+    # module docstring flagged this explicitly as "a known gap, not a silent one"). Flat columns,
+    # not a child table — these are single current-value facts, same shape as
+    # `gender`/`blood_group` above, not history. `permanent_*` mirrors `present_*` for the
+    # market-standard two-address block; `permanent_same_as_present` lets the UI collapse the
+    # permanent block into a copy of the present one without duplicating data entry.
+    present_address_line1: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    present_address_line2: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    present_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    present_state_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    present_pincode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    present_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    permanent_address_line1: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    permanent_address_line2: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    permanent_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    permanent_state_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    permanent_pincode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    permanent_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    permanent_same_as_present: Mapped[bool] = mapped_column(Boolean, default=True)
+    emergency_contact_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    emergency_contact_relationship: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    emergency_contact_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     photo_url: Mapped[str | None] = mapped_column(String, nullable=True)
     pan_number_enc: Mapped[str | None] = mapped_column(String, nullable=True)
     aadhaar_number_enc: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -252,10 +291,13 @@ class EmployeeBank(Base, TimestampMixin):
     after exit, since it is still needed for full-and-final settlement payout after the
     employee has left (plan §7). No other Employee sub-resource has this behavior.
 
-    `account_number_enc` is a plain, unencrypted `TEXT` column today — the same posture as
-    `Employee.pan_number_enc`/`aadhaar_number_enc`, an explicitly accepted, documented gap
-    (`HRMS_SYSTEM_DESIGN_BASELINE.md` Decision D-2 Option 2; plan §14/§22 PD-4), not a silent
-    oversight. Real account numbers must not be written here before that decision is revisited."""
+    `account_number_enc` is a plain `String` column at the SQLAlchemy level (DATA-01 does not
+    change its DB type, plan §4 Option A) but is **DATA-01-encrypted at the application layer**:
+    `EmployeeBankService.create_bank` calls `PiiCryptoService.encrypt_column(table=
+    "employee_bank", column="account_number_enc", record_id=<this row's id>)` before the row is
+    inserted, and every read path (`bank_to_read`) requires an explicitly-decrypted value passed
+    in — the raw ORM attribute always holds ciphertext, never plaintext, and is never
+    auto-decrypted on load (plan §2.5)."""
 
     __tablename__ = "employee_bank"
 
@@ -277,6 +319,119 @@ class EmployeeBank(Base, TimestampMixin):
     is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
     verification_status: Mapped[str] = mapped_column(String(20), default="PENDING")
     penny_drop_reference: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class EmployeeExperience(Base, TimestampMixin):
+    """Previous employment / PF continuity (market-parity onboarding-data pass, part 4) — EPF
+    Form 11's continuity block (previous UAN, PF account number, DOJ/DOE) plus Form 12B's
+    salary-continuity fields, using the shape `docs/modules/employee/02_EMPLOYEE_DATA_MODEL.md`
+    §2 pre-named (`company_name, designation, from/to date, last_ctc, reason_for_leaving,
+    document_id`). Unlike `EmployeeStatutory`/`EmployeeBank`, this is a genuine one-to-many list
+    — a candidate may have multiple past employers, all concurrently valid rows — not "one
+    current value over time," so there is no effective-dating and no GiST exclusion constraint,
+    just a plain `employee_id` FK, mirroring `OnboardingDocument`'s own "list of child rows"
+    shape."""
+
+    __tablename__ = "employee_experience"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    company_name: Mapped[str] = mapped_column(String(200))
+    designation: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    from_date: Mapped[date] = mapped_column(Date)
+    to_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_ctc_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reason_for_leaving: Mapped[str | None] = mapped_column(String, nullable=True)
+    had_prior_pf_membership: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Same sensitivity tier as `Employee.uan_number` — plain, not `_enc` (plan §1's own posture).
+    previous_uan: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    previous_pf_account_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    previous_esi_ip_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    document_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class EmployeeEducation(Base, TimestampMixin):
+    """Education history (market-parity onboarding-data pass, part 5) — same "plain list" shape
+    as `EmployeeExperience`: a candidate may hold multiple qualifications, all concurrently
+    valid, so this is a plain `employee_id` FK with no effective-dating. Field shape
+    (`qualification, institution_name, year_of_passing, document_id`) matches
+    `docs/modules/employee/02_EMPLOYEE_DATA_MODEL.md` §2's own `employee_education` row."""
+
+    __tablename__ = "employee_education"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    qualification: Mapped[str] = mapped_column(String(150))
+    institution_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    year_of_passing: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    document_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class EmployeeDependent(Base, TimestampMixin):
+    """PF/Gratuity nominee declaration + ESI family details (market-parity onboarding-data
+    pass, part 6) — per EPF Form 2, Gratuity Form F, and ESI Form 1/Form 2. Same "plain list"
+    shape as `EmployeeExperience`/`EmployeeEducation`: an employee may declare several
+    dependents, all concurrently valid, so this is a plain `employee_id` FK with no
+    effective-dating and no GiST exclusion constraint.
+
+    `aadhaar_number_enc` is a plain `String` column at the SQLAlchemy level but is
+    **DATA-01-encrypted at the application layer**, same contract as `EmployeeBank.
+    account_number_enc`: `EmployeeDependentService.create_dependent` calls `PiiCryptoService.
+    encrypt_column(table="employee_dependent", column="aadhaar_number_enc", record_id=<this
+    row's id>)` before insert, and every read path requires an explicitly-decrypted value passed
+    in — the raw ORM attribute always holds ciphertext, never plaintext.
+
+    A dependent may be declared a nominee under PF and/or Gratuity independently
+    (`is_pf_nominee`/`is_gratuity_nominee`), each with its own share percentage — application-
+    layer validation (`EmployeeDependentService`) keeps each scheme's percentages summing to
+    <=100 across an employee's dependents, since a DB `CHECK` cannot aggregate across rows.
+    `is_esi_dependent` has no percentage — ESI family coverage is not proportioned. `is_minor`/
+    `guardian_name`/`guardian_relationship` mirror EPF Form 2's own minor-nominee guardian
+    block."""
+
+    __tablename__ = "employee_dependent"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    full_name: Mapped[str] = mapped_column(String(150))
+    relationship: Mapped[str] = mapped_column(String(50))
+    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    is_minor: Mapped[bool] = mapped_column(Boolean, default=False)
+    guardian_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    guardian_relationship: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    aadhaar_number_enc: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_pf_nominee: Mapped[bool] = mapped_column(Boolean, default=False)
+    pf_nominee_share_percentage: Mapped[float | None] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+    is_gratuity_nominee: Mapped[bool] = mapped_column(Boolean, default=False)
+    gratuity_nominee_share_percentage: Mapped[float | None] = mapped_column(
+        Numeric(5, 2), nullable=True
+    )
+    is_esi_dependent: Mapped[bool] = mapped_column(Boolean, default=False)
+    document_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
 

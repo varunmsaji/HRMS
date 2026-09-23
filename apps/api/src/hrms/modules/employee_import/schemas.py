@@ -51,6 +51,14 @@ ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
 #: employee target range, cheap to raise later").
 MAX_IMPORT_ROWS = 1000
 
+#: SEC-03 (docs/audits/UPLOAD_BATCH_B_FILE_VALIDATION.md) — no source document names a byte-size
+#: ceiling for the import CSV (only the 1000-row cap above, enforced post-parse); this task's own
+#: engineering decision, sized the same way `ONBOARDING_DOCUMENT_MAX_SIZE_BYTES` was: generous
+#: for the documented 50-5,000 row target range (a 1000-row CSV of this column set is well under
+#: 1MB in practice) while still bounding worst-case memory/storage use before the row count is
+#: even checked.
+MAX_IMPORT_FILE_SIZE_BYTES = 5 * 1024 * 1024
+
 
 class EmployeeImportRow(BaseModel):
     """One validated CSV row. Every field arrives as a string from `csv.DictReader`; this model

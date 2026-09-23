@@ -39,6 +39,32 @@ export function PersonalInfoStep({ values, errors, onChange }: PersonalInfoStepP
       <FormField id="nationality" label="Nationality" error={errors.nationality}>
         <Input value={values.nationality} onChange={(e) => update("nationality", e.target.value)} />
       </FormField>
+      <FormField
+        id="fatherOrHusbandName"
+        label="Father's / husband's name"
+        error={errors.fatherOrHusbandName}
+      >
+        <Input
+          value={values.fatherOrHusbandName}
+          onChange={(e) => update("fatherOrHusbandName", e.target.value)}
+        />
+      </FormField>
+      <FormField id="panNumber" label="PAN number" error={errors.panNumber}>
+        <Input
+          value={values.panNumber}
+          maxLength={10}
+          onChange={(e) => update("panNumber", e.target.value.toUpperCase())}
+          placeholder="ABCDE1234F"
+        />
+      </FormField>
+      <FormField id="aadhaarNumber" label="Aadhaar number" error={errors.aadhaarNumber}>
+        <Input
+          value={values.aadhaarNumber}
+          maxLength={12}
+          onChange={(e) => update("aadhaarNumber", e.target.value.replace(/\D/g, ""))}
+          placeholder="12-digit Aadhaar number"
+        />
+      </FormField>
     </div>
   );
 }

@@ -185,7 +185,16 @@ async def test_verifying_all_sections_auto_verifies_case(
     try:
         case, _token = await _submitted_case(client, headers)
 
-        sections = ["personal_info", "address_info", "emergency_contact", "bank_info"]
+        sections = [
+            "personal_info",
+            "address_info",
+            "emergency_contact",
+            "bank_info",
+            "statutory_info",
+            "compensation_info",
+            "previous_employment_info",
+            "nominee_info",
+        ]
         for section in sections:
             response = await client.post(
                 _review_url(case["id"], section), headers=headers, json={"status": "VERIFIED"}
@@ -198,7 +207,9 @@ async def test_verifying_all_sections_auto_verifies_case(
         assert mid_view["status"] == "UNDER_REVIEW"
 
         last = await client.post(
-            _review_url(case["id"], "statutory_info"), headers=headers, json={"status": "VERIFIED"}
+            _review_url(case["id"], "education_info"),
+            headers=headers,
+            json={"status": "VERIFIED"},
         )
         assert last.status_code == 200
 

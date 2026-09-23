@@ -127,6 +127,21 @@ class OnboardingTokenRepository:
             token.used_first_at = now
             await session.flush()
 
+    async def get_latest_for_case(
+        self, session: AsyncSession, *, case_id: UUID
+    ) -> OnboardingToken | None:
+        """Admin-facing read (O6 detail view) — the most recently issued token row for a case,
+        regardless of whether it's still live, so HR can see when the current/last link expires
+        (or that it's already expired/revoked) without ever seeing the raw token itself, which
+        this table never stores (module docstring)."""
+        stmt = (
+            select(OnboardingToken)
+            .where(OnboardingToken.onboarding_case_id == case_id)
+            .order_by(OnboardingToken.created_at.desc())
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
 
 class OnboardingDocumentRepository:
     async def insert_document(

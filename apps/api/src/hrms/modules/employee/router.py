@@ -41,6 +41,9 @@ from hrms.modules.employee.dependencies import (
     get_employee_assignment_service,
     get_employee_bank_service,
     get_employee_compensation_service,
+    get_employee_dependent_service,
+    get_employee_education_service,
+    get_employee_experience_service,
     get_employee_service,
     get_employee_statutory_service,
     get_employment_service,
@@ -58,6 +61,9 @@ from hrms.modules.employee.permissions import (
     EMPLOYEE_VIEW_ALL,
     EMPLOYEE_VIEW_BANKING,
     EMPLOYEE_VIEW_COMPENSATION,
+    EMPLOYEE_VIEW_EXPERIENCE,
+    EMPLOYEE_VIEW_NOMINEE,
+    EMPLOYEE_VIEW_SENSITIVE,
     EMPLOYEE_VIEW_STATUTORY,
 )
 from hrms.modules.employee.schemas import (
@@ -69,6 +75,14 @@ from hrms.modules.employee.schemas import (
     CompensationRead,
     EmployeeConfirmInput,
     EmployeeCreate,
+    EmployeeDependentCreate,
+    EmployeeDependentRead,
+    EmployeeEducationCreate,
+    EmployeeEducationRead,
+    EmployeeExperienceCreate,
+    EmployeeExperienceRead,
+    EmployeeIdentityRead,
+    EmployeeIdentityUpdate,
     EmployeeRead,
     EmployeeUpdate,
     EmploymentCreate,
@@ -82,13 +96,22 @@ from hrms.modules.employee.service import (
     EmployeeAssignmentService,
     EmployeeBankService,
     EmployeeCompensationService,
+    EmployeeDependentService,
+    EmployeeEducationService,
+    EmployeeExperienceService,
     EmployeeService,
     EmployeeStatutoryService,
     EmploymentService,
 )
 from hrms.modules.identity.permissions import EMPLOYEE_VIEW
 from hrms.modules.identity.schemas import build_meta
-from hrms.shared.pagination import DataEnvelope, ListEnvelope
+from hrms.shared.pagination import (
+    DataEnvelope,
+    ListEnvelope,
+    PageParams,
+    build_pagination_meta,
+    pagination_params,
+)
 
 router = APIRouter(tags=["employee"])
 
@@ -99,11 +122,16 @@ async def list_employees(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_ALL))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
 ) -> ListEnvelope[EmployeeRead]:
-    data = await service.list_employees(
-        tenant.company_id, scope=scope, caller_employee_id=user.employee_id
+    data, total = await service.list_employees(
+        tenant.company_id, scope=scope, caller_employee_id=user.employee_id, page=page
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.post("/employees", status_code=status.HTTP_201_CREATED)
@@ -203,6 +231,63 @@ async def confirm_employee(
     slice: no reminders, no manager-recommendation routing, no auto-extend/auto-confirm rules,
     no letter generation (full FR-EMP-010 scope, deliberately not built here)."""
     data = await service.confirm_employee(
+        tenant.company_id,
+        employee_id,
+        body,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# --- Employee Identity (E-02) ---------------------------------------------------------------
+#
+# PAN/Aadhaar/UAN/father's-or-husband's-name — a plain update-in-place on `Employee` itself
+# (like `update_employee` above), not an effective-dated history write like Statutory/Bank
+# below. `.VIEW_SENSITIVE` gates the read (resolves `DataScope`, `SELF`-scoped for the base
+# `EMPLOYEE` role — an employee can see their own PAN/Aadhaar/UAN, same posture as Banking);
+# `.UPDATE_SENSITIVE` gates the write, reused as-is from Statutory/Bank rather than a new code.
+
+
+@router.get(
+    "/employees/{employee_id}/identity",
+    status_code=status.HTTP_200_OK,
+)
+async def get_identity(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_SENSITIVE))],
+    service: Annotated[EmployeeService, Depends(get_employee_service)],
+) -> DataEnvelope[EmployeeIdentityRead]:
+    data = await service.get_identity(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.patch(
+    "/employees/{employee_id}/identity",
+    status_code=status.HTTP_200_OK,
+)
+async def update_identity(
+    employee_id: UUID,
+    body: EmployeeIdentityUpdate,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeService, Depends(get_employee_service)],
+) -> DataEnvelope[EmployeeIdentityRead]:
+    data = await service.update_identity(
         tenant.company_id,
         employee_id,
         body,
@@ -734,3 +819,320 @@ async def create_bank(
         user_agent=request.headers.get("User-Agent"),
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# --- Employee Experience (market-parity onboarding-data pass, part 4) -----------------------
+#
+# Previous employment / PF continuity — a genuine one-to-many list (multiple past employers,
+# concurrently valid), unlike Statutory/Bank's "insert-and-close-the-old-one" shape: `POST`
+# always inserts a new independent row, and `DELETE` (not a second `POST`) is the row's only
+# other mutation path. `.VIEW_EXPERIENCE` gates the reads (`SELF`-scoped for the base `EMPLOYEE`
+# role); `.UPDATE_SENSITIVE` gates both writes, reused as-is rather than a new code.
+
+
+@router.get(
+    "/employees/{employee_id}/experience",
+    status_code=status.HTTP_200_OK,
+)
+async def list_experiences(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_EXPERIENCE))],
+    service: Annotated[EmployeeExperienceService, Depends(get_employee_experience_service)],
+) -> ListEnvelope[EmployeeExperienceRead]:
+    data = await service.list_experiences(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/experience/{experience_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_experience(
+    employee_id: UUID,
+    experience_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_EXPERIENCE))],
+    service: Annotated[EmployeeExperienceService, Depends(get_employee_experience_service)],
+) -> DataEnvelope[EmployeeExperienceRead]:
+    data = await service.get_experience(
+        tenant.company_id,
+        employee_id,
+        experience_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/employees/{employee_id}/experience",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_experience(
+    employee_id: UUID,
+    body: EmployeeExperienceCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeExperienceService, Depends(get_employee_experience_service)],
+) -> DataEnvelope[EmployeeExperienceRead]:
+    """Always inserts a new independent row — a candidate/employee may have any number of past
+    employers, all concurrently valid, so unlike Bank/Statutory this never closes an existing
+    row and never needs `If-Match`."""
+    data = await service.create_experience(
+        tenant.company_id,
+        employee_id,
+        body,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete(
+    "/employees/{employee_id}/experience/{experience_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_experience(
+    employee_id: UUID,
+    experience_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeExperienceService, Depends(get_employee_experience_service)],
+) -> None:
+    await service.delete_experience(
+        tenant.company_id,
+        employee_id,
+        experience_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+
+
+# --- Employee Education (market-parity onboarding-data pass, part 5) ------------------------
+#
+# Mirrors the Experience block above exactly — plain one-to-many list, `.VIEW_EXPERIENCE` gates
+# reads (folded together with Experience under one code, per that permission's own docstring:
+# "both are background data with the same sensitivity/visibility profile"), `.UPDATE_SENSITIVE`
+# gates both writes.
+
+
+@router.get(
+    "/employees/{employee_id}/education",
+    status_code=status.HTTP_200_OK,
+)
+async def list_educations(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_EXPERIENCE))],
+    service: Annotated[EmployeeEducationService, Depends(get_employee_education_service)],
+) -> ListEnvelope[EmployeeEducationRead]:
+    data = await service.list_educations(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/education/{education_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_education(
+    employee_id: UUID,
+    education_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_EXPERIENCE))],
+    service: Annotated[EmployeeEducationService, Depends(get_employee_education_service)],
+) -> DataEnvelope[EmployeeEducationRead]:
+    data = await service.get_education(
+        tenant.company_id,
+        employee_id,
+        education_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/employees/{employee_id}/education",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_education(
+    employee_id: UUID,
+    body: EmployeeEducationCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeEducationService, Depends(get_employee_education_service)],
+) -> DataEnvelope[EmployeeEducationRead]:
+    data = await service.create_education(
+        tenant.company_id,
+        employee_id,
+        body,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete(
+    "/employees/{employee_id}/education/{education_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_education(
+    employee_id: UUID,
+    education_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeEducationService, Depends(get_employee_education_service)],
+) -> None:
+    await service.delete_education(
+        tenant.company_id,
+        employee_id,
+        education_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+
+
+# --- Employee Dependent (market-parity onboarding-data pass, part 6) ------------------------
+#
+# PF/Gratuity nominee declaration + ESI family details — mirrors the Experience/Education blocks
+# above exactly: plain one-to-many list, `POST` always inserts a new independent row, `DELETE`
+# is the only other mutation path. `.VIEW_NOMINEE` gates reads (`SELF`-scoped for the base
+# `EMPLOYEE` role); `.UPDATE_SENSITIVE` gates both writes, reused as-is — a dependent's Aadhaar
+# is at least as sensitive as anything else that code already gates.
+
+
+@router.get(
+    "/employees/{employee_id}/dependents",
+    status_code=status.HTTP_200_OK,
+)
+async def list_dependents(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_NOMINEE))],
+    service: Annotated[EmployeeDependentService, Depends(get_employee_dependent_service)],
+) -> ListEnvelope[EmployeeDependentRead]:
+    data = await service.list_dependents(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/dependents/{dependent_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def get_dependent(
+    employee_id: UUID,
+    dependent_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_NOMINEE))],
+    service: Annotated[EmployeeDependentService, Depends(get_employee_dependent_service)],
+) -> DataEnvelope[EmployeeDependentRead]:
+    data = await service.get_dependent(
+        tenant.company_id,
+        employee_id,
+        dependent_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/employees/{employee_id}/dependents",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_dependent(
+    employee_id: UUID,
+    body: EmployeeDependentCreate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeDependentService, Depends(get_employee_dependent_service)],
+) -> DataEnvelope[EmployeeDependentRead]:
+    """Always inserts a new independent row — an employee may declare any number of dependents,
+    all concurrently valid, so unlike Bank/Statutory this never closes an existing row and never
+    needs `If-Match`."""
+    data = await service.create_dependent(
+        tenant.company_id,
+        employee_id,
+        body,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete(
+    "/employees/{employee_id}/dependents/{dependent_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_dependent(
+    employee_id: UUID,
+    dependent_id: UUID,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeDependentService, Depends(get_employee_dependent_service)],
+) -> None:
+    await service.delete_dependent(
+        tenant.company_id,
+        employee_id,
+        dependent_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )

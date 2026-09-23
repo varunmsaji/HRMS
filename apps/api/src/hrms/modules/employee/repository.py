@@ -14,6 +14,9 @@ from hrms.modules.employee.models import (
     EmployeeAssignment,
     EmployeeBank,
     EmployeeCompensation,
+    EmployeeDependent,
+    EmployeeEducation,
+    EmployeeExperience,
     EmployeeStatutory,
     Employment,
 )
@@ -38,18 +41,45 @@ class EmployeeRepository:
         *,
         company_id: UUID,
         visible_employee_ids: frozenset[UUID] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[Employee]:
         """`visible_employee_ids=None` means `COMPANY` scope (or the caller didn't resolve a
         scope at all, e.g. non-data-scoped routes still calling this unchanged) — no extra
         predicate, identical to this method's pre-data-scope behavior. A non-`None` (possibly
         empty) set narrows the result to exactly those IDs — applied at the SQL layer, not as an
-        in-Python filter, so it composes correctly once pagination exists
-        (`docs/modules/employee/25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §15)."""
+        in-Python filter, so it composes correctly with pagination
+        (`docs/modules/employee/25_EMPLOYEE_RBAC_DATA_SCOPE_IMPLEMENTATION_PLAN.md` §15).
+
+        `limit=None` (the default) returns every visible row unpaginated — preserves the exact
+        pre-API-01 behavior for internal callers that still want the full set (e.g.
+        `attendance/tasks.py`'s background job). `GET /employees` (API-01) always passes an
+        explicit `limit`/`offset`, applied at the SQL layer via `LIMIT`/`OFFSET`, never by
+        slicing a fully-materialized Python list."""
         conditions = [Employee.company_id == company_id, Employee.deleted_at.is_(None)]
         if visible_employee_ids is not None:
             conditions.append(Employee.id.in_(visible_employee_ids))
-        stmt = select(Employee).where(*conditions).order_by(Employee.created_at)
+        # `id` is a stable secondary key — `created_at` alone can tie for rows inserted in the
+        # same transaction/batch import, which would make page boundaries non-deterministic.
+        stmt = select(Employee).where(*conditions).order_by(Employee.created_at, Employee.id)
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_employees(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None = None,
+    ) -> int:
+        """Same predicates as `list_employees`, no `ORDER BY`/`LIMIT` — the paired COUNT query
+        for `GET /employees`'s `pagination.total` (API-01)."""
+        conditions = [Employee.company_id == company_id, Employee.deleted_at.is_(None)]
+        if visible_employee_ids is not None:
+            conditions.append(Employee.id.in_(visible_employee_ids))
+        stmt = select(func.count()).select_from(Employee).where(*conditions)
+        return int((await session.execute(stmt)).scalar_one())
 
     async def count_active_employees(self, session: AsyncSession, *, company_id: UUID) -> int:
         """Counts non-deleted, `is_active` employees — the population the `EMPLOYEE_SEATS`
@@ -832,3 +862,219 @@ class EmployeeBankRepository:
             .returning(EmployeeBank)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class EmployeeExperienceRepository:
+    """Previous employment / PF continuity (market-parity onboarding-data pass, part 4) —
+    a plain one-to-many list, not effective-dated history: `insert_experience` never closes an
+    existing row (there is no "current" row to close), and `delete_experience` is the only
+    mutation path after insert, mirroring `close_statutory`'s optimistic-lock shape but as a
+    soft-delete rather than a field update."""
+
+    async def insert_experience(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> EmployeeExperience:
+        row = EmployeeExperience(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_experiences(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[EmployeeExperience]:
+        stmt = (
+            select(EmployeeExperience)
+            .where(
+                EmployeeExperience.company_id == company_id,
+                EmployeeExperience.employee_id == employee_id,
+                EmployeeExperience.deleted_at.is_(None),
+            )
+            .order_by(EmployeeExperience.from_date)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_experience(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, experience_id: UUID
+    ) -> EmployeeExperience | None:
+        stmt = select(EmployeeExperience).where(
+            EmployeeExperience.id == experience_id,
+            EmployeeExperience.company_id == company_id,
+            EmployeeExperience.employee_id == employee_id,
+            EmployeeExperience.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_experience(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        experience_id: UUID,
+        expected_version: int,
+        now: datetime,
+    ) -> EmployeeExperience | None:
+        stmt = (
+            update(EmployeeExperience)
+            .where(
+                EmployeeExperience.id == experience_id,
+                EmployeeExperience.company_id == company_id,
+                EmployeeExperience.employee_id == employee_id,
+                EmployeeExperience.version == expected_version,
+                EmployeeExperience.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, version=expected_version + 1, updated_at=now)
+            .returning(EmployeeExperience)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class EmployeeEducationRepository:
+    """Education history (market-parity onboarding-data pass, part 5) — mirrors
+    `EmployeeExperienceRepository`'s exact shape (plain list, soft-delete only mutation path)."""
+
+    async def insert_education(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> EmployeeEducation:
+        row = EmployeeEducation(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_educations(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[EmployeeEducation]:
+        stmt = (
+            select(EmployeeEducation)
+            .where(
+                EmployeeEducation.company_id == company_id,
+                EmployeeEducation.employee_id == employee_id,
+                EmployeeEducation.deleted_at.is_(None),
+            )
+            .order_by(EmployeeEducation.year_of_passing)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_education(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, education_id: UUID
+    ) -> EmployeeEducation | None:
+        stmt = select(EmployeeEducation).where(
+            EmployeeEducation.id == education_id,
+            EmployeeEducation.company_id == company_id,
+            EmployeeEducation.employee_id == employee_id,
+            EmployeeEducation.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_education(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        education_id: UUID,
+        expected_version: int,
+        now: datetime,
+    ) -> EmployeeEducation | None:
+        stmt = (
+            update(EmployeeEducation)
+            .where(
+                EmployeeEducation.id == education_id,
+                EmployeeEducation.company_id == company_id,
+                EmployeeEducation.employee_id == employee_id,
+                EmployeeEducation.version == expected_version,
+                EmployeeEducation.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, version=expected_version + 1, updated_at=now)
+            .returning(EmployeeEducation)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class EmployeeDependentRepository:
+    """PF/Gratuity nominee declaration + ESI family details (market-parity onboarding-data pass,
+    part 6) — mirrors `EmployeeEducationRepository`'s exact shape (plain list, soft-delete only
+    mutation path after insert), plus `sum_pf_nominee_percentage`/`sum_gratuity_nominee_percentage`
+    for `EmployeeDependentService`'s cross-row percentage validator (a DB `CHECK` cannot aggregate
+    across sibling rows, so the service queries this sum itself before inserting)."""
+
+    async def insert_dependent(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> EmployeeDependent:
+        row = EmployeeDependent(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def list_dependents(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[EmployeeDependent]:
+        stmt = (
+            select(EmployeeDependent)
+            .where(
+                EmployeeDependent.company_id == company_id,
+                EmployeeDependent.employee_id == employee_id,
+                EmployeeDependent.deleted_at.is_(None),
+            )
+            .order_by(EmployeeDependent.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_dependent(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, dependent_id: UUID
+    ) -> EmployeeDependent | None:
+        stmt = select(EmployeeDependent).where(
+            EmployeeDependent.id == dependent_id,
+            EmployeeDependent.company_id == company_id,
+            EmployeeDependent.employee_id == employee_id,
+            EmployeeDependent.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_dependent(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        dependent_id: UUID,
+        expected_version: int,
+        now: datetime,
+    ) -> EmployeeDependent | None:
+        stmt = (
+            update(EmployeeDependent)
+            .where(
+                EmployeeDependent.id == dependent_id,
+                EmployeeDependent.company_id == company_id,
+                EmployeeDependent.employee_id == employee_id,
+                EmployeeDependent.version == expected_version,
+                EmployeeDependent.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, version=expected_version + 1, updated_at=now)
+            .returning(EmployeeDependent)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def sum_pf_nominee_percentage(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> float:
+        stmt = select(func.coalesce(func.sum(EmployeeDependent.pf_nominee_share_percentage), 0)).where(
+            EmployeeDependent.company_id == company_id,
+            EmployeeDependent.employee_id == employee_id,
+            EmployeeDependent.is_pf_nominee.is_(True),
+            EmployeeDependent.deleted_at.is_(None),
+        )
+        return float((await session.execute(stmt)).scalar_one())
+
+    async def sum_gratuity_nominee_percentage(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> float:
+        stmt = select(
+            func.coalesce(func.sum(EmployeeDependent.gratuity_nominee_share_percentage), 0)
+        ).where(
+            EmployeeDependent.company_id == company_id,
+            EmployeeDependent.employee_id == employee_id,
+            EmployeeDependent.is_gratuity_nominee.is_(True),
+            EmployeeDependent.deleted_at.is_(None),
+        )
+        return float((await session.execute(stmt)).scalar_one())

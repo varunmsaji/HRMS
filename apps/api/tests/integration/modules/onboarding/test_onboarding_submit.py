@@ -56,6 +56,22 @@ async def _fill_all_sections(client: AsyncClient, token: str) -> None:
             "tax_regime": "NEW",
         },
     )
+    await client.patch(
+        f"/v1/public/onboarding/{token}/sections/compensation_info",
+        json={"annual_ctc_minor": 60000000, "currency": "INR"},
+    )
+    await client.patch(
+        f"/v1/public/onboarding/{token}/sections/previous_employment_info",
+        json={"items": []},
+    )
+    await client.patch(
+        f"/v1/public/onboarding/{token}/sections/education_info",
+        json={"items": []},
+    )
+    await client.patch(
+        f"/v1/public/onboarding/{token}/sections/nominee_info",
+        json={"items": []},
+    )
 
 
 async def test_submit_rejected_when_sections_incomplete(

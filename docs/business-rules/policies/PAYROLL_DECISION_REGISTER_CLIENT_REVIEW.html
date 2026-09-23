@@ -1,0 +1,472 @@
+<title>Payroll — Product Decision Register</title>
+<style>
+  :root{
+    --paper: #f2f0ea;
+    --paper-raised: #fbfaf7;
+    --ink: #1e2420;
+    --ink-soft: #4a534c;
+    --line: #dcd6c9;
+    --accent: #2b4a4a;
+    --accent-soft: #dce6e3;
+    --accent-strong: #17302f;
+    --crit: #9c3b2c;
+    --crit-soft: #f3ddd6;
+    --high: #a56a1e;
+    --high-soft: #f2e3ca;
+    --med: #4c6a86;
+    --med-soft: #dee7ee;
+    --low: #55735a;
+    --low-soft: #dde8dd;
+    --ready: #6a5a8c;
+    --ready-soft: #e6e0f0;
+    --shadow: 0 1px 2px rgba(30,36,32,0.06), 0 8px 24px -12px rgba(30,36,32,0.18);
+  }
+  :root[data-theme="dark"]{
+    --paper: #161a17;
+    --paper-raised: #1e2420;
+    --ink: #e9e6dd;
+    --ink-soft: #a9b0a6;
+    --line: #333c34;
+    --accent: #7fada6;
+    --accent-soft: #223330;
+    --accent-strong: #b7d6cf;
+    --crit: #d98a72;
+    --crit-soft: #3a271f;
+    --high: #d9ac6a;
+    --high-soft: #3a3021;
+    --med: #91b0cc;
+    --med-soft: #22303c;
+    --low: #93b895;
+    --low-soft: #223226;
+    --ready: #b6a6d9;
+    --ready-soft: #2c2740;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper: #161a17;
+      --paper-raised: #1e2420;
+      --ink: #e9e6dd;
+      --ink-soft: #a9b0a6;
+      --line: #333c34;
+      --accent: #7fada6;
+      --accent-soft: #223330;
+      --accent-strong: #b7d6cf;
+      --crit: #d98a72;
+      --crit-soft: #3a271f;
+      --high: #d9ac6a;
+      --high-soft: #3a3021;
+      --med: #91b0cc;
+      --med-soft: #22303c;
+      --low: #93b895;
+      --low-soft: #223226;
+      --ready: #b6a6d9;
+      --ready-soft: #2c2740;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+
+  .prv-root{
+    --font-display: "Iowan Old Style", "Sitka Text", "Palatino Linotype", Palatino, "Source Serif Pro", Georgia, serif;
+    --font-body: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.65;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 1.25rem 5rem;
+  }
+  .prv-root *{ box-sizing: border-box; }
+  .prv-root ::selection{ background: var(--accent-soft); }
+
+  .prv-root h1, .prv-root h2, .prv-root h3{
+    font-family: var(--font-display);
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .cover{
+    padding: 3.2rem 0 2.4rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 2.8rem;
+  }
+  .cover-eyebrow{
+    display:inline-flex; align-items:center; gap:.5rem;
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: .3rem .65rem;
+    border-radius: 3px;
+    margin-bottom: 1.4rem;
+  }
+  .cover h1{
+    font-size: clamp(2rem, 4vw, 2.75rem);
+    line-height: 1.12;
+    margin: 0 0 .9rem;
+    max-width: 22ch;
+  }
+  .cover p.lede{
+    font-size: 1.1rem;
+    color: var(--ink-soft);
+    max-width: 60ch;
+    margin: 0 0 1.8rem;
+  }
+  .cover-meta{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1.2rem;
+    border-top: 1px solid var(--line);
+    padding-top: 1.2rem;
+  }
+  .cover-meta dt{
+    font-size: .68rem; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-soft); margin-bottom: .3rem; font-family: var(--font-mono);
+  }
+  .cover-meta dd{ margin:0; font-size: .95rem; }
+
+  section{ margin-bottom: 3.4rem; }
+  .section-head{
+    display:flex; align-items:baseline; gap: .85rem;
+    margin-bottom: 1.3rem;
+    padding-bottom: .6rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-head .eyebrow{
+    font-family: var(--font-mono);
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .section-head h2{ font-size: 1.5rem; margin: 0; }
+
+  .prv-root p{ margin: 0 0 1rem; max-width: 68ch; }
+  .prv-root .wide p{ max-width: 74ch; }
+
+  .lead-stat{
+    font-size: 1.18rem;
+    color: var(--accent-strong);
+    border-left: 3px solid var(--accent);
+    padding-left: 1rem;
+    margin: 1.4rem 0 1.8rem;
+    max-width: 62ch;
+  }
+
+  .connect{
+    display:flex; align-items:stretch; gap: 0; margin: 1.6rem 0 2rem;
+    flex-wrap: wrap;
+  }
+  .connect-box{
+    flex: 1 1 190px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1.1rem 1.2rem;
+    box-shadow: var(--shadow);
+  }
+  .connect-box h4{
+    margin: 0 0 .4rem; font-family: var(--font-display); font-size: 1.05rem; font-weight: 600;
+  }
+  .connect-box p{ margin:0; font-size: .87rem; color: var(--ink-soft); max-width: 38ch;}
+  .connect-mid{
+    flex: 0 0 auto;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding: 0 .9rem;
+    min-width: 60px;
+    text-align:center;
+  }
+  .connect-mid .arrow{
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-size: 1.3rem;
+    line-height: 1;
+  }
+
+  .rule-grid{
+    display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr));
+    gap: 1rem; margin: 1.6rem 0;
+  }
+  .rule-card{
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 6px;
+    padding: 1.1rem 1.2rem; border-left: 3px solid var(--ready);
+  }
+  .rule-card h4{
+    margin: 0 0 .35rem; font-size: .95rem; font-family: var(--font-display); font-weight: 600;
+    display:flex; align-items:center; gap:.5rem;
+  }
+  .rule-card .status-chip{
+    font-family: var(--font-mono); font-size: .62rem; letter-spacing:.06em; text-transform:uppercase;
+    color: var(--ready); background: var(--ready-soft); padding: .1rem .4rem; border-radius: 2px;
+  }
+  .rule-card p{ margin:0; font-size: .87rem; color: var(--ink-soft); }
+  .rule-card .example{ margin-top: .55rem; font-size: .84rem; color: var(--ink-soft); }
+  .rule-card .example b{ color: var(--ink); font-weight: 600; }
+
+  .kind-platform{ border-left-color: var(--accent); }
+  .kind-platform .status-chip{ color: var(--accent-strong); background: var(--accent-soft); }
+  .kind-config{ border-left-color: var(--med); }
+  .kind-config .status-chip{ color: var(--med); background: var(--med-soft); }
+  .kind-default{ border-left-color: var(--ready); }
+  .kind-default .status-chip{ color: var(--ready); background: var(--ready-soft); }
+
+  .table-scroll{ overflow-x: auto; margin: 1.4rem 0; border: 1px solid var(--line); border-radius: 6px; }
+  table{ width: 100%; border-collapse: collapse; min-width: 560px; background: var(--paper-raised); }
+  thead th{
+    text-align:left; font-family: var(--font-mono); font-size: .68rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--ink-soft); font-weight: 600;
+    padding: .8rem .9rem; border-bottom: 1px solid var(--line); background: var(--accent-soft);
+  }
+  tbody td{
+    padding: .85rem .9rem; border-bottom: 1px solid var(--line); font-size: .89rem;
+    vertical-align: top;
+  }
+  tbody tr:last-child td{ border-bottom: none; }
+  tbody tr:hover td{ background: var(--accent-soft); }
+
+  .priority-block{ margin-bottom: 1.8rem; }
+  .priority-title{
+    display:flex; align-items:center; gap:.6rem; margin-bottom: .8rem; flex-wrap: wrap;
+  }
+  .priority-dot{ width:.6rem; height:.6rem; border-radius: 50%; display:inline-block; }
+  .priority-title h3{
+    font-family: var(--font-body); font-size: .82rem; letter-spacing: .08em; text-transform: uppercase;
+    margin: 0; color: var(--ink-soft); font-weight: 700;
+  }
+  .priority-count{
+    font-family: var(--font-mono); font-size: .74rem; color: var(--ink-soft);
+  }
+  .priority-note{
+    font-size: .85rem; color: var(--ink-soft); margin: -.4rem 0 1rem; max-width: 66ch;
+  }
+  .decision-card{
+    padding: 1rem 1.15rem;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--paper-raised);
+    margin-bottom: .7rem;
+  }
+  .decision-card:last-child{ margin-bottom:0; }
+  .decision-card .card-head{
+    display:flex; align-items:baseline; justify-content: space-between; gap: .8rem; flex-wrap: wrap;
+    margin-bottom: .5rem;
+  }
+  .decision-card h4{ margin: 0; font-size: .98rem; font-family: var(--font-display); font-weight: 600;}
+  .kind-chip{
+    font-family: var(--font-mono); font-size: .6rem; letter-spacing: .07em; text-transform: uppercase;
+    padding: .12rem .45rem; border-radius: 3px; white-space: nowrap;
+  }
+  .kind-chip.platform{ color: var(--accent-strong); background: var(--accent-soft); }
+  .kind-chip.config{ color: var(--med); background: var(--med-soft); }
+  .kind-chip.default{ color: var(--ready); background: var(--ready-soft); }
+  .decision-card .q-label, .decision-card .a-label{
+    font-family: var(--font-mono); font-size: .64rem; letter-spacing: .08em; text-transform: uppercase;
+    display:block; margin-bottom: .2rem;
+  }
+  .decision-card .q-label{ color: var(--ink-soft); }
+  .decision-card .a-label{ color: var(--accent-strong); }
+  .decision-card .q-text{ margin: 0 0 .8rem; font-size: .93rem; }
+  .decision-card .a-text{ margin: 0; font-size: .89rem; color: var(--ink-soft); background: var(--accent-soft); padding: .6rem .8rem; border-radius: 4px; }
+  .decision-card .fr-ref{ font-family: var(--font-mono); font-size: .68rem; color: var(--ink-soft); opacity: .75; margin-left: .4rem; }
+
+  .pri-critical{ border-left: 3px solid var(--crit); }
+  .pri-high{ border-left: 3px solid var(--high); }
+  .pri-medium{ border-left: 3px solid var(--med); }
+  .pri-low{ border-left: 3px solid var(--low); }
+  .priority-dot.crit{ background: var(--crit); }
+  .priority-dot.high{ background: var(--high); }
+  .priority-dot.med{ background: var(--med); }
+  .priority-dot.low{ background: var(--low); }
+
+  .legend-key{
+    display:flex; gap: 1.4rem; flex-wrap: wrap; margin: 1rem 0 1.8rem;
+    font-size: .82rem; color: var(--ink-soft);
+  }
+  .legend-key span{ display:inline-flex; align-items:center; gap:.4rem; }
+
+  footer.doc-foot{
+    border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1.4rem;
+    font-size: .8rem; color: var(--ink-soft);
+    display:flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem;
+  }
+
+  a{ color: var(--accent-strong); }
+  :focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce){ *{ scroll-behavior: auto !important; } }
+</style>
+
+<div class="prv-root">
+
+  <div class="cover">
+    <span class="cover-eyebrow">Product Decision Register · Payroll</span>
+    <h1>Payroll, built once — run differently by every company that signs up</h1>
+    <p class="lede">Nine open decisions for the Payroll module, each tagged as a platform rule, a tenant setting, or a default template, with our recommendation next to it — yours to confirm or change.</p>
+    <dl class="cover-meta">
+      <div><dt>For</dt><dd>Client review</dd></div>
+      <div><dt>Scope</dt><dd>Payroll module (in progress)</dd></div>
+      <div><dt>Product model</dt><dd>Multi-tenant SaaS</dd></div>
+      <div><dt>Status</dt><dd>Awaiting your decisions (§3)</dd></div>
+    </dl>
+  </div>
+
+  <section class="wide">
+    <div class="section-head"><span class="eyebrow">01</span><h2>What Payroll will read from — already built, already multi-tenant</h2></div>
+    <p>Four things already exist in the system and will feed Payroll directly, for every tenant independently — every table is already scoped by company, with row-level security enforcing that one tenant's data is structurally invisible to another. Nothing here needs rebuilding for the SaaS model; it was built that way from the first migration.</p>
+    <div class="connect">
+      <div class="connect-box">
+        <h4>Employee record</h4>
+        <p>CTC history, PF/ESI/PT/tax-regime profile, and bank account — each tracked with its own effective date, scoped to one company's data only.</p>
+      </div>
+      <div class="connect-mid"><span class="arrow">&#8594;</span></div>
+      <div class="connect-box">
+        <h4>Attendance &amp; Leave</h4>
+        <p>Paid/unpaid days, overtime minutes, and comp-off — delivered as facts only, per tenant. No money is calculated there by design.</p>
+      </div>
+      <div class="connect-mid"><span class="arrow">&#8594;</span></div>
+      <div class="connect-box">
+        <h4>Payroll (in progress)</h4>
+        <p>Turns those facts into a payslip for each tenant's own employees, using that tenant's own settings — never another tenant's.</p>
+      </div>
+    </div>
+    <div class="rule-grid">
+      <div class="rule-card"><h4>Compensation <span class="status-chip">Live</span></h4><p>Every CTC an employee has ever had, with the reason for each change — already company-scoped.</p></div>
+      <div class="rule-card"><h4>Statutory profile <span class="status-chip">Live</span></h4><p>PF/ESI/PT/LWF applicability and identifiers, tax regime, per employee — the raw inputs, not the calculation.</p></div>
+      <div class="rule-card"><h4>Bank details <span class="status-chip">Live</span></h4><p>Payout account, kept open even after an employee exits, so a final settlement still has somewhere to go.</p></div>
+      <div class="rule-card"><h4>Once finalised, never edited <span class="status-chip">Locked</span></h4><p>A paid month is frozen for every tenant alike — any later correction becomes an adjustment in a future run, never a rewrite of the past.</p></div>
+    </div>
+  </section>
+
+  <section class="wide">
+    <div class="section-head"><span class="eyebrow">02</span><h2>Three kinds of decision</h2></div>
+    <p>Every question in §3 is tagged with one of these. Getting the tag right matters more than getting the default right — a wrong default is a config change; a platform rule mistaken for a tenant setting (or the reverse) is a schema and UI rework.</p>
+    <div class="rule-grid">
+      <div class="rule-card kind-platform">
+        <h4><span class="status-chip">Platform rule</span></h4>
+        <p>Fixed behaviour, identical for every tenant. No settings screen, no override.</p>
+        <p class="example"><b>Example:</b> a finalised pay run can never be edited — only corrected forward as an arrear.</p>
+      </div>
+      <div class="rule-card kind-config">
+        <h4><span class="status-chip">Tenant setting</span></h4>
+        <p>Every company configures this for itself, on its own timeline, independent of every other tenant.</p>
+        <p class="example"><b>Example:</b> whether PF/ESI apply, and to which state's PT slab — this company's registrations, not a global switch.</p>
+      </div>
+      <div class="rule-card kind-default">
+        <h4><span class="status-chip">Default template</span></h4>
+        <p>What a brand-new signup sees before they've touched anything — pre-filled, fully editable, never mandatory.</p>
+        <p class="example"><b>Example:</b> a standard Indian salary-structure template offered at onboarding, replaceable with the company's own.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wide">
+    <div class="section-head"><span class="eyebrow">03</span><h2>Decisions we need from you</h2></div>
+    <p>Ordered by how much each one blocks the build right now. Where a question references a requirement ID (e.g. <span class="fr-ref">FR-PAY-008</span>), that's this project's own numbering, kept for traceability.</p>
+    <div class="legend-key">
+      <span><span class="kind-chip platform">Platform</span> fixed for everyone</span>
+      <span><span class="kind-chip config">Config</span> tenant sets it</span>
+      <span><span class="kind-chip default">Default</span> onboarding template</span>
+    </div>
+
+    <div class="priority-block">
+      <div class="priority-title"><span class="priority-dot crit"></span><h3>Critical — blocking the settings model and computation engine right now</h3><span class="priority-count">4 items</span></div>
+      <p class="priority-note">These decide what belongs in the tenant-settings schema versus what's shared platform logic — get this backwards and the computation engine has to be re-keyed later.</p>
+
+      <div class="decision-card pri-critical">
+        <div class="card-head"><h4>1. How should a month's pay-days be counted? <span class="fr-ref">FR-PAY-008</span></h4><span class="kind-chip config">Config</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">Calendar days, actual working days, a fixed 26-day month, or a fixed 30-day month, with unpaid leave deducted from that base — this varies genuinely by company, so it's a per-tenant setting, not a platform constant.</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">Build it as a company-level setting with four options, defaulting new signups to Fixed 30-day — the most common convention in Indian services/IT payroll and the easiest for an employee to reason about. Once a tenant's first pay run has been finalised, lock the setting for that tenant — changing it retroactively would silently reshape every past payslip's math.</p>
+      </div>
+
+      <div class="decision-card pri-critical">
+        <div class="card-head"><h4>2. How does a tenant tell the product which statutory registrations apply to them? <span class="fr-ref">FR-PAY-005</span></h4><span class="kind-chip config">Config</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">PF, ESI, Professional Tax (and which state), Labour Welfare Fund, Gratuity, and Bonus Act applicability are different for every company that signs up — a 2-person startup and a 500-person manufacturer aren't the same. This can't be answered once; it needs a real setup flow.</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">A guided "Company Statutory Setup" step in onboarding: which states the company operates in, headcount per legal entity, and toggles for PF/ESI/LWF with their registration numbers. Pre-select PF and ESI as likely-on above the thresholds where they're legally mandatory (informational nudge, not an enforced rule — the tenant can still turn them off if genuinely exempt).</p>
+      </div>
+
+      <div class="decision-card pri-critical">
+        <div class="card-head"><h4>3. Who maintains the actual PF/ESI/PT/TDS rate values, and for how many tenants at once? <span class="fr-ref">FR-PAY-005, ADR-0011</span></h4><span class="kind-chip platform">Platform</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">These rates are set by the government, not by any individual company — every tenant in Maharashtra owes the same PT slab as every other tenant in Maharashtra. Should each tenant maintain their own copy, or is this shared reference data?</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">One shared, platform-owned <code>statutory_master</code> table, keyed by jurisdiction and effective date, read by every tenant's pay run but writable only by the platform team (with a compliance consultant's sign-off on every rate change). This is meaningfully simpler than per-tenant copies — one update, on the day the government changes a rate, correctly reaches every customer at once instead of 200 separate configuration tasks.</p>
+      </div>
+
+      <div class="decision-card pri-critical">
+        <div class="card-head"><h4>4. What salary structure does a new tenant start with? <span class="fr-ref">FR-PAY-001, FR-PAY-003, FR-PAY-004</span></h4><span class="kind-chip default">Default</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">Every tenant needs their own component set (Basic, HRA, Special Allowance, etc.) and their own CTC-to-net logic — but nobody signing up wants to build that from a blank canvas on day one.</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">Ship 2–3 starter templates a new tenant picks from at setup — a standard white-collar template (Basic 40–50% of CTC, HRA 40–50% of Basic by metro/non-metro, remainder as Special Allowance) and a blue-collar/wage-earner template — fully editable afterward, never locked to the original choice. This is the single highest-leverage thing for a good first-signup experience; a blank component builder on day one is a real activation-rate risk.</p>
+      </div>
+
+    </div>
+
+    <div class="priority-block">
+      <div class="priority-title"><span class="priority-dot high"></span><h3>High — needed before the first real tenant onboards</h3><span class="priority-count">3 items</span></div>
+      <p class="priority-note">Each of these shapes a settings screen or an onboarding step — cheaper to design once than to retrofit after tenants are already using it.</p>
+
+      <div class="decision-card pri-high">
+        <div class="card-head"><h4>5. What's the pay cycle and pay date? <span class="fr-ref">FR-PAY-007</span></h4><span class="kind-chip config">Config</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">Monthly is assumed — but the actual credit date (last working day, 1st, 7th of the following month) genuinely differs by company, and can even differ by legal entity within one tenant.</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">A per-legal-entity setting, defaulting to last working day of the month for a new signup — the most common Indian convention, so most tenants will never need to touch it.</p>
+      </div>
+
+      <div class="decision-card pri-high">
+        <div class="card-head"><h4>6. Who approves a pay run before it's finalised? <span class="fr-ref">FR-PAY-007</span></h4><span class="kind-chip config">Config</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">A pay run moves draft → computed → review → approved → finalised → paid. Small tenants may want one approver; larger ones want HR then Finance. Should the number of approval stages be configurable per tenant?</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">Yes — a tenant-configurable approval chain (1 or 2 stages), defaulting new signups to a single approver so a 5-person company isn't forced into a two-person sign-off it doesn't have staff for. The no-self-approval rule underneath it, however, is a platform rule with no override — the same one already locked for attendance and leave.</p>
+      </div>
+
+      <div class="decision-card pri-high">
+        <div class="card-head"><h4>7. Does leave cancel overtime on the same day — one platform answer, or per-tenant? <span class="fr-ref">Attendance–Leave review, Decision 1</span></h4><span class="kind-chip config">Config</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">The earlier Attendance &amp; Leave review flagged this as unresolved. Attendance policies are already assignable per company/department/individual, so this naturally becomes a policy-level setting rather than one global answer — different tenants genuinely pay this differently.</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">Expose it as a toggle on the existing attendance policy object, defaulting new policies to "leave cancels overtime" (the safer, harder-to-mispay default). This still has to be resolved before Payroll's first real run reads the data — it just lives in Attendance's settings, not a new Payroll-specific one.</p>
+      </div>
+    </div>
+
+    <div class="priority-block">
+      <div class="priority-title"><span class="priority-dot low"></span><h3>Low — fine to settle later, per tenant as it comes up</h3><span class="priority-count">2 items</span></div>
+
+      <div class="decision-card pri-low">
+        <div class="card-head"><h4>8. Should a rejoining employee's PF number carry forward automatically? <span class="fr-ref">Statutory module, open question</span></h4><span class="kind-chip platform">Platform</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">When someone who previously left a company rejoins, should their earlier PF number be pre-filled, or re-entered fresh each time?</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">Pre-fill it as a suggestion HR can override, the same behaviour for every tenant — most rejoining employees keep the same UAN/PF number, but this doesn't vary by company, so it doesn't need its own setting.</p>
+      </div>
+
+      <div class="decision-card pri-low">
+        <div class="card-head"><h4>9. Rounding rule for computed pay components <span class="fr-ref">FR-PAY-001</span></h4><span class="kind-chip default">Default</span></div>
+        <span class="q-label">Question</span>
+        <p class="q-text">When a formula produces a fractional rupee amount, should it round to the nearest rupee, always down, or always up?</p>
+        <span class="a-label">Recommended answer</span>
+        <p class="a-text">Ship one sensible default for every new tenant — nearest rupee for earnings, round down for statutory deductions — and don't expose it as a setting unless a real tenant asks; it's the kind of knob that mostly adds surface area without anyone actually needing it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wide">
+    <div class="section-head"><span class="eyebrow">04</span><h2>What happens after these are answered</h2></div>
+    <p>The four critical items decide the shape of the tenant-settings schema itself — get those tagged correctly as platform-vs-config-vs-default and the computation engine work already in progress can be built against that schema instead of guessing at it. The high-priority items should be settled before the first real tenant's first pay run; the low-priority items can land alongside their own settings screens as those get built. Every "Config" item here is a settings screen that has to exist somewhere in the product — the recommendation is the default value it ships with, not the only value it will ever hold.</p>
+  </section>
+
+  <footer class="doc-foot">
+    <span>Payroll — Product Decision Register</span>
+    <span>Prepared 7 September 2026</span>
+  </footer>
+
+</div>

@@ -524,3 +524,25 @@ class InvalidReportingManagerError(ValidationError):
             message,
             details=[{"field": field, "code": "INVALID_REPORTING_MANAGER", "message": message}],
         )
+
+
+class NomineePercentageExceededError(ValidationError):
+    """Raised by `EmployeeDependentService.create_dependent` when a new PF or Gratuity nominee
+    share percentage would push that scheme's total across all of the employee's *other*
+    non-deleted nominee dependents above 100 — a DB `CHECK` cannot aggregate across sibling rows,
+    so this is enforced here, mirroring the "no source document, this task's own engineering
+    decision" posture `BankVersionRequiredError` and friends already establish for this module's
+    invented-but-necessary rules. `field` is `pf_nominee_share_percentage` or
+    `gratuity_nominee_share_percentage` depending on which scheme overflowed."""
+
+    code = "NOMINEE_PERCENTAGE_EXCEEDED"
+
+    def __init__(self, *, field: str, scheme: str, total: float) -> None:
+        message = (
+            f"{scheme} nominee share percentages would total {total}%, exceeding 100% "
+            "across this employee's nominees"
+        )
+        super().__init__(
+            message,
+            details=[{"field": field, "code": "NOMINEE_PERCENTAGE_EXCEEDED", "message": message}],
+        )

@@ -107,8 +107,8 @@ export function RegularizationRequestDialog({
       .catch(() => setShifts([]));
     if (mode === "ON_BEHALF" && !employeeId) {
       void apiClient
-        .get<EmployeeOption[]>("/employees")
-        .then(setEmployees)
+        .getList<EmployeeOption>("/employees", { per_page: 100 })
+        .then(({ data }) => setEmployees(data))
         .catch(() => setEmployees([]));
     }
   }, [open, attendanceDate, mode, employeeId]);

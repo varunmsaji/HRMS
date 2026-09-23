@@ -27,7 +27,6 @@ import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import type { Designation } from "@/lib/designation/types";
-import type { LegalEntity } from "@/lib/legal-entity/types";
 import type { OnboardingCase } from "@/lib/onboarding/types";
 import {
   EMPTY_ONBOARDING_CASE_FORM_VALUES,
@@ -41,7 +40,6 @@ interface ReferenceData {
   branches: Branch[];
   departments: Department[];
   designations: Designation[];
-  legalEntities: LegalEntity[];
 }
 
 function candidateName(onboardingCase: OnboardingCase): string {
@@ -70,15 +68,14 @@ export default function OnboardingPage() {
     setLoading(true);
     setError(null);
     try {
-      const [data, branches, departments, designations, legalEntities] = await Promise.all([
+      const [data, branches, departments, designations] = await Promise.all([
         apiClient.get<OnboardingCase[]>("/onboarding-cases"),
         apiClient.get<Branch[]>("/branches").catch(() => []),
         apiClient.get<Department[]>("/departments").catch(() => []),
         apiClient.get<Designation[]>("/designations").catch(() => []),
-        apiClient.get<LegalEntity[]>("/legal-entities").catch(() => []),
       ]);
       setCases(data);
-      setRefs({ branches, departments, designations, legalEntities });
+      setRefs({ branches, departments, designations });
     } catch (err) {
       setCases(null);
       setError(
@@ -131,7 +128,6 @@ export default function OnboardingPage() {
           designationId: getFieldError(err.details, "designation_id"),
           departmentId: getFieldError(err.details, "department_id"),
           branchId: getFieldError(err.details, "branch_id"),
-          legalEntityId: getFieldError(err.details, "legal_entity_id"),
         });
         return;
       }
@@ -251,7 +247,6 @@ export default function OnboardingPage() {
               branches={refs?.branches ?? []}
               departments={refs?.departments ?? []}
               designations={refs?.designations ?? []}
-              legalEntities={refs?.legalEntities ?? []}
               idPrefix="create-"
             />
           </div>

@@ -3,19 +3,43 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from hrms.core.config.settings import get_settings
-from hrms.core.db.session import dispose_engine, get_engine
+from hrms.core.crypto.registry import EncryptionKeyRegistry
+from hrms.core.db.session import dispose_engine, get_engine, session_scope
 from hrms.core.errors.handlers import register_exception_handlers
 from hrms.core.observability.logging import configure_logging
 from hrms.core.tenancy.middleware import TenancyMiddleware
+from hrms.core.uploads import MaxUploadSizeMiddleware
 from hrms.modules.health.router import router as health_router
+from hrms.shared.rate_limit import OnboardingUploadRateLimitMiddleware
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     get_engine(settings)
+
+    # DATA-01 (docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md §10.3) — the
+    # database-backed half of the boot guard: `Settings._guard_non_development_config` already
+    # requires a real `kms_cmk_arn` outside development (a synchronous check, no DB access); this
+    # is the complementary check that at least one `ACTIVE` `encryption_keys` row actually
+    # exists, which requires a query and so cannot live in `Settings`. Mirrors SEC-01's "fail at
+    # boot, not on first request" posture. Never runs in development (this repository's test
+    # suite never triggers `lifespan()` at all — httpx's `ASGITransport` does not invoke it by
+    # default — so this has no effect on the existing test suite regardless).
+    if not settings.is_development:
+        async with session_scope(settings) as session:
+            active_count = await EncryptionKeyRegistry().count_active(session)
+        if active_count != 1:
+            raise RuntimeError(
+                f"encryption_keys has {active_count} ACTIVE row(s) for environment="
+                f"{settings.environment!r} — refusing to boot without exactly one. Run the "
+                "DATA-01 initial key provisioning step "
+                "(hrms.core.crypto.provisioning.provision_initial_key) before deploying."
+            )
+
     yield
     await dispose_engine()
 
@@ -35,12 +59,60 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.is_development else [],
+        allow_origins=settings.effective_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # SEC-03 (docs/audits/UPLOAD_BATCH_B_FILE_VALIDATION.md) — the public, unauthenticated
+    # onboarding document-upload endpoint is the finding's primary target; the authenticated
+    # employee-import CSV upload shares the same `await file.read()`-before-size-check pattern
+    # (hrms/core/uploads.py docstring) so it gets the same guard at a smaller ceiling. Scoped by
+    # path prefix only — not a general request-body limiter for the rest of the API. Each ceiling
+    # includes headroom above the corresponding per-file business-rule limit for multipart form
+    # overhead (boundary markers, part headers, the `document_type`/other fields sharing the
+    # request) — the exact per-file byte ceiling is still enforced by the existing
+    # `OnboardingDocumentTooLargeError`/new `ImportFileTooLargeError` checks inside the request.
+    from hrms.modules.employee_import.schemas import MAX_IMPORT_FILE_SIZE_BYTES
+    from hrms.modules.onboarding.schemas import ONBOARDING_DOCUMENT_MAX_SIZE_BYTES
+
+    app.add_middleware(
+        MaxUploadSizeMiddleware,
+        max_bytes=ONBOARDING_DOCUMENT_MAX_SIZE_BYTES + 2 * 1024 * 1024,
+        path_prefixes=("/v1/public/onboarding/",),
+    )
+    app.add_middleware(
+        MaxUploadSizeMiddleware,
+        max_bytes=MAX_IMPORT_FILE_SIZE_BYTES + 1024 * 1024,
+        path_prefixes=("/v1/employee-imports",),
+    )
+    # SEC-03 (docs/audits/UPLOAD_BATCH_C_RATE_LIMITING.md) — abuse/DoS protection for the same
+    # public, unauthenticated upload endpoint the middleware above already size-bounds. Added
+    # ahead of `TenancyMiddleware` in this call order (so it ends up *inside* Tenancy/ProxyHeaders
+    # in the actual request path — Starlette builds the stack in reverse add order) because it
+    # needs the trusted-proxy-resolved `scope["client"]` OPS-02 already sets up, and it runs before
+    # both `MaxUploadSizeMiddleware` registrations and all of FastAPI's own routing/multipart
+    # parsing/DI, rejecting an over-limit request before any of that work starts. 30 requests per
+    # IP and 10 per onboarding token per 60s are this batch's own engineering decision — no source
+    # document names a number for this endpoint; see the report's §4 for the reasoning and the
+    # explicit call-out that this needs product/security sign-off, not a claim that it already has
+    # it.
+    app.add_middleware(
+        OnboardingUploadRateLimitMiddleware,
+        ip_limit=30,
+        token_limit=10,
+        window_seconds=60,
+    )
     app.add_middleware(TenancyMiddleware)
+    # OPS-02 — added last so it is the outermost middleware (Starlette builds the stack in
+    # reverse add order): it must resolve `scope["client"]` before CORS/Tenancy/rate-limit/
+    # route code ever reads `request.client.host`. Trusts `X-Forwarded-For` only from the
+    # configured `trusted_proxy_hosts`; with the empty default, every request's socket peer is
+    # used as-is and forwarded headers from an untrusted source are never applied.
+    app.add_middleware(
+        ProxyHeadersMiddleware,
+        trusted_hosts=list(settings.trusted_proxy_hosts),
+    )
 
     register_exception_handlers(app)
 

@@ -125,8 +125,8 @@ export default function RostersPage() {
 
   useEffect(() => {
     void apiClient
-      .get<EmployeeOption[]>("/employees")
-      .then(setEmployees)
+      .getList<EmployeeOption>("/employees", { per_page: 100 })
+      .then(({ data }) => setEmployees(data))
       .catch(() => setEmployees([]));
     void apiClient
       .get<ShiftOption[]>("/shifts")

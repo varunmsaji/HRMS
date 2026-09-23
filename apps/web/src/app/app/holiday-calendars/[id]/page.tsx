@@ -8,6 +8,7 @@ import { HolidayCalendarForm } from "@/components/holiday-calendar/holiday-calen
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Holiday, HolidayCalendar } from "@/lib/holiday-calendar/types";
 import { HOLIDAY_TYPES } from "@/lib/holiday-calendar/types";
@@ -53,6 +55,8 @@ export default function HolidayCalendarDetailPage() {
 
   const [calendar, setCalendar] = useState<HolidayCalendar | null>(null);
   const [holidays, setHolidays] = useState<Holiday[] | null>(null);
+  const [holidaysPagination, setHolidaysPagination] = useState<PaginationMeta | null>(null);
+  const [holidaysPage, setHolidaysPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -76,34 +80,42 @@ export default function HolidayCalendarDetailPage() {
   const [editHolidayErrors, setEditHolidayErrors] = useState<HolidayFormErrors>({});
   const [savingEditHoliday, setSavingEditHoliday] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [calendarData, holidayData] = await Promise.all([
-        apiClient.get<HolidayCalendar>(`/holiday-calendars/${params.id}`),
-        apiClient.get<Holiday[]>(`/holiday-calendars/${params.id}/holidays`),
-      ]);
-      setCalendar(calendarData);
-      setHolidays(holidayData);
-      return calendarData;
-    } catch (err) {
-      setCalendar(null);
-      setHolidays(null);
-      setError(
-        err instanceof ApiError
-          ? err
-          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
-      );
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [params.id]);
+  const load = useCallback(
+    async (targetHolidaysPage: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [calendarData, holidayResult] = await Promise.all([
+          apiClient.get<HolidayCalendar>(`/holiday-calendars/${params.id}`),
+          apiClient.getList<Holiday>(`/holiday-calendars/${params.id}/holidays`, {
+            page: targetHolidaysPage,
+          }),
+        ]);
+        setCalendar(calendarData);
+        setHolidays(holidayResult.data);
+        setHolidaysPagination(holidayResult.pagination);
+        return calendarData;
+      } catch (err) {
+        setCalendar(null);
+        setHolidays(null);
+        setHolidaysPagination(null);
+        setError(
+          err instanceof ApiError
+            ? err
+            : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
+        );
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [params.id],
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(holidaysPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holidaysPage]);
 
   function startEditing() {
     if (!calendar) return;
@@ -174,7 +186,7 @@ export default function HolidayCalendarDetailPage() {
   }
 
   async function reloadLatest() {
-    const latest = await load();
+    const latest = await load(holidaysPage);
     if (latest) {
       setEditing(false);
       setFormValues(null);
@@ -236,8 +248,14 @@ export default function HolidayCalendarDetailPage() {
       );
       setAddHolidayOpen(false);
       toast({ title: "Holiday added", variant: "success" });
-      const data = await apiClient.get<Holiday[]>(`/holiday-calendars/${params.id}/holidays`);
+      // Reloads whichever page the user is currently viewing — holidays are ordered by date,
+      // not recency, so the newly-added row isn't guaranteed to land on page 1.
+      const { data, pagination: meta } = await apiClient.getList<Holiday>(
+        `/holiday-calendars/${params.id}/holidays`,
+        { page: holidaysPage },
+      );
       setHolidays(data);
+      setHolidaysPagination(meta);
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
         setHolidayErrors({
@@ -370,7 +388,7 @@ export default function HolidayCalendarDetailPage() {
                     ? "This holiday calendar could not be found."
                     : error.message
               }
-              onRetry={error.status === 404 ? undefined : () => void load()}
+              onRetry={error.status === 404 ? undefined : () => void load(holidaysPage)}
             />
           ) : null}
 
@@ -426,7 +444,7 @@ export default function HolidayCalendarDetailPage() {
                   <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                     Holidays
                   </dt>
-                  <dd className="mt-0.5 text-sm text-foreground">{holidays?.length ?? 0}</dd>
+                  <dd className="mt-0.5 text-sm text-foreground">{holidaysPagination?.total ?? holidays?.length ?? 0}</dd>
                 </div>
               </dl>
             </div>
@@ -499,6 +517,14 @@ export default function HolidayCalendarDetailPage() {
                     </li>
                   ))}
               </ul>
+            ) : null}
+
+            {holidaysPagination ? (
+              <PaginationControls
+                pagination={holidaysPagination}
+                onPageChange={setHolidaysPage}
+                disabled={loading}
+              />
             ) : null}
           </CardContent>
         </Card>

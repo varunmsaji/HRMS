@@ -1,5 +1,24 @@
 "use client";
 
+import {
+  AlertTriangle,
+  Briefcase,
+  Building2,
+  CheckCircle2,
+  ClipboardCheck,
+  ClipboardList,
+  FileText,
+  GraduationCap,
+  Landmark,
+  MapPin,
+  Pencil,
+  Phone,
+  Upload,
+  User,
+  Users,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -8,38 +27,63 @@ import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { AddressInfoStep } from "@/components/onboarding/wizard/address-info-step";
 import { BankInfoStep } from "@/components/onboarding/wizard/bank-info-step";
+import { CompensationInfoStep } from "@/components/onboarding/wizard/compensation-info-step";
 import { DocumentUploadStep } from "@/components/onboarding/wizard/document-upload-step";
+import { EducationInfoStep } from "@/components/onboarding/wizard/education-info-step";
 import { EmergencyContactStep } from "@/components/onboarding/wizard/emergency-contact-step";
+import { NomineeInfoStep } from "@/components/onboarding/wizard/nominee-info-step";
 import { PersonalInfoStep } from "@/components/onboarding/wizard/personal-info-step";
+import { PreviousEmploymentStep } from "@/components/onboarding/wizard/previous-employment-step";
 import { StatutoryInfoStep } from "@/components/onboarding/wizard/statutory-info-step";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { OnboardingDocument, PublicOnboardingCase } from "@/lib/onboarding/types";
 import {
   EMPTY_ADDRESS_INFO,
   EMPTY_BANK_INFO,
+  EMPTY_COMPENSATION_INFO,
+  EMPTY_EDUCATION_INFO,
   EMPTY_EMERGENCY_CONTACT,
+  EMPTY_NOMINEE_INFO,
   EMPTY_PERSONAL_INFO,
+  EMPTY_PREVIOUS_EMPLOYMENT_INFO,
   EMPTY_STATUTORY_INFO,
   addressInfoFromSection,
   addressInfoToPayload,
   bankInfoFromSection,
   bankInfoToPayload,
+  compensationInfoFromSection,
+  compensationInfoToPayload,
+  educationFromSection,
+  educationToPayload,
   emergencyContactFromSection,
   emergencyContactToPayload,
+  nomineeFromSection,
+  nomineeToPayload,
   personalInfoFromSection,
   personalInfoToPayload,
+  previousEmploymentFromSection,
+  previousEmploymentToPayload,
   statutoryInfoFromSection,
   statutoryInfoToPayload,
   validateBankInfo,
+  validateCompensationInfo,
+  validateEducation,
   validateEmergencyContact,
+  validateNominee,
   validatePersonalInfo,
+  validatePreviousEmployment,
   validateStatutoryInfo,
   type AddressInfoFormValues,
   type BankInfoFormValues,
+  type CompensationInfoFormValues,
+  type EducationFormValues,
   type EmergencyContactFormValues,
+  type NomineeFormValues,
   type PersonalInfoFormValues,
+  type PreviousEmploymentFormValues,
   type StatutoryInfoFormValues,
 } from "@/lib/onboarding/public-wizard";
 
@@ -50,6 +94,10 @@ const STEPS = [
   "emergency",
   "bank",
   "statutory",
+  "compensation",
+  "previousEmployment",
+  "education",
+  "nominee",
   "documents",
   "review",
 ] as const;
@@ -62,29 +110,104 @@ const STEP_LABELS: Record<Step, string> = {
   emergency: "Emergency Contact",
   bank: "Bank Details",
   statutory: "Statutory Details",
+  compensation: "Compensation",
+  previousEmployment: "Previous Employment",
+  education: "Education",
+  nominee: "Nominees & Family",
   documents: "Document Upload",
   review: "Review & Submit",
 };
 
+const STEP_ICONS: Record<Step, LucideIcon> = {
+  welcome: ClipboardList,
+  personal: User,
+  address: MapPin,
+  emergency: Phone,
+  bank: Landmark,
+  statutory: FileText,
+  compensation: Wallet,
+  previousEmployment: Briefcase,
+  education: GraduationCap,
+  nominee: Users,
+  documents: Upload,
+  review: ClipboardCheck,
+};
+
+const STEP_DESCRIPTIONS: Partial<Record<Step, string>> = {
+  personal: "Basic details HR needs for your employee record.",
+  address: "Where you currently live.",
+  emergency: "Who we should contact if something happens at work.",
+  bank: "Where your salary will be paid.",
+  statutory: "Tax and statutory registration details.",
+  compensation: "Your agreed compensation for this role.",
+  previousEmployment: "Help HR carry forward your PF account from a past employer, if any.",
+  education: "Your educational qualifications.",
+  nominee: "Your PF/Gratuity nominees and ESI-covered family members.",
+  documents: "Upload your ID and any other requested documents.",
+};
+
 function WizardHeader() {
   return (
-    <header className="border-b border-border px-6 py-4">
-      <span className="text-md font-semibold text-foreground">HRMS Platform</span>
+    <header className="border-b border-border bg-surface px-6 py-4">
+      <div className="mx-auto flex max-w-2xl items-center gap-2">
+        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary-subtle text-primary">
+          <Building2 className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <span className="text-md font-semibold text-foreground">HRMS Platform</span>
+      </div>
     </header>
+  );
+}
+
+function TerminalScreen({
+  icon: Icon,
+  tone,
+  title,
+  description,
+}: {
+  icon: LucideIcon;
+  tone: "success" | "neutral" | "danger";
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex min-h-screen flex-col bg-background">
+      <WizardHeader />
+      <main className="flex flex-1 items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 text-center shadow-sm sm:p-8">
+          <span
+            className={
+              "mx-auto flex h-12 w-12 items-center justify-center rounded-full " +
+              (tone === "success"
+                ? "bg-success-subtle text-success"
+                : tone === "danger"
+                  ? "bg-danger-subtle text-danger"
+                  : "bg-muted text-foreground-secondary")
+            }
+          >
+            <Icon className="h-6 w-6" aria-hidden="true" />
+          </span>
+          <h1 className="mt-4 text-lg font-semibold text-foreground">{title}</h1>
+          <p className="mt-2 text-sm text-foreground-secondary">{description}</p>
+        </div>
+      </main>
+    </div>
   );
 }
 
 function SectionReviewBanner({ status, reason }: { status: string | undefined; reason: string | null | undefined }) {
   if (status === "VERIFIED") {
     return (
-      <div className="rounded-md border border-success bg-success-subtle px-3 py-2 text-sm text-foreground">
+      <div className="mb-6 flex items-start gap-2 rounded-md border border-success bg-success-subtle px-3 py-2 text-sm text-foreground">
+        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden="true" />
         This section has been verified by HR — no changes needed.
       </div>
     );
   }
   if (status === "REJECTED") {
     return (
-      <div className="rounded-md border border-danger bg-danger-subtle px-3 py-2 text-sm text-foreground">
+      <div className="mb-6 flex items-start gap-2 rounded-md border border-danger bg-danger-subtle px-3 py-2 text-sm text-foreground">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
         HR requested changes to this section{reason ? `: ${reason}` : "."}
       </div>
     );
@@ -92,25 +215,35 @@ function SectionReviewBanner({ status, reason }: { status: string | undefined; r
   return null;
 }
 
-function StepIndicator({ step }: { step: Step }) {
-  const currentIndex = STEPS.indexOf(step);
+function StepHeading({ step }: { step: Step }) {
+  const Icon = STEP_ICONS[step];
+  const description = STEP_DESCRIPTIONS[step];
   return (
-    <ol className="mb-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground-muted">
-      {STEPS.map((s, index) => (
-        <li
-          key={s}
-          className={
-            index === currentIndex
-              ? "font-medium text-foreground"
-              : index < currentIndex
-                ? "text-foreground-secondary"
-                : undefined
-          }
-        >
-          {index + 1}. {STEP_LABELS[s]}
-        </li>
-      ))}
-    </ol>
+    <div className="mb-6 flex items-start gap-3">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary-subtle text-primary">
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">{STEP_LABELS[step]}</h2>
+        {description ? <p className="mt-0.5 text-sm text-foreground-secondary">{description}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function ProgressHeader({ step }: { step: Step }) {
+  const currentIndex = STEPS.indexOf(step);
+  const pct = Math.round((currentIndex / (STEPS.length - 1)) * 100);
+  return (
+    <div className="mb-6">
+      <div className="mb-2 flex items-center justify-between text-xs font-medium text-foreground-muted">
+        <span>
+          Step {currentIndex + 1} of {STEPS.length}
+        </span>
+        <span>{pct}% complete</span>
+      </div>
+      <Progress value={currentIndex} max={STEPS.length - 1} />
+    </div>
   );
 }
 
@@ -132,6 +265,13 @@ export default function OnboardingWizardPage() {
     useState<EmergencyContactFormValues>(EMPTY_EMERGENCY_CONTACT);
   const [bankInfo, setBankInfo] = useState<BankInfoFormValues>(EMPTY_BANK_INFO);
   const [statutoryInfo, setStatutoryInfo] = useState<StatutoryInfoFormValues>(EMPTY_STATUTORY_INFO);
+  const [compensationInfo, setCompensationInfo] =
+    useState<CompensationInfoFormValues>(EMPTY_COMPENSATION_INFO);
+  const [previousEmployment, setPreviousEmployment] = useState<PreviousEmploymentFormValues>(
+    EMPTY_PREVIOUS_EMPLOYMENT_INFO,
+  );
+  const [educationInfo, setEducationInfo] = useState<EducationFormValues>(EMPTY_EDUCATION_INFO);
+  const [nomineeInfo, setNomineeInfo] = useState<NomineeFormValues>(EMPTY_NOMINEE_INFO);
   const [documents, setDocuments] = useState<OnboardingDocument[]>([]);
 
   const load = useCallback(async () => {
@@ -154,6 +294,10 @@ export default function OnboardingWizardPage() {
       setEmergencyContact(emergencyContactFromSection(data.emergency_contact));
       setBankInfo(bankInfoFromSection(data.bank_info));
       setStatutoryInfo(statutoryInfoFromSection(data.statutory_info));
+      setCompensationInfo(compensationInfoFromSection(data.compensation_info));
+      setPreviousEmployment(previousEmploymentFromSection(data.previous_employment_info));
+      setEducationInfo(educationFromSection(data.education_info));
+      setNomineeInfo(nomineeFromSection(data.nominee_info));
       setDocuments(existingDocuments);
     } catch (err) {
       setOnboardingCase(null);
@@ -225,45 +369,100 @@ export default function OnboardingWizardPage() {
 
   if (error || !onboardingCase) {
     return (
-      <div className="flex min-h-screen flex-col bg-background">
-        <WizardHeader />
-        <main className="flex flex-1 items-center justify-center px-4 py-12">
-          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 text-center shadow-sm sm:p-8">
-            <h1 className="text-lg font-semibold text-foreground">Link not available</h1>
-            <p className="mt-2 text-sm text-foreground-secondary">
-              {error?.status === 404
-                ? "This onboarding link is invalid or has expired. Please contact HR for a new one."
-                : (error?.message ?? "Something went wrong.")}
-            </p>
-          </div>
-        </main>
-      </div>
+      <TerminalScreen
+        icon={AlertTriangle}
+        tone="danger"
+        title="Link not available"
+        description={
+          error?.status === 404
+            ? "This onboarding link is invalid or has expired. Please contact HR for a new one."
+            : (error?.message ?? "Something went wrong.")
+        }
+      />
     );
   }
 
   const candidateName = onboardingCase.candidate_first_name;
 
   if (submitted || onboardingCase.status === "SUBMITTED" || !onboardingCase.writable) {
+    const isSubmitted = onboardingCase.status === "SUBMITTED" || submitted;
+    const isActivated = onboardingCase.status === "ACTIVATED";
     return (
-      <div className="flex min-h-screen flex-col bg-background">
-        <WizardHeader />
-        <main className="flex flex-1 items-center justify-center px-4 py-12">
-          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 text-center shadow-sm sm:p-8">
-            <h1 className="text-lg font-semibold text-foreground">
-              {onboardingCase.status === "SUBMITTED" || submitted
-                ? `Thanks, ${candidateName}!`
-                : "This link is no longer active"}
-            </h1>
-            <p className="mt-2 text-sm text-foreground-secondary">
-              {onboardingCase.status === "SUBMITTED" || submitted
-                ? "Your details have been submitted for review. HR will be in touch if anything needs a correction."
-                : `Current status: ${onboardingCase.status}. Please contact HR if you have questions.`}
-            </p>
-          </div>
-        </main>
-      </div>
+      <TerminalScreen
+        icon={isSubmitted || isActivated ? CheckCircle2 : AlertTriangle}
+        tone={isSubmitted || isActivated ? "success" : "neutral"}
+        title={
+          isActivated
+            ? `You're all set, ${candidateName}!`
+            : isSubmitted
+              ? `Thanks, ${candidateName}!`
+              : "This link is no longer active"
+        }
+        description={
+          isActivated
+            ? "Your onboarding is complete and your employee record has been created. Contact HR if anything needs updating."
+            : isSubmitted
+              ? "Your details have been submitted for review. HR will be in touch if anything needs a correction."
+              : `Current status: ${onboardingCase.status}. Please contact HR if you have questions.`
+        }
+      />
     );
   }
+
+  const reviewSections: {
+    step: Step;
+    summary: string;
+  }[] = [
+    {
+      step: "personal",
+      summary:
+        [personalInfo.firstName, personalInfo.lastName].filter(Boolean).join(" ") || "Not filled in yet",
+    },
+    { step: "address", summary: addressInfo.city ? `City: ${addressInfo.city}` : "Not filled in yet" },
+    {
+      step: "emergency",
+      summary: emergencyContact.contactName
+        ? `Contact: ${emergencyContact.contactName}`
+        : "Not filled in yet",
+    },
+    {
+      step: "bank",
+      summary: bankInfo.paymentMode ? `Payment mode: ${bankInfo.paymentMode}` : "Not filled in yet",
+    },
+    {
+      step: "statutory",
+      summary: statutoryInfo.taxRegime ? `Tax regime: ${statutoryInfo.taxRegime}` : "Not filled in yet",
+    },
+    {
+      step: "compensation",
+      summary: compensationInfo.annualCtc
+        ? `Annual CTC: ${compensationInfo.annualCtc} ${compensationInfo.currency}`
+        : "Not filled in yet",
+    },
+    {
+      step: "previousEmployment",
+      summary:
+        previousEmployment.items.length > 0
+          ? `${previousEmployment.items.length} previous employer(s)`
+          : "None added",
+    },
+    {
+      step: "education",
+      summary:
+        educationInfo.items.length > 0
+          ? `${educationInfo.items.length} qualification(s)`
+          : "None added",
+    },
+    {
+      step: "nominee",
+      summary:
+        nomineeInfo.items.length > 0 ? `${nomineeInfo.items.length} nominee(s)` : "None added",
+    },
+    {
+      step: "documents",
+      summary: documents.length > 0 ? `${documents.length} document(s) uploaded` : "None uploaded yet",
+    },
+  ];
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
@@ -279,13 +478,29 @@ export default function OnboardingWizardPage() {
           </div>
 
           <div className="rounded-lg border border-border bg-surface p-6 shadow-sm sm:p-8">
-            <StepIndicator step={step} />
+            <ProgressHeader step={step} />
 
             {step === "welcome" ? (
-              <div className="space-y-4">
-                <p className="text-sm text-foreground-secondary">
-                  This should take about 10 minutes. You&apos;ll need your bank account details
-                  and PF/ESI information handy.
+              <div className="space-y-5">
+                <div className="space-y-2 rounded-md border border-border bg-muted/40 p-4 text-sm">
+                  <p className="font-medium text-foreground">Before you start, have these ready:</p>
+                  <ul className="space-y-1.5 text-foreground-secondary">
+                    <li className="flex items-center gap-2">
+                      <Landmark className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />
+                      Bank account details
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />
+                      PF / ESI information
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <Upload className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />A
+                      photo or scan of your ID
+                    </li>
+                  </ul>
+                </div>
+                <p className="text-xs text-foreground-muted">
+                  This should take about 10 minutes.
                 </p>
                 <div className="flex justify-end">
                   <Button type="button" onClick={() => goTo("personal")}>
@@ -297,6 +512,7 @@ export default function OnboardingWizardPage() {
 
             {step === "personal" ? (
               <div className="space-y-6">
+                <StepHeading step="personal" />
                 <SectionReviewBanner
                   status={sectionReviewFor("personal_info")?.status}
                   reason={sectionReviewFor("personal_info")?.rejection_reason}
@@ -335,6 +551,7 @@ export default function OnboardingWizardPage() {
 
             {step === "address" ? (
               <div className="space-y-6">
+                <StepHeading step="address" />
                 <SectionReviewBanner
                   status={sectionReviewFor("address_info")?.status}
                   reason={sectionReviewFor("address_info")?.rejection_reason}
@@ -368,6 +585,7 @@ export default function OnboardingWizardPage() {
 
             {step === "emergency" ? (
               <div className="space-y-6">
+                <StepHeading step="emergency" />
                 <SectionReviewBanner
                   status={sectionReviewFor("emergency_contact")?.status}
                   reason={sectionReviewFor("emergency_contact")?.rejection_reason}
@@ -409,6 +627,7 @@ export default function OnboardingWizardPage() {
 
             {step === "bank" ? (
               <div className="space-y-6">
+                <StepHeading step="bank" />
                 <SectionReviewBanner
                   status={sectionReviewFor("bank_info")?.status}
                   reason={sectionReviewFor("bank_info")?.rejection_reason}
@@ -447,6 +666,7 @@ export default function OnboardingWizardPage() {
 
             {step === "statutory" ? (
               <div className="space-y-6">
+                <StepHeading step="statutory" />
                 <SectionReviewBanner
                   status={sectionReviewFor("statutory_info")?.status}
                   reason={sectionReviewFor("statutory_info")?.rejection_reason}
@@ -461,7 +681,7 @@ export default function OnboardingWizardPage() {
                     disabled={saving}
                     onClick={async () => {
                       if (sectionReviewFor("statutory_info")?.status === "VERIFIED") {
-                        goTo("documents");
+                        goTo("compensation");
                         return;
                       }
                       const errors = validateStatutoryInfo(statutoryInfo);
@@ -473,7 +693,7 @@ export default function OnboardingWizardPage() {
                         "statutory_info",
                         statutoryInfoToPayload(statutoryInfo),
                       );
-                      if (ok) goTo("documents");
+                      if (ok) goTo("compensation");
                     }}
                   >
                     {sectionReviewFor("statutory_info")?.status === "VERIFIED"
@@ -486,11 +706,198 @@ export default function OnboardingWizardPage() {
               </div>
             ) : null}
 
-            {step === "documents" ? (
+            {step === "compensation" ? (
               <div className="space-y-6">
-                <DocumentUploadStep token={token} documents={documents} onDocumentsChange={setDocuments} />
+                <StepHeading step="compensation" />
+                <SectionReviewBanner
+                  status={sectionReviewFor("compensation_info")?.status}
+                  reason={sectionReviewFor("compensation_info")?.rejection_reason}
+                />
+                <CompensationInfoStep
+                  values={compensationInfo}
+                  errors={{}}
+                  onChange={setCompensationInfo}
+                />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("statutory")}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (sectionReviewFor("compensation_info")?.status === "VERIFIED") {
+                        goTo("previousEmployment");
+                        return;
+                      }
+                      const errors = validateCompensationInfo(compensationInfo);
+                      if (Object.keys(errors).length > 0) {
+                        toast({ title: "Enter a valid annual CTC", variant: "danger" });
+                        return;
+                      }
+                      const ok = await saveSection(
+                        "compensation_info",
+                        compensationInfoToPayload(compensationInfo),
+                      );
+                      if (ok) goTo("previousEmployment");
+                    }}
+                  >
+                    {sectionReviewFor("compensation_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {step === "previousEmployment" ? (
+              <div className="space-y-6">
+                <StepHeading step="previousEmployment" />
+                <SectionReviewBanner
+                  status={sectionReviewFor("previous_employment_info")?.status}
+                  reason={sectionReviewFor("previous_employment_info")?.rejection_reason}
+                />
+                <PreviousEmploymentStep
+                  values={previousEmployment}
+                  errors={{}}
+                  onChange={setPreviousEmployment}
+                />
+                <div className="flex justify-between">
+                  <Button type="button" variant="outline" onClick={() => goTo("compensation")}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (sectionReviewFor("previous_employment_info")?.status === "VERIFIED") {
+                        goTo("education");
+                        return;
+                      }
+                      const errors = validatePreviousEmployment(previousEmployment);
+                      if (Object.keys(errors).length > 0) {
+                        toast({
+                          title: errors.items ?? "Fix the previous employment entries",
+                          variant: "danger",
+                        });
+                        return;
+                      }
+                      const ok = await saveSection(
+                        "previous_employment_info",
+                        previousEmploymentToPayload(previousEmployment),
+                      );
+                      if (ok) goTo("education");
+                    }}
+                  >
+                    {sectionReviewFor("previous_employment_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {step === "education" ? (
+              <div className="space-y-6">
+                <StepHeading step="education" />
+                <SectionReviewBanner
+                  status={sectionReviewFor("education_info")?.status}
+                  reason={sectionReviewFor("education_info")?.rejection_reason}
+                />
+                <EducationInfoStep
+                  values={educationInfo}
+                  errors={{}}
+                  onChange={setEducationInfo}
+                />
+                <div className="flex justify-between">
+                  <Button type="button" variant="outline" onClick={() => goTo("previousEmployment")}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (sectionReviewFor("education_info")?.status === "VERIFIED") {
+                        goTo("nominee");
+                        return;
+                      }
+                      const errors = validateEducation(educationInfo);
+                      if (Object.keys(errors).length > 0) {
+                        toast({
+                          title: errors.items ?? "Fix the education entries",
+                          variant: "danger",
+                        });
+                        return;
+                      }
+                      const ok = await saveSection(
+                        "education_info",
+                        educationToPayload(educationInfo),
+                      );
+                      if (ok) goTo("nominee");
+                    }}
+                  >
+                    {sectionReviewFor("education_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {step === "nominee" ? (
+              <div className="space-y-6">
+                <StepHeading step="nominee" />
+                <SectionReviewBanner
+                  status={sectionReviewFor("nominee_info")?.status}
+                  reason={sectionReviewFor("nominee_info")?.rejection_reason}
+                />
+                <NomineeInfoStep values={nomineeInfo} errors={{}} onChange={setNomineeInfo} />
+                <div className="flex justify-between">
+                  <Button type="button" variant="outline" onClick={() => goTo("education")}>
+                    Back
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (sectionReviewFor("nominee_info")?.status === "VERIFIED") {
+                        goTo("documents");
+                        return;
+                      }
+                      const errors = validateNominee(nomineeInfo);
+                      if (Object.keys(errors).length > 0) {
+                        toast({
+                          title: errors.items ?? "Fix the nominee entries",
+                          variant: "danger",
+                        });
+                        return;
+                      }
+                      const ok = await saveSection("nominee_info", nomineeToPayload(nomineeInfo));
+                      if (ok) goTo("documents");
+                    }}
+                  >
+                    {sectionReviewFor("nominee_info")?.status === "VERIFIED"
+                      ? "Continue"
+                      : saving
+                        ? "Saving…"
+                        : "Save & Continue"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {step === "documents" ? (
+              <div className="space-y-6">
+                <StepHeading step="documents" />
+                <DocumentUploadStep token={token} documents={documents} onDocumentsChange={setDocuments} />
+                <div className="flex justify-between">
+                  <Button type="button" variant="outline" onClick={() => goTo("nominee")}>
                     Back
                   </Button>
                   <Button type="button" onClick={() => goTo("review")}>
@@ -502,46 +909,44 @@ export default function OnboardingWizardPage() {
 
             {step === "review" ? (
               <div className="space-y-6">
-                <p className="text-sm text-foreground-secondary">
-                  Please review your details below. Once submitted, HR will verify each section —
-                  you&apos;ll be notified if anything needs a correction.
+                <StepHeading step="review" />
+                <p className="-mt-4 text-sm text-foreground-secondary">
+                  Check everything below before you submit. Once submitted, HR will verify each
+                  section — you&apos;ll be notified if anything needs a correction.
                 </p>
-                <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                  <div>
-                    <dt className="text-xs font-medium uppercase text-foreground-muted">Name</dt>
-                    <dd className="text-foreground">
-                      {[personalInfo.firstName, personalInfo.lastName].filter(Boolean).join(" ")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium uppercase text-foreground-muted">City</dt>
-                    <dd className="text-foreground">{addressInfo.city || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium uppercase text-foreground-muted">
-                      Emergency contact
-                    </dt>
-                    <dd className="text-foreground">{emergencyContact.contactName || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium uppercase text-foreground-muted">
-                      Payment mode
-                    </dt>
-                    <dd className="text-foreground">{bankInfo.paymentMode || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium uppercase text-foreground-muted">
-                      Tax regime
-                    </dt>
-                    <dd className="text-foreground">{statutoryInfo.taxRegime || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-medium uppercase text-foreground-muted">
-                      Documents uploaded
-                    </dt>
-                    <dd className="text-foreground">{documents.length}</dd>
-                  </div>
-                </dl>
+                <div className="space-y-2">
+                  {reviewSections.map((section) => {
+                    const Icon = STEP_ICONS[section.step];
+                    return (
+                      <div
+                        key={section.step}
+                        className="flex items-center justify-between gap-4 rounded-md border border-border p-3"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground-secondary">
+                            <Icon className="h-4 w-4" aria-hidden="true" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">
+                              {STEP_LABELS[section.step]}
+                            </p>
+                            <p className="truncate text-xs text-foreground-muted">{section.summary}</p>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => goTo(section.step)}
+                        >
+                          <Pencil aria-hidden="true" />
+                          Edit
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("documents")}>
                     Back

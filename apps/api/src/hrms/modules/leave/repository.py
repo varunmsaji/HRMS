@@ -310,6 +310,8 @@ class LeaveLedgerRepository:
         company_id: UUID,
         employee_id: UUID,
         leave_type_id: UUID | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[LeaveLedgerEntry]:
         conditions = [
             LeaveLedgerEntry.company_id == company_id,
@@ -322,7 +324,28 @@ class LeaveLedgerRepository:
             .where(*conditions)
             .order_by(LeaveLedgerEntry.effective_date.desc(), LeaveLedgerEntry.created_at.desc())
         )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_for_employee(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID | None = None,
+    ) -> int:
+        """Same predicates as `list_for_employee`, no `ORDER BY`/`LIMIT` — the paired COUNT query
+        for `GET /leave-ledger`'s `pagination.total` (API-01 §6)."""
+        conditions = [
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.employee_id == employee_id,
+        ]
+        if leave_type_id is not None:
+            conditions.append(LeaveLedgerEntry.leave_type_id == leave_type_id)
+        stmt = select(func.count()).select_from(LeaveLedgerEntry).where(*conditions)
+        return int((await session.execute(stmt)).scalar_one())
 
     async def exists_for_cycle(
         self,
@@ -526,6 +549,35 @@ class LeaveApplicationRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    def _filtered_conditions(
+        self,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> list[Any] | None:
+        """Shared WHERE predicates for `list_filtered`/`count_filtered` (API-01 §5) — kept
+        identical between the two so pagination and the `total` it reports always agree.
+        Returns `None` when an empty `visible_employee_ids` already proves the result is empty,
+        letting both callers short-circuit without issuing a query."""
+        if visible_employee_ids is not None and not visible_employee_ids:
+            return None
+        conditions = [LeaveApplication.company_id == company_id]
+        if visible_employee_ids is not None:
+            conditions.append(LeaveApplication.employee_id.in_(visible_employee_ids))
+        if employee_id is not None:
+            conditions.append(LeaveApplication.employee_id == employee_id)
+        if date_from is not None:
+            conditions.append(LeaveApplication.end_date >= date_from)
+        if date_to is not None:
+            conditions.append(LeaveApplication.start_date <= date_to)
+        if status is not None:
+            conditions.append(LeaveApplication.status == status)
+        return conditions
+
     async def list_filtered(
         self,
         session: AsyncSession,
@@ -536,26 +588,56 @@ class LeaveApplicationRepository:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[LeaveApplication]:
-        conditions = [LeaveApplication.company_id == company_id]
-        if visible_employee_ids is not None:
-            if not visible_employee_ids:
-                return []
-            conditions.append(LeaveApplication.employee_id.in_(visible_employee_ids))
-        if employee_id is not None:
-            conditions.append(LeaveApplication.employee_id == employee_id)
-        if date_from is not None:
-            conditions.append(LeaveApplication.end_date >= date_from)
-        if date_to is not None:
-            conditions.append(LeaveApplication.start_date <= date_to)
-        if status is not None:
-            conditions.append(LeaveApplication.status == status)
+        conditions = self._filtered_conditions(
+            company_id=company_id,
+            visible_employee_ids=visible_employee_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+        if conditions is None:
+            return []
+        # `id` is a stable secondary key — `submitted_at` alone can tie for applications
+        # submitted in the same request burst, which would make page boundaries
+        # non-deterministic.
         stmt = (
             select(LeaveApplication)
             .where(*conditions)
-            .order_by(LeaveApplication.submitted_at.desc())
+            .order_by(LeaveApplication.submitted_at.desc(), LeaveApplication.id.desc())
         )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        employee_id: UUID | None,
+        date_from: date | None,
+        date_to: date | None,
+        status: str | None,
+    ) -> int:
+        """Same predicates as `list_filtered`, no `ORDER BY`/`LIMIT` — the paired COUNT query for
+        `GET /leave-applications`'s `pagination.total` (API-01 §5)."""
+        conditions = self._filtered_conditions(
+            company_id=company_id,
+            visible_employee_ids=visible_employee_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+        if conditions is None:
+            return 0
+        stmt = select(func.count()).select_from(LeaveApplication).where(*conditions)
+        return int((await session.execute(stmt)).scalar_one())
 
     async def update(
         self,
@@ -602,6 +684,26 @@ class LeaveApplicationDayRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def list_for_applications(
+        self, session: AsyncSession, *, company_id: UUID, leave_application_ids: list[UUID]
+    ) -> list[LeaveApplicationDay]:
+        """Batch form of `list_for_application` — one bounded query for every day row across a
+        whole *page* of applications (API-01 §5), replacing the per-application N+1 query.
+        Caller groups the flat result by `.leave_application_id`; `order_by` here is preserved
+        per-application because `calendar_date` is the primary key, `leave_application_id` the
+        secondary — rows for the same application stay in calendar order after grouping."""
+        if not leave_application_ids:
+            return []
+        stmt = (
+            select(LeaveApplicationDay)
+            .where(
+                LeaveApplicationDay.company_id == company_id,
+                LeaveApplicationDay.leave_application_id.in_(leave_application_ids),
+            )
+            .order_by(LeaveApplicationDay.leave_application_id, LeaveApplicationDay.calendar_date)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def set_projection_id(
         self,
         session: AsyncSession,
@@ -644,6 +746,26 @@ class LeaveApplicationActionRepository:
                 LeaveApplicationAction.leave_application_id == leave_application_id,
             )
             .order_by(LeaveApplicationAction.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_for_applications(
+        self, session: AsyncSession, *, company_id: UUID, leave_application_ids: list[UUID]
+    ) -> list[LeaveApplicationAction]:
+        """Batch form of `list_for_application` — see
+        `LeaveApplicationDayRepository.list_for_applications` (API-01 §5); same grouping
+        contract, ordered by `leave_application_id` then `created_at`."""
+        if not leave_application_ids:
+            return []
+        stmt = (
+            select(LeaveApplicationAction)
+            .where(
+                LeaveApplicationAction.company_id == company_id,
+                LeaveApplicationAction.leave_application_id.in_(leave_application_ids),
+            )
+            .order_by(
+                LeaveApplicationAction.leave_application_id, LeaveApplicationAction.created_at
+            )
         )
         return list((await session.execute(stmt)).scalars().all())
 

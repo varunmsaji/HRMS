@@ -110,6 +110,7 @@ from hrms.modules.leave.schemas import (
     statutory_leave_minimum_to_read,
 )
 from hrms.modules.leave.year import LeaveYearSettingData, is_leave_year_start
+from hrms.shared.pagination import PageParams
 
 if TYPE_CHECKING:
     from hrms.modules.leave.models import LeavePolicyVersion
@@ -1252,7 +1253,10 @@ class LeaveLedgerService:
         leave_type_id: UUID | None,
         scope: DataScope,
         caller_employee_id: UUID | None,
-    ) -> list[LeaveLedgerEntryRead]:
+        page: PageParams,
+    ) -> tuple[list[LeaveLedgerEntryRead], int]:
+        """`_ensure_employee_visible` raises before any ledger row is ever fetched — pagination
+        only ever slides across one already-authorized employee's own ledger (API-01 §6/§10)."""
         await self._ensure_employee_visible(
             company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
         )
@@ -1261,8 +1265,16 @@ class LeaveLedgerService:
             company_id=company_id,
             employee_id=employee_id,
             leave_type_id=leave_type_id,
+            limit=page.limit,
+            offset=page.offset,
         )
-        return [leave_ledger_entry_to_read(r) for r in rows]
+        total = await self._repo.count_for_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            leave_type_id=leave_type_id,
+        )
+        return [leave_ledger_entry_to_read(r) for r in rows], total
 
     async def get_balances(
         self,
@@ -1792,6 +1804,35 @@ class LeaveApplicationService:
             self._session, company_id=company_id, leave_application_id=row.id
         )
         return leave_application_to_read(row, days=days, actions=actions)
+
+    async def _read_many(self, rows: list[Any], *, company_id: UUID) -> list[LeaveApplicationRead]:
+        """Bulk form of `_read` (API-01 §5) — 1 query for `days` + 1 for `actions` across the
+        whole page, instead of 2 queries per row. `rows` is expected to already be one bounded
+        page (`list_applications`), so the `IN (...)` batch stays small regardless of how large
+        the overall filtered result set is."""
+        if not rows:
+            return []
+        application_ids = [r.id for r in rows]
+        days = await self._day_repo.list_for_applications(
+            self._session, company_id=company_id, leave_application_ids=application_ids
+        )
+        actions = await self._action_repo.list_for_applications(
+            self._session, company_id=company_id, leave_application_ids=application_ids
+        )
+        days_by_application: dict[Any, list[Any]] = {aid: [] for aid in application_ids}
+        for day in days:
+            days_by_application[day.leave_application_id].append(day)
+        actions_by_application: dict[Any, list[Any]] = {aid: [] for aid in application_ids}
+        for action in actions:
+            actions_by_application[action.leave_application_id].append(action)
+        return [
+            leave_application_to_read(
+                row,
+                days=days_by_application[row.id],
+                actions=actions_by_application[row.id],
+            )
+            for row in rows
+        ]
 
     async def _stale_error(
         self, company_id: UUID, application_id: UUID
@@ -2641,7 +2682,13 @@ class LeaveApplicationService:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[LeaveApplicationRead]:
+        page: PageParams,
+    ) -> tuple[list[LeaveApplicationRead], int]:
+        """Pagination happens *after* `DataScope` narrows `visible_ids` (API-01 §5/§10) — the
+        `LIMIT`/`OFFSET` only ever slides across rows already inside the caller's own scope, so
+        `page`/`per_page` can't be used to reach applications the caller couldn't otherwise see.
+        Day/action records are then batch-loaded for just this page's application IDs
+        (`_read_many`), not per-row — the N+1 fix (API-01 §5)."""
         visible_ids = await self._resolve_visible_employee_ids(
             company_id, scope, caller_employee_id
         )
@@ -2653,8 +2700,20 @@ class LeaveApplicationService:
             date_from=date_from,
             date_to=date_to,
             status=status,
+            limit=page.limit,
+            offset=page.offset,
         )
-        return [await self._read(r, company_id=company_id) for r in rows]
+        total = await self._repo.count_filtered(
+            self._session,
+            company_id=company_id,
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+            status=status,
+        )
+        reads = await self._read_many(rows, company_id=company_id)
+        return reads, total
 
     async def get_application(
         self,

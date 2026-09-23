@@ -1,5 +1,5 @@
 import { ApiError, NetworkError } from "@/lib/api/errors";
-import type { DataEnvelope, ErrorEnvelope } from "@/lib/api/types";
+import type { DataEnvelope, ErrorEnvelope, ListEnvelope } from "@/lib/api/types";
 import {
   clearSession,
   loadSession,
@@ -19,6 +19,25 @@ interface RequestOptions {
   headers?: Record<string, string>;
   /** Optimistic-concurrency header for PATCH per docs/product/09_API_Standards.md §1.7. */
   ifMatch?: string;
+  /** Return the raw envelope instead of unwrapping `.data` — list endpoints need `.pagination`
+   * too (API-01). */
+  rawEnvelope?: boolean;
+}
+
+/** 1-indexed `page`/`per_page` query params for a paginated list endpoint (API-01). */
+export interface PageQuery {
+  page?: number;
+  per_page?: number;
+}
+
+function withQuery(path: string, params?: Record<string, string | number | undefined>): string {
+  if (!params) return path;
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return qs ? `${path}${path.includes("?") ? "&" : "?"}${qs}` : path;
 }
 
 function requestId(): string {
@@ -89,6 +108,9 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     });
   }
 
+  if (options.rawEnvelope) {
+    return payload as T;
+  }
   return (payload as DataEnvelope<T>).data;
 }
 
@@ -147,6 +169,19 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 export const apiClient = {
   get: <T>(path: string, options?: Omit<RequestOptions, "method" | "body">) =>
     apiRequest<T>(path, { ...options, method: "GET" }),
+  /** Paginated list endpoints (API-01) — returns the full envelope (`data` + `pagination`),
+   * not just the unwrapped array, so callers can render page controls. `query` merges
+   * `page`/`per_page` with any endpoint-specific filters. */
+  getList: <T>(
+    path: string,
+    query?: PageQuery & Record<string, string | number | undefined>,
+    options?: Omit<RequestOptions, "method" | "body" | "rawEnvelope">,
+  ) =>
+    apiRequest<ListEnvelope<T>>(withQuery(path, query), {
+      ...options,
+      method: "GET",
+      rawEnvelope: true,
+    }),
   post: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, "method" | "body">) =>
     apiRequest<T>(path, { ...options, method: "POST", body }),
   patch: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, "method" | "body">) =>

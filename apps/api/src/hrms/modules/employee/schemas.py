@@ -5,10 +5,11 @@ Fields deliberately excluded from `EmployeeCreate`/`EmployeeUpdate`, and why:
 - `status`: system-managed via lifecycle actions (FR-EMP-014); no transition exists in this
   slice, so it is set once at creation (`PRE_JOINING`) and never exposed as writable.
 - `display_name`: derived, not directly editable.
-- `pan_number_enc` / `aadhaar_number_enc` / `uan_number`: documented as requiring
-  `EMPLOYEE.UPDATE_SENSITIVE` (`02_EMPLOYEE_DATA_MODEL.md` §2 section A), a permission out of
-  E-01's scope (`01_EMPLOYEE_FOUNDATION_AUDIT.md` §2.2) — the columns exist at the DB level but
-  have no write path until the slice that adds that permission.
+- `pan_number_enc` / `aadhaar_number_enc` / `uan_number`: gated by `EMPLOYEE.UPDATE_SENSITIVE`/
+  `.VIEW_SENSITIVE` via the dedicated `EmployeeIdentityUpdate`/`EmployeeIdentityRead` schemas
+  below (market-parity onboarding-data pass, "E-02") — deliberately kept off the general
+  `EmployeeCreate`/`EmployeeUpdate`/`EmployeeRead` surface so a caller holding only
+  `EMPLOYEE.UPDATE` can never read or write them through the basic-details endpoint.
 - `user_id`: system-managed (login provisioning), not client-settable.
 """
 
@@ -16,7 +17,9 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from hrms.core.audit.redact import SENSITIVE_FIELD_MASKS, mask_sensitive
 
 if TYPE_CHECKING:
     from hrms.modules.employee.models import (
@@ -24,6 +27,9 @@ if TYPE_CHECKING:
         EmployeeAssignment,
         EmployeeBank,
         EmployeeCompensation,
+        EmployeeDependent,
+        EmployeeEducation,
+        EmployeeExperience,
         EmployeeStatutory,
         Employment,
     )
@@ -56,8 +62,25 @@ class EmployeeCreate(BaseModel):
     blood_group: str | None = Field(default=None, max_length=10)
     marital_status: str | None = Field(default=None, max_length=20)
     nationality: str | None = Field(default=None, max_length=80)
+    father_or_husband_name: str | None = Field(default=None, max_length=150)
     personal_email: str | None = Field(default=None, max_length=255)
     personal_mobile: str | None = Field(default=None, max_length=20)
+    present_address_line1: str | None = Field(default=None, max_length=200)
+    present_address_line2: str | None = Field(default=None, max_length=200)
+    present_city: str | None = Field(default=None, max_length=100)
+    present_state_code: str | None = Field(default=None, max_length=10)
+    present_pincode: str | None = Field(default=None, max_length=10)
+    present_country_code: str | None = Field(default=None, max_length=2)
+    permanent_address_line1: str | None = Field(default=None, max_length=200)
+    permanent_address_line2: str | None = Field(default=None, max_length=200)
+    permanent_city: str | None = Field(default=None, max_length=100)
+    permanent_state_code: str | None = Field(default=None, max_length=10)
+    permanent_pincode: str | None = Field(default=None, max_length=10)
+    permanent_country_code: str | None = Field(default=None, max_length=2)
+    permanent_same_as_present: bool = True
+    emergency_contact_name: str | None = Field(default=None, max_length=150)
+    emergency_contact_relationship: str | None = Field(default=None, max_length=50)
+    emergency_contact_phone: str | None = Field(default=None, max_length=20)
     photo_url: str | None = None
     custom_fields: dict[str, Any] | None = None
 
@@ -73,8 +96,25 @@ class EmployeeUpdate(BaseModel):
     blood_group: str | None = Field(default=None, max_length=10)
     marital_status: str | None = Field(default=None, max_length=20)
     nationality: str | None = Field(default=None, max_length=80)
+    father_or_husband_name: str | None = Field(default=None, max_length=150)
     personal_email: str | None = Field(default=None, max_length=255)
     personal_mobile: str | None = Field(default=None, max_length=20)
+    present_address_line1: str | None = Field(default=None, max_length=200)
+    present_address_line2: str | None = Field(default=None, max_length=200)
+    present_city: str | None = Field(default=None, max_length=100)
+    present_state_code: str | None = Field(default=None, max_length=10)
+    present_pincode: str | None = Field(default=None, max_length=10)
+    present_country_code: str | None = Field(default=None, max_length=2)
+    permanent_address_line1: str | None = Field(default=None, max_length=200)
+    permanent_address_line2: str | None = Field(default=None, max_length=200)
+    permanent_city: str | None = Field(default=None, max_length=100)
+    permanent_state_code: str | None = Field(default=None, max_length=10)
+    permanent_pincode: str | None = Field(default=None, max_length=10)
+    permanent_country_code: str | None = Field(default=None, max_length=2)
+    permanent_same_as_present: bool | None = None
+    emergency_contact_name: str | None = Field(default=None, max_length=150)
+    emergency_contact_relationship: str | None = Field(default=None, max_length=50)
+    emergency_contact_phone: str | None = Field(default=None, max_length=20)
     photo_url: str | None = None
     custom_fields: dict[str, Any] | None = None
     is_active: bool | None = None
@@ -103,8 +143,25 @@ class EmployeeRead(BaseModel):
     blood_group: str | None
     marital_status: str | None
     nationality: str | None
+    father_or_husband_name: str | None
     personal_email: str | None
     personal_mobile: str | None
+    present_address_line1: str | None
+    present_address_line2: str | None
+    present_city: str | None
+    present_state_code: str | None
+    present_pincode: str | None
+    present_country_code: str | None
+    permanent_address_line1: str | None
+    permanent_address_line2: str | None
+    permanent_city: str | None
+    permanent_state_code: str | None
+    permanent_pincode: str | None
+    permanent_country_code: str | None
+    permanent_same_as_present: bool
+    emergency_contact_name: str | None
+    emergency_contact_relationship: str | None
+    emergency_contact_phone: str | None
     photo_url: str | None
     status: str
     custom_fields: dict[str, Any] | None
@@ -134,8 +191,25 @@ def employee_to_read(employee: "Employee") -> EmployeeRead:
         blood_group=employee.blood_group,
         marital_status=employee.marital_status,
         nationality=employee.nationality,
+        father_or_husband_name=employee.father_or_husband_name,
         personal_email=employee.personal_email,
         personal_mobile=employee.personal_mobile,
+        present_address_line1=employee.present_address_line1,
+        present_address_line2=employee.present_address_line2,
+        present_city=employee.present_city,
+        present_state_code=employee.present_state_code,
+        present_pincode=employee.present_pincode,
+        present_country_code=employee.present_country_code,
+        permanent_address_line1=employee.permanent_address_line1,
+        permanent_address_line2=employee.permanent_address_line2,
+        permanent_city=employee.permanent_city,
+        permanent_state_code=employee.permanent_state_code,
+        permanent_pincode=employee.permanent_pincode,
+        permanent_country_code=employee.permanent_country_code,
+        permanent_same_as_present=employee.permanent_same_as_present,
+        emergency_contact_name=employee.emergency_contact_name,
+        emergency_contact_relationship=employee.emergency_contact_relationship,
+        emergency_contact_phone=employee.emergency_contact_phone,
         photo_url=employee.photo_url,
         status=employee.status,
         custom_fields=employee.custom_fields,
@@ -556,7 +630,14 @@ class BankRead(BaseModel):
     updated_at: str
 
 
-def bank_to_read(bank: "EmployeeBank") -> BankRead:
+def bank_to_read(bank: "EmployeeBank", *, decrypted_account_number: str | None) -> BankRead:
+    """DATA-01 (`docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md` §2.5) — `bank.
+    account_number_enc` now holds ciphertext (the ORM attribute is never auto-decrypted, plan
+    §2.5's corrected encryption boundary). `decrypted_account_number` is a required keyword — not
+    defaulted — so a call site cannot forget it and silently return ciphertext where the API
+    contract expects the plaintext account number; the caller (`EmployeeBankService`, after its
+    own permission check has already run) is the only place authorized to have called
+    `PiiCryptoService.decrypt_column` to produce it."""
     return BankRead(
         id=bank.id,
         company_id=bank.company_id,
@@ -564,7 +645,7 @@ def bank_to_read(bank: "EmployeeBank") -> BankRead:
         effective_from=bank.effective_from,
         effective_to=bank.effective_to,
         account_holder_name=bank.account_holder_name,
-        account_number_enc=bank.account_number_enc,
+        account_number_enc=decrypted_account_number,
         bank_name=bank.bank_name,
         ifsc=bank.ifsc,
         branch_name=bank.branch_name,
@@ -579,4 +660,296 @@ def bank_to_read(bank: "EmployeeBank") -> BankRead:
 
 
 def bank_to_audit_dict(bank: BankRead) -> dict[str, Any]:
-    return bank.model_dump(mode="json")
+    """DATA-01 §7 (mandatory) — `bank` here already carries the *decrypted* account number
+    (`bank_to_read`'s new contract, above), so without this masking step the plaintext would flow
+    straight into the immutable `audit_log` table. `mask_sensitive` replaces it with the
+    documented last-four-digit form (`"******7890"`) before this dict ever reaches
+    `AuditService.record()` — never the plaintext, and never the raw ciphertext blob either."""
+    return mask_sensitive(bank.model_dump(mode="json"), sensitive_fields=SENSITIVE_FIELD_MASKS)
+
+
+# --- Employee Identity (E-02) --------------------------------------------------------------
+#
+# The write path the module docstring's exclusion note and `EMPLOYEE.UPDATE_SENSITIVE`'s own
+# description ("Edit PAN/Aadhaar/bank/statutory") already anticipated — `pan_number_enc`/
+# `aadhaar_number_enc`/`uan_number` finally get a schema + service + route. Unlike Bank/
+# Statutory/Compensation, this is not an effective-dated history table — PAN/Aadhaar/UAN are
+# single current-value facts on `Employee` itself (like `gender`/`blood_group`), so this is a
+# plain update-in-place, not an insert-a-new-row-and-close-the-old-one write.
+
+
+class EmployeeIdentityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pan_number: str | None = Field(default=None, min_length=10, max_length=10)
+    aadhaar_number: str | None = Field(default=None, min_length=12, max_length=12)
+    uan_number: str | None = Field(default=None, max_length=20)
+    father_or_husband_name: str | None = Field(default=None, max_length=150)
+
+
+class EmployeeIdentityRead(BaseModel):
+    employee_id: UUID
+    pan_number: str | None
+    aadhaar_number: str | None
+    uan_number: str | None
+    father_or_husband_name: str | None
+    version: int
+
+
+def employee_identity_to_read(employee: "Employee", *, pan_number: str | None, aadhaar_number: str | None) -> EmployeeIdentityRead:
+    """`pan_number`/`aadhaar_number` are required keywords, not read off `employee.
+    pan_number_enc`/`.aadhaar_number_enc` directly — those ORM attributes hold ciphertext only
+    (mirrors `bank_to_read`'s exact contract). The caller (`EmployeeService.get_identity`), after
+    its own permission check, is the only place authorized to have called
+    `PiiCryptoService.decrypt_column(...)` to produce these plaintext values."""
+    return EmployeeIdentityRead(
+        employee_id=employee.id,
+        pan_number=pan_number,
+        aadhaar_number=aadhaar_number,
+        uan_number=employee.uan_number,
+        father_or_husband_name=employee.father_or_husband_name,
+        version=employee.version,
+    )
+
+
+def employee_identity_to_audit_dict(identity: EmployeeIdentityRead) -> dict[str, Any]:
+    """DATA-01 §7 (mandatory) — same masking contract as `bank_to_audit_dict`. `identity` here
+    carries plaintext `pan_number`/`aadhaar_number`; `SENSITIVE_FIELD_MASKS` is keyed by the
+    `_enc` column-name convention, so the dict is aliased onto those keys before masking and
+    aliased back afterward — this dict's own field names (`pan_number`, not `pan_number_enc`)
+    stay in the audit record, only their values change."""
+    payload = identity.model_dump(mode="json")
+    aliased = {**payload, "pan_number_enc": payload["pan_number"], "aadhaar_number_enc": payload["aadhaar_number"]}
+    masked = mask_sensitive(aliased, sensitive_fields=SENSITIVE_FIELD_MASKS)
+    payload["pan_number"] = masked["pan_number_enc"]
+    payload["aadhaar_number"] = masked["aadhaar_number_enc"]
+    return payload
+
+
+# --- Employee Experience (market-parity onboarding-data pass, part 4) -----------------------
+#
+# Previous employment / PF continuity — a genuine one-to-many list (multiple past employers,
+# all concurrently valid), not an effective-dated history table like Statutory/Bank/
+# Compensation. `create_experience` inserts a new independent row every time; there is no
+# "close the current row" step because rows never supersede each other.
+
+
+class EmployeeExperienceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    company_name: str = Field(min_length=1, max_length=200)
+    designation: str | None = Field(default=None, max_length=150)
+    from_date: date
+    to_date: date | None = None
+    last_ctc_minor: int | None = Field(default=None, ge=0)
+    reason_for_leaving: str | None = None
+    had_prior_pf_membership: bool = False
+    previous_uan: str | None = Field(default=None, max_length=20)
+    previous_pf_account_number: str | None = Field(default=None, max_length=30)
+    previous_esi_ip_number: str | None = Field(default=None, max_length=30)
+    document_id: UUID | None = None
+
+
+class EmployeeExperienceRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    company_name: str
+    designation: str | None
+    from_date: date
+    to_date: date | None
+    last_ctc_minor: int | None
+    reason_for_leaving: str | None
+    had_prior_pf_membership: bool
+    previous_uan: str | None
+    previous_pf_account_number: str | None
+    previous_esi_ip_number: str | None
+    document_id: UUID | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def employee_experience_to_read(experience: "EmployeeExperience") -> EmployeeExperienceRead:
+    return EmployeeExperienceRead(
+        id=experience.id,
+        company_id=experience.company_id,
+        employee_id=experience.employee_id,
+        company_name=experience.company_name,
+        designation=experience.designation,
+        from_date=experience.from_date,
+        to_date=experience.to_date,
+        last_ctc_minor=experience.last_ctc_minor,
+        reason_for_leaving=experience.reason_for_leaving,
+        had_prior_pf_membership=experience.had_prior_pf_membership,
+        previous_uan=experience.previous_uan,
+        previous_pf_account_number=experience.previous_pf_account_number,
+        previous_esi_ip_number=experience.previous_esi_ip_number,
+        document_id=experience.document_id,
+        version=experience.version,
+        created_at=_format_timestamp(experience.created_at) or "",
+        updated_at=_format_timestamp(experience.updated_at) or "",
+    )
+
+
+def employee_experience_to_audit_dict(experience: EmployeeExperienceRead) -> dict[str, Any]:
+    return experience.model_dump(mode="json")
+
+
+# --- Employee Education (market-parity onboarding-data pass, part 5) ------------------------
+#
+# Same "plain list" shape as Experience above — a candidate may hold multiple qualifications,
+# all concurrently valid, not effective-dated history.
+
+
+class EmployeeEducationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    qualification: str = Field(min_length=1, max_length=150)
+    institution_name: str | None = Field(default=None, max_length=200)
+    year_of_passing: int | None = Field(default=None, ge=1950, le=2100)
+    document_id: UUID | None = None
+
+
+class EmployeeEducationRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    qualification: str
+    institution_name: str | None
+    year_of_passing: int | None
+    document_id: UUID | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def employee_education_to_read(education: "EmployeeEducation") -> EmployeeEducationRead:
+    return EmployeeEducationRead(
+        id=education.id,
+        company_id=education.company_id,
+        employee_id=education.employee_id,
+        qualification=education.qualification,
+        institution_name=education.institution_name,
+        year_of_passing=education.year_of_passing,
+        document_id=education.document_id,
+        version=education.version,
+        created_at=_format_timestamp(education.created_at) or "",
+        updated_at=_format_timestamp(education.updated_at) or "",
+    )
+
+
+def employee_education_to_audit_dict(education: EmployeeEducationRead) -> dict[str, Any]:
+    return education.model_dump(mode="json")
+
+
+# --- Employee Dependent (market-parity onboarding-data pass, part 6) ------------------------
+#
+# PF/Gratuity nominee declaration + ESI family details (EPF Form 2, Gratuity Form F, ESI Form
+# 1/Form 2). Same "plain list" shape as Experience/Education above, plus a DATA-01-encrypted
+# `aadhaar_number_enc` (same request-field-name-holds-plaintext convention `EmployeeIdentityUpdate`/
+# `BankCreate` already use) and a minor/guardian conditional block.
+
+
+class EmployeeDependentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str = Field(min_length=1, max_length=150)
+    relationship: str = Field(min_length=1, max_length=50)
+    date_of_birth: date | None = None
+    gender: str | None = Field(default=None, max_length=20)
+    is_minor: bool = False
+    guardian_name: str | None = Field(default=None, max_length=150)
+    guardian_relationship: str | None = Field(default=None, max_length=50)
+    aadhaar_number_enc: str | None = Field(default=None, min_length=12, max_length=12)
+    is_pf_nominee: bool = False
+    pf_nominee_share_percentage: float | None = Field(default=None, gt=0, le=100)
+    is_gratuity_nominee: bool = False
+    gratuity_nominee_share_percentage: float | None = Field(default=None, gt=0, le=100)
+    is_esi_dependent: bool = False
+    document_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _require_guardian_when_minor(self) -> "EmployeeDependentCreate":
+        if self.is_minor and not (self.guardian_name or "").strip():
+            raise ValueError("guardian_name is required when is_minor is true")
+        return self
+
+    @model_validator(mode="after")
+    def _require_percentage_when_nominee(self) -> "EmployeeDependentCreate":
+        if self.is_pf_nominee and self.pf_nominee_share_percentage is None:
+            raise ValueError("pf_nominee_share_percentage is required when is_pf_nominee is true")
+        if self.is_gratuity_nominee and self.gratuity_nominee_share_percentage is None:
+            raise ValueError(
+                "gratuity_nominee_share_percentage is required when is_gratuity_nominee is true"
+            )
+        return self
+
+
+class EmployeeDependentRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    employee_id: UUID
+    full_name: str
+    relationship: str
+    date_of_birth: date | None
+    gender: str | None
+    is_minor: bool
+    guardian_name: str | None
+    guardian_relationship: str | None
+    aadhaar_number_enc: str | None
+    is_pf_nominee: bool
+    pf_nominee_share_percentage: float | None
+    is_gratuity_nominee: bool
+    gratuity_nominee_share_percentage: float | None
+    is_esi_dependent: bool
+    document_id: UUID | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def employee_dependent_to_read(
+    dependent: "EmployeeDependent", *, decrypted_aadhaar_number: str | None
+) -> EmployeeDependentRead:
+    """DATA-01 — `decrypted_aadhaar_number` is a required keyword, not read off `dependent.
+    aadhaar_number_enc` directly, mirroring `bank_to_read`'s exact contract: the caller
+    (`EmployeeDependentService`), after its own permission check, is the only place authorized to
+    have called `PiiCryptoService.decrypt_column(...)` to produce it."""
+    return EmployeeDependentRead(
+        id=dependent.id,
+        company_id=dependent.company_id,
+        employee_id=dependent.employee_id,
+        full_name=dependent.full_name,
+        relationship=dependent.relationship,
+        date_of_birth=dependent.date_of_birth,
+        gender=dependent.gender,
+        is_minor=dependent.is_minor,
+        guardian_name=dependent.guardian_name,
+        guardian_relationship=dependent.guardian_relationship,
+        aadhaar_number_enc=decrypted_aadhaar_number,
+        is_pf_nominee=dependent.is_pf_nominee,
+        pf_nominee_share_percentage=(
+            float(dependent.pf_nominee_share_percentage)
+            if dependent.pf_nominee_share_percentage is not None
+            else None
+        ),
+        is_gratuity_nominee=dependent.is_gratuity_nominee,
+        gratuity_nominee_share_percentage=(
+            float(dependent.gratuity_nominee_share_percentage)
+            if dependent.gratuity_nominee_share_percentage is not None
+            else None
+        ),
+        is_esi_dependent=dependent.is_esi_dependent,
+        document_id=dependent.document_id,
+        version=dependent.version,
+        created_at=_format_timestamp(dependent.created_at) or "",
+        updated_at=_format_timestamp(dependent.updated_at) or "",
+    )
+
+
+def employee_dependent_to_audit_dict(dependent: EmployeeDependentRead) -> dict[str, Any]:
+    """DATA-01 §7 (mandatory) — `dependent` here carries the plaintext `aadhaar_number_enc`;
+    `SENSITIVE_FIELD_MASKS` is keyed by field name (not table), so it already covers this field
+    with no registry change needed (`redact.py` module docstring's own point)."""
+    return mask_sensitive(dependent.model_dump(mode="json"), sensitive_fields=SENSITIVE_FIELD_MASKS)

@@ -39,12 +39,14 @@ from hrms.modules.employee.service import (
 from hrms.modules.employee_import.exceptions import (
     ImportBatchNotFoundError,
     ImportFileEmptyError,
+    ImportFileTooLargeError,
     ImportHeaderInvalidError,
     ImportRowLimitExceededError,
 )
 from hrms.modules.employee_import.repository import EmployeeImportRepository
 from hrms.modules.employee_import.schemas import (
     ALL_COLUMNS,
+    MAX_IMPORT_FILE_SIZE_BYTES,
     MAX_IMPORT_ROWS,
     REQUIRED_COLUMNS,
     EmployeeImportBatchRead,
@@ -126,11 +128,21 @@ class EmployeeImportService:
         file_bytes: bytes,
         actor_user_id: UUID | None,
     ) -> EmployeeImportBatchRead:
+        # SEC-03 — checked before parsing, same posture as onboarding's
+        # `OnboardingDocumentTooLargeError`; `MAX_IMPORT_ROWS` only catches an oversized file
+        # *after* it has already been decoded and split into rows.
+        if len(file_bytes) > MAX_IMPORT_FILE_SIZE_BYTES:
+            raise ImportFileTooLargeError(MAX_IMPORT_FILE_SIZE_BYTES)
         rows = self._parse_and_validate_shape(file_bytes)
 
         now = datetime.now(UTC)
         batch_id = uuid4()
-        s3_key = f"employee-imports/{company_id}/{batch_id}/{filename}"
+        # SEC-04 — the object-key filename component is always this fixed literal, never the
+        # client-supplied `filename` (path-traversal/unsafe-key risk); `batch_id` already makes
+        # the key unique, and the format is always CSV (`_parse_and_validate_shape` above already
+        # requires it). The client-supplied `filename` is retained only as display metadata
+        # (`original_filename` below), same split as onboarding documents.
+        s3_key = f"employee-imports/{company_id}/{batch_id}/import.csv"
         # Storage write happens before the DB row so a storage failure never leaves a batch row
         # pointing at a nonexistent object.
         await self._storage.put_object(key=s3_key, body=file_bytes, content_type="text/csv")
@@ -276,7 +288,23 @@ class EmployeeImportService:
         )
         await self._commit_and_restore_rls(company_id)
 
-        file_bytes = await self._storage.get_object(key=batch.s3_key)
+        try:
+            file_bytes = await self._storage.get_object(key=batch.s3_key)
+        except Exception:  # noqa: BLE001 — must catch every storage failure, not just botocore's
+            # Storage unavailable (MinIO down, bad credentials, missing bucket, ...): leave the
+            # batch in a terminal FAILED state rather than stuck at PROCESSING forever with no
+            # operator-visible outcome. Re-raised so the Celery task itself still records/logs
+            # the failure (Document 11 §1) — this only closes out the DB-visible batch status.
+            await self._repo.update_batch_progress(
+                self._session,
+                company_id=company_id,
+                batch_id=batch_id,
+                values={"status": "FAILED", "completed_at": datetime.now(UTC)},
+                now=datetime.now(UTC),
+            )
+            await self._session.commit()
+            raise
+
         rows = [
             _sanitize_raw_row(row)
             for row in csv.DictReader(io.StringIO(file_bytes.decode("utf-8-sig")))

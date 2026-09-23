@@ -3,9 +3,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { NAV_ITEMS } from "@/components/layout/nav-items";
+import { NAV_ITEMS, SETTINGS_ITEMS } from "@/components/layout/nav-items";
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
+
+const SETTINGS_HREFS = new Set(SETTINGS_ITEMS.map((item) => item.href));
+
+function matchesHref(pathname: string | null, href: string): boolean {
+  return pathname === href || Boolean(pathname?.startsWith(`${href}/`));
+}
 
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -15,7 +21,13 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="flex flex-col gap-1 p-3" aria-label="Primary">
       {items.map((item) => {
-        const active = pathname === item.href || pathname?.startsWith(`${item.href}/`);
+        // "Settings" also lights up while on any of the config pages it links out to, so the
+        // sidebar still shows where you are even though those pages aren't listed directly.
+        const active =
+          item.href === "/app/settings"
+            ? matchesHref(pathname, item.href) ||
+              Array.from(SETTINGS_HREFS).some((href) => matchesHref(pathname, href))
+            : matchesHref(pathname, item.href);
         const Icon = item.icon;
         return (
           <Link

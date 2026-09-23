@@ -84,7 +84,13 @@ from hrms.modules.leave.service import (
     LeaveYearSettingService,
     StatutoryLeaveMinimumService,
 )
-from hrms.shared.pagination import DataEnvelope, ListEnvelope
+from hrms.shared.pagination import (
+    DataEnvelope,
+    ListEnvelope,
+    PageParams,
+    build_pagination_meta,
+    pagination_params,
+)
 
 router = APIRouter(tags=["leave"])
 
@@ -505,17 +511,23 @@ async def list_leave_ledger_entries(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     rbac: Annotated[RbacService, Depends(get_rbac_service)],
     service: Annotated[LeaveLedgerService, Depends(get_leave_ledger_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
     leave_type_id: Annotated[UUID | None, Query()] = None,
 ) -> ListEnvelope[LeaveLedgerEntryRead]:
     scope = await _combined_balance_scope(user, rbac)
-    data = await service.list_entries(
+    data, total = await service.list_entries(
         tenant.company_id,
         employee_id,
         leave_type_id=leave_type_id,
         scope=scope,
         caller_employee_id=user.employee_id,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/leave-balances", status_code=status.HTTP_200_OK)
@@ -591,13 +603,14 @@ async def list_leave_applications(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     rbac: Annotated[RbacService, Depends(get_rbac_service)],
     service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
     employee_id: Annotated[UUID | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     application_status: Annotated[str | None, Query()] = None,
 ) -> ListEnvelope[LeaveApplicationRead]:
     scope = await _combined_balance_scope(user, rbac)
-    data = await service.list_applications(
+    data, total = await service.list_applications(
         tenant.company_id,
         scope=scope,
         caller_employee_id=user.employee_id,
@@ -605,8 +618,13 @@ async def list_leave_applications(
         date_from=date_from,
         date_to=date_to,
         status=application_status,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/leave-applications/{application_id}", status_code=status.HTTP_200_OK)
