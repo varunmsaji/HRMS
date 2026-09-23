@@ -305,6 +305,8 @@ async def test_registration_success_full_row_graph(
                 "LEAVE.APPLICATION_SUBMIT",
                 "LEAVE.APPLICATION_SUBMIT_ON_BEHALF",
                 "LEAVE.APPLICATION_APPROVE",
+                # Decision 10 (PAYROLL_BUSINESS_DECISIONS.md) — HR cancels approved leave.
+                "LEAVE.APPLICATION_CANCEL_APPROVED",
                 # Added by LD-16/LD-20/LD-22 (leave combination rules, leave year setting,
                 # statutory compliance floor) — not new to this session's own work.
                 "LEAVE.COMBINATION_RULE_MANAGE",
@@ -672,5 +674,6 @@ async def test_registration_seeds_hr_admin_approval_grants(
         assert grants["ATTENDANCE.REGULARIZATION_APPROVE"] == "COMPANY"
         assert grants["ATTENDANCE.OVERTIME_APPROVE"] == "COMPANY"
         assert grants["LEAVE.APPLICATION_APPROVE"] == "COMPANY"
+        assert grants["LEAVE.APPLICATION_CANCEL_APPROVED"] == "COMPANY"
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)

@@ -20,6 +20,10 @@ LEAVE_BALANCE_ADJUST = "LEAVE.BALANCE_ADJUST"
 LEAVE_APPLICATION_SUBMIT = "LEAVE.APPLICATION_SUBMIT"
 LEAVE_APPLICATION_SUBMIT_ON_BEHALF = "LEAVE.APPLICATION_SUBMIT_ON_BEHALF"
 LEAVE_APPLICATION_APPROVE = "LEAVE.APPLICATION_APPROVE"
+# Decision 10 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — HR-only: cancel an approved
+# application at any time, including after it has started (reason mandatory then). Without it,
+# only the employee themself may cancel their own approved leave, and only before it starts.
+LEAVE_APPLICATION_CANCEL_APPROVED = "LEAVE.APPLICATION_CANCEL_APPROVED"
 
 # L5.5 — client spec §7 (LEAVE_DECISION_LOG.md LD-16). COMPANY-scoped config, same `.MANAGE`
 # convention as LEAVE_TYPE_MANAGE/LEAVE_POLICY_MANAGE above.
@@ -47,6 +51,11 @@ LEAVE_PERMISSIONS: list[tuple[str, str, str]] = [
         "Submit a leave application on behalf of another employee",
     ),
     (LEAVE_APPLICATION_APPROVE, "LEAVE", "Approve or reject a leave application"),
+    (
+        LEAVE_APPLICATION_CANCEL_APPROVED,
+        "LEAVE",
+        "Cancel an approved leave application, including after it has started",
+    ),
     (LEAVE_COMBINATION_RULE_MANAGE, "LEAVE", "Manage leave combination (exclusivity) rules"),
     (LEAVE_YEAR_SETTING_MANAGE, "LEAVE", "Manage the company's leave year configuration"),
     (LEAVE_STATUTORY_MINIMUM_MANAGE, "LEAVE", "Manage statutory leave minimums (compliance)"),

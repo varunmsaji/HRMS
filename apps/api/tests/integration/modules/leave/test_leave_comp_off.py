@@ -11,6 +11,7 @@ exercising the real code path minus the Celery/asyncio bridge itself.
 """
 
 from datetime import date
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -170,26 +171,31 @@ async def test_credit_skipped_when_no_comp_off_type_designated(
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
-async def test_credit_skipped_when_day_length_not_configured(
+async def test_day_length_and_expiry_default_from_the_shift_when_not_configured(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
+    """Decision 13 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — with neither
+    `comp_off_day_length_minutes` nor `comp_off_expiry_days` set, one comp-off day is the
+    shift's scheduled minutes that day, and the comp-off expires after 60 days. Before, such a
+    policy credited nothing and never expired."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
         employee_id = wired["employee"]["id"]
-        # comp_off_day_length_minutes left unset — engine must never guess a conversion basis.
         await _create_overtime_policy(
-            client,
-            headers,
-            approval_chain="AUTO",
-            comp_off_instead_of_pay=True,
-            comp_off_expiry_days=90,
+            client, headers, approval_chain="AUTO", comp_off_instead_of_pay=True
         )
-        await _ot_calculate_day(client, headers, employee_id=employee_id)
+        day = await _ot_calculate_day(client, headers, employee_id=employee_id)
+        record = await _get_overtime_record_for_day(
+            client, headers, employee_id=employee_id, day="2026-08-10"
+        )
+        assert record["comp_off_minutes"] == 60
+        assert record["comp_off_expiry_date"] == "2026-10-09"
         await _create_leave_type(client, headers, is_comp_off=True)
 
-        written = await _credit(company_id)
-        assert written == 0
+        assert await _credit(company_id) == 1
+        expected = (Decimal(60) / Decimal(day["scheduled_minutes"])).quantize(Decimal("0.01"))
+        assert await _get_balance(client, headers, employee_id) == str(expected)
     finally:
         await _teardown_leave(company_id=company_id)
         await _cleanup_overtime(company_id=company_id)

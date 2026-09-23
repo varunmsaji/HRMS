@@ -17,6 +17,7 @@ export const LEAVE_APPLICATION_ACTIONS = [
   "APPROVED",
   "REJECTED",
   "CANCELLED",
+  "EXCESS_AS_LOP",
 ] as const;
 export type LeaveApplicationActionType = (typeof LEAVE_APPLICATION_ACTIONS)[number];
 
@@ -26,6 +27,8 @@ export interface LeaveApplicationDay {
   fraction: string;
   half: LeaveHalfDay | null;
   is_sandwich_generated: boolean;
+  /** PAY-010 — approved as loss of pay because the balance could not cover it. */
+  is_lop: boolean;
   leave_day_projection_id: string | null;
 }
 
@@ -49,6 +52,8 @@ export interface LeaveApplication {
   start_date: string;
   end_date: string;
   total_days: string;
+  /** PAY-010 — days approved as loss of pay; only `total_days - lop_days` was debited. */
+  lop_days: string;
   reason: string | null;
   attachment_reference: string | null;
   expected_delivery_date: string | null;
@@ -69,6 +74,8 @@ export interface LeaveApplication {
 
   cancelled_at: string | null;
   cancelled_by_user_id: string | null;
+  /** Decision 10 — mandatory when HR cancels approved leave that has already started. */
+  cancellation_reason: string | null;
 
   version: number;
 

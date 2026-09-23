@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { ErrorState } from "@/components/common/error-state";
+import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
@@ -20,9 +21,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
-import { formatDateTime } from "@/lib/attendance/format";
+import { businessToday, formatDateTime } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LeaveApplication } from "@/lib/leave-application/types";
@@ -45,6 +47,7 @@ const ACTION_LABELS: Record<string, string> = {
   APPROVED: "Approved",
   REJECTED: "Rejected",
   CANCELLED: "Cancelled",
+  EXCESS_AS_LOP: "Days beyond the balance approved as loss of pay",
 };
 
 /** `GET /v1/leave-applications/{id}` detail (LEAVE_DECISION_LOG.md LD-02/LD-05/LD-12/LD-13).
@@ -64,6 +67,7 @@ export default function LeaveApplicationDetailPage() {
   const [reviewAction, setReviewAction] = useState<"approve" | "reject" | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,11 +97,12 @@ export default function LeaveApplicationDetailPage() {
     try {
       const updated = await apiClient.post<LeaveApplication>(
         `/leave-applications/${application.id}/cancel`,
-        {},
+        cancelReason.trim() ? { reason: cancelReason.trim() } : {},
         { ifMatch: String(application.version) },
       );
       setApplication(updated);
       setCancelOpen(false);
+      setCancelReason("");
       toast({
         title:
           updated.status === "CANCELLED" && application.status === "APPROVED"
@@ -118,10 +123,19 @@ export default function LeaveApplicationDetailPage() {
     user?.employee_id && application?.employee_id === user.employee_id,
   );
   const canReview = canApprove && isPending && !isOwnApplication;
-  // LD-13: cancel is available while SUBMITTED or already APPROVED, always submitter-only.
+  // Decision 10 (mirrors `LeaveApplicationService.cancel`): the submitter or the employee may
+  // withdraw a SUBMITTED application; approved leave may be cancelled by the employee only before
+  // it starts, and by HR (`LEAVE.APPLICATION_CANCEL_APPROVED`) at any time — with a reason once
+  // it has started. Managers never cancel approved leave.
+  const canCancelApproved = can("LEAVE.APPLICATION_CANCEL_APPROVED");
+  const hasStarted = application ? businessToday(tz) >= application.start_date : false;
   const canCancel =
-    (application?.status === "SUBMITTED" || application?.status === "APPROVED") &&
-    application?.submitted_by_user_id === user?.id;
+    application?.status === "SUBMITTED"
+      ? application.submitted_by_user_id === user?.id || isOwnApplication
+      : application?.status === "APPROVED"
+        ? canCancelApproved || (isOwnApplication && !hasStarted)
+        : false;
+  const cancelReasonRequired = application?.status === "APPROVED" && hasStarted;
 
   return (
     <div className="space-y-6">
@@ -184,6 +198,9 @@ export default function LeaveApplicationDetailPage() {
               <h2 className="mb-4 text-sm font-medium text-foreground">Application</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <Field label="Total days" value={application.total_days} />
+                {Number(application.lop_days) > 0 ? (
+                  <Field label="Loss of pay days" value={application.lop_days} />
+                ) : null}
                 <Field label="Reason" value={application.reason ?? "—"} />
                 <Field label="Attachment reference" value={application.attachment_reference ?? "—"} />
                 <Field label="Approval chain" value={application.approval_chain} />
@@ -204,6 +221,7 @@ export default function LeaveApplicationDetailPage() {
                       <th className="px-3 py-2 text-right font-medium">Fraction</th>
                       <th className="px-3 py-2 text-left font-medium">Half</th>
                       <th className="px-3 py-2 text-left font-medium">Sandwich rule</th>
+                      <th className="px-3 py-2 text-left font-medium">Pay</th>
                       <th className="px-3 py-2 text-left font-medium">Attendance projection</th>
                     </tr>
                   </thead>
@@ -214,6 +232,7 @@ export default function LeaveApplicationDetailPage() {
                         <td className="px-3 py-2 text-right">{day.fraction}</td>
                         <td className="px-3 py-2">{day.half ?? "—"}</td>
                         <td className="px-3 py-2">{day.is_sandwich_generated ? "Yes" : "—"}</td>
+                        <td className="px-3 py-2">{day.is_lop ? "Loss of pay" : "Leave balance"}</td>
                         <td className="px-3 py-2">
                           {day.leave_day_projection_id ? (
                             <a
@@ -242,6 +261,9 @@ export default function LeaveApplicationDetailPage() {
                 <Field label="Reviewer comment" value={application.reviewer_comment ?? "—"} />
                 <Field label="Rejection reason" value={application.rejection_reason ?? "—"} />
                 <Field label="Cancelled at" value={formatDateTime(application.cancelled_at, tz)} />
+                {application.cancellation_reason ? (
+                  <Field label="Cancellation reason" value={application.cancellation_reason} />
+                ) : null}
               </dl>
             </CardContent>
           </Card>
@@ -289,11 +311,28 @@ export default function LeaveApplicationDetailPage() {
                 : "This withdraws the application before it's reviewed. It cannot be undone."}
             </DialogDescription>
           </DialogHeader>
+          <FormField
+            id="leave-cancel-reason"
+            label="Reason"
+            required={cancelReasonRequired}
+            description={
+              cancelReasonRequired
+                ? "Required — this leave has already started."
+                : "Optional, recorded on the application."
+            }
+          >
+            <Input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} maxLength={2000} />
+          </FormField>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setCancelOpen(false)} disabled={cancelling}>
               Keep application
             </Button>
-            <Button type="button" variant="destructive" onClick={() => void handleCancel()} disabled={cancelling}>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleCancel()}
+              disabled={cancelling || (cancelReasonRequired && !cancelReason.trim())}
+            >
               {cancelling ? "Cancelling…" : "Cancel application"}
             </Button>
           </DialogFooter>

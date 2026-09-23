@@ -188,6 +188,10 @@ from hrms.shared.timezone import resolve_zoneinfo
 
 _logger = get_logger(__name__)
 
+# Decision 13 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — comp-off lifetime when the overtime
+# policy leaves `comp_off_expiry_days` unset.
+DEFAULT_COMP_OFF_EXPIRY_DAYS = 60
+
 
 def _validate_bands(bands: list[Any], *, required: bool, field: str) -> None:
     """Ordered, non-overlapping (architecture §11.1) — validated here at publish time, not a DB
@@ -1923,6 +1927,18 @@ class AttendanceService:
         workstream (§12.4), not absorbed here. Only `ShiftVersion` publish gets this check,
         because it is the one the Phase 2/3 timezone work already touches in the same file."""
         await _ensure_date_open(self._session, company_id, target_date)
+
+    async def closed_period_overlapping(
+        self, company_id: UUID, date_from: date, date_to: date
+    ) -> tuple[date, date] | None:
+        """PD-3 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — the cross-module seam Leave uses
+        to refuse apply/approve/cancel on dates inside a closed period: closing the attendance
+        period locks leave for those dates too. Returns the first `CLOSED` period's bounds, or
+        `None` when the whole range is open. Company grain, like `AttendancePeriod` itself today."""
+        period = await AttendancePeriodRepository().get_first_closed_overlapping(
+            self._session, company_id=company_id, date_from=date_from, date_to=date_to
+        )
+        return (period.period_start, period.period_end) if period is not None else None
 
 
 async def _resolve_visible_employee_ids(
@@ -3721,8 +3737,14 @@ class AttendanceDayService:
         # the day row's payroll-facing summary is gated on the decision (see `calculate()`).
         comp_off_minutes = result.comp_off_minutes_earned
         comp_off_expiry_date: date | None = None
-        if comp_off_minutes > 0 and ot_version.comp_off_expiry_days is not None:
-            comp_off_expiry_date = target_date + timedelta(days=ot_version.comp_off_expiry_days)
+        if comp_off_minutes > 0:
+            # Decision 13 — comp-off expires after 60 days unless the policy says otherwise.
+            expiry_days = (
+                ot_version.comp_off_expiry_days
+                if ot_version.comp_off_expiry_days is not None
+                else DEFAULT_COMP_OFF_EXPIRY_DAYS
+            )
+            comp_off_expiry_date = target_date + timedelta(days=expiry_days)
 
         configured_multiplier = next(
             (r.multiplier_decimal for r in ot_rate_rows if r.day_class == result.ot_day_class),

@@ -24,7 +24,7 @@ from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.errors.base import PermissionDeniedError, ValidationError
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
-from hrms.core.rbac.types import DataScope
+from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
@@ -39,6 +39,7 @@ from hrms.modules.leave.dependencies import (
 )
 from hrms.modules.leave.permissions import (
     LEAVE_APPLICATION_APPROVE,
+    LEAVE_APPLICATION_CANCEL_APPROVED,
     LEAVE_APPLICATION_SUBMIT,
     LEAVE_APPLICATION_SUBMIT_ON_BEHALF,
     LEAVE_BALANCE_ADJUST,
@@ -51,6 +52,7 @@ from hrms.modules.leave.permissions import (
     LEAVE_YEAR_SETTING_MANAGE,
 )
 from hrms.modules.leave.schemas import (
+    LeaveApplicationCancelInput,
     LeaveApplicationCreate,
     LeaveApplicationRead,
     LeaveApplicationReviewInput,
@@ -651,18 +653,25 @@ async def cancel_leave_application(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     rbac: Annotated[RbacService, Depends(get_rbac_service)],
     service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+    body: LeaveApplicationCancelInput | None = None,
 ) -> DataEnvelope[LeaveApplicationRead]:
-    """Only the original submitter may cancel (enforced in the service), whether the
-    application is still `SUBMITTED` or already `APPROVED` (LD-13). This route accepts either
-    submission permission since a cancel is available to whichever kind of submitter created
-    the application — mirrors `cancel_regularization_request`'s combined-scope shape exactly."""
+    """Who may cancel is decided in the service (decision 10): the submitter or the employee
+    while `SUBMITTED`; the employee before an approved leave starts; after that only a
+    company-scoped `LEAVE.APPLICATION_CANCEL_APPROVED` holder, with a reason. This route accepts
+    either submission permission or that HR permission — mirrors
+    `cancel_regularization_request`'s combined-scope shape."""
     self_scope = await rbac.resolve_data_scope(
         user.user_id, user.company_id, LEAVE_APPLICATION_SUBMIT
     )
     on_behalf_scope = await rbac.resolve_data_scope(
         user.user_id, user.company_id, LEAVE_APPLICATION_SUBMIT_ON_BEHALF
     )
-    combined_scope = DataScope(levels=self_scope.levels | on_behalf_scope.levels)
+    cancel_approved_scope = await rbac.resolve_data_scope(
+        user.user_id, user.company_id, LEAVE_APPLICATION_CANCEL_APPROVED
+    )
+    combined_scope = DataScope(
+        levels=self_scope.levels | on_behalf_scope.levels | cancel_approved_scope.levels
+    )
     if not combined_scope.levels:
         raise PermissionDeniedError(
             f"Permission {LEAVE_APPLICATION_SUBMIT} is required", code="PERMISSION_DENIED"
@@ -675,6 +684,8 @@ async def cancel_leave_application(
         caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         expected_version=int(if_match),
+        reason=body.reason if body else None,
+        can_cancel_approved=DataScopeLevel.COMPANY in cancel_approved_scope.levels,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )

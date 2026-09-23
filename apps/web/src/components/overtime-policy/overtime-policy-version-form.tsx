@@ -178,9 +178,14 @@ export function OvertimePolicyVersionForm({
               onChange={(v) => update("compOffInsteadOfPay", v)}
             />
           </div>
-          <FormField id="ot-comp-off-expiry" label="Comp-off expiry (days)">
+          <FormField
+            id="ot-comp-off-expiry"
+            label="Comp-off expiry (days)"
+            description="Leave blank for the default of 60 days."
+          >
             <Input
               type="number"
+              placeholder="60"
               value={values.compOffExpiryDays}
               onChange={(e) => update("compOffExpiryDays", e.target.value)}
             />
@@ -188,7 +193,7 @@ export function OvertimePolicyVersionForm({
           <FormField
             id="ot-comp-off-day-length"
             label="Comp-off day length (minutes)"
-            description="Minutes of comp-off that equal one full day on the leave balance, e.g. 480 for an 8-hour day. Leave blank to skip crediting until set."
+            description="Minutes of comp-off that equal one full day on the leave balance, e.g. 480 for an 8-hour day. Leave blank to use the employee's scheduled shift length that day."
           >
             <Input
               type="number"

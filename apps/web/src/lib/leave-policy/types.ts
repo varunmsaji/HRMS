@@ -12,6 +12,15 @@ export type ApprovalChain = (typeof APPROVAL_CHAINS)[number];
 export const ACCRUAL_FREQUENCIES = ["NONE", "MONTHLY", "YEARLY"] as const;
 export type AccrualFrequency = (typeof ACCRUAL_FREQUENCIES)[number];
 
+/** Decision 11 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — balance handling at leave-year start. */
+export const YEAR_END_ACTIONS = ["CARRY_FORWARD", "LAPSE", "ENCASH_EXCESS"] as const;
+export type YearEndAction = (typeof YEAR_END_ACTIONS)[number];
+export const YEAR_END_ACTION_LABELS: Record<YearEndAction, string> = {
+  CARRY_FORWARD: "Carry forward up to the cap, the rest lapses",
+  LAPSE: "Lapse — the whole balance is forfeited",
+  ENCASH_EXCESS: "Carry forward up to the cap, encash the rest",
+};
+
 export interface LeavePolicy {
   id: string;
   company_id: string;
@@ -48,6 +57,9 @@ export interface LeavePolicyVersion {
   max_carry_forward_days: string | null;
   encashment_allowed: boolean;
   allow_negative_balance: boolean;
+  /** PAY-011 — days below zero allowed when `allow_negative_balance` is on. */
+  negative_balance_floor: string | null;
+  year_end_action: YearEndAction;
   sandwich_rule_enabled: boolean;
   reserve_balance_on_submission: boolean;
   pre_delivery_days: number | null;

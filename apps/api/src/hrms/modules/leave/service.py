@@ -22,7 +22,9 @@ from hrms.modules.leave.approval_chain import effective_stage_sequence, next_app
 from hrms.modules.leave.exceptions import (
     LeaveApplicationApproverMismatchError,
     LeaveApplicationAttachmentRequiredError,
+    LeaveApplicationBalanceShortfallError,
     LeaveApplicationCalendarNotResolvedError,
+    LeaveApplicationCancelReasonRequiredError,
     LeaveApplicationCombinationNotAllowedError,
     LeaveApplicationDateRangeInvalidError,
     LeaveApplicationHalfDayNotAllowedError,
@@ -32,6 +34,7 @@ from hrms.modules.leave.exceptions import (
     LeaveApplicationNotAllowedDuringProbationError,
     LeaveApplicationNotFoundError,
     LeaveApplicationNotPermittedError,
+    LeaveApplicationPeriodClosedError,
     LeaveApplicationPolicyNotResolvedError,
     LeaveApplicationReasonRequiredError,
     LeaveApplicationSelfApprovalNotAllowedError,
@@ -110,6 +113,7 @@ from hrms.modules.leave.schemas import (
     statutory_leave_minimum_to_read,
 )
 from hrms.modules.leave.year import LeaveYearSettingData, is_leave_year_start
+from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
 
 if TYPE_CHECKING:
@@ -540,6 +544,36 @@ class StatutoryLeaveMinimumService:
         )
 
 
+def _negative_floor(policy_version: Any) -> Decimal:
+    """PAY-011 (decision 8) — how many days below zero this policy lets the balance go: its
+    `negative_balance_floor` when `allow_negative_balance` is on, else 0 (NULL reads as 0)."""
+    if policy_version is None or not policy_version.allow_negative_balance:
+        return Decimal("0.00")
+    return policy_version.negative_balance_floor or Decimal("0.00")
+
+
+def _year_end_split(version: Any, balance: Decimal) -> tuple[Decimal, Decimal]:
+    """Decision 11 — `(lapse, encash)` days out of the balance at leave-year start.
+    `LAPSE` forfeits the whole positive balance. `CARRY_FORWARD` keeps up to
+    `max_carry_forward_days` (no cap: keeps everything) and forfeits the rest. `ENCASH_EXCESS`
+    keeps up to the cap and encashes the rest, at most `max_encashment_days` when set — anything
+    above that still lapses. A negative balance is never touched (recovered in F&F, decision 8)."""
+    zero = Decimal("0.00")
+    if balance <= 0:
+        return zero, zero
+    if version.year_end_action == "LAPSE":
+        return balance, zero
+    if version.max_carry_forward_days is None:
+        return zero, zero
+    excess = max(balance - version.max_carry_forward_days, zero)
+    if version.year_end_action != "ENCASH_EXCESS":
+        return excess, zero
+    encash = excess
+    if version.max_encashment_days is not None:
+        encash = min(excess, version.max_encashment_days)
+    return excess - encash, encash
+
+
 def _annual_entitlement_days(
     accrual_frequency: str, accrual_rate_per_cycle: Decimal | None
 ) -> Decimal:
@@ -737,6 +771,8 @@ class LeavePolicyService:
                 "max_carry_forward_days": body.max_carry_forward_days,
                 "encashment_allowed": body.encashment_allowed,
                 "allow_negative_balance": body.allow_negative_balance,
+                "negative_balance_floor": body.negative_balance_floor,
+                "year_end_action": body.year_end_action,
                 "sandwich_rule_enabled": body.sandwich_rule_enabled,
                 "reserve_balance_on_submission": body.reserve_balance_on_submission,
                 "pre_delivery_days": body.pre_delivery_days,
@@ -956,6 +992,17 @@ class LeavePolicyService:
             raise LeavePolicyVersionNotDraftError()
         if draft.effective_from is None:
             raise LeavePolicyPublishIncompleteError("effective_from is required to publish")
+        # PAY-011 (decision 8) — negative balance is opt-in per leave type, and always bounded.
+        if draft.allow_negative_balance and not draft.negative_balance_floor:
+            raise LeavePolicyPublishIncompleteError(
+                "negative_balance_floor (days below zero allowed) is required when "
+                "allow_negative_balance is on"
+            )
+        # Decision 11 — "encash the excess" needs a cap to measure the excess against.
+        if draft.year_end_action == "ENCASH_EXCESS" and draft.max_carry_forward_days is None:
+            raise LeavePolicyPublishIncompleteError(
+                "max_carry_forward_days is required when year_end_action is ENCASH_EXCESS"
+            )
         await self._enforce_statutory_minimum(company_id, draft)
 
         before_read = leave_policy_version_to_read(draft)
@@ -1430,7 +1477,7 @@ class LeaveAccrualService:
                 if amount <= 0:
                     continue
 
-                await self._ledger_repo.insert(
+                if await self._ledger_repo.insert_if_absent(
                     self._session,
                     data={
                         "id": uuid4(),
@@ -1444,18 +1491,19 @@ class LeaveAccrualService:
                         "reason": f"Monthly accrual for {period_start:%B %Y}",
                         "created_by_user_id": None,
                     },
-                )
-                written += 1
+                ):
+                    written += 1
         return written
 
     async def run_year_end_for_company(self, company_id: UUID, *, as_of: date) -> int:
         """LD-21 — for every employee whose employment span covers `as_of` and for whom `as_of`
         is their leave-year start date (per the company's `LeaveYearSetting`, LD-20 — the same
         date for everyone under `CALENDAR`/`FINANCIAL`/`CUSTOM`, each employee's own
-        `Employment.joining_date` anniversary under `ANNIVERSARY`): enforces the carry-forward
-        cap against the balance as it stood at day-start, then credits `YEARLY` accrual — both
-        per leave type, both idempotent (`exists_for_cycle`, keyed on `as_of` as the cycle date,
-        same mechanism `run_for_company` already uses for monthly cycles)."""
+        `Employment.joining_date` anniversary under `ANNIVERSARY`): applies the policy's
+        year-end rule (decision 11, `_year_end_split`: lapse / carry-forward cap / encash the
+        excess) against the balance as it stood at day-start, then credits `YEARLY` accrual —
+        all per leave type, all idempotent (`exists_for_cycle` plus the DAT-001 unique indexes,
+        keyed on `as_of` as the cycle date)."""
         setting_read = await self._year_setting_service.get_effective(company_id)
         setting = LeaveYearSettingData(
             leave_year_type=setting_read.leave_year_type,
@@ -1515,38 +1563,66 @@ class LeaveAccrualService:
                 if version is None:
                     continue
 
-                if version.max_carry_forward_days is not None:
-                    current_balance = balance_by_type.get(leave_type.id, Decimal("0.00"))
-                    excess = current_balance - version.max_carry_forward_days
-                    if excess > 0:
-                        already_forfeited = await self._ledger_repo.exists_for_cycle(
-                            self._session,
-                            company_id=company_id,
-                            employee_id=employee_id,
-                            leave_type_id=leave_type.id,
-                            entry_type="CARRY_FORWARD",
-                            effective_date=as_of,
-                        )
-                        if not already_forfeited:
-                            await self._ledger_repo.insert(
-                                self._session,
-                                data={
-                                    "id": uuid4(),
-                                    "company_id": company_id,
-                                    "employee_id": employee_id,
-                                    "leave_type_id": leave_type.id,
-                                    "entry_type": "CARRY_FORWARD",
-                                    "amount": -excess,
-                                    "effective_date": as_of,
-                                    "reference_id": version.id,
-                                    "reason": (
-                                        f"Carry-forward cap ({version.max_carry_forward_days} "
-                                        f"days) exceeded at leave year start {as_of}"
-                                    ),
-                                    "created_by_user_id": None,
-                                },
+                lapse, encash = _year_end_split(
+                    version, balance_by_type.get(leave_type.id, Decimal("0.00"))
+                )
+                if lapse > 0:
+                    already_forfeited = await self._ledger_repo.exists_for_cycle(
+                        self._session,
+                        company_id=company_id,
+                        employee_id=employee_id,
+                        leave_type_id=leave_type.id,
+                        entry_type="CARRY_FORWARD",
+                        effective_date=as_of,
+                    )
+                    if not already_forfeited:
+                        reason = (
+                            f"Balance lapsed at leave year start {as_of}"
+                            if version.year_end_action == "LAPSE"
+                            else (
+                                f"Carry-forward cap ({version.max_carry_forward_days} "
+                                f"days) exceeded at leave year start {as_of}"
                             )
+                        )
+                        if await self._ledger_repo.insert_if_absent(
+                            self._session,
+                            data={
+                                "id": uuid4(),
+                                "company_id": company_id,
+                                "employee_id": employee_id,
+                                "leave_type_id": leave_type.id,
+                                "entry_type": "CARRY_FORWARD",
+                                "amount": -lapse,
+                                "effective_date": as_of,
+                                "reference_id": version.id,
+                                "reason": reason,
+                                "created_by_user_id": None,
+                            },
+                        ):
                             written += 1
+                # Decision 11 — idempotent through `uq_leave_ledger_year_end_encashment`; payroll
+                # pays every system-written (`reference_id` set) ENCASHMENT entry.
+                if encash > 0:
+                    if await self._ledger_repo.insert_if_absent(
+                        self._session,
+                        data={
+                            "id": uuid4(),
+                            "company_id": company_id,
+                            "employee_id": employee_id,
+                            "leave_type_id": leave_type.id,
+                            "entry_type": "ENCASHMENT",
+                            "amount": -encash,
+                            "effective_date": as_of,
+                            "reference_id": version.id,
+                            "reason": (
+                                f"Encashed above the carry-forward cap "
+                                f"({version.max_carry_forward_days} days) at leave year start "
+                                f"{as_of}"
+                            ),
+                            "created_by_user_id": None,
+                        },
+                    ):
+                        written += 1
 
                 if (
                     version.accrual_frequency == "YEARLY"
@@ -1562,7 +1638,7 @@ class LeaveAccrualService:
                         effective_date=as_of,
                     )
                     if not already_accrued:
-                        await self._ledger_repo.insert(
+                        if await self._ledger_repo.insert_if_absent(
                             self._session,
                             data={
                                 "id": uuid4(),
@@ -1576,8 +1652,8 @@ class LeaveAccrualService:
                                 "reason": f"Yearly accrual for leave year starting {as_of}",
                                 "created_by_user_id": None,
                             },
-                        )
-                        written += 1
+                        ):
+                            written += 1
         return written
 
 
@@ -1634,7 +1710,7 @@ class LeaveCompOffService:
             if amount <= 0:
                 continue
 
-            await self._ledger_repo.insert(
+            if await self._ledger_repo.insert_if_absent(
                 self._session,
                 data={
                     "id": uuid4(),
@@ -1648,8 +1724,8 @@ class LeaveCompOffService:
                     "reason": f"Comp-off earned for {fact.attendance_date:%d %b %Y}",
                     "created_by_user_id": None,
                 },
-            )
-            written += 1
+            ):
+                written += 1
         return written
 
     async def expire_company(self, company_id: UUID, *, as_of: date) -> int:
@@ -1661,7 +1737,13 @@ class LeaveCompOffService:
         original amount — but only if the employee's *current* comp-off balance still covers
         it. If the balance has already fallen below the credit's amount (some of it was spent
         since), nothing is expired for that credit — this never drives a balance negative, at
-        the cost of being generous in the edge case where a newer credit was drawn down first."""
+        the cost of being generous in the edge case where a newer credit was drawn down first.
+
+        Each credit's check-then-offset runs under the employee's comp-off balance lock (the
+        one leave approval takes, PAY-010), so a concurrent sweep waits and then sees this
+        one's offset instead of expiring the same credit twice, and an approval spending the
+        balance can't slip between the balance check and the offset. Credits come back ordered
+        by employee, so two sweeps take the locks in the same order."""
         comp_off_type = await self._type_repo.get_comp_off_type(
             self._session, company_id=company_id
         )
@@ -1685,6 +1767,12 @@ class LeaveCompOffService:
             expiry_date = fact.comp_off_expiry_date if fact else None
             if expiry_date is None or expiry_date > as_of:
                 continue
+            await self._ledger_repo.lock_balance(
+                self._session,
+                company_id=company_id,
+                employee_id=credit.employee_id,
+                leave_type_id=comp_off_type.id,
+            )
             already_expired = await self._ledger_repo.exists_with_reference(
                 self._session,
                 company_id=company_id,
@@ -1694,12 +1782,11 @@ class LeaveCompOffService:
             if already_expired:
                 continue
 
-            balances = await self._ledger_repo.get_balances(
-                self._session, company_id=company_id, employee_id=credit.employee_id
-            )
-            current_balance = next(
-                (b.balance for b in balances if b.leave_type_id == comp_off_type.id),
-                Decimal("0.00"),
+            current_balance = await self._ledger_repo.get_balance(
+                self._session,
+                company_id=company_id,
+                employee_id=credit.employee_id,
+                leave_type_id=comp_off_type.id,
             )
             if current_balance < credit.amount:
                 continue
@@ -1944,6 +2031,7 @@ class LeaveApplicationService:
         )
         if leave_type is None:
             raise NotFoundError("Resource not found")
+        await self._ensure_period_open(company_id, body.start_date, body.end_date)
 
         # LD-16: reject if another leave type this employee already has an active (SUBMITTED or
         # APPROVED) application for, overlapping this date range, has an explicit
@@ -2060,8 +2148,9 @@ class LeaveApplicationService:
                     leave_type_id=leave_type.id,
                 )
                 current_balance -= reserved
-            # LD-06: never negative — hard-capped at current balance, no exceptions.
-            if current_balance < total_days:
+            # LD-06 / PAY-011 (decision 8): never below the policy's negative floor — 0 unless
+            # the policy opts in with `allow_negative_balance` + `negative_balance_floor`.
+            if current_balance + _negative_floor(policy_version) < total_days:
                 raise LeaveApplicationInsufficientBalanceError()
 
         approval_chain = policy_version.approval_chain
@@ -2264,6 +2353,7 @@ class LeaveApplicationService:
         row = await self._get_reviewable(
             company_id, application_id, scope=scope, caller_employee_id=caller_employee_id
         )
+        await self._ensure_period_open(company_id, row.start_date, row.end_date)
         return await self._approve_internal(
             company_id,
             row,
@@ -2271,6 +2361,7 @@ class LeaveApplicationService:
             actor_employee_id=caller_employee_id,
             reviewer_comment=body.reviewer_comment,
             expected_version=expected_version,
+            excess_as_lop=body.excess_as_lop,
             ip_address=ip_address,
             user_agent=user_agent,
         )
@@ -2345,6 +2436,7 @@ class LeaveApplicationService:
         expected_version: int,
         ip_address: str | None,
         user_agent: str | None,
+        excess_as_lop: bool = False,
     ) -> LeaveApplicationRead:
         now = datetime.now(UTC)
         # LD-23: generalizes the old hardcoded "MANAGER_THEN_HR + at MANAGER stage -> not final"
@@ -2435,9 +2527,52 @@ class LeaveApplicationService:
             company_id,
             updated,
             actor_user_id=actor_user_id,
+            excess_as_lop=excess_as_lop,
             ip_address=ip_address,
             user_agent=user_agent,
         )
+
+    async def _cover_from_balance(
+        self, company_id: UUID, row: Any, days: list[Any], *, excess_as_lop: bool
+    ) -> list[Any]:
+        """PAY-010 / decision 9 — re-checks the balance at final approval, under a lock held
+        until this transaction commits, so two approvals can never both spend the same balance.
+        Returns the days that cannot be covered (empty when the balance suffices). Uncovered
+        days are the *latest* ones, whole days only: a day the remaining balance only partly
+        covers is LOP in full and the partial balance stays unused."""
+        await self._ledger_repo.lock_balance(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            leave_type_id=row.leave_type_id,
+        )
+        balance = await self._ledger_repo.get_balance(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            leave_type_id=row.leave_type_id,
+        )
+        policy_version = await self._policy_repo.get_version_by_id(
+            self._session, company_id=company_id, version_id=row.leave_policy_version_id
+        )
+        available = balance + _negative_floor(policy_version)
+        if row.total_days <= available:
+            return []
+        if not excess_as_lop:
+            raise LeaveApplicationBalanceShortfallError(
+                balance=balance,
+                available=available,
+                requested=row.total_days,
+                shortfall=row.total_days - max(available, Decimal("0.00")),
+            )
+        remaining = max(available, Decimal("0.00"))
+        uncovered: list[Any] = []
+        for day in days:
+            if not uncovered and day.fraction <= remaining:
+                remaining -= day.fraction
+            else:
+                uncovered.append(day)
+        return uncovered
 
     async def _apply_approval(
         self,
@@ -2447,6 +2582,7 @@ class LeaveApplicationService:
         actor_user_id: UUID | None,
         ip_address: str | None,
         user_agent: str | None,
+        excess_as_lop: bool = False,
     ) -> LeaveApplicationRead:
         """LD-12: runs inside the same transaction as the approval write that preceded it — if
         `LeaveProjectionService.sync()` refuses any single day (its attendance period is
@@ -2469,6 +2605,32 @@ class LeaveApplicationService:
         days = await self._day_repo.list_for_application(
             self._session, company_id=company_id, leave_application_id=row.id
         )
+        lop_day_ids: set[UUID] = set()
+        if leave_type is not None and leave_type.requires_balance:
+            uncovered = await self._cover_from_balance(
+                company_id, row, days, excess_as_lop=excess_as_lop
+            )
+            if uncovered:
+                lop_day_ids = {day.id for day in uncovered}
+                lop_days = sum((day.fraction for day in uncovered), Decimal("0.00"))
+                now = datetime.now(UTC)
+                await self._day_repo.mark_lop(
+                    self._session, company_id=company_id, day_ids=list(lop_day_ids), now=now
+                )
+                # Same version-free follow-up posture as `set_projection_id`: this transaction
+                # already owns the row (it just wrote `status='APPROVED'` under `If-Match`).
+                row = await self._repo.set_lop_days(
+                    self._session, company_id=company_id, application_id=row.id, lop_days=lop_days
+                )
+                await self._record_action(
+                    company_id=company_id,
+                    leave_application_id=row.id,
+                    action="EXCESS_AS_LOP",
+                    actor_user_id=actor_user_id,
+                    actor_employee_id=None,
+                    stage=None,
+                    comment=f"{lop_days} day(s) approved as loss of pay (balance shortfall)",
+                )
         # LEAVE.APPLICATION_APPROVE already gated this action — this cross-module call is not
         # re-deriving Attendance's own RBAC, just satisfying `sync()`'s required scope param
         # (mirrors L2's `create_adjustment` "the permission grant itself is the gate" posture).
@@ -2486,7 +2648,10 @@ class LeaveApplicationService:
                     leave_type_code=leave_type.code if leave_type is not None else None,
                     fraction=str(day.fraction),
                     half=half_to_projection_half.get(day.half) if day.half else None,
-                    is_paid=leave_type.is_paid_default if leave_type is not None else True,
+                    is_paid=(
+                        (leave_type.is_paid_default if leave_type is not None else True)
+                        and day.id not in lop_day_ids
+                    ),
                 ),
                 scope=full_scope,
                 caller_employee_id=None,
@@ -2502,8 +2667,13 @@ class LeaveApplicationService:
                 now=datetime.now(UTC),
             )
 
-        # The actual balance deduction — skipped entirely for a LOP-style type (LD-02).
-        if leave_type is not None and leave_type.requires_balance:
+        # The actual balance deduction — skipped entirely for a LOP-style type (LD-02), and
+        # never for days approved as LOP (PAY-010).
+        if (
+            leave_type is not None
+            and leave_type.requires_balance
+            and row.total_days - row.lop_days > 0
+        ):
             await self._ledger_repo.insert(
                 self._session,
                 data={
@@ -2512,7 +2682,7 @@ class LeaveApplicationService:
                     "employee_id": row.employee_id,
                     "leave_type_id": row.leave_type_id,
                     "entry_type": "APPLICATION",
-                    "amount": -row.total_days,
+                    "amount": -(row.total_days - row.lop_days),
                     "effective_date": row.start_date,
                     "reference_id": row.id,
                     "reason": f"Leave application {row.start_date} to {row.end_date}",
@@ -2535,13 +2705,18 @@ class LeaveApplicationService:
         caller_employee_id: UUID | None,
         actor_user_id: UUID | None,
         expected_version: int,
+        reason: str | None = None,
+        can_cancel_approved: bool = False,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> LeaveApplicationRead:
         """`SUBMITTED` (pre-approval) mirrors `AttendanceRegularizationRequestService.cancel`
-        exactly — only the original submitter, no side effects. `APPROVED` (post-approval) is
-        new territory (LD-13, no Regularization precedent): same submitter-only rule, but also
-        reverses the ledger debit and every synced `LeaveDayProjection`."""
+        — the original submitter (or the employee it is for) withdraws it, no side effects.
+        `APPROVED` (LD-13) also reverses the ledger debit and every synced `LeaveDayProjection`,
+        and follows decision 10 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`): the employee may
+        cancel their own approved leave only before it starts; after that only a holder of
+        `LEAVE.APPLICATION_CANCEL_APPROVED` (company scope, HR) may, with a mandatory reason.
+        Managers never cancel approved leave."""
         row = await self._repo.get(
             self._session, company_id=company_id, application_id=application_id
         )
@@ -2550,10 +2725,27 @@ class LeaveApplicationService:
         await self._ensure_employee_visible(
             company_id, row.employee_id, scope=scope, caller_employee_id=caller_employee_id
         )
-        if row.submitted_by_user_id != actor_user_id:
-            raise PermissionDeniedError("Only the original submitter may cancel this application")
         if row.status not in ("SUBMITTED", "APPROVED"):
             raise LeaveApplicationInvalidTransitionError()
+        reason = reason.strip() if reason and reason.strip() else None
+        is_own = caller_employee_id is not None and caller_employee_id == row.employee_id
+        if row.status == "SUBMITTED":
+            if row.submitted_by_user_id != actor_user_id and not is_own:
+                raise PermissionDeniedError(
+                    "Only the submitter or the employee may withdraw this application"
+                )
+        else:
+            started = await self._business_today(company_id) >= row.start_date
+            if can_cancel_approved:
+                if started and reason is None:
+                    raise LeaveApplicationCancelReasonRequiredError()
+            elif not is_own:
+                raise PermissionDeniedError("Only HR may cancel another employee's approved leave")
+            elif started:
+                raise PermissionDeniedError("This leave has already started — ask HR to cancel it")
+            # PD-3 — withdrawing a still-pending application is always allowed (it never
+            # touched attendance); reversing an approved one inside a closed period is not.
+            await self._ensure_period_open(company_id, row.start_date, row.end_date)
 
         was_approved = row.status == "APPROVED"
         now = datetime.now(UTC)
@@ -2566,6 +2758,7 @@ class LeaveApplicationService:
                 "approval_stage": None,
                 "cancelled_at": now,
                 "cancelled_by_user_id": actor_user_id,
+                "cancellation_reason": reason,
             },
             expected_version=expected_version,
             now=now,
@@ -2580,7 +2773,7 @@ class LeaveApplicationService:
             actor_user_id=actor_user_id,
             actor_employee_id=caller_employee_id,
             stage=None,
-            comment=None,
+            comment=reason,
         )
 
         if was_approved:
@@ -2607,6 +2800,24 @@ class LeaveApplicationService:
         )
         return read
 
+    async def _ensure_period_open(self, company_id: UUID, start_date: date, end_date: date) -> None:
+        """PD-3 — closing the attendance period locks leave for its dates. Checked up front so
+        the caller gets a leave-specific error rather than `LeaveProjectionService`'s
+        per-day `ATTENDANCE_PERIOD_CLOSED` halfway through the write."""
+        from hrms.modules.attendance.service import AttendanceService
+
+        closed = await AttendanceService(self._session).closed_period_overlapping(
+            company_id, start_date, end_date
+        )
+        if closed is not None:
+            raise LeaveApplicationPeriodClosedError(period_start=closed[0], period_end=closed[1])
+
+    async def _business_today(self, company_id: UUID) -> date:
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        return business_today(company.timezone)
+
     async def _reverse_approval(
         self,
         company_id: UUID,
@@ -2625,7 +2836,9 @@ class LeaveApplicationService:
         leave_type = await self._type_repo.get(
             self._session, company_id=company_id, leave_type_id=row.leave_type_id
         )
-        if leave_type is not None and leave_type.requires_balance:
+        # Credits back exactly what `_apply_approval` debited — never the LOP days (PAY-010).
+        debited = row.total_days - row.lop_days
+        if leave_type is not None and leave_type.requires_balance and debited > 0:
             await self._ledger_repo.insert(
                 self._session,
                 data={
@@ -2634,7 +2847,7 @@ class LeaveApplicationService:
                     "employee_id": row.employee_id,
                     "leave_type_id": row.leave_type_id,
                     "entry_type": "ADJUSTMENT",
-                    "amount": row.total_days,
+                    "amount": debited,
                     "effective_date": date.today(),
                     "reference_id": row.id,
                     "reason": "Reversal: leave application cancelled after approval",

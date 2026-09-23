@@ -6,6 +6,8 @@ shared *pattern* instead of a cross-module import) applies here too: Leave shoul
 independent, deletable module, not one that reaches into Attendance's exception classes for a
 concept that happens to be shaped the same way."""
 
+from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from hrms.core.errors.base import (
@@ -297,6 +299,80 @@ class LeaveApplicationInsufficientBalanceError(ValidationError):
     def __init__(self, message: str = "Insufficient leave balance for this request") -> None:
         super().__init__(
             message, details=[{"field": "total_days", "code": self.code, "message": message}]
+        )
+
+
+class LeaveApplicationBalanceShortfallError(ConflictError):
+    """PAY-010 (decision 9) — at final approval the balance (plus any allowed negative floor) no
+    longer covers the application, e.g. another application was approved since it was
+    submitted. The approver must reject, or approve again with `excess_as_lop` so the uncovered
+    days become unpaid leave. Never silently negative."""
+
+    code = "LEAVE_APPLICATION_BALANCE_SHORTFALL"
+
+    def __init__(
+        self, *, balance: Decimal, available: Decimal, requested: Decimal, shortfall: Decimal
+    ) -> None:
+        message = (
+            f"Leave balance covers {max(available, Decimal('0.00'))} of the {requested} days "
+            f"requested ({shortfall} short). Reject, or approve with the excess as loss of pay."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "total_days",
+                    "code": self.code,
+                    "message": message,
+                    "context": {
+                        "balance": str(balance),
+                        "available": str(available),
+                        "requested": str(requested),
+                        "shortfall": str(shortfall),
+                    },
+                }
+            ],
+        )
+
+
+class LeaveApplicationPeriodClosedError(ConflictError):
+    """PD-3 — the application covers a date inside a `CLOSED` attendance period. Closing the
+    period locks leave for those dates too: no new application, approval, or cancellation of
+    approved leave there. Late corrections flow as arrears in the next payroll (decision 15)."""
+
+    code = "LEAVE_APPLICATION_PERIOD_CLOSED"
+
+    def __init__(self, *, period_start: date, period_end: date) -> None:
+        message = (
+            f"The attendance period {period_start} to {period_end} is closed — leave on these "
+            "dates can no longer be applied for, approved, or cancelled"
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "start_date",
+                    "code": self.code,
+                    "message": message,
+                    "context": {
+                        "period_start": period_start.isoformat(),
+                        "period_end": period_end.isoformat(),
+                    },
+                }
+            ],
+        )
+
+
+class LeaveApplicationCancelReasonRequiredError(ValidationError):
+    """Decision 10 — cancelling approved leave that has already started needs a reason."""
+
+    code = "LEAVE_APPLICATION_CANCEL_REASON_REQUIRED"
+
+    def __init__(
+        self, message: str = "A reason is required to cancel leave that has already started"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "reason", "code": self.code, "message": message}]
         )
 
 

@@ -9,6 +9,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import CursorResult, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.leave.models import (
@@ -173,6 +174,17 @@ class LeavePolicyRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_version_by_id(
+        self, session: AsyncSession, *, company_id: UUID, version_id: UUID
+    ) -> LeavePolicyVersion | None:
+        """By id alone — a leave application snapshots `leave_policy_version_id`, not the policy.
+        Deliberately includes soft-deleted versions: the application stays bound to it."""
+        stmt = select(LeavePolicyVersion).where(
+            LeavePolicyVersion.id == version_id,
+            LeavePolicyVersion.company_id == company_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def get_open_draft(
         self, session: AsyncSession, *, company_id: UUID, policy_id: UUID
     ) -> LeavePolicyVersion | None:
@@ -303,6 +315,39 @@ class LeaveLedgerRepository:
         await session.flush()
         return row
 
+    async def insert_if_absent(self, session: AsyncSession, *, data: dict[str, Any]) -> bool:
+        """DAT-001 — for system-written entries guarded by a partial unique index (one
+        `ACCRUAL`/`CARRY_FORWARD` per cycle, one `COMP_OFF_CREDIT` per overtime record). A
+        concurrent duplicate run inserts nothing instead of double-crediting. Returns whether
+        this call wrote the row."""
+        stmt = (
+            pg_insert(LeaveLedgerEntry)
+            .values(**data)
+            .on_conflict_do_nothing()
+            .returning(LeaveLedgerEntry.id)
+        )
+        return (await session.execute(stmt)).first() is not None
+
+    async def lock_balance(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, leave_type_id: UUID
+    ) -> None:
+        """PAY-010 — serialises every check-then-debit on one employee's balance for one leave
+        type until the transaction ends. A transaction-scoped advisory lock, not `FOR UPDATE`:
+        the race is two transactions each *inserting* a debit, and row locks cannot block an
+        insert of a row neither has seen."""
+        key = f"leave-balance:{company_id}:{employee_id}:{leave_type_id}"
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
+
+    async def get_balance(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, leave_type_id: UUID
+    ) -> Decimal:
+        stmt = select(func.coalesce(func.sum(LeaveLedgerEntry.amount), 0)).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.employee_id == employee_id,
+            LeaveLedgerEntry.leave_type_id == leave_type_id,
+        )
+        return Decimal((await session.execute(stmt)).scalar_one())
+
     async def list_for_employee(
         self,
         session: AsyncSession,
@@ -395,11 +440,20 @@ class LeaveLedgerRepository:
         """All `COMP_OFF_CREDIT` entries for this leave type — the expiry sweep (LD-14)
         cross-references each one's `reference_id` (the source `overtime_record_id`) against
         Attendance's facts to find its expiry date, since `leave_ledger` itself has no
-        `expiry_date` column (LD-02's locked shape)."""
-        stmt = select(LeaveLedgerEntry).where(
-            LeaveLedgerEntry.company_id == company_id,
-            LeaveLedgerEntry.leave_type_id == leave_type_id,
-            LeaveLedgerEntry.entry_type == "COMP_OFF_CREDIT",
+        `expiry_date` column (LD-02's locked shape). Ordered by employee so concurrent sweeps
+        take per-employee balance locks in the same order."""
+        stmt = (
+            select(LeaveLedgerEntry)
+            .where(
+                LeaveLedgerEntry.company_id == company_id,
+                LeaveLedgerEntry.leave_type_id == leave_type_id,
+                LeaveLedgerEntry.entry_type == "COMP_OFF_CREDIT",
+            )
+            .order_by(
+                LeaveLedgerEntry.employee_id,
+                LeaveLedgerEntry.effective_date,
+                LeaveLedgerEntry.id,
+            )
         )
         return list((await session.execute(stmt)).scalars().all())
 
@@ -661,6 +715,20 @@ class LeaveApplicationRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def set_lop_days(
+        self, session: AsyncSession, *, company_id: UUID, application_id: UUID, lop_days: Decimal
+    ) -> LeaveApplication:
+        stmt = (
+            update(LeaveApplication)
+            .where(
+                LeaveApplication.id == application_id,
+                LeaveApplication.company_id == company_id,
+            )
+            .values(lop_days=lop_days)
+            .returning(LeaveApplication)
+        )
+        return (await session.execute(stmt)).scalar_one()
+
 
 class LeaveApplicationDayRepository:
     async def insert_many(
@@ -724,6 +792,22 @@ class LeaveApplicationDayRepository:
                 LeaveApplicationDay.company_id == company_id,
             )
             .values(leave_day_projection_id=leave_day_projection_id, updated_at=now)
+        )
+
+    async def mark_lop(
+        self, session: AsyncSession, *, company_id: UUID, day_ids: list[UUID], now: datetime
+    ) -> None:
+        """PAY-010 — flags the days an "approve with excess as LOP" decision left uncovered.
+        Same not-version-guarded posture as `set_projection_id`."""
+        if not day_ids:
+            return
+        await session.execute(
+            update(LeaveApplicationDay)
+            .where(
+                LeaveApplicationDay.id.in_(day_ids),
+                LeaveApplicationDay.company_id == company_id,
+            )
+            .values(is_lop=True, updated_at=now)
         )
 
 

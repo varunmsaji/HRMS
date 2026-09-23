@@ -1,7 +1,12 @@
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { ACCRUAL_FREQUENCIES, APPROVAL_CHAINS } from "@/lib/leave-policy/types";
+import {
+  ACCRUAL_FREQUENCIES,
+  APPROVAL_CHAINS,
+  YEAR_END_ACTION_LABELS,
+  YEAR_END_ACTIONS,
+} from "@/lib/leave-policy/types";
 import type {
   LeavePolicyVersionFormErrors,
   LeavePolicyVersionFormValues,
@@ -184,13 +189,35 @@ export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicy
             id="lpv-max-carry-forward"
             label="Max carry-forward days"
             error={errors.maxCarryForwardDays}
-            description="Leave blank for unlimited."
+            description={
+              values.yearEndAction === "ENCASH_EXCESS"
+                ? "Required — days above it are encashed at year end."
+                : "Leave blank for unlimited."
+            }
           >
             <Input
               value={values.maxCarryForwardDays}
               onChange={(e) => update("maxCarryForwardDays", e.target.value)}
               placeholder="30"
             />
+          </FormField>
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FormField
+            id="lpv-year-end-action"
+            label="At leave year end"
+            description="E.g. casual leave lapses; earned leave carries forward to a cap (30–45 days)."
+          >
+            <NativeSelect
+              value={values.yearEndAction}
+              onChange={(e) => update("yearEndAction", e.target.value)}
+            >
+              {YEAR_END_ACTIONS.map((action) => (
+                <option key={action} value={action}>
+                  {YEAR_END_ACTION_LABELS[action]}
+                </option>
+              ))}
+            </NativeSelect>
           </FormField>
         </div>
         <div className="mt-3 flex flex-col gap-2">
@@ -200,11 +227,28 @@ export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicy
             onChange={(checked) => update("encashmentAllowed", checked)}
           />
           <Checkbox
-            label="Allow negative balance (advance leave)"
+            label="Allow negative balance"
             checked={values.allowNegativeBalance}
             onChange={(checked) => update("allowNegativeBalance", checked)}
           />
         </div>
+        {values.allowNegativeBalance ? (
+          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField
+              id="lpv-negative-balance-floor"
+              label="Days below zero allowed"
+              required
+              error={errors.negativeBalanceFloor}
+              description="E.g. 3 lets the balance go down to −3. The deficit is recovered at exit."
+            >
+              <Input
+                value={values.negativeBalanceFloor}
+                onChange={(e) => update("negativeBalanceFloor", e.target.value)}
+                placeholder="3"
+              />
+            </FormField>
+          </div>
+        ) : null}
       </div>
 
       <div>

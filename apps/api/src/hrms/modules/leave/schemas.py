@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     )
 
 _ACCRUAL_FREQUENCIES = ("NONE", "MONTHLY", "YEARLY")
+# Decision 11 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — what happens at leave-year start.
+_YEAR_END_ACTIONS = ("CARRY_FORWARD", "LAPSE", "ENCASH_EXCESS")
 # LD-23 — client's three-level chain (Manager -> Head of Department -> HR), same "engine reads
 # whatever HR configures" posture as every other approval_chain value.
 _APPROVAL_CHAINS = ("AUTO", "MANAGER", "MANAGER_THEN_HR", "MANAGER_THEN_HOD_THEN_HR", "HR")
@@ -216,6 +218,8 @@ class LeavePolicyVersionCreate(BaseModel):
     max_carry_forward_days: Decimal | None = Field(default=None, ge=0)
     encashment_allowed: bool = False
     allow_negative_balance: bool = False
+    negative_balance_floor: Decimal | None = Field(default=None, ge=0, le=365)
+    year_end_action: str = "CARRY_FORWARD"
     sandwich_rule_enabled: bool = True
     reserve_balance_on_submission: bool = False
     pre_delivery_days: int | None = Field(default=None, ge=0)
@@ -239,6 +243,12 @@ class LeavePolicyVersionCreate(BaseModel):
         _check_choice("accrual_frequency", value, _ACCRUAL_FREQUENCIES)
         return value
 
+    @field_validator("year_end_action")
+    @classmethod
+    def validate_year_end_action(cls, value: str) -> str:
+        _check_choice("year_end_action", value, _YEAR_END_ACTIONS)
+        return value
+
 
 class LeavePolicyVersionUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -258,6 +268,8 @@ class LeavePolicyVersionUpdate(BaseModel):
     max_carry_forward_days: Decimal | None = Field(default=None, ge=0)
     encashment_allowed: bool | None = None
     allow_negative_balance: bool | None = None
+    negative_balance_floor: Decimal | None = Field(default=None, ge=0, le=365)
+    year_end_action: str | None = None
     sandwich_rule_enabled: bool | None = None
     reserve_balance_on_submission: bool | None = None
     pre_delivery_days: int | None = Field(default=None, ge=0)
@@ -279,6 +291,12 @@ class LeavePolicyVersionUpdate(BaseModel):
     @classmethod
     def validate_accrual_frequency(cls, value: str | None) -> str | None:
         _check_choice("accrual_frequency", value, _ACCRUAL_FREQUENCIES)
+        return value
+
+    @field_validator("year_end_action")
+    @classmethod
+    def validate_year_end_action(cls, value: str | None) -> str | None:
+        _check_choice("year_end_action", value, _YEAR_END_ACTIONS)
         return value
 
 
@@ -313,6 +331,8 @@ class LeavePolicyVersionRead(BaseModel):
     max_carry_forward_days: Decimal | None
     encashment_allowed: bool
     allow_negative_balance: bool
+    negative_balance_floor: Decimal | None
+    year_end_action: str
     sandwich_rule_enabled: bool
     reserve_balance_on_submission: bool
     pre_delivery_days: int | None
@@ -354,6 +374,8 @@ def leave_policy_version_to_read(row: "LeavePolicyVersion") -> LeavePolicyVersio
         max_carry_forward_days=row.max_carry_forward_days,
         encashment_allowed=row.encashment_allowed,
         allow_negative_balance=row.allow_negative_balance,
+        negative_balance_floor=row.negative_balance_floor,
+        year_end_action=row.year_end_action,
         sandwich_rule_enabled=row.sandwich_rule_enabled,
         reserve_balance_on_submission=row.reserve_balance_on_submission,
         pre_delivery_days=row.pre_delivery_days,
@@ -524,6 +546,19 @@ class LeaveApplicationReviewInput(BaseModel):
 
     reviewer_comment: str | None = None
     rejection_reason: str | None = None
+    # PAY-010 (decision 9) — approve even though the balance no longer covers the application:
+    # the uncovered days become unpaid (LOP) leave. Without it such an approval is refused with
+    # `LEAVE_APPLICATION_BALANCE_SHORTFALL`, whose details state the shortfall.
+    excess_as_lop: bool = False
+
+
+class LeaveApplicationCancelInput(BaseModel):
+    """Optional body for cancel. `reason` is mandatory when HR cancels an approved application
+    that has already started (decision 10); recorded whenever given."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class LeaveApplicationDayRead(BaseModel):
@@ -532,6 +567,7 @@ class LeaveApplicationDayRead(BaseModel):
     fraction: Decimal
     half: str | None
     is_sandwich_generated: bool
+    is_lop: bool
     leave_day_projection_id: UUID | None
 
 
@@ -542,6 +578,7 @@ def leave_application_day_to_read(row: "LeaveApplicationDay") -> LeaveApplicatio
         fraction=row.fraction,
         half=row.half,
         is_sandwich_generated=row.is_sandwich_generated,
+        is_lop=row.is_lop,
         leave_day_projection_id=row.leave_day_projection_id,
     )
 
@@ -578,6 +615,7 @@ class LeaveApplicationRead(BaseModel):
     start_date: date
     end_date: date
     total_days: Decimal
+    lop_days: Decimal
     reason: str | None
     attachment_reference: str | None
     expected_delivery_date: date | None
@@ -598,6 +636,7 @@ class LeaveApplicationRead(BaseModel):
 
     cancelled_at: str | None
     cancelled_by_user_id: UUID | None
+    cancellation_reason: str | None
 
     version: int
 
@@ -623,6 +662,7 @@ def leave_application_to_read(
         start_date=row.start_date,
         end_date=row.end_date,
         total_days=row.total_days,
+        lop_days=row.lop_days,
         reason=row.reason,
         attachment_reference=row.attachment_reference,
         expected_delivery_date=row.expected_delivery_date,
@@ -639,6 +679,7 @@ def leave_application_to_read(
         rejection_reason=row.rejection_reason,
         cancelled_at=_format_timestamp(row.cancelled_at),
         cancelled_by_user_id=row.cancelled_by_user_id,
+        cancellation_reason=row.cancellation_reason,
         version=row.version,
         days=[leave_application_day_to_read(d) for d in days],
         actions=[leave_application_action_to_read(a) for a in actions],

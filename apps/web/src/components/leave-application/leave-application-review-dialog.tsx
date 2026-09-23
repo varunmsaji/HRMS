@@ -45,14 +45,19 @@ export function LeaveApplicationReviewDialog({
   const [rejectionReason, setRejectionReason] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // PAY-010 — set when the final approval found the balance can no longer cover the application.
+  const [shortfall, setShortfall] = useState<{ available: string; shortfall: string } | null>(
+    null,
+  );
 
   function reset() {
     setComment("");
     setRejectionReason("");
     setFormError(null);
+    setShortfall(null);
   }
 
-  async function handleConfirm() {
+  async function handleConfirm(excessAsLop = false) {
     if (!application) return;
     setSaving(true);
     setFormError(null);
@@ -60,7 +65,10 @@ export function LeaveApplicationReviewDialog({
       const updated = await apiClient.post<LeaveApplication>(
         `/leave-applications/${application.id}/${action}`,
         action === "approve"
-          ? { reviewer_comment: comment.trim() || undefined }
+          ? {
+              reviewer_comment: comment.trim() || undefined,
+              excess_as_lop: excessAsLop || undefined,
+            }
           : {
               reviewer_comment: comment.trim() || undefined,
               rejection_reason: rejectionReason.trim() || undefined,
@@ -83,6 +91,14 @@ export function LeaveApplicationReviewDialog({
               ? "You are not the resolved approver for this application's current stage."
               : describeApiError(err),
         );
+        return;
+      }
+      if (err instanceof ApiError && err.code === "LEAVE_APPLICATION_BALANCE_SHORTFALL") {
+        const context = (err.details[0]?.context ?? {}) as Record<string, unknown>;
+        setShortfall({
+          available: String(context.available ?? "0.00"),
+          shortfall: String(context.shortfall ?? ""),
+        });
         return;
       }
       if (err instanceof ApiError && err.status === 409) {
@@ -141,19 +157,37 @@ export function LeaveApplicationReviewDialog({
               {formError}
             </p>
           ) : null}
+          {shortfall ? (
+            <div role="alert" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+              <p className="font-medium">Not enough leave balance</p>
+              <p className="mt-1 text-foreground-muted">
+                The balance now covers {Number(shortfall.available) > 0 ? shortfall.available : "0"}{" "}
+                of {application?.total_days} days — {shortfall.shortfall} short (another
+                application may have been approved since this one was submitted). Reject it, or
+                approve it with the uncovered days as loss of pay (unpaid leave). The latest days
+                become loss of pay, whole days only.
+              </p>
+            </div>
+          ) : null}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            variant={action === "reject" ? "destructive" : "default"}
-            onClick={() => void handleConfirm()}
-            disabled={saving}
-          >
-            {saving ? "Saving…" : action === "approve" ? "Approve" : "Reject"}
-          </Button>
+          {shortfall ? (
+            <Button type="button" onClick={() => void handleConfirm(true)} disabled={saving}>
+              {saving ? "Saving…" : "Approve, uncovered days as loss of pay"}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant={action === "reject" ? "destructive" : "default"}
+              onClick={() => void handleConfirm()}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : action === "approve" ? "Approve" : "Reject"}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -143,6 +143,13 @@ class LeavePolicyVersion(Base, TimestampMixin):
     max_carry_forward_days: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     encashment_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_negative_balance: Mapped[bool] = mapped_column(Boolean, default=False)
+    # PAY-011 (decision 8) — how far below zero the balance may go when `allow_negative_balance`
+    # is on (`3.00` = down to −3). Required to publish with the switch on; NULL reads as 0.
+    negative_balance_floor: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # Decision 11 — balance handling at leave-year start: CARRY_FORWARD (up to
+    # `max_carry_forward_days`, excess lapses), LAPSE (whole balance lapses), or ENCASH_EXCESS
+    # (up to the cap carried, excess written as an ENCASHMENT for payroll).
+    year_end_action: Mapped[str] = mapped_column(String(20), default="CARRY_FORWARD")
     # LD-06 decision 5: sandwich-leave rule applies for this client — new drafts default to it
     # being on, though HR can still turn it off per policy.
     sandwich_rule_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -273,6 +280,9 @@ class LeaveApplication(Base, TimestampMixin):
     start_date: Mapped[date] = mapped_column(Date)
     end_date: Mapped[date] = mapped_column(Date)
     total_days: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    # PAY-010 (decision 9) — days approved as loss of pay because the balance could not cover
+    # them ("approve with excess as LOP"). Only `total_days - lop_days` is debited.
+    lop_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     attachment_reference: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # LD-17 — client spec §F. Generic, optional, harmless for every non-maternity leave type
@@ -304,6 +314,8 @@ class LeaveApplication(Base, TimestampMixin):
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Decision 10 — mandatory when HR cancels leave that has already started.
+    cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancelled_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
@@ -335,6 +347,8 @@ class LeaveApplicationDay(Base, TimestampMixin):
     fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2))
     half: Mapped[str | None] = mapped_column(String(10), nullable=True)
     is_sandwich_generated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # PAY-010 — this day is approved as unpaid (LOP) leave, not debited from the balance.
+    is_lop: Mapped[bool] = mapped_column(Boolean, default=False)
     leave_day_projection_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
     )

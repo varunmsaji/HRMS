@@ -422,6 +422,13 @@ Eligibility:
 
 Holiday/WO OT day_class uses **worked_on_holiday / worked_on_weekly_off** (worked minutes > 0 on that calendar type).
 
+On a holiday or weekly off, `excess` is still measured against the shift's scheduled minutes
+(the schedule window does not depend on day type): with an 8 h shift, working 8 h on a weekly
+off detects **0** OT, and working 10 h detects 120 min. Comp-off (`comp_off_minutes` =
+detected OT when `comp_off_instead_of_pay`) inherits this, so off-day work up to a full shift
+earns no comp-off today. Whether off-day work should count in full is an open decision — see
+`docs/audits/COMPOFF_POLICY_SAFETY_REVIEW.md`.
+
 ### Night OT — gap
 
 `is_night` = `shift.is_cross_midnight`.  

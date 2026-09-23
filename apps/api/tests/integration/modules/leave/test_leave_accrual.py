@@ -252,6 +252,41 @@ async def test_accrual_is_idempotent_on_rerun(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_accrual_runs_credit_once(
+    client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DAT-001 — two Beat firings racing past the "already written?" check (simulated by making
+    that check always answer no) still produce one ACCRUAL: the partial unique index turns the
+    second insert into a no-op."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee = await _create_employee(client, headers)
+        legal_entity = await _create_legal_entity(client, headers)
+        await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2025-01-01",
+        )
+        leave_type = await _create_leave_type(client, headers)
+        await _create_published_monthly_policy(client, headers, leave_type_id=leave_type["id"])
+
+        from hrms.modules.leave.repository import LeaveLedgerRepository
+
+        async def _never_written(*_args: Any, **_kwargs: Any) -> bool:
+            return False
+
+        monkeypatch.setattr(LeaveLedgerRepository, "exists_for_cycle", _never_written)
+        assert await _run_accrual(company_id, as_of=date(2026, 3, 1)) == 1
+        assert await _run_accrual(company_id, as_of=date(2026, 3, 1)) == 0
+        assert await _get_balance(client, headers, employee["id"]) == "1.50"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
 async def test_no_policy_assigned_skips_accrual(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:

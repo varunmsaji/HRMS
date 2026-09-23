@@ -378,6 +378,24 @@ window — acceptable under ADR-0004's existing "leave-ledger volume is low" ass
 cut, same tradeoff LD-03 already accepted for balance computation itself. Revisit if profiling
 ever shows otherwise.
 
+**Amendments (2026-09-23, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decision 13 and
+`docs/audits/COMPOFF_POLICY_SAFETY_REVIEW.md`):**
+
+- Decision 2's "skip when unset" no longer holds: an unset `comp_off_day_length_minutes` now
+  falls back to the day's `attendance_day.scheduled_minutes`, and an unset
+  `comp_off_expiry_days` to 60 days. The conversion is still proportional
+  (`comp_off_minutes ÷ day length`, 2 dp, `ROUND_HALF_UP`). Decision 13's 0 / 0.5 / 1-day step
+  rule is **deferred** pending a product decision (see the safety review): `comp_off_minutes` is
+  overtime beyond the shift even on a weekly off or holiday, so the step rule cannot mean "hours
+  worked" on today's input.
+- A credit is always computed from the policy version that produced its overtime record
+  (`overtime_record.overtime_policy_version_id`), including a record still waiting to be
+  credited when a newer version is published. Written credits are never recomputed.
+- Decision 4's expiry idempotency is now concurrency-safe: each credit's check-then-offset runs
+  under the employee's comp-off balance advisory lock (`LeaveLedgerRepository.lock_balance`, the
+  one leave approval takes), with credits ordered by employee so concurrent sweeps lock in the
+  same order.
+
 ---
 
 ## LD-15 — Reserved/Pending Balance: derived live from open applications, no new ledger entry

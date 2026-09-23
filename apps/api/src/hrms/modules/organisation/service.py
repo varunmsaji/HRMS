@@ -462,7 +462,11 @@ class OrganisationService:
 
         # L1 — `LEAVE.*` (LEAVE_DECISION_LOG.md LD-08). Same live-registration-path rationale as
         # `attendance_permission_rows` immediately above.
-        from hrms.modules.leave.permissions import LEAVE_APPLICATION_APPROVE, LEAVE_PERMISSIONS
+        from hrms.modules.leave.permissions import (
+            LEAVE_APPLICATION_APPROVE,
+            LEAVE_APPLICATION_CANCEL_APPROVED,
+            LEAVE_PERMISSIONS,
+        )
 
         leave_permission_rows = [
             await self._repo.get_or_create_permission(
@@ -596,10 +600,12 @@ class OrganisationService:
         # product's own default-role catalogue (Decision H) already designates for "runs HR
         # operations" — granting it here at `COMPANY` scope is what actually lets that persona do
         # the job the role's name implies.
+        # Decision 10 — HR cancels approved leave after it has started (employees only before).
         for perm in (
             attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
             attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
+            leave_permission_by_code[LEAVE_APPLICATION_CANCEL_APPROVED],
         ):
             await self._repo.insert_role_permission(
                 self._session,

@@ -871,12 +871,15 @@ async def test_cancel_after_approval_reverses_ledger_and_projections(
         projection_id = data["days"][0]["leave_day_projection_id"]
         assert await _get_balance(client, headers, employee_id) == "19.00"
 
+        # The leave has already started (decision 10) — HR cancels it, reason mandatory.
         cancelled = await client.post(
             f"/v1/leave-applications/{application_id}/cancel",
             headers={**headers, "If-Match": str(data["version"])},
+            json={"reason": "Employee was recalled to work"},
         )
         assert cancelled.status_code == 200, cancelled.text
         assert cancelled.json()["data"]["status"] == "CANCELLED"
+        assert cancelled.json()["data"]["cancellation_reason"] == "Employee was recalled to work"
 
         assert await _get_balance(client, headers, employee_id) == "20.00"
 

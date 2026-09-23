@@ -70,6 +70,8 @@ export interface LeavePolicyVersionFormValues {
   maxCarryForwardDays: string;
   encashmentAllowed: boolean;
   allowNegativeBalance: boolean;
+  negativeBalanceFloor: string;
+  yearEndAction: string;
   sandwichRuleEnabled: boolean;
   reserveBalanceOnSubmission: boolean;
   preDeliveryDays: string;
@@ -98,6 +100,8 @@ export const EMPTY_LEAVE_POLICY_VERSION_FORM_VALUES: LeavePolicyVersionFormValue
   maxCarryForwardDays: "",
   encashmentAllowed: false,
   allowNegativeBalance: false,
+  negativeBalanceFloor: "",
+  yearEndAction: "CARRY_FORWARD",
   sandwichRuleEnabled: true,
   reserveBalanceOnSubmission: false,
   preDeliveryDays: "",
@@ -114,6 +118,7 @@ export interface LeavePolicyVersionFormErrors {
   effectiveFrom?: string;
   accrualRatePerCycle?: string;
   maxCarryForwardDays?: string;
+  negativeBalanceFloor?: string;
 }
 
 function intOrNull(value: string): number | null {
@@ -149,6 +154,8 @@ export function leavePolicyVersionToFormValues(
     maxCarryForwardDays: version.max_carry_forward_days ?? "",
     encashmentAllowed: version.encashment_allowed,
     allowNegativeBalance: version.allow_negative_balance,
+    negativeBalanceFloor: version.negative_balance_floor ?? "",
+    yearEndAction: version.year_end_action,
     sandwichRuleEnabled: version.sandwich_rule_enabled,
     reserveBalanceOnSubmission: version.reserve_balance_on_submission,
     preDeliveryDays: version.pre_delivery_days === null ? "" : String(version.pre_delivery_days),
@@ -185,6 +192,10 @@ export function buildLeavePolicyVersionPayload(
     max_carry_forward_days: decimalOrNull(values.maxCarryForwardDays),
     encashment_allowed: values.encashmentAllowed,
     allow_negative_balance: values.allowNegativeBalance,
+    negative_balance_floor: values.allowNegativeBalance
+      ? decimalOrNull(values.negativeBalanceFloor)
+      : null,
+    year_end_action: values.yearEndAction,
     sandwich_rule_enabled: values.sandwichRuleEnabled,
     reserve_balance_on_submission: values.reserveBalanceOnSubmission,
     pre_delivery_days: intOrNull(values.preDeliveryDays),
@@ -200,15 +211,26 @@ export function buildLeavePolicyVersionPayload(
 
 /** Light client-side pre-check — the backend is authoritative. */
 export function validateLeavePolicyVersionForm(
-  _values: LeavePolicyVersionFormValues,
+  values: LeavePolicyVersionFormValues,
 ): LeavePolicyVersionFormErrors {
-  return {};
+  const errors: LeavePolicyVersionFormErrors = {};
+  if (values.allowNegativeBalance) {
+    const floor = Number(values.negativeBalanceFloor.trim());
+    if (!values.negativeBalanceFloor.trim() || Number.isNaN(floor) || floor <= 0) {
+      errors.negativeBalanceFloor = "Enter how many days below zero the balance may go.";
+    }
+  }
+  if (values.yearEndAction === "ENCASH_EXCESS" && !values.maxCarryForwardDays.trim()) {
+    errors.maxCarryForwardDays = "Set a cap — the days above it are encashed at year end.";
+  }
+  return errors;
 }
 
 export function mapLeavePolicyVersionApiErrors(details: ErrorDetail[]): LeavePolicyVersionFormErrors {
   const errors: LeavePolicyVersionFormErrors = {};
   for (const detail of details) {
     if (detail.field === "effective_from") errors.effectiveFrom = detail.message;
+    if (detail.field === "negative_balance_floor") errors.negativeBalanceFloor = detail.message;
   }
   return errors;
 }

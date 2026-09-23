@@ -1767,7 +1767,8 @@ class OvertimeRecordRepository:
     ) -> list[CompOffFactRow]:
         """LEAVE_DECISION_LOG.md LD-14 — the read-only fact feed for Leave's L5 comp-off credit
         engine. Every terminal (`AUTO_APPROVED`/`APPROVED`) record with `comp_off_minutes > 0`,
-        joined with its `OvertimePolicyVersion` for the minutes-per-day conversion basis. No
+        joined with its `OvertimePolicyVersion` for the minutes-per-day conversion basis —
+        falling back to the day's scheduled shift minutes when the policy leaves it unset. No
         window/date filter — comp-off volume is low (mirrors `LeaveAccrualService`'s own
         low-volume assumption, ADR-0004), and idempotency against re-crediting an already-handled
         record is the caller's (Leave's) responsibility, keyed on `reference_id`, not this
@@ -1779,13 +1780,19 @@ class OvertimeRecordRepository:
                 OvertimeRecord.attendance_date,
                 OvertimeRecord.comp_off_minutes,
                 OvertimeRecord.comp_off_expiry_date,
-                OvertimePolicyVersion.comp_off_day_length_minutes,
+                # Decision 13 — unset on the policy means one comp-off day = the shift's
+                # scheduled minutes that day (`attendance_day.scheduled_minutes`).
+                func.coalesce(
+                    OvertimePolicyVersion.comp_off_day_length_minutes,
+                    AttendanceDay.scheduled_minutes,
+                ),
             )
             .select_from(OvertimeRecord)
             .join(
                 OvertimePolicyVersion,
                 OvertimePolicyVersion.id == OvertimeRecord.overtime_policy_version_id,
             )
+            .outerjoin(AttendanceDay, AttendanceDay.id == OvertimeRecord.attendance_day_id)
             .where(
                 OvertimeRecord.company_id == company_id,
                 OvertimeRecord.status.in_(("AUTO_APPROVED", "APPROVED")),
@@ -1876,6 +1883,24 @@ class AttendancePeriodRepository:
             .order_by(AttendancePeriod.period_start.desc())
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def get_first_closed_overlapping(
+        self, session: AsyncSession, *, company_id: UUID, date_from: date, date_to: date
+    ) -> AttendancePeriod | None:
+        """PD-3 — the earliest `CLOSED` period overlapping `[date_from, date_to]`, for a caller
+        (leave) that locks a whole date range rather than a single date."""
+        stmt = (
+            select(AttendancePeriod)
+            .where(
+                AttendancePeriod.company_id == company_id,
+                AttendancePeriod.status == "CLOSED",
+                AttendancePeriod.period_start <= date_to,
+                AttendancePeriod.period_end >= date_from,
+            )
+            .order_by(AttendancePeriod.period_start)
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     async def get_covering(
         self,
