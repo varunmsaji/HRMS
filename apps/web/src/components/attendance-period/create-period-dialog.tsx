@@ -14,22 +14,34 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import type { AttendancePeriod, AttendancePeriodCreatePayload } from "@/lib/attendance-period/types";
+import type { LegalEntity } from "@/lib/legal-entity/types";
 
 interface CreatePeriodDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (period: AttendancePeriod) => void;
+  legalEntities: LegalEntity[];
 }
 
+type Cycle = "MONTH" | "CUSTOM";
+
 /** `POST /v1/attendance-periods` (architecture §4.2/§22, decision log WD-30). Creating a period
- * opens it immediately — there is no separate "open" step. Backend rejects an overlapping range
- * (`ATTENDANCE_PERIOD_OVERLAP`) for the same company. */
-export function CreatePeriodDialog({ open, onOpenChange, onCreated }: CreatePeriodDialogProps) {
+ * opens it immediately — there is no separate "open" step. Each legal entity runs its own cycle
+ * (decision 14); the backend rejects a range overlapping another period of the same entity
+ * (`ATTENDANCE_PERIOD_OVERLAP`). A full calendar month is the default (decision 18); a custom
+ * range stays available for an off-cycle period. */
+export function CreatePeriodDialog({
+  open,
+  onOpenChange,
+  onCreated,
+  legalEntities,
+}: CreatePeriodDialogProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   // `SR-06` (execution gate §21, Phase 4) — was `todayIso()`, the UTC calendar date, PERSISTED
@@ -37,6 +49,10 @@ export function CreatePeriodDialog({ open, onOpenChange, onCreated }: CreatePeri
   // payroll period boundary one day early — not just a display glitch, a wrong value written to
   // a record HR then finalizes and locks.
   const today = () => businessToday(user?.company_timezone ?? "Asia/Kolkata");
+  const defaultEntityId = () => (legalEntities.length === 1 ? legalEntities[0].id : "");
+  const [legalEntityId, setLegalEntityId] = useState(defaultEntityId);
+  const [cycle, setCycle] = useState<Cycle>("MONTH");
+  const [month, setMonth] = useState(() => today().slice(0, 7));
   const [periodStart, setPeriodStart] = useState(today);
   const [periodEnd, setPeriodEnd] = useState(today);
   const [label, setLabel] = useState("");
@@ -44,6 +60,9 @@ export function CreatePeriodDialog({ open, onOpenChange, onCreated }: CreatePeri
   const [saving, setSaving] = useState(false);
 
   function reset() {
+    setLegalEntityId(defaultEntityId());
+    setCycle("MONTH");
+    setMonth(today().slice(0, 7));
     setPeriodStart(today());
     setPeriodEnd(today());
     setLabel("");
@@ -51,12 +70,19 @@ export function CreatePeriodDialog({ open, onOpenChange, onCreated }: CreatePeri
   }
 
   async function handleCreate() {
+    const entityId = legalEntityId || defaultEntityId();
+    if (!entityId) {
+      setFormError("Choose a legal entity.");
+      return;
+    }
     setSaving(true);
     setFormError(null);
     try {
       const payload: AttendancePeriodCreatePayload = {
-        period_start: periodStart,
-        period_end: periodEnd,
+        legal_entity_id: entityId,
+        ...(cycle === "MONTH"
+          ? { month }
+          : { period_start: periodStart, period_end: periodEnd }),
         label: label.trim() || undefined,
       };
       const created = await apiClient.post<AttendancePeriod>("/attendance-periods", payload);
@@ -66,7 +92,7 @@ export function CreatePeriodDialog({ open, onOpenChange, onCreated }: CreatePeri
       toast({ title: "Attendance period created", variant: "success" });
     } catch (err) {
       if (err instanceof ApiError && err.code === "ATTENDANCE_PERIOD_OVERLAP") {
-        setFormError("Another period already covers part of this date range.");
+        setFormError("Another period for this legal entity already covers part of these dates.");
         return;
       }
       setFormError(describeApiError(err));
@@ -89,21 +115,63 @@ export function CreatePeriodDialog({ open, onOpenChange, onCreated }: CreatePeri
           <DialogTitle>New attendance period</DialogTitle>
           <DialogDescription>
             The period opens immediately — attendance for these dates stays fully editable until
-            you finalize it.
+            you finalize it. Each legal entity closes its own period.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <FormField id="period-start" label="Period start">
-            <Input
-              type="date"
-              value={periodStart}
-              onChange={(e) => setPeriodStart(e.target.value)}
-            />
+          <FormField id="period-legal-entity" label="Legal entity">
+            <NativeSelect
+              value={legalEntityId || defaultEntityId()}
+              onChange={(e) => setLegalEntityId(e.target.value)}
+            >
+              {legalEntities.length !== 1 ? <option value="">Select a legal entity</option> : null}
+              {legalEntities.map((entity) => (
+                <option key={entity.id} value={entity.id}>
+                  {entity.name}
+                </option>
+              ))}
+            </NativeSelect>
           </FormField>
-          <FormField id="period-end" label="Period end">
-            <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+          <FormField id="period-cycle" label="Cycle">
+            <NativeSelect
+              value={cycle}
+              onChange={(e) => setCycle(e.target.value as Cycle)}
+            >
+              <option value="MONTH">Calendar month</option>
+              <option value="CUSTOM">Custom date range</option>
+            </NativeSelect>
           </FormField>
-          <FormField id="period-label" label="Label" description='Optional, e.g. "August 2026".'>
+          {cycle === "MONTH" ? (
+            <FormField id="period-month" label="Month" description="1st to last day of the month.">
+              <Input
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+              />
+            </FormField>
+          ) : (
+            <>
+              <FormField id="period-start" label="Period start">
+                <Input
+                  type="date"
+                  value={periodStart}
+                  onChange={(e) => setPeriodStart(e.target.value)}
+                />
+              </FormField>
+              <FormField id="period-end" label="Period end">
+                <Input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+              </FormField>
+            </>
+          )}
+          <FormField
+            id="period-label"
+            label="Label"
+            description={
+              cycle === "MONTH"
+                ? 'Optional — defaults to the month name, e.g. "August 2026".'
+                : 'Optional, e.g. "August 2026".'
+            }
+          >
             <Input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={100} />
           </FormField>
           {formError ? (

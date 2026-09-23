@@ -834,6 +834,31 @@ class EmploymentService:
         )
         return [(row.employee_id, row.joining_date, row.last_working_day) for row in rows]
 
+    async def list_legal_entity_spans(
+        self,
+        company_id: UUID,
+        *,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        employee_id: UUID | None = None,
+    ) -> list[tuple[UUID, UUID, date, date | None]]:
+        """`(employee_id, legal_entity_id, joining_date, last_working_day)` for every employment
+        spell — overlapping `[date_from, date_to]` when both are given, otherwise all of them —
+        optionally for one employee. The fact query behind Attendance's legal-entity period
+        grain (`PAYROLL_BUSINESS_DECISIONS.md` decision 14): which entity's period owns an
+        employee-date. Same internal, unscoped posture as `list_spans_overlapping`."""
+        rows = await self._repo.list_spans_overlapping(
+            self._session,
+            company_id=company_id,
+            date_from=date_from,
+            date_to=date_to,
+            employee_id=employee_id,
+        )
+        return [
+            (row.employee_id, row.legal_entity_id, row.joining_date, row.last_working_day)
+            for row in rows
+        ]
+
     async def create_employment(
         self,
         company_id: UUID,

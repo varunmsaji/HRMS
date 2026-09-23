@@ -2031,7 +2031,7 @@ class LeaveApplicationService:
         )
         if leave_type is None:
             raise NotFoundError("Resource not found")
-        await self._ensure_period_open(company_id, body.start_date, body.end_date)
+        await self._ensure_period_open(company_id, employee_id, body.start_date, body.end_date)
 
         # LD-16: reject if another leave type this employee already has an active (SUBMITTED or
         # APPROVED) application for, overlapping this date range, has an explicit
@@ -2353,7 +2353,7 @@ class LeaveApplicationService:
         row = await self._get_reviewable(
             company_id, application_id, scope=scope, caller_employee_id=caller_employee_id
         )
-        await self._ensure_period_open(company_id, row.start_date, row.end_date)
+        await self._ensure_period_open(company_id, row.employee_id, row.start_date, row.end_date)
         return await self._approve_internal(
             company_id,
             row,
@@ -2745,7 +2745,9 @@ class LeaveApplicationService:
                 raise PermissionDeniedError("This leave has already started — ask HR to cancel it")
             # PD-3 — withdrawing a still-pending application is always allowed (it never
             # touched attendance); reversing an approved one inside a closed period is not.
-            await self._ensure_period_open(company_id, row.start_date, row.end_date)
+            await self._ensure_period_open(
+                company_id, row.employee_id, row.start_date, row.end_date
+            )
 
         was_approved = row.status == "APPROVED"
         now = datetime.now(UTC)
@@ -2800,14 +2802,17 @@ class LeaveApplicationService:
         )
         return read
 
-    async def _ensure_period_open(self, company_id: UUID, start_date: date, end_date: date) -> None:
+    async def _ensure_period_open(
+        self, company_id: UUID, employee_id: UUID, start_date: date, end_date: date
+    ) -> None:
         """PD-3 — closing the attendance period locks leave for its dates. Checked up front so
         the caller gets a leave-specific error rather than `LeaveProjectionService`'s
-        per-day `ATTENDANCE_PERIOD_CLOSED` halfway through the write."""
+        per-day `ATTENDANCE_PERIOD_CLOSED` halfway through the write. Decision 14 — only the
+        employee's own legal entity's period counts."""
         from hrms.modules.attendance.service import AttendanceService
 
         closed = await AttendanceService(self._session).closed_period_overlapping(
-            company_id, start_date, end_date
+            company_id, employee_id, start_date, end_date
         )
         if closed is not None:
             raise LeaveApplicationPeriodClosedError(period_start=closed[0], period_end=closed[1])

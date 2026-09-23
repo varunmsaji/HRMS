@@ -74,6 +74,41 @@ async def test_apply_refused_when_any_date_is_in_a_closed_period(
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
+async def test_another_legal_entitys_closed_period_does_not_block_leave(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Decision 14 — periods are per legal entity; only the employee's own entity's closed
+    period locks their leave."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        ctx = await _setup_full(client, headers)
+        employee_id = ctx["employee"]["id"]
+        other_entity = await client.post(
+            "/v1/legal-entities", headers=headers, json={"name": "Other LE"}
+        )
+        assert other_entity.status_code == 201, other_entity.text
+        await _insert_closed_period(
+            company_id=company_id,
+            period_start="2026-08-01",
+            period_end="2026-08-31",
+            legal_entity_id=other_entity.json()["data"]["id"],
+        )
+
+        allowed = await _submit(
+            client,
+            headers,
+            employee_id=employee_id,
+            leave_type_id=ctx["leave_type"]["id"],
+            start_date="2026-08-20",
+            end_date="2026-08-20",
+        )
+        assert allowed.status_code == 201, allowed.text
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
 async def test_approve_refused_after_the_period_closes_but_withdraw_allowed(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:

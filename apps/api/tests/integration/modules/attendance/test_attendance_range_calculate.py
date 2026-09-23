@@ -42,7 +42,7 @@ async def test_calculate_range_queues_job_and_validates_input(
             assert queued.status_code == 202, queued.text
             assert queued.json()["data"]["task_id"] == "job-1"
             delay.assert_called_once_with(
-                str(company_id), "2026-08-01", "2026-08-31", None, str(user_id)
+                str(company_id), "2026-08-01", "2026-08-31", None, str(user_id), None
             )
 
             too_long = await client.post(

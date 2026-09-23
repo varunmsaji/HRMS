@@ -1360,6 +1360,37 @@ first question (weekly-off pattern sufficiency) remains unanswered.
 
 ---
 
+## WD-34 — Attendance period grain: per legal entity (resolves PD-LOCK-1, supersedes WD-30 point 3)
+
+**Status:** LOCKED (product owner sign-off 2026-09-23, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md`
+decisions 14 and 18). Implemented in migration `20261004104000`.
+
+**Context:** WD-30 shipped company grain because Payroll's grain was unknown. BUS-007 is now
+decided: payroll runs per legal entity (PF/ESI/TDS are filed per entity), so the attendance cycle
+Payroll reads must be per entity too.
+
+**Decision:**
+
+1. `attendance_period.legal_entity_id` is required; the GiST no-overlap is per
+   `(company_id, legal_entity_id)`.
+2. A period owns an employee-date when the employment covering that date is in its entity. A date
+   no employment covers belongs to the spell that ended before it, else the spell starting after
+   it — so every date of an employee with any employment has exactly one owning entity, and a
+   mid-month transfer splits the employee between two periods.
+3. Validation, the summary, lock and reopen, and every per-employee lock check (punch, roster,
+   regularization, overtime, calculate, leave PD-3) use that ownership. An employee with no
+   employment at all fails closed (any closed period blocks). Company-wide changes — shift-version
+   publish, timezone change — still refuse when any entity's closed period covers the date.
+4. `attendance_day.locked_period_id` records which period locked a day; reopen unlocks exactly
+   those rows rather than a date range that another entity's closed period may share.
+5. The default cycle is the calendar month (`month: "YYYY-MM"` on create); custom ranges remain.
+
+**Rejected:** keeping a company-wide period with per-entity summaries (one entity's blocker would
+hold up every entity's payroll); attributing a day by the employee's *current* employment (a
+transfer would silently move already-closed history into the new entity).
+
+---
+
 ## Divergences index (quick reference) — continued
 
 | Prior source | This log |

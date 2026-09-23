@@ -17,7 +17,7 @@ from datetime import date, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.models import AuditLog
@@ -32,7 +32,7 @@ from hrms.modules.attendance.email_templates import (
 )
 from hrms.modules.attendance.models import AttendanceDay, AttendancePeriod
 from hrms.modules.attendance.permissions import ATTENDANCE_LOCK
-from hrms.modules.employee.models import Employee
+from hrms.modules.employee.models import Employee, Employment
 from hrms.modules.onboarding.email_sender import EmailSender
 
 _logger = get_logger(__name__)
@@ -107,6 +107,19 @@ class IncompleteDayReminderService:
                     AttendanceDay.is_locked.is_(False),
                     AttendanceDay.attendance_date >= period.period_start,
                     AttendanceDay.attendance_date <= last_day,
+                    # Decision 14 — only this legal entity's employees. INCOMPLETE is only ever
+                    # computed for an employed day, so the covering employment decides.
+                    exists().where(
+                        Employment.company_id == company_id,
+                        Employment.employee_id == AttendanceDay.employee_id,
+                        Employment.legal_entity_id == period.legal_entity_id,
+                        Employment.deleted_at.is_(None),
+                        Employment.joining_date <= AttendanceDay.attendance_date,
+                        or_(
+                            Employment.last_working_day.is_(None),
+                            Employment.last_working_day >= AttendanceDay.attendance_date,
+                        ),
+                    ),
                 )
                 .order_by(AttendanceDay.employee_id, AttendanceDay.attendance_date)
             )

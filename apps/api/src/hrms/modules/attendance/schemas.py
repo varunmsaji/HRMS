@@ -1,5 +1,6 @@
 """Pydantic request/response shapes for the attendance module (W3)."""
 
+import calendar
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, Any
@@ -1869,16 +1870,35 @@ _ATTENDANCE_PERIOD_BLOCKING_REASON_CODES = (
 class AttendancePeriodCreate(BaseModel):
     """Create always opens immediately — no separate "open" action, mirroring WD-28's
     no-DRAFT-state precedent (a period isn't useful in a created-but-not-open state; every date
-    inside it is mutable/computable from the instant it exists)."""
+    inside it is mutable/computable from the instant it exists).
+
+    Decision 14 — one legal entity per period. Decision 18 — the cycle is a full calendar month
+    by default: send `month` (`YYYY-MM`) and the 1st-to-last-day range is derived from it (and a
+    "September 2026"-style label when none is given). An explicit `period_start`/`period_end`
+    pair is still accepted for an off-cycle period; send one form or the other, not both."""
 
     model_config = ConfigDict(extra="forbid")
 
-    period_start: date
-    period_end: date
+    legal_entity_id: UUID
+    month: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    period_start: date | None = None
+    period_end: date | None = None
     label: str | None = Field(default=None, max_length=100)
 
     @model_validator(mode="after")
     def validate_range(self) -> "AttendancePeriodCreate":
+        has_range = self.period_start is not None or self.period_end is not None
+        if self.month is not None:
+            if has_range:
+                raise ValueError("Send either month or period_start/period_end, not both")
+            year, month = (int(part) for part in self.month.split("-"))
+            self.period_start = date(year, month, 1)
+            self.period_end = date(year, month, calendar.monthrange(year, month)[1])
+            if self.label is None:
+                self.label = self.period_start.strftime("%B %Y")
+            return self
+        if self.period_start is None or self.period_end is None:
+            raise ValueError("Send month, or both period_start and period_end")
         if self.period_end < self.period_start:
             raise ValueError("period_end must not be before period_start")
         return self
@@ -1898,6 +1918,8 @@ class AttendanceRangeCalculateInput(BaseModel):
     date_from: date
     date_to: date
     employee_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=1000)
+    #: Decision 14 — only employment spells in this legal entity (one entity's period).
+    legal_entity_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_range(self) -> "AttendanceRangeCalculateInput":
@@ -1913,6 +1935,7 @@ class AttendanceRangeCalculateQueued(BaseModel):
     date_from: date
     date_to: date
     employee_ids: list[UUID] | None
+    legal_entity_id: UUID | None = None
 
 
 class WorkOnLeaveKeepLeaveInput(BaseModel):
@@ -1950,6 +1973,7 @@ def attendance_period_action_to_read(row: "AttendancePeriodAction") -> Attendanc
 class AttendancePeriodRead(BaseModel):
     id: UUID
     company_id: UUID
+    legal_entity_id: UUID
     period_start: date
     period_end: date
     label: str | None
@@ -1980,6 +2004,7 @@ def attendance_period_to_read(
     return AttendancePeriodRead(
         id=row.id,
         company_id=row.company_id,
+        legal_entity_id=row.legal_entity_id,
         period_start=row.period_start,
         period_end=row.period_end,
         label=row.label,

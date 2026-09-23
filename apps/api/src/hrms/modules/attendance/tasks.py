@@ -135,10 +135,12 @@ async def _calculate_range_async(
     date_to: date,
     employee_ids: list[UUID] | None,
     actor_user_id: UUID | None,
+    legal_entity_id: UUID | None = None,
 ) -> dict[str, int]:
     """Calculates every **employed** day in `[date_from, date_to]` for every employee with an
-    employment spell overlapping it (optionally narrowed to `employee_ids`) — exactly the set of
-    rows `AttendancePeriodService`'s EMPLOYEES_WITHOUT_ATTENDANCE gate requires, and no
+    employment spell overlapping it (optionally narrowed to `employee_ids`, and to spells in
+    `legal_entity_id` — decision 14, one entity's period) — exactly the set of rows
+    `AttendancePeriodService`'s EMPLOYEES_WITHOUT_ATTENDANCE gate requires, and no
     NOT_JOINED/EXITED rows outside employment.
 
     One transaction per employee (not one for the whole company, unlike the 3-day nightly
@@ -149,13 +151,15 @@ async def _calculate_range_async(
     from hrms.modules.employee.service import EmploymentService
 
     async with session_scope(company_id=str(company_id)) as session:
-        spans = await EmploymentService(session).list_spans_overlapping(
+        spans = await EmploymentService(session).list_legal_entity_spans(
             company_id, date_from=date_from, date_to=date_to
         )
     wanted = set(employee_ids) if employee_ids is not None else None
     dates_by_employee: dict[UUID, set[date]] = {}
-    for employee_id, joining_date, last_working_day in spans:
+    for employee_id, span_legal_entity_id, joining_date, last_working_day in spans:
         if wanted is not None and employee_id not in wanted:
+            continue
+        if legal_entity_id is not None and span_legal_entity_id != legal_entity_id:
             continue
         dates_by_employee.setdefault(employee_id, set()).update(
             _employed_dates(joining_date, last_working_day, date_from, date_to)
@@ -204,6 +208,7 @@ def calculate_range(
     date_to: str,
     employee_ids: list[str] | None,
     actor_user_id: str | None,
+    legal_entity_id: str | None = None,
 ) -> dict[str, int]:
     return asyncio.run(
         _calculate_range_async(
@@ -212,6 +217,7 @@ def calculate_range(
             date.fromisoformat(date_to),
             [UUID(e) for e in employee_ids] if employee_ids is not None else None,
             UUID(actor_user_id) if actor_user_id else None,
+            UUID(legal_entity_id) if legal_entity_id else None,
         )
     )
 

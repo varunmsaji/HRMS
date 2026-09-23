@@ -618,6 +618,13 @@ class AttendanceDay(Base, TimestampMixin):
     locked_by: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
+    # Decision 14 — the period whose finalize locked this day. Reopen unlocks exactly these rows,
+    # never a bare date range (another legal entity's closed period may cover the same dates).
+    locked_period_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("attendance_period.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -876,15 +883,14 @@ class AttendancePeriod(Base, TimestampMixin):
     architecture's own `AttendanceLock` never describes a closed-but-unlocked state either.
 
     `[period_start, period_end]` inclusive-inclusive (§17 convention). No overlap with another
-    period for the same `company_id` (GiST exclusion, mirrors `PolicyAssignment`/`Employment`).
+    period for the same `(company_id, legal_entity_id)` (GiST exclusion, mirrors
+    `PolicyAssignment`/`Employment`).
 
-    `legal_entity_id` is reserved, unused in V1 (always `NULL`; company grain only) — ships ahead
-    of use exactly like `AttendanceDay.is_locked` shipped in W4 before this table existed.
-    PD-LOCK-1 (architecture §32) is genuinely open between company/legal-entity/pay-cycle grain;
-    the architecture's own stated default — legal-entity grain *only if* payroll will be
-    LE-scoped — cannot be evaluated because Payroll does not exist yet, so V1 ships the other half
-    of that same documented default: company grain. The column is reserved so a future slice can
-    switch grain without a migration that touches every existing row."""
+    Legal-entity grain (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decision 14, resolving
+    PD-LOCK-1): payroll — and so the attendance cycle it reads — runs per legal entity, because
+    PF/ESI/TDS are filed per entity. A period covers the employee-dates whose employment on that
+    date belongs to `legal_entity_id` (see `_period_owns_date` in `service.py`); another entity's
+    employees are unaffected by it being open or closed."""
 
     __tablename__ = "attendance_period"
 
@@ -892,8 +898,8 @@ class AttendancePeriod(Base, TimestampMixin):
     company_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
     )
-    legal_entity_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("legal_entity.id"), nullable=True
+    legal_entity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("legal_entity.id"), index=True
     )
 
     period_start: Mapped[date] = mapped_column(Date)

@@ -21,6 +21,8 @@ export interface AttendancePeriodActionEntry {
 export interface AttendancePeriod {
   id: string;
   company_id: string;
+  /** Decision 14 — each legal entity runs its own attendance cycle. */
+  legal_entity_id: string;
   period_start: string;
   period_end: string;
   label: string | null;
@@ -45,10 +47,13 @@ export interface AttendancePeriod {
   updated_at: string;
 }
 
-/** Mirrors `AttendancePeriodCreate`. */
+/** Mirrors `AttendancePeriodCreate`. Send `month` (`YYYY-MM`, decision 18 — the calendar-month
+ * default) or an explicit `period_start`/`period_end` pair, never both. */
 export interface AttendancePeriodCreatePayload {
-  period_start: string;
-  period_end: string;
+  legal_entity_id: string;
+  month?: string;
+  period_start?: string;
+  period_end?: string;
   label?: string;
 }
 

@@ -482,13 +482,21 @@ Submit blocked when locked if policy `blocked_when_locked` (default true). Pendi
 
 States: **OPEN | CLOSED** (CLOSED = locked). No persisted CLOSING.
 
+### Grain — A
+
+**Per legal entity** (`PAYROLL_BUSINESS_DECISIONS.md` decision 14). Every period belongs to one legal entity; periods of the same entity cannot overlap, different entities' periods can. A period owns the employee-dates whose employment on that date is in its entity — an employee transferred mid-month is split between the two entities' periods. A date no employment covers belongs to the entity of the spell that ended before it (after exit, or a gap), else the spell starting after it (before joining).
+
+Default cycle: **full calendar month** (decision 18) — create with `month: "YYYY-MM"`; an explicit start/end range is still accepted for an off-cycle period.
+
+Everything below — validation blockers, summary, lock, reopen and the lock checks on punches, rosters, regularizations, overtime, calculation and leave — applies only to the employee-dates the period owns. Two company-wide changes still refuse when *any* entity's closed period covers the date: shift-version publish and the company timezone change.
+
 ### Validate blockers — A
 
 `EMPLOYEES_WITHOUT_ATTENDANCE`, `CONFIG_ERROR`, `INCOMPLETE_ATTENDANCE` (only KEEP_INCOMPLETE), `PENDING_REGULARIZATION`, `PENDING_OVERTIME_APPROVAL`, `UNPUBLISHED_ROSTER`.
 
 ### Finalize — A
 
-Re-validate → close → resolve INCOMPLETE paid/lop → snapshot summaries → bulk_lock days.
+Re-validate → close → resolve INCOMPLETE paid/lop → snapshot summaries → lock the owned days (each records `locked_period_id`). Reopen unlocks exactly the days that period locked.
 
 ### Impossible after lock — A
 

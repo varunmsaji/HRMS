@@ -31,6 +31,7 @@ const mockedGet = vi.mocked(apiClient.get);
 const samplePeriod: AttendancePeriod = {
   id: "period-1",
   company_id: "company-1",
+  legal_entity_id: "le-1",
   period_start: "2026-08-01",
   period_end: "2026-08-31",
   label: "August 2026",

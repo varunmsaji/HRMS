@@ -93,8 +93,10 @@ Following from decisions 2, 3, 5, 16 and 17, the frozen `attendance_period_summa
 | 2026-09-23 | Step 1c | Summary OT buckets fixed — `attendance_day.ot_day_class` (engine day class, backfilled from `overtime_record.day_class`) replaces matching the policy's rate code, so codes like `OT_NIGHT_2X` no longer all land in `ot_minutes_normal`; PAY-006 pre-cutoff reminders (daily 10:00 IST Celery job `attendance.run_incomplete_reminders`: from `attendance_incomplete_reminder_lead_days` (3) before an open period's end until it closes, each employee with unlocked INCOMPLETE days before today gets one email, users with `ATTENDANCE.LOCK` get a digest; once per period per business day via an `ATTENDANCE_INCOMPLETE_REMINDERS_SENT` audit row); PAY-008 (`calculation.ENGINE_VERSION = 2` stored in `attendance_day.engine_version` and the snapshot; sibling-day and cross-module inputs recorded in `computation_snapshot["derived_inputs"]`) | `20261004094000`, `20261004095000` |
 | 2026-09-23 | Step 2 | PAY-011 / decision 8 (`allow_negative_balance` enforced at submit and approval, bounded by the new `leave_policy_version.negative_balance_floor`, required to publish with the switch on; NULL reads as 0); PAY-010 / decision 9 (balance re-checked at final approval under a per-employee, per-leave-type advisory lock; overdraw → 409 `LEAVE_APPLICATION_BALANCE_SHORTFALL` with the shortfall, or approve with `excess_as_lop: true` — the latest uncovered whole days become `leave_application_day.is_lop`, projected unpaid, `leave_application.lop_days` not debited, cancel credits back only what was debited; web review dialog shows the shortfall); DAT-001 (partial unique indexes on `ACCRUAL`/`CARRY_FORWARD` per cycle and `COMP_OFF_CREDIT` per overtime record, `INSERT … ON CONFLICT DO NOTHING`); decision 10 (new `LEAVE.APPLICATION_CANCEL_APPROVED`, COMPANY_ADMIN + HR_ADMIN at company scope: employee cancels own approved leave only before it starts, HR any time with a mandatory reason once started — `leave_application.cancellation_reason`, 422 `LEAVE_APPLICATION_CANCEL_REASON_REQUIRED`; managers and other submitters can no longer cancel approved leave); PD-3 (apply, approve and cancel-of-approved refused with 409 `LEAVE_APPLICATION_PERIOD_CLOSED` when any date is inside a CLOSED attendance period; withdrawing or rejecting a pending application stays allowed); decision 11 (`leave_policy_version.year_end_action` = `CARRY_FORWARD` (default, unchanged behaviour) / `LAPSE` (whole positive balance lapses) / `ENCASH_EXCESS` (excess over `max_carry_forward_days` written as a system `ENCASHMENT` for payroll, capped at `max_encashment_days` with the rest lapsing; cap required to publish); negative balances are never touched at year end); decision 13 defaults (comp-off day length falls back to the day's scheduled shift minutes, expiry to 60 days) | `20261004100000`, `20261004101000`, `20261004102000`, `20261004103000` |
 | 2026-09-23 | Step 2 — comp-off safety review | [`COMPOFF_POLICY_SAFETY_REVIEW.md`](./COMPOFF_POLICY_SAFETY_REVIEW.md). Comp-off expiry made concurrency-safe (per-credit check-then-offset under the employee's comp-off balance advisory lock, credits ordered by employee). Decision 13's step rule deliberately **not** built (product call 2026-09-23: defer): on today's input it would only ever lower future credits and could never award a day for a full shift worked on a weekly off. No change to credit amounts, balances or historical ledger rows | none |
+| 2026-09-23 | Step 3 | Decision 14 (`attendance_period.legal_entity_id` required; no-overlap per `(company, legal entity)`; a period owns the employee-dates whose employment is in its entity — mid-month transfers split, not-employed days go to the spell that ended before them, else the one starting after; validation blockers, live/frozen summary, lock and reopen scoped to owned days; new `attendance_day.locked_period_id` so reopen unlocks exactly what that period locked; punch/roster/regularization/overtime/calculate and PD-3 leave locks check only the employee's own entity; shift-version publish and timezone change stay company-wide; incomplete-day reminders per entity; `calculate-range` takes `legal_entity_id`; `GET /attendance-periods?legal_entity_id=`); decision 18 (create accepts `month: "YYYY-MM"` → 1st–last day, label defaults to "September 2026"; explicit range still allowed). Web: entity picker + calendar-month default in the create dialog, entity column/filter on the list, entity on the detail page. Existing periods backfilled with the company's only legal entity; the migration refuses to run if a company with periods has zero or several | `20261004104000` |
 
 Step 1 is complete. Step 2 is complete except decision 13's step rule (see the follow-ups below).
+Step 3 is complete.
 
 Follow-ups found during step 1 (not yet done):
 
@@ -128,9 +130,21 @@ Follow-ups found during step 2 (not yet done):
   fractional balances) are listed in `COMPOFF_POLICY_SAFETY_REVIEW.md` §13.
 - System year-end `ENCASHMENT` entries (decision 11) are balance debits only — the payroll
   module must pick up entries with a `reference_id` and pay them.
-- `attendance_period` is company-grain today, so PD-3's lock is company-wide; step 3
-  (decision 14, per legal entity) must narrow `AttendanceService.closed_period_overlapping` to
-  the employee's legal entity.
+- ~~`attendance_period` is company-grain today, so PD-3's lock is company-wide~~ — done in
+  step 3: `AttendanceService.closed_period_overlapping` now checks only the employee's own
+  legal entity per date.
+
+Follow-ups found during step 3 (not yet done):
+
+- Before deploying `20261004104000` to an environment with real data, run the pre-check query
+  in its docstring: any company that already has periods and zero or several legal entities
+  stops the migration, and those periods must be assigned or split by hand first.
+- Punch intake keeps its DEC-TZ-05 rule (refuse only when the punch's local date **and** the
+  day before are both closed). With per-entity periods that rule is evaluated per employee;
+  a late punch on the first day of a closed period is still stored (inert — the locked day
+  refuses recalculation), as before.
+- Payroll (step 5) must read periods per legal entity and match employees by the same
+  ownership rule — the frozen `attendance_period_summary` rows are already per entity.
 
 ---
 

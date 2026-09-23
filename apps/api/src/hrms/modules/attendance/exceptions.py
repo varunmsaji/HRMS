@@ -487,17 +487,31 @@ class AttendancePeriodNotFoundError(NotFoundError):
 
 
 class AttendancePeriodOverlapError(ConflictError):
-    """The GiST exclusion constraint on `(company_id, daterange(period_start, period_end))`
-    backs this — mirrors `PolicyVersionOverlapError`'s pattern of converting a DB-level
-    `IntegrityError` into the documented envelope."""
+    """The GiST exclusion constraint on `(company_id, legal_entity_id, daterange(period_start,
+    period_end))` backs this — mirrors `PolicyVersionOverlapError`'s pattern of converting a
+    DB-level `IntegrityError` into the documented envelope."""
 
     code = "ATTENDANCE_PERIOD_OVERLAP"
 
     def __init__(
-        self, message: str = "Another attendance period already covers part of this date range"
+        self,
+        message: str = (
+            "Another attendance period for this legal entity already covers part of this date range"
+        ),
     ) -> None:
         super().__init__(
             message, details=[{"field": "period_start", "code": self.code, "message": message}]
+        )
+
+
+class AttendancePeriodLegalEntityInvalidError(ValidationError):
+    """Decision 14 — a period belongs to one legal entity of the caller's own company."""
+
+    code = "ATTENDANCE_PERIOD_LEGAL_ENTITY_INVALID"
+
+    def __init__(self, message: str = "Legal entity not found in this company") -> None:
+        super().__init__(
+            message, details=[{"field": "legal_entity_id", "code": self.code, "message": message}]
         )
 
 

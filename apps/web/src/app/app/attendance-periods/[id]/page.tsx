@@ -27,6 +27,7 @@ import {
 import { formatDateTime } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import type { LegalEntity } from "@/lib/legal-entity/types";
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -62,6 +63,7 @@ export default function AttendancePeriodDetailPage() {
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
   const [calculating, setCalculating] = useState(false);
+  const [legalEntityName, setLegalEntityName] = useState<string | null>(null);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -74,6 +76,11 @@ export default function AttendancePeriodDetailPage() {
       ]);
       setPeriod(periodData);
       setSummary(summaryData);
+      // Display only — the period is still usable if the entity cannot be read.
+      apiClient
+        .get<LegalEntity>(`/legal-entities/${periodData.legal_entity_id}`)
+        .then((entity) => setLegalEntityName(entity.name))
+        .catch(() => setLegalEntityName(null));
     } catch (err) {
       setPeriod(null);
       setSummary(null);
@@ -108,8 +115,9 @@ export default function AttendancePeriodDetailPage() {
     }
   }
 
-  /** PAY-001 — queues calculation of every employed day in the period (up to today) so it can
-   * be finalized; the job runs in the background and `Validate` shows when it has caught up. */
+  /** PAY-001 — queues calculation of every employed day in the period (up to today) for this
+   * period's legal entity (decision 14) so it can be finalized; the job runs in the background
+   * and `Validate` shows when it has caught up. */
   async function handleCalculateRange() {
     if (!period) return;
     const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local
@@ -119,6 +127,7 @@ export default function AttendancePeriodDetailPage() {
       await apiClient.post(`/attendance/days/calculate-range`, {
         date_from: period.period_start,
         date_to: dateTo,
+        legal_entity_id: period.legal_entity_id,
       });
       toast({
         title: "Attendance calculation queued",
@@ -210,6 +219,7 @@ export default function AttendancePeriodDetailPage() {
               <h2 className="mb-4 text-sm font-medium text-foreground">Period</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <Field label="Label" value={period.label ?? "—"} />
+                <Field label="Legal entity" value={legalEntityName ?? "—"} />
                 <Field label="Period start" value={period.period_start} />
                 <Field label="Period end" value={period.period_end} />
                 <Field label="Opened at" value={formatDateTime(period.opened_at, tz)} />

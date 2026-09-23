@@ -1294,36 +1294,43 @@ class AttendanceDayRepository:
         session: AsyncSession,
         *,
         company_id: UUID,
-        date_from: date,
-        date_to: date,
+        attendance_day_ids: list[UUID],
+        attendance_period_id: UUID,
         locked_by: UUID | None,
         now: datetime,
     ) -> None:
         """W8 — the only writer that ever sets `is_locked=true` (models.py's own W4 docstring
-        names this exact seam). Every row already in range is locked regardless of its current
-        `attendance_status`, including `CONFIG_ERROR`/`INCOMPLETE` rows — finalize's own
-        validation gate is what prevents those from ever reaching this point (a `CLOSED` period
-        with an unresolved exception inside it should never be reachable, not silently skipped
+        names this exact seam). Locks exactly the rows the finalizing period owns
+        (`attendance_day_ids`, decision 14 — a date range alone would also lock another legal
+        entity's days) regardless of their `attendance_status`, including `CONFIG_ERROR`/
+        `INCOMPLETE` rows — finalize's own validation gate is what prevents those from ever
+        reaching this point. Records `locked_period_id` so reopen can unlock the same set.
 
         Lock-ordering note (execution gate §17.3 constraint 2, `IR-10`): reviewed against
         `AttendanceDayService.calculate()`'s `FOR UPDATE` on a single `attendance_day` row.
         `calculate()` never holds more than one `attendance_day` row lock at a time within its
         own transaction (it acquires the target row, does read-only work, then writes that same
-        row once), and this range `UPDATE` touches only `attendance_day` — no other table this
+        row once), and this `UPDATE` touches only `attendance_day` — no other table this
         method locks (`attendance_period`, via the caller's own `update()` just before this call)
-        is ever locked by `calculate()`. A range `UPDATE` here and a concurrent single-row `FOR
+        is ever locked by `calculate()`. This `UPDATE` and a concurrent single-row `FOR
         UPDATE` in `calculate()` can only block each other (whichever started first wins, the
         other waits), never deadlock — a deadlock needs a cycle of at least two mutual waits, and
-        neither side ever holds one lock while requesting a second, conflicting one.
-        here)."""
+        neither side ever holds one lock while requesting a second, conflicting one."""
+        if not attendance_day_ids:
+            return
         await session.execute(
             update(AttendanceDay)
             .where(
                 AttendanceDay.company_id == company_id,
-                AttendanceDay.attendance_date >= date_from,
-                AttendanceDay.attendance_date <= date_to,
+                AttendanceDay.id.in_(attendance_day_ids),
             )
-            .values(is_locked=True, locked_at=now, locked_by=locked_by, updated_at=now)
+            .values(
+                is_locked=True,
+                locked_at=now,
+                locked_by=locked_by,
+                locked_period_id=attendance_period_id,
+                updated_at=now,
+            )
         )
 
     async def bulk_unlock(
@@ -1331,22 +1338,27 @@ class AttendanceDayRepository:
         session: AsyncSession,
         *,
         company_id: UUID,
-        date_from: date,
-        date_to: date,
+        attendance_period_id: UUID,
         now: datetime,
     ) -> None:
-        """Reopen (`ATTENDANCE.UNLOCK`) — clears the denormalized flag this same repository set
-        in `bulk_lock`. Does not recompute anything; a day made mutable again is only actually
-        changed by a later, ordinary `calculate()`/regularization/adjustment call."""
+        """Reopen (`ATTENDANCE.UNLOCK`) — clears the denormalized flag `bulk_lock` set, on
+        exactly the rows that period locked. Does not recompute anything; a day made mutable
+        again is only actually changed by a later, ordinary `calculate()`/regularization/
+        adjustment call."""
         await session.execute(
             update(AttendanceDay)
             .where(
                 AttendanceDay.company_id == company_id,
-                AttendanceDay.attendance_date >= date_from,
-                AttendanceDay.attendance_date <= date_to,
+                AttendanceDay.locked_period_id == attendance_period_id,
                 AttendanceDay.is_locked.is_(True),
             )
-            .values(is_locked=False, locked_at=None, locked_by=None, updated_at=now)
+            .values(
+                is_locked=False,
+                locked_at=None,
+                locked_by=None,
+                locked_period_id=None,
+                updated_at=now,
+            )
         )
 
 
@@ -1872,11 +1884,18 @@ class AttendancePeriodRepository:
         return (await session.execute(stmt)).first() is not None
 
     async def list_filtered(
-        self, session: AsyncSession, *, company_id: UUID, status: str | None
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        status: str | None,
+        legal_entity_id: UUID | None = None,
     ) -> list[AttendancePeriod]:
         conditions = [AttendancePeriod.company_id == company_id]
         if status is not None:
             conditions.append(AttendancePeriod.status == status)
+        if legal_entity_id is not None:
+            conditions.append(AttendancePeriod.legal_entity_id == legal_entity_id)
         stmt = (
             select(AttendancePeriod)
             .where(*conditions)
@@ -1884,11 +1903,12 @@ class AttendancePeriodRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
-    async def get_first_closed_overlapping(
+    async def list_closed_overlapping(
         self, session: AsyncSession, *, company_id: UUID, date_from: date, date_to: date
-    ) -> AttendancePeriod | None:
-        """PD-3 — the earliest `CLOSED` period overlapping `[date_from, date_to]`, for a caller
-        (leave) that locks a whole date range rather than a single date."""
+    ) -> list[AttendancePeriod]:
+        """Every `CLOSED` period, of any legal entity, overlapping `[date_from, date_to]`,
+        earliest first. The caller decides which of them own the employee-dates it cares about
+        (decision 14 — at most one per legal entity per date)."""
         stmt = (
             select(AttendancePeriod)
             .where(
@@ -1898,30 +1918,8 @@ class AttendancePeriodRepository:
                 AttendancePeriod.period_end >= date_from,
             )
             .order_by(AttendancePeriod.period_start)
-            .limit(1)
         )
-        return (await session.execute(stmt)).scalar_one_or_none()
-
-    async def get_covering(
-        self,
-        session: AsyncSession,
-        *,
-        company_id: UUID,
-        target_date: date,
-        status: str | None = None,
-    ) -> AttendancePeriod | None:
-        """WD-30 — the authoritative period lookup every lock-enforcement check in this module
-        consults. The GiST exclusion on `attendance_period` guarantees at most one row can ever
-        match, for any `target_date`, regardless of `status`."""
-        conditions = [
-            AttendancePeriod.company_id == company_id,
-            AttendancePeriod.period_start <= target_date,
-            AttendancePeriod.period_end >= target_date,
-        ]
-        if status is not None:
-            conditions.append(AttendancePeriod.status == status)
-        stmt = select(AttendancePeriod).where(*conditions)
-        return (await session.execute(stmt)).scalar_one_or_none()
+        return list((await session.execute(stmt)).scalars().all())
 
     async def update(
         self,

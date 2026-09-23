@@ -131,7 +131,7 @@
 | ATT-012 | attendance | `_evaluate_no_schedule` has a redundant `lop_fraction` conditional | 🟢 |
 | DAT-007 | employee | `vpf_percentage` annotated `float` over a `Numeric(9,4)` column | 🟢 |
 | DAT-009 | attendance | `Numeric(3,2)` fractions leave no headroom for quarter-day constructs | 🟢 |
-| DAT-011 | attendance | `attendance_period.legal_entity_id` reserved, always NULL (PD-LOCK-1 open) | 🟢 |
+| DAT-011 | attendance | ~~`attendance_period.legal_entity_id` reserved, always NULL (PD-LOCK-1 open)~~ — fixed 2026-09-23, periods are per legal entity (WD-34) | 🟢 |
 | DAT-012 | db | No partitioning on `punch` / `attendance_day` (documented deferral, WD-26) | 🟢 |
 | SEC-003 | web | Access and refresh tokens in `localStorage` (documented trade-off) | 🟠 but deferrable |
 | SEC-010 | auth | No password reset, email verification, or MFA; weak password policy | 🔵 |

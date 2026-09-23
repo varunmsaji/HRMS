@@ -66,6 +66,19 @@ async def _cleanup_attendance_period(*, company_id: UUID) -> None:
         await session.commit()
 
 
+async def _first_legal_entity_id(client: AsyncClient, headers: dict[str, str]) -> str:
+    """The tenant's oldest legal entity — the one `_build_wired_employee` created first — or a
+    new one when the tenant has none yet."""
+    response = await client.get("/v1/legal-entities", headers=headers)
+    assert response.status_code == 200, response.text
+    entities = sorted(response.json()["data"], key=lambda e: e["created_at"])
+    if entities:
+        return str(entities[0]["id"])
+    created = await client.post("/v1/legal-entities", headers=headers, json={"name": "Acme LE"})
+    assert created.status_code == 201, created.text
+    return str(created.json()["data"]["id"])
+
+
 async def _create_period(
     client: AsyncClient,
     headers: dict[str, str],
@@ -73,38 +86,72 @@ async def _create_period(
     period_start: str = _DAY,
     period_end: str = _DAY,
     label: str | None = "August window",
+    legal_entity_id: str | None = None,
 ) -> dict[str, Any]:
+    if legal_entity_id is None:
+        legal_entity_id = await _first_legal_entity_id(client, headers)
     response = await client.post(
         "/v1/attendance-periods",
         headers=headers,
-        json={"period_start": period_start, "period_end": period_end, "label": label},
+        json={
+            "legal_entity_id": legal_entity_id,
+            "period_start": period_start,
+            "period_end": period_end,
+            "label": label,
+        },
     )
     assert response.status_code == 201, response.text
     return dict(response.json()["data"])
 
 
 async def _insert_closed_period(
-    *, company_id: UUID, period_start: str = _DAY, period_end: str = _DAY
+    *,
+    company_id: UUID,
+    period_start: str = _DAY,
+    period_end: str = _DAY,
+    legal_entity_id: str | UUID | None = None,
 ) -> None:
     """Test-only shortcut (see module docstring) — bypasses validation entirely to unit-test one
-    guard at a time."""
+    guard at a time. Defaults to the tenant's oldest legal entity."""
     factory = get_session_factory()
     async with factory() as session:
         await set_rls_company_id(session, str(company_id))
         now = datetime.now(UTC)
+        if legal_entity_id is None:
+            legal_entity_id = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM legal_entity WHERE company_id = :cid "
+                        "ORDER BY created_at LIMIT 1"
+                    ),
+                    {"cid": str(company_id)},
+                )
+            ).scalar_one_or_none()
+        if legal_entity_id is None:
+            legal_entity_id = (
+                await session.execute(
+                    text(
+                        "INSERT INTO legal_entity (id, company_id, name, is_active, version, "
+                        "created_at, updated_at) VALUES (gen_random_uuid(), :cid, 'Acme LE', "
+                        "true, 1, :now, :now) RETURNING id"
+                    ),
+                    {"cid": str(company_id), "now": now},
+                )
+            ).scalar_one()
         await session.execute(
             text(
                 """
                 INSERT INTO attendance_period
-                  (id, company_id, period_start, period_end, label, status, opened_at,
-                   closed_at, version, created_at, updated_at)
+                  (id, company_id, legal_entity_id, period_start, period_end, label, status,
+                   opened_at, closed_at, version, created_at, updated_at)
                 VALUES
-                  (gen_random_uuid(), :cid, :start, :end, 'raw-closed', 'CLOSED', :now,
-                   :now, 1, :now, :now)
+                  (gen_random_uuid(), :cid, :le, :start, :end, 'raw-closed', 'CLOSED',
+                   :now, :now, 1, :now, :now)
                 """
             ),
             {
                 "cid": str(company_id),
+                "le": str(legal_entity_id),
                 "start": date.fromisoformat(period_start),
                 "end": date.fromisoformat(period_end),
                 "now": now,
@@ -163,11 +210,17 @@ async def test_overlapping_period_rejected(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        await _create_period(client, headers, period_start="2026-08-01", period_end="2026-08-31")
+        first = await _create_period(
+            client, headers, period_start="2026-08-01", period_end="2026-08-31"
+        )
         overlapping = await client.post(
             "/v1/attendance-periods",
             headers=headers,
-            json={"period_start": "2026-08-15", "period_end": "2026-09-15"},
+            json={
+                "legal_entity_id": first["legal_entity_id"],
+                "period_start": "2026-08-15",
+                "period_end": "2026-09-15",
+            },
         )
         assert overlapping.status_code == 409, overlapping.text
         assert overlapping.json()["error"]["code"] == "ATTENDANCE_PERIOD_OVERLAP"

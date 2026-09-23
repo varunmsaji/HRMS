@@ -1466,8 +1466,11 @@ async def list_attendance_periods(
     _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
     service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
     period_status: Annotated[str | None, Query()] = None,
+    legal_entity_id: Annotated[UUID | None, Query()] = None,
 ) -> ListEnvelope[AttendancePeriodRead]:
-    data = await service.list_periods(tenant.company_id, status=period_status)
+    data = await service.list_periods(
+        tenant.company_id, status=period_status, legal_entity_id=legal_entity_id
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

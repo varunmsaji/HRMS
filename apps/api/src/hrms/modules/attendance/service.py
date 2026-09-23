@@ -6,6 +6,7 @@ identical CRUD/versioning/publish mechanics. Mirrors `organisation.service.Organ
 `ShiftVersion` methods (create/list/get/update/discard/publish/resolve_as_of) three times over,
 plus policy-resolution delegation (§16/§19 step 7)."""
 
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -25,6 +26,7 @@ from hrms.modules.attendance.exceptions import (
     AttendancePeriodClosedError,
     AttendancePeriodFinalizationBlockedError,
     AttendancePeriodInvalidTransitionError,
+    AttendancePeriodLegalEntityInvalidError,
     AttendancePeriodNotFoundError,
     AttendancePeriodOverlapError,
     AttendanceRangeInFutureError,
@@ -1926,19 +1928,31 @@ class AttendanceService:
         reaching a closed period" — that is recorded as debt against the policy-versioning
         workstream (§12.4), not absorbed here. Only `ShiftVersion` publish gets this check,
         because it is the one the Phase 2/3 timezone work already touches in the same file."""
-        await _ensure_date_open(self._session, company_id, target_date)
+        await _ensure_date_open(self._session, company_id, target_date, employee_id=None)
 
     async def closed_period_overlapping(
-        self, company_id: UUID, date_from: date, date_to: date
+        self, company_id: UUID, employee_id: UUID, date_from: date, date_to: date
     ) -> tuple[date, date] | None:
         """PD-3 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md`) — the cross-module seam Leave uses
         to refuse apply/approve/cancel on dates inside a closed period: closing the attendance
-        period locks leave for those dates too. Returns the first `CLOSED` period's bounds, or
-        `None` when the whole range is open. Company grain, like `AttendancePeriod` itself today."""
-        period = await AttendancePeriodRepository().get_first_closed_overlapping(
+        period locks leave for those dates too. Decision 14 — only a period of the legal entity
+        owning each of the employee's dates counts. Returns the first such `CLOSED` period's
+        bounds, or `None` when every date is open."""
+        closed = await AttendancePeriodRepository().list_closed_overlapping(
             self._session, company_id=company_id, date_from=date_from, date_to=date_to
         )
-        return (period.period_start, period.period_end) if period is not None else None
+        if not closed:
+            return None
+        spans = await _employee_entity_spans(self._session, company_id, employee_id)
+        for period in closed:
+            day = max(period.period_start, date_from)
+            last = min(period.period_end, date_to)
+            while day <= last:
+                owner = _owning_legal_entity(spans, day)
+                if owner is None or owner == period.legal_entity_id:
+                    return (period.period_start, period.period_end)
+                day += timedelta(days=1)
+        return None
 
 
 async def _resolve_visible_employee_ids(
@@ -1982,7 +1996,65 @@ async def _ensure_employee_visible(
     )
 
 
-async def _ensure_date_open(session: AsyncSession, company_id: UUID, target_date: date) -> None:
+#: One employment spell as `(legal_entity_id, joining_date, last_working_day)`.
+_EntitySpan = tuple[UUID, date, date | None]
+
+
+def _owning_legal_entity(spans: list[_EntitySpan], target_date: date) -> UUID | None:
+    """Decision 14 (`PAYROLL_BUSINESS_DECISIONS.md`) — the legal entity whose attendance period
+    owns one employee's `target_date`: the entity of the employment covering it. A date no
+    employment covers belongs to the most recent spell that ended before it (post-exit, or a gap
+    between spells), else to the first spell starting after it (pre-joining) — so every such
+    not-employed day is accounted for by exactly one entity's period. `None` only when the
+    employee has no employment at all; callers then fail closed."""
+    for legal_entity_id, joining_date, last_working_day in spans:
+        if joining_date <= target_date and (
+            last_working_day is None or target_date <= last_working_day
+        ):
+            return legal_entity_id
+    preceding = [s for s in spans if s[2] is not None and s[2] < target_date]
+    if preceding:
+        return max(preceding, key=lambda s: s[2] or date.min)[0]
+    following = [s for s in spans if s[1] > target_date]
+    if following:
+        return min(following, key=lambda s: s[1])[0]
+    return None
+
+
+async def _employee_entity_spans(
+    session: AsyncSession, company_id: UUID, employee_id: UUID
+) -> list[_EntitySpan]:
+    from hrms.modules.employee.service import EmploymentService
+
+    spans = await EmploymentService(session).list_legal_entity_spans(
+        company_id, employee_id=employee_id
+    )
+    return [(legal_entity_id, joining, last) for _, legal_entity_id, joining, last in spans]
+
+
+async def _is_date_closed(
+    session: AsyncSession, company_id: UUID, target_date: date, *, employee_id: UUID | None
+) -> bool:
+    """Whether a `CLOSED` period owns `target_date` — for `employee_id`, only a period of the
+    legal entity that owns that employee-date (decision 14); with `employee_id=None` (a
+    company-wide change such as a shift-version publish) any legal entity's closed period
+    counts."""
+    closed = await AttendancePeriodRepository().list_closed_overlapping(
+        session, company_id=company_id, date_from=target_date, date_to=target_date
+    )
+    if not closed:
+        return False
+    if employee_id is None:
+        return True
+    owner = _owning_legal_entity(
+        await _employee_entity_spans(session, company_id, employee_id), target_date
+    )
+    return owner is None or any(p.legal_entity_id == owner for p in closed)
+
+
+async def _ensure_date_open(
+    session: AsyncSession, company_id: UUID, target_date: date, *, employee_id: UUID | None
+) -> None:
     """W8 (WD-30) — the authoritative period-lock check every mutating service in this module
     consults before writing anything that could affect a date's attendance facts: punch
     ingestion, roster writes, regularization submission, and overtime approve/reject all call
@@ -1991,17 +2063,16 @@ async def _ensure_date_open(session: AsyncSession, company_id: UUID, target_date
     row yet (a new joiner backdated into an already-closed period, for instance).
     `AttendanceDayService.calculate()` additionally keeps its own pre-existing `is_locked`
     check (`AttendanceDayLockedError`) for the already-computed-row case, so a locked day is
-    refused by two independent, defence-in-depth paths, not one."""
-    period_repo = AttendancePeriodRepository()
-    closed_period = await period_repo.get_covering(
-        session, company_id=company_id, target_date=target_date, status="CLOSED"
-    )
-    if closed_period is not None:
+    refused by two independent, defence-in-depth paths, not one.
+
+    Decision 14 — periods are per legal entity, so the check is per employee-date
+    (`_is_date_closed`); pass `employee_id=None` only for a genuinely company-wide change."""
+    if await _is_date_closed(session, company_id, target_date, employee_id=employee_id):
         raise AttendancePeriodClosedError()
 
 
 async def _ensure_punch_date_open(
-    session: AsyncSession, company_id: UUID, punch_time: datetime
+    session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
 ) -> None:
     """The period-lock gate for *punch ingestion specifically* (`DEC-TZ-05`/`CD-1` ⭐, SELECTED,
     execution gate §10) — split out from `_ensure_date_open` so this basis can differ from the
@@ -2030,22 +2101,9 @@ async def _ensure_punch_date_open(
     local_date = punch_time.astimezone(tz).date()
     previous_local_date = local_date - timedelta(days=1)
 
-    period_repo = AttendancePeriodRepository()
-    local_closed = (
-        await period_repo.get_covering(
-            session, company_id=company_id, target_date=local_date, status="CLOSED"
-        )
-        is not None
-    )
-    if not local_closed:
+    if not await _is_date_closed(session, company_id, local_date, employee_id=employee_id):
         return
-    previous_closed = (
-        await period_repo.get_covering(
-            session, company_id=company_id, target_date=previous_local_date, status="CLOSED"
-        )
-        is not None
-    )
-    if previous_closed:
+    if await _is_date_closed(session, company_id, previous_local_date, employee_id=employee_id):
         raise AttendancePeriodClosedError()
 
 
@@ -2147,7 +2205,7 @@ class ShiftRosterService:
         ip_address: str | None,
         user_agent: str | None,
     ) -> ShiftRosterRead:
-        await _ensure_date_open(self._session, company_id, roster_date)
+        await _ensure_date_open(self._session, company_id, roster_date, employee_id=employee_id)
         now = datetime.now(UTC)
         roster_id = uuid4()
         data = {
@@ -2203,7 +2261,9 @@ class ShiftRosterService:
         await _ensure_employee_visible(
             self._session, company_id, row.employee_id, scope, caller_employee_id
         )
-        await _ensure_date_open(self._session, company_id, row.roster_date)
+        await _ensure_date_open(
+            self._session, company_id, row.roster_date, employee_id=row.employee_id
+        )
         before_read = shift_roster_to_read(row)
 
         values = build_shift_roster_update_values(patch)
@@ -2270,7 +2330,9 @@ class ShiftRosterService:
         await _ensure_employee_visible(
             self._session, company_id, row.employee_id, scope, caller_employee_id
         )
-        await _ensure_date_open(self._session, company_id, row.roster_date)
+        await _ensure_date_open(
+            self._session, company_id, row.roster_date, employee_id=row.employee_id
+        )
         before_read = shift_roster_to_read(row)
         if before_read.status == "PUBLISHED":
             return before_read
@@ -2328,7 +2390,9 @@ class ShiftRosterService:
         await _ensure_employee_visible(
             self._session, company_id, row.employee_id, scope, caller_employee_id
         )
-        await _ensure_date_open(self._session, company_id, row.roster_date)
+        await _ensure_date_open(
+            self._session, company_id, row.roster_date, employee_id=row.employee_id
+        )
         before_read = shift_roster_to_read(row)
 
         now = datetime.now(UTC)
@@ -2490,7 +2554,7 @@ class PunchService:
         # regardless: `AttendanceDayService.calculate()` refuses a locked day outright, so a
         # stray punch here is at worst an inert, orphaned row (WD-11 — additive, never mutates
         # facts), never a silent rewrite.
-        await _ensure_punch_date_open(self._session, company_id, punch_time)
+        await _ensure_punch_date_open(self._session, company_id, employee_id, punch_time)
         punch_id = uuid4()
         data = {
             "id": punch_id,
@@ -2760,7 +2824,7 @@ class AttendanceDayService:
         # specific, narrower error for the already-computed-row case (`ATTENDANCE_DAY_LOCKED`,
         # not `ATTENDANCE_PERIOD_CLOSED`) — two independent, defence-in-depth guards, since the
         # two should never actually disagree (finalize/reopen sets both together).
-        await _ensure_date_open(self._session, company_id, target_date)
+        await _ensure_date_open(self._session, company_id, target_date, employee_id=employee_id)
         # Execution gate §17.3 — `FOR UPDATE`, acquired here (before `_build_calculation_input`
         # re-resolves configuration below), not after. Taking it after the read would serialise
         # the write but leave the read itself racing a concurrent calculate() for the same
@@ -2976,12 +3040,14 @@ class AttendanceDayService:
             body.date_to.isoformat(),
             employee_ids,
             str(actor_user_id) if actor_user_id else None,
+            str(body.legal_entity_id) if body.legal_entity_id else None,
         )
         queued = AttendanceRangeCalculateQueued(
             task_id=str(async_result.id),
             date_from=body.date_from,
             date_to=body.date_to,
             employee_ids=body.employee_ids,
+            legal_entity_id=body.legal_entity_id,
         )
         await self._audit.record(
             self._session,
@@ -4019,7 +4085,9 @@ class RegularizationRequestService:
         # already exists). A period-level close is a company-wide administrative decision no
         # per-policy flag can opt out of, and it is the only check that can catch a backdated
         # request for a date that has no `AttendanceDay` row at all yet.
-        await _ensure_date_open(self._session, company_id, body.attendance_date)
+        await _ensure_date_open(
+            self._session, company_id, body.attendance_date, employee_id=employee_id
+        )
 
         # `TZ-06` — was `date.today()`, the UTC calendar date under the pinned `TZ=UTC` server
         # (`DEC-TZ-04`). Between 00:00 and 05:29 IST that is one day BEHIND the correct India
@@ -4924,7 +4992,9 @@ class OvertimeRecordService:
         # `comp_off_minutes_earned` directly (`mark_ot_approved`, below), entirely outside
         # `AttendanceDayService.calculate()` — its own `is_locked` check never runs for this
         # path, so the period check here is the *only* guard, not defence-in-depth.
-        await _ensure_date_open(self._session, company_id, row.attendance_date)
+        await _ensure_date_open(
+            self._session, company_id, row.attendance_date, employee_id=row.employee_id
+        )
         now = datetime.now(UTC)
         is_final_stage = not (
             row.approval_chain == "MANAGER_THEN_HR" and row.approval_stage == "MANAGER"
@@ -5052,7 +5122,9 @@ class OvertimeRecordService:
         # `comp_off_minutes_earned` directly (`mark_ot_approved`, below), entirely outside
         # `AttendanceDayService.calculate()` — its own `is_locked` check never runs for this
         # path, so the period check here is the *only* guard, not defence-in-depth.
-        await _ensure_date_open(self._session, company_id, row.attendance_date)
+        await _ensure_date_open(
+            self._session, company_id, row.attendance_date, employee_id=row.employee_id
+        )
         now = datetime.now(UTC)
         before_read = await self._read(row, company_id=company_id)
         updated = await self._repo.update(
@@ -5114,6 +5186,26 @@ class OvertimeRecordService:
 # ---------------------------------------------------------------------------
 # W8 — AttendancePeriod (architecture §4.2/§22, decision log WD-30)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _PeriodScope:
+    """Decision 14 — which employee-dates one legal-entity period owns. `members` are the
+    employees with an employment in the period's entity overlapping the period; of their dates,
+    the period owns those `_owning_legal_entity` attributes to its entity (so a mid-period
+    transfer splits the employee between two entities' periods). `expected_dates` are the dates
+    each member is employed in this entity inside the period — the ones that must have a
+    calculated row before finalize."""
+
+    legal_entity_id: UUID
+    spans_by_employee: dict[UUID, list[_EntitySpan]]
+    expected_dates: dict[UUID, set[date]]
+
+    def owns(self, employee_id: UUID, target_date: date) -> bool:
+        spans = self.spans_by_employee.get(employee_id)
+        if spans is None or employee_id not in self.expected_dates:
+            return False
+        return _owning_legal_entity(spans, target_date) == self.legal_entity_id
 
 
 class AttendancePeriodService:
@@ -5191,12 +5283,21 @@ class AttendancePeriodService:
         user_agent: str | None = None,
     ) -> AttendancePeriodRead:
         """Create always opens immediately (WD-30) — there is no separate "open" action."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        try:
+            await OrganisationService(self._session).get_legal_entity(
+                company_id, body.legal_entity_id
+            )
+        except NotFoundError as exc:
+            raise AttendancePeriodLegalEntityInvalidError() from exc
+
         now = datetime.now(UTC)
         period_id = uuid4()
         data = {
             "id": period_id,
             "company_id": company_id,
-            "legal_entity_id": None,
+            "legal_entity_id": body.legal_entity_id,
             "period_start": body.period_start,
             "period_end": body.period_end,
             "label": body.label,
@@ -5234,9 +5335,11 @@ class AttendancePeriodService:
         return read
 
     async def list_periods(
-        self, company_id: UUID, *, status: str | None
+        self, company_id: UUID, *, status: str | None, legal_entity_id: UUID | None = None
     ) -> list[AttendancePeriodRead]:
-        rows = await self._repo.list_filtered(self._session, company_id=company_id, status=status)
+        rows = await self._repo.list_filtered(
+            self._session, company_id=company_id, status=status, legal_entity_id=legal_entity_id
+        )
         return [await self._read(row) for row in rows]
 
     async def get(self, company_id: UUID, period_id: UUID) -> AttendancePeriodRead:
@@ -5245,13 +5348,37 @@ class AttendancePeriodService:
 
     # -- finalization validation --------------------------------------------------------
 
-    async def _run_validation(
-        self, company_id: UUID, period: "AttendancePeriod"
-    ) -> tuple[AttendancePeriodValidationRead, list["AttendanceDay"]]:
-        """Fail-closed (WD-21): any non-empty bucket blocks. Returns the raw `AttendanceDay`
-        rows alongside the verdict so `finalize` never re-queries them — the summary snapshot
-        and the lock-time INCOMPLETE resolution both need the exact same row set validation
-        just inspected, not a second read that could race against it."""
+    async def _scope(self, company_id: UUID, period: "AttendancePeriod") -> _PeriodScope:
+        """Built from every employment spell in the company (not only those overlapping the
+        period) so a not-employed day is attributed exactly as `_ensure_date_open` attributes
+        it for a single employee."""
+        from hrms.modules.employee.service import EmploymentService
+
+        spans = await EmploymentService(self._session).list_legal_entity_spans(company_id)
+        spans_by_employee: dict[UUID, list[_EntitySpan]] = {}
+        expected_dates: dict[UUID, set[date]] = {}
+        for employee_id, legal_entity_id, joining_date, last_working_day in spans:
+            spans_by_employee.setdefault(employee_id, []).append(
+                (legal_entity_id, joining_date, last_working_day)
+            )
+            if legal_entity_id != period.legal_entity_id:
+                continue
+            span_start = max(joining_date, period.period_start)
+            span_end = min(last_working_day or period.period_end, period.period_end)
+            if span_start > span_end:
+                continue
+            dates = expected_dates.setdefault(employee_id, set())
+            for offset in range((span_end - span_start).days + 1):
+                dates.add(span_start + timedelta(days=offset))
+        return _PeriodScope(
+            legal_entity_id=period.legal_entity_id,
+            spans_by_employee=spans_by_employee,
+            expected_dates=expected_dates,
+        )
+
+    async def _owned_day_rows(
+        self, company_id: UUID, period: "AttendancePeriod", scope: _PeriodScope
+    ) -> list["AttendanceDay"]:
         day_rows = await self._day_repo.list_filtered(
             self._session,
             company_id=company_id,
@@ -5261,35 +5388,34 @@ class AttendancePeriodService:
             date_to=period.period_end,
             status=None,
         )
+        return [r for r in day_rows if scope.owns(r.employee_id, r.attendance_date)]
+
+    async def _run_validation(
+        self, company_id: UUID, period: "AttendancePeriod"
+    ) -> tuple[AttendancePeriodValidationRead, list["AttendanceDay"]]:
+        """Fail-closed (WD-21): any non-empty bucket blocks. Returns the raw `AttendanceDay`
+        rows alongside the verdict so `finalize` never re-queries them — the summary snapshot
+        and the lock-time INCOMPLETE resolution both need the exact same row set validation
+        just inspected, not a second read that could race against it.
+
+        Decision 14 — everything below is limited to the employee-dates this legal entity's
+        period owns (`_PeriodScope`); another entity's blockers never hold this one up."""
+        scope = await self._scope(company_id, period)
+        day_rows = await self._owned_day_rows(company_id, period, scope)
         reasons: list[AttendancePeriodBlockingReason] = []
 
-        # EMPLOYEES_WITHOUT_ATTENDANCE — every employment spell overlapping the period must have
-        # an `AttendanceDay` row for each calendar day it overlaps the period (architecture §19.1:
-        # `calculate()` always writes a row, even NOT_JOINED/EXITED/CONFIG_ERROR ones, once run —
-        # a missing row means it was simply never run for that employee-date).
-        from hrms.modules.employee.service import EmploymentService
-
-        employment_service = EmploymentService(self._session)
-        spans = await employment_service.list_spans_overlapping(
-            company_id, date_from=period.period_start, date_to=period.period_end
-        )
-        # Exact per-date comparison, not a row count: a count lets `NOT_JOINED` rows computed
-        # before a mid-period joining date mask missing days after it, and cannot tell two
-        # employment spans in the same period apart.
+        # EMPLOYEES_WITHOUT_ATTENDANCE — every day an employee is employed in this entity inside
+        # the period must have an `AttendanceDay` row (architecture §19.1: `calculate()` always
+        # writes a row, even NOT_JOINED/EXITED/CONFIG_ERROR ones, once run — a missing row means
+        # it was simply never run for that employee-date). Exact per-date comparison, not a row
+        # count: a count lets `NOT_JOINED` rows computed before a mid-period joining date mask
+        # missing days after it, and cannot tell two employment spans in the same period apart.
         dates_by_employee: dict[UUID, set[date]] = {}
         for day_row in day_rows:
             dates_by_employee.setdefault(day_row.employee_id, set()).add(day_row.attendance_date)
-        expected_by_employee: dict[UUID, set[date]] = {}
-        for employee_id, joining_date, last_working_day in spans:
-            span_start = max(joining_date, period.period_start)
-            span_last_day = last_working_day or period.period_end
-            span_end = min(span_last_day, period.period_end)
-            expected_dates = expected_by_employee.setdefault(employee_id, set())
-            for offset in range((span_end - span_start).days + 1):
-                expected_dates.add(span_start + timedelta(days=offset))
         missing_employees = [
             str(employee_id)
-            for employee_id, expected_dates in expected_by_employee.items()
+            for employee_id, expected_dates in scope.expected_dates.items()
             if not expected_dates <= dates_by_employee.get(employee_id, set())
         ]
         if missing_employees:
@@ -5422,6 +5548,7 @@ class AttendancePeriodService:
             status="SUBMITTED",
             request_type=None,
         )
+        pending_reg = [r for r in pending_reg if scope.owns(r.employee_id, r.attendance_date)]
         if pending_reg:
             reasons.append(
                 AttendancePeriodBlockingReason(
@@ -5446,6 +5573,7 @@ class AttendancePeriodService:
             date_to=period.period_end,
             status="PENDING",
         )
+        pending_ot = [r for r in pending_ot if scope.owns(r.employee_id, r.attendance_date)]
         if pending_ot:
             reasons.append(
                 AttendancePeriodBlockingReason(
@@ -5468,6 +5596,7 @@ class AttendancePeriodService:
             date_to=period.period_end,
             status="DRAFT",
         )
+        draft_roster = [r for r in draft_roster if scope.owns(r.employee_id, r.roster_date)]
         if draft_roster:
             reasons.append(
                 AttendancePeriodBlockingReason(
@@ -5665,15 +5794,8 @@ class AttendancePeriodService:
             )
             return [attendance_period_summary_to_read(row, frozen=True) for row in rows]
 
-        day_rows = await self._day_repo.list_filtered(
-            self._session,
-            company_id=company_id,
-            visible_employee_ids=None,
-            employee_id=None,
-            date_from=period.period_start,
-            date_to=period.period_end,
-            status=None,
-        )
+        scope = await self._scope(company_id, period)
+        day_rows = await self._owned_day_rows(company_id, period, scope)
         now_str = _format_timestamp(datetime.now(UTC)) or ""
         aggregates = self._aggregate_day_rows(day_rows)
         return [
@@ -5875,8 +5997,8 @@ class AttendancePeriodService:
         await self._day_repo.bulk_lock(
             self._session,
             company_id=company_id,
-            date_from=period.period_start,
-            date_to=period.period_end,
+            attendance_day_ids=[r.id for r in day_rows],
+            attendance_period_id=period_id,
             locked_by=actor_user_id,
             now=now,
         )
@@ -5915,9 +6037,10 @@ class AttendancePeriodService:
         user_agent: str | None = None,
     ) -> AttendancePeriodRead:
         """`ATTENDANCE.UNLOCK` (architecture §13.4/§23.2) — clears `AttendanceDay.is_locked`
-        across the period's range and reopens it for correction. Does not recompute or restore
-        anything by itself; a day made mutable again is only actually changed by a later,
-        ordinary `calculate()`/regularization/adjustment call, and re-finalizing regenerates a
+        on the days this period's finalize locked and reopens it for correction. Does not
+        recompute or restore anything by itself; a day made mutable again is only actually
+        changed by a later, ordinary `calculate()`/regularization/adjustment call, and
+        re-finalizing regenerates a
         fresh frozen `AttendancePeriodSummary` snapshot (`AttendancePeriodSummaryRepository.
         replace_for_period` is a full delete/recreate, never a stale leftover)."""
         period = await self._get_or_404(company_id, period_id)
@@ -5943,11 +6066,7 @@ class AttendancePeriodService:
             raise await self._stale_error(company_id, period_id)
 
         await self._day_repo.bulk_unlock(
-            self._session,
-            company_id=company_id,
-            date_from=period.period_start,
-            date_to=period.period_end,
-            now=now,
+            self._session, company_id=company_id, attendance_period_id=period_id, now=now
         )
 
         await self._record_action(
@@ -6004,7 +6123,9 @@ class LeaveProjectionService:
         )
         # §21 — "Leave module must consult AttendanceLock (service). Default refuse." A closed
         # period refuses the publish outright, before any row is written or recomputed.
-        await _ensure_date_open(self._session, company_id, body.attendance_date)
+        await _ensure_date_open(
+            self._session, company_id, body.attendance_date, employee_id=body.employee_id
+        )
 
         existing = await self._repo.get_by_natural_key(
             self._session,
@@ -6134,7 +6255,9 @@ class LeaveProjectionService:
         # cancellation — refuse rather than silently rewriting an already-locked day. Matches
         # PD-LOCK-2's scope boundary (W8): no arrears mechanism exists, so the only correction
         # path for a locked date is a full `ATTENDANCE.UNLOCK` period reopen.
-        await _ensure_date_open(self._session, company_id, existing.attendance_date)
+        await _ensure_date_open(
+            self._session, company_id, existing.attendance_date, employee_id=existing.employee_id
+        )
 
         before_read = leave_day_projection_to_read(existing)
         now = datetime.now(UTC)

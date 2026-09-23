@@ -305,7 +305,7 @@ audit for the full breakdown and scale projection.
 | DAT-007 | `EmployeeStatutory.vpf_percentage: Mapped[float \| None]` over a `Numeric(9,4)` column — the annotation is wrong (the runtime value is `Decimal`). Nothing computes with it yet. | 🔵 | `employee/models.py:228` |
 | DAT-009 | `paid_day_fraction`/`lop_fraction` are `Numeric(3,2)` — adequate for 0.00–1.00, no headroom for quarter-day or >1 constructs | 🔵 | `attendance/models.py:580-581` |
 | DAT-010 | No FK from `leave_day_projection.leave_application_id` to `leave_application.id` — deliberate (the table predates Leave), now an unenforced cross-module reference | 🔵 | `attendance/models.py:1012-1014` |
-| DAT-011 | `attendance_period.legal_entity_id` reserved, always NULL — period grain is company-wide (PD-LOCK-1 open) | 🔵 | `attendance/models.py:872` |
+| DAT-011 | ~~`attendance_period.legal_entity_id` reserved, always NULL — period grain is company-wide (PD-LOCK-1 open)~~ **Fixed 2026-09-23** — per-legal-entity periods (decision 14, WD-34, migration `20261004104000`) | 🔵 | `attendance/models.py:872` |
 | DAT-012 | No partitioning on `punch` or `attendance_day` — documented deferral (WD-26), correct at current volume | 🟢 | — |
 | SEC-007 | `company` has `FORCE ROW LEVEL SECURITY` but RLS is never `ENABLE`d and no policy exists, so `FORCE` is a no-op | 🔵 | `scripts/sql/002_row_level_security.sql:10-11` |
 
