@@ -22,7 +22,13 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
-import type { Employment } from "@/lib/employee/types";
+import {
+  PAY_BASIS_DESCRIPTIONS,
+  PAY_BASIS_LABELS,
+  PAY_BASIS_VALUES,
+  type Employment,
+  type PayBasis,
+} from "@/lib/employee/types";
 import {
   EMPTY_EMPLOYMENT_FORM_VALUES,
   EMPTY_TERMINATE_FORM_VALUES,
@@ -268,6 +274,12 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                     </dd>
                   </div>
                   <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                      Pay basis
+                    </dt>
+                    <dd className="mt-0.5 text-sm text-foreground">{PAY_BASIS_LABELS[current.pay_basis]}</dd>
+                  </div>
+                  <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Status</dt>
                     <dd className="mt-0.5 text-sm">
                       <Badge variant="success">Active</Badge>
@@ -343,6 +355,23 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                 value={hireValues.joiningDate}
                 onChange={(e) => setHireValues({ ...hireValues, joiningDate: e.target.value })}
               />
+            </FormField>
+            <FormField
+              id="hire-pay-basis"
+              label="Pay basis"
+              required
+              description={PAY_BASIS_DESCRIPTIONS[hireValues.payBasis]}
+            >
+              <NativeSelect
+                value={hireValues.payBasis}
+                onChange={(e) => setHireValues({ ...hireValues, payBasis: e.target.value as PayBasis })}
+              >
+                {PAY_BASIS_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {PAY_BASIS_LABELS[value]}
+                  </option>
+                ))}
+              </NativeSelect>
             </FormField>
             <FormField
               id="hire-probation-end-date"

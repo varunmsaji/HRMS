@@ -64,6 +64,8 @@ export const ATTENDANCE_PERIOD_BLOCKING_REASON_LABELS: Record<string, string> = 
   PENDING_REGULARIZATION: "Pending regularization requests",
   PENDING_OVERTIME_APPROVAL: "Pending overtime approvals",
   UNPUBLISHED_ROSTER: "Unpublished (DRAFT) roster entries",
+  PAID_LOP_MISMATCH: "Days whose paid, loss-of-pay and unpaid-off shares do not add up to one day",
+  WORK_ON_LEAVE_UNRESOLVED: "Punches on approved full-day leave awaiting an HR decision",
 };
 
 export interface AttendancePeriodBlockingReason {
@@ -91,6 +93,13 @@ export interface AttendancePeriodSummaryRow {
   weekly_off_days: string;
   half_days: string;
   lop_days: string;
+  /** `null` only on a summary frozen before these fields existed (PAY-002/PAY-003). */
+  on_duty_days: string | null;
+  incomplete_days: string | null;
+  not_employed_days: string | null;
+  unpaid_off_days: string | null;
+  paid_days: string | null;
+  payable_days: string | null;
   ot_minutes_normal: number;
   ot_minutes_weekly_off: number;
   ot_minutes_holiday: number;
@@ -101,6 +110,28 @@ export interface AttendancePeriodSummaryRow {
   generated_at: string;
   frozen: boolean;
 }
+
+/** Column order for the period summary table — payroll figures first, then the day buckets,
+ * which are mutually exclusive and add up to the period's calendar days. */
+export const ATTENDANCE_PERIOD_SUMMARY_COLUMNS: ReadonlyArray<{
+  key: keyof AttendancePeriodSummaryRow;
+  label: string;
+}> = [
+  { key: "paid_days", label: "Paid days" },
+  { key: "lop_days", label: "LOP" },
+  { key: "unpaid_off_days", label: "Unpaid off" },
+  { key: "payable_days", label: "Payable" },
+  { key: "present_days", label: "Present" },
+  { key: "half_days", label: "Half day" },
+  { key: "absent_days", label: "Absent" },
+  { key: "leave_days", label: "Leave" },
+  { key: "on_duty_days", label: "On duty" },
+  { key: "holiday_days", label: "Holiday" },
+  { key: "weekly_off_days", label: "Weekly off" },
+  { key: "incomplete_days", label: "Incomplete" },
+  { key: "not_employed_days", label: "Not employed" },
+  { key: "late_count", label: "Late count" },
+];
 
 export const ATTENDANCE_PERIOD_STATUS_LABELS: Record<AttendancePeriodStatus, string> = {
   OPEN: "Open",

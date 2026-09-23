@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from hrms.core.audit.service import AuditService
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
@@ -26,6 +27,8 @@ from hrms.modules.attendance.exceptions import (
     AttendancePeriodInvalidTransitionError,
     AttendancePeriodNotFoundError,
     AttendancePeriodOverlapError,
+    AttendanceRangeInFutureError,
+    AttendanceSummaryReconciliationError,
     DuplicatePunchIdempotencyKeyError,
     FuturePunchTimeError,
     InvalidPolicyBandError,
@@ -66,6 +69,7 @@ from hrms.modules.attendance.exceptions import (
     StalePolicyResourceError,
     StaleRegularizationRequestResourceError,
     StaleShiftRosterResourceError,
+    WorkOnLeaveNotFlaggedError,
 )
 from hrms.modules.attendance.models import (
     AttendanceDay,
@@ -111,6 +115,8 @@ from hrms.modules.attendance.schemas import (
     AttendancePolicyVersionPublishRequest,
     AttendancePolicyVersionRead,
     AttendancePolicyVersionUpdate,
+    AttendanceRangeCalculateInput,
+    AttendanceRangeCalculateQueued,
     LeaveDayProjectionRead,
     LeaveProjectionCancelInput,
     LeaveProjectionSync,
@@ -139,6 +145,7 @@ from hrms.modules.attendance.schemas import (
     ShiftRosterCreate,
     ShiftRosterRead,
     ShiftRosterUpdate,
+    WorkOnLeaveKeepLeaveInput,
     _format_timestamp,
     _parse_time,
     attendance_day_to_audit_dict,
@@ -2926,6 +2933,114 @@ class AttendanceDayService:
             user_agent=user_agent,
         )
 
+    async def queue_range_calculation(
+        self,
+        company_id: UUID,
+        body: AttendanceRangeCalculateInput,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> AttendanceRangeCalculateQueued:
+        """PAY-001 — queues `attendance.calculate_range` for the range (see
+        `tasks._calculate_range_async`). Refuses a range ending after the company's current
+        business date."""
+        from hrms.modules.attendance.tasks import calculate_range
+        from hrms.modules.organisation.service import OrganisationService
+
+        company = await OrganisationService(self._session).get_company_profile(company_id)
+        if body.date_to > business_today(company.timezone):
+            raise AttendanceRangeInFutureError()
+        employee_ids = (
+            [str(e) for e in body.employee_ids] if body.employee_ids is not None else None
+        )
+        async_result = calculate_range.delay(
+            str(company_id),
+            body.date_from.isoformat(),
+            body.date_to.isoformat(),
+            employee_ids,
+            str(actor_user_id) if actor_user_id else None,
+        )
+        queued = AttendanceRangeCalculateQueued(
+            task_id=str(async_result.id),
+            date_from=body.date_from,
+            date_to=body.date_to,
+            employee_ids=body.employee_ids,
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_RANGE_CALCULATION_QUEUED",
+            entity_type="attendance_day",
+            entity_id=None,
+            before=None,
+            after=queued.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return queued
+
+    async def keep_leave_over_punches(
+        self,
+        company_id: UUID,
+        attendance_day_id: UUID,
+        body: WorkOnLeaveKeepLeaveInput,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> AttendanceDayRead:
+        """BUS-012 (`PAYROLL_BUSINESS_DECISIONS.md` #5) — HR confirms the approved full-day leave
+        stands over the punches recorded on the same day. The day is already paid as leave
+        (the engine never pays it twice); this only records the decision so period finalize
+        stops blocking on `WORK_ON_LEAVE_UNRESOLVED`. The alternative resolution — cancelling
+        the leave — goes through Leave and needs nothing here."""
+        row = await self._day_repo.get(
+            self._session, company_id=company_id, attendance_day_id=attendance_day_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        if row.is_locked:
+            raise AttendanceDayLockedError()
+        if not row.work_on_leave_flagged:
+            raise WorkOnLeaveNotFlaggedError()
+        before = attendance_day_to_read(row, [])
+        updated = await self._day_repo.replace_derived_fields(
+            self._session,
+            company_id=company_id,
+            attendance_day_id=row.id,
+            values={
+                "work_on_leave_resolution": "KEEP_LEAVE",
+                "work_on_leave_resolution_reason": body.reason,
+                "work_on_leave_resolved_by": actor_user_id,
+                "work_on_leave_resolved_at": datetime.now(UTC),
+            },
+            now=datetime.now(UTC),
+        )
+        if updated is None:
+            raise AttendanceDayLockedError()
+        breaks = await self._break_repo.list_for_day(
+            self._session, company_id=company_id, attendance_day_id=updated.id
+        )
+        after = attendance_day_to_read(updated, breaks)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_WORK_ON_LEAVE_RESOLVED",
+            entity_type="attendance_day",
+            entity_id=updated.id,
+            before={"work_on_leave_resolution": before.work_on_leave_resolution},
+            after={
+                "work_on_leave_resolution": after.work_on_leave_resolution,
+                "reason": body.reason,
+            },
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
     async def list_orphaned_punches(
         self, company_id: UUID, *, date_from: date, date_to: date
     ) -> list[PunchRead]:
@@ -3054,10 +3169,25 @@ class AttendanceDayService:
             "worked_on_holiday": result.worked_on_holiday,
             "worked_on_weekly_off": result.worked_on_weekly_off,
             "work_on_leave_flagged": result.work_on_leave_flagged,
+            # BUS-012 — a still-flagged day keeps HR's resolution (key omitted, so
+            # `replace_derived_fields` leaves the columns alone); an unflagged one drops it.
+            **(
+                {}
+                if result.work_on_leave_flagged
+                else {
+                    "work_on_leave_resolution": None,
+                    "work_on_leave_resolution_reason": None,
+                    "work_on_leave_resolved_by": None,
+                    "work_on_leave_resolved_at": None,
+                }
+            ),
             "is_core_hours_breach": result.is_core_hours_breach,
             "on_duty": result.attendance_status == "ON_DUTY" or result.is_on_duty_flagged,
             "paid_day_fraction": Decimal(result.paid_day_fraction),
             "lop_fraction": Decimal(result.lop_fraction),
+            "leave_fraction": Decimal(result.leave_fraction),
+            "weekly_off_fraction": Decimal(result.weekly_off_fraction),
+            "unpaid_off_fraction": Decimal(result.unpaid_off_fraction),
             "ot_minutes_detected": result.ot_minutes_detected,
             "ot_minutes_approved": result.ot_minutes_approved,
             "ot_pending": result.ot_pending,
@@ -3161,6 +3291,7 @@ class AttendanceDayService:
                     operates_on_holiday=shift_version.operates_on_holiday,
                     operates_on_weekly_off=shift_version.operates_on_weekly_off,
                     is_cross_midnight=shift_version.is_cross_midnight,
+                    is_night_shift=shift_version.is_night_shift,
                     breaks=[
                         calc.ShiftBreakData(
                             id=b.id,
@@ -3216,11 +3347,19 @@ class AttendanceDayService:
         calendar_day_type = None
         holiday_name = None
         holiday_on_weekly_off = False
+        weekly_off_fraction = "1.00"
+        holiday_type: str | None = None
+        holiday_is_paid = True
         work_calendar_id = calendar_result.work_calendar_id
         if not calendar_result.config_incomplete and calendar_result.day_type is not None:
             calendar_day_type = calendar_result.day_type.day_type
             holiday_name = calendar_result.day_type.holiday_name
             holiday_on_weekly_off = calendar_result.day_type.holiday_on_weekly_off
+            if calendar_result.day_type.weekly_off_fraction is not None:
+                weekly_off_fraction = str(calendar_result.day_type.weekly_off_fraction)
+            holiday_type = calendar_result.day_type.holiday_type
+            if calendar_result.day_type.holiday_is_paid is not None:
+                holiday_is_paid = calendar_result.day_type.holiday_is_paid
 
         attendance_resolution = await self._resolution.resolve(
             company_id, "ATTENDANCE_POLICY", employee_id=employee_id, target_date=target_date
@@ -3481,6 +3620,10 @@ class AttendanceDayService:
             calendar_day_type=calendar_day_type,
             holiday_name=holiday_name,
             holiday_on_weekly_off=holiday_on_weekly_off,
+            weekly_off_fraction=weekly_off_fraction,
+            pay_basis=employment.pay_basis if employment is not None else "MONTHLY",
+            holiday_type=holiday_type,
+            holiday_is_paid=holiday_is_paid,
             shift=shift_inputs,
             scheduled_start=window.scheduled_start,
             scheduled_end=window.scheduled_end,
@@ -5106,17 +5249,25 @@ class AttendancePeriodService:
         spans = await employment_service.list_spans_overlapping(
             company_id, date_from=period.period_start, date_to=period.period_end
         )
-        day_counts: dict[UUID, int] = {}
+        # Exact per-date comparison, not a row count: a count lets `NOT_JOINED` rows computed
+        # before a mid-period joining date mask missing days after it, and cannot tell two
+        # employment spans in the same period apart.
+        dates_by_employee: dict[UUID, set[date]] = {}
         for day_row in day_rows:
-            day_counts[day_row.employee_id] = day_counts.get(day_row.employee_id, 0) + 1
-        missing_employees: list[str] = []
+            dates_by_employee.setdefault(day_row.employee_id, set()).add(day_row.attendance_date)
+        expected_by_employee: dict[UUID, set[date]] = {}
         for employee_id, joining_date, last_working_day in spans:
             span_start = max(joining_date, period.period_start)
             span_last_day = last_working_day or period.period_end
             span_end = min(span_last_day, period.period_end)
-            expected = (span_end - span_start).days + 1
-            if day_counts.get(employee_id, 0) < expected:
-                missing_employees.append(str(employee_id))
+            expected_dates = expected_by_employee.setdefault(employee_id, set())
+            for offset in range((span_end - span_start).days + 1):
+                expected_dates.add(span_start + timedelta(days=offset))
+        missing_employees = [
+            str(employee_id)
+            for employee_id, expected_dates in expected_by_employee.items()
+            if not expected_dates <= dates_by_employee.get(employee_id, set())
+        ]
         if missing_employees:
             reasons.append(
                 AttendancePeriodBlockingReason(
@@ -5143,6 +5294,56 @@ class AttendancePeriodService:
                     sample=[
                         f"{r.employee_id}:{r.attendance_date.isoformat()}"
                         for r in config_error_rows[:20]
+                    ],
+                )
+            )
+
+        # WORK_ON_LEAVE_UNRESOLVED — BUS-012: punches on an approved full-day leave day must be
+        # resolved by HR (cancel the leave, or confirm it stands) before the period can close.
+        unresolved_leave_rows = [
+            r for r in day_rows if r.work_on_leave_flagged and r.work_on_leave_resolution is None
+        ]
+        if unresolved_leave_rows:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="WORK_ON_LEAVE_UNRESOLVED",
+                    message=(
+                        "Some employees punched on a day of approved full-day leave — cancel "
+                        "the leave or confirm it stands before finalizing"
+                    ),
+                    count=len(unresolved_leave_rows),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}"
+                        for r in unresolved_leave_rows[:20]
+                    ],
+                )
+            )
+
+        # PAID_LOP_MISMATCH — PAY-003 reconciliation (PAYROLL_BUSINESS_DECISIONS.md "Derived
+        # rules" #5): every employed day must split exactly into paid + LOP = 1.00, or the frozen
+        # summary's `paid_days + lop_days = payable_days` invariant cannot hold. INCOMPLETE rows
+        # are exempt here only because `finalize` resolves them to 1.00/0.00 or 0.00/1.00.
+        mismatched_rows = [
+            r
+            for r in day_rows
+            if r.attendance_status not in ("NOT_JOINED", "EXITED", "INCOMPLETE", "CONFIG_ERROR")
+            and Decimal(str(r.paid_day_fraction))
+            + Decimal(str(r.lop_fraction))
+            + Decimal(str(r.unpaid_off_fraction))
+            != Decimal("1.00")
+        ]
+        if mismatched_rows:
+            reasons.append(
+                AttendancePeriodBlockingReason(
+                    code="PAID_LOP_MISMATCH",
+                    message=(
+                        "Some attendance days do not split exactly into paid and loss-of-pay — "
+                        "recompute them before finalizing"
+                    ),
+                    count=len(mismatched_rows),
+                    sample=[
+                        f"{r.employee_id}:{r.attendance_date.isoformat()}"
+                        for r in mismatched_rows[:20]
                     ],
                 )
             )
@@ -5282,21 +5483,43 @@ class AttendancePeriodService:
     # -- summary aggregation --------------------------------------------------------
 
     @staticmethod
-    def _aggregate_day_rows(day_rows: list["AttendanceDay"]) -> dict[UUID, dict[str, Any]]:
+    def _aggregate_day_rows(
+        day_rows: list["AttendanceDay"], *, period_days: int | None = None
+    ) -> dict[UUID, dict[str, Any]]:
         """Pure read-side aggregation of already-computed `AttendanceDay` facts (architecture
-        §22.2) — never derives a new attendance fact, only tallies existing ones."""
+        §22.2) — never derives a new attendance fact, only tallies existing ones.
+
+        PAY-002/PAY-003 (`PAYROLL_BUSINESS_DECISIONS.md`, "Derived rules for the attendance
+        period summary"): every day lands in exactly one bucket, split by `leave_fraction` when
+        part of it was leave — `present`/`half`/`absent`/`leave`/`on_duty`/`holiday`/
+        `weekly_off`/`incomplete`/`not_employed`. Working on a holiday or weekly off counts as
+        `present` only (the calendar type is still visible via `worked_on_holiday`/
+        `worked_on_weekly_off` on the day row), never also as `holiday`/`weekly_off`.
+
+        `period_days` — passed by `finalize` only. There the EMPLOYEES_WITHOUT_ATTENDANCE gate
+        guarantees a row for every employed day, so any day without an employed row is by
+        construction a not-employed day. The live (OPEN) preview cannot assume that — a missing
+        row there may just be uncalculated — so it counts only explicit NOT_JOINED/EXITED rows."""
+        zero = Decimal("0.00")
+        one = Decimal("1.00")
         by_employee: dict[UUID, dict[str, Any]] = {}
         for row in day_rows:
             agg = by_employee.setdefault(
                 row.employee_id,
                 {
-                    "present_days": Decimal("0.00"),
-                    "absent_days": Decimal("0.00"),
-                    "leave_days": Decimal("0.00"),
-                    "holiday_days": Decimal("0.00"),
-                    "weekly_off_days": Decimal("0.00"),
-                    "half_days": Decimal("0.00"),
-                    "lop_days": Decimal("0.00"),
+                    "present_days": zero,
+                    "absent_days": zero,
+                    "leave_days": zero,
+                    "holiday_days": zero,
+                    "weekly_off_days": zero,
+                    "half_days": zero,
+                    "on_duty_days": zero,
+                    "incomplete_days": zero,
+                    "not_employed_days": zero,
+                    "paid_days": zero,
+                    "lop_days": zero,
+                    "unpaid_off_days": zero,
+                    "payable_days": zero,
                     "ot_minutes_normal": 0,
                     "ot_minutes_weekly_off": 0,
                     "ot_minutes_holiday": 0,
@@ -5306,19 +5529,53 @@ class AttendancePeriodService:
                     "worked_minutes_total": 0,
                 },
             )
-            if row.attendance_status == "PRESENT":
-                agg["present_days"] += 1
-            elif row.attendance_status == "HALF_DAY":
-                agg["half_days"] += 1
-            elif row.attendance_status == "ABSENT":
-                agg["absent_days"] += 1
-            elif row.attendance_status == "LEAVE":
-                agg["leave_days"] += 1
-            if row.calendar_day_type == "HOLIDAY":
-                agg["holiday_days"] += 1
-            elif row.calendar_day_type == "WEEKLY_OFF":
-                agg["weekly_off_days"] += 1
-            agg["lop_days"] += Decimal(str(row.lop_fraction))
+            status = row.attendance_status
+            if status in ("NOT_JOINED", "EXITED"):
+                agg["not_employed_days"] += one
+                continue
+
+            paid = Decimal(str(row.paid_day_fraction))
+            lop = Decimal(str(row.lop_fraction))
+            agg["payable_days"] += one
+            agg["paid_days"] += paid
+            agg["lop_days"] += lop
+            agg["unpaid_off_days"] += Decimal(str(row.unpaid_off_fraction or 0))
+
+            leave_part = min(Decimal(str(row.leave_fraction or 0)), one)
+            if status == "LEAVE" and leave_part == zero:
+                # A LEAVE row computed before `leave_fraction` existed and never backfilled
+                # (locked history) — it can only mean a full-day leave.
+                leave_part = one
+            # PAY-012 — the off half of a half-day weekly off.
+            off_part = min(Decimal(str(row.weekly_off_fraction or 0)), one - leave_part)
+            rest = one - leave_part - off_part
+            agg["leave_days"] += leave_part
+            agg["weekly_off_days"] += off_part
+            if rest > zero:
+                if status in ("PRESENT", "WFH"):
+                    agg["present_days"] += rest
+                elif status == "HALF_DAY":
+                    # With leave or a half weekly off: the worked remainder. Without either: a
+                    # band-derived half day (0.50 paid / 0.50 LOP), counted as one day.
+                    split_day = leave_part > zero or off_part > zero
+                    agg["present_days" if split_day else "half_days"] += rest
+                elif status in ("ABSENT", "LEAVE"):
+                    # LEAVE with rest > 0 = half-day leave, unworked other half (LOP).
+                    agg["absent_days"] += rest
+                elif status == "ON_DUTY":
+                    agg["on_duty_days"] += rest
+                elif status == "NOT_EXPECTED":
+                    if row.calendar_day_type in ("HOLIDAY", "SHUTDOWN"):
+                        agg["holiday_days"] += rest
+                    else:  # WEEKLY_OFF, or a roster week-off on a calendar WORKING day
+                        agg["weekly_off_days"] += rest
+                elif status == "INCOMPLETE" and paid > zero:
+                    agg["present_days"] += rest  # resolved TREAT_PRESENT at lock
+                elif status == "INCOMPLETE" and lop > zero:
+                    agg["absent_days"] += rest  # resolved TREAT_ABSENT at lock
+                else:  # unresolved INCOMPLETE, CONFIG_ERROR
+                    agg["incomplete_days"] += rest
+
             if row.ot_classification == "WEEKLY_OFF":
                 agg["ot_minutes_weekly_off"] += row.ot_minutes_approved
             elif row.ot_classification == "HOLIDAY":
@@ -5331,7 +5588,43 @@ class AttendancePeriodService:
             if row.is_late:
                 agg["late_count"] += 1
             agg["worked_minutes_total"] += row.worked_minutes
+
+        if period_days is not None:
+            for agg in by_employee.values():
+                agg["not_employed_days"] = Decimal(period_days) - agg["payable_days"]
         return by_employee
+
+    @staticmethod
+    def _assert_summary_reconciles(
+        aggregates: dict[UUID, dict[str, Any]], *, period_days: int
+    ) -> None:
+        """PAY-003 reconciliation invariant, asserted on the exact values about to be frozen.
+        Unreachable when validation passed (`PAID_LOP_MISMATCH`, INCOMPLETE resolution, the
+        EMPLOYEES_WITHOUT_ATTENDANCE gate) — a failure here is a bug, and the whole finalize
+        transaction must roll back rather than freeze figures Payroll would pay from."""
+        bucket_keys = (
+            "present_days",
+            "half_days",
+            "absent_days",
+            "leave_days",
+            "on_duty_days",
+            "holiday_days",
+            "weekly_off_days",
+            "incomplete_days",
+            "not_employed_days",
+        )
+        for employee_id, agg in aggregates.items():
+            bucket_total = sum((agg[key] for key in bucket_keys), Decimal("0.00"))
+            if bucket_total != Decimal(period_days):
+                raise AttendanceSummaryReconciliationError(
+                    f"Summary buckets for employee {employee_id} total {bucket_total}, "
+                    f"expected {period_days} days"
+                )
+            if agg["paid_days"] + agg["lop_days"] + agg["unpaid_off_days"] != agg["payable_days"]:
+                raise AttendanceSummaryReconciliationError(
+                    f"paid_days + lop_days + unpaid_off_days != payable_days for employee "
+                    f"{employee_id}"
+                )
 
     async def get_summary(
         self, company_id: UUID, period_id: UUID
@@ -5367,6 +5660,12 @@ class AttendancePeriodService:
                 weekly_off_days=str(agg["weekly_off_days"]),
                 half_days=str(agg["half_days"]),
                 lop_days=str(agg["lop_days"]),
+                on_duty_days=str(agg["on_duty_days"]),
+                incomplete_days=str(agg["incomplete_days"]),
+                not_employed_days=str(agg["not_employed_days"]),
+                unpaid_off_days=str(agg["unpaid_off_days"]),
+                paid_days=str(agg["paid_days"]),
+                payable_days=str(agg["payable_days"]),
                 ot_minutes_normal=agg["ot_minutes_normal"],
                 ot_minutes_weekly_off=agg["ot_minutes_weekly_off"],
                 ot_minutes_holiday=agg["ot_minutes_holiday"],
@@ -5383,12 +5682,25 @@ class AttendancePeriodService:
     # -- finalize / reopen --------------------------------------------------------
 
     async def _apply_incomplete_lock_resolution(
-        self, company_id: UUID, day_rows: list["AttendanceDay"]
+        self,
+        company_id: UUID,
+        period_id: UUID,
+        day_rows: list["AttendanceDay"],
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
     ) -> None:
         """Architecture §11.4 — resolves every still-`INCOMPLETE` day's `paid_day_fraction`/
         `lop_fraction` per its own snapshotted policy's `incomplete_at_lock_behaviour`
         immediately before locking. `_run_validation` already guarantees no `KEEP_INCOMPLETE`
-        row reaches this point."""
+        row reaches this point.
+
+        PAY-007: the resolved values are written onto the in-memory rows with
+        `set_committed_value` as well as to the database, so the summary `finalize` aggregates
+        next is computed from the resolved figures explicitly rather than depending on the ORM
+        synchronizing a Core `UPDATE` into objects already loaded. The rewrite is recorded as
+        one audit row per period listing every resolved day."""
         incomplete_rows = [r for r in day_rows if r.attendance_status == "INCOMPLETE"]
         if not incomplete_rows:
             return
@@ -5404,12 +5716,34 @@ class AttendancePeriodService:
             v.id: v.incomplete_at_lock_behaviour for v in versions
         }
         now = datetime.now(UTC)
+        resolved: list[dict[str, Any]] = []
         for row in incomplete_rows:
             behaviour = behaviour_by_version.get(row.attendance_policy_version_id, "TREAT_ABSENT")
+            # PAY-012 — the off half of a half-day weekly off is never LOP; BUS-001 — for a
+            # daily-wage employee that half is unpaid rather than paid.
+            off = Decimal(str(row.weekly_off_fraction or 0)).quantize(Decimal("0.01"))
+            unpaid_off = Decimal(str(row.unpaid_off_fraction or 0)).quantize(Decimal("0.01"))
             if behaviour == "TREAT_PRESENT":
-                paid_day_fraction, lop_fraction = Decimal("1.00"), Decimal("0.00")
+                paid_day_fraction, lop_fraction = Decimal("1.00") - unpaid_off, Decimal("0.00")
             else:  # TREAT_ABSENT (default) — KEEP_INCOMPLETE already blocked validation
-                paid_day_fraction, lop_fraction = Decimal("0.00"), Decimal("1.00")
+                behaviour = "TREAT_ABSENT"
+                paid_day_fraction, lop_fraction = off - unpaid_off, Decimal("1.00") - off
+            resolved.append(
+                {
+                    "attendance_day_id": str(row.id),
+                    "employee_id": str(row.employee_id),
+                    "attendance_date": row.attendance_date.isoformat(),
+                    "behaviour": behaviour,
+                    "before": {
+                        "paid_day_fraction": str(row.paid_day_fraction),
+                        "lop_fraction": str(row.lop_fraction),
+                    },
+                    "after": {
+                        "paid_day_fraction": str(paid_day_fraction),
+                        "lop_fraction": str(lop_fraction),
+                    },
+                }
+            )
             await self._day_repo.set_lock_time_incomplete_resolution(
                 self._session,
                 company_id=company_id,
@@ -5418,6 +5752,21 @@ class AttendancePeriodService:
                 lop_fraction=lop_fraction,
                 now=now,
             )
+            set_committed_value(row, "paid_day_fraction", paid_day_fraction)
+            set_committed_value(row, "lop_fraction", lop_fraction)
+
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ATTENDANCE_INCOMPLETE_RESOLVED_AT_LOCK",
+            entity_type="attendance_period",
+            entity_id=period_id,
+            before=None,
+            after={"resolved_days": resolved},
+            ip=ip_address,
+            user_agent=user_agent,
+        )
 
     async def finalize(
         self,
@@ -5465,9 +5814,18 @@ class AttendancePeriodService:
         if updated is None:
             raise await self._stale_error(company_id, period_id)
 
-        await self._apply_incomplete_lock_resolution(company_id, day_rows)
+        await self._apply_incomplete_lock_resolution(
+            company_id,
+            period_id,
+            day_rows,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
-        aggregates = self._aggregate_day_rows(day_rows)
+        period_days = (period.period_end - period.period_start).days + 1
+        aggregates = self._aggregate_day_rows(day_rows, period_days=period_days)
+        self._assert_summary_reconciles(aggregates, period_days=period_days)
         summary_rows = [
             {
                 "id": uuid4(),

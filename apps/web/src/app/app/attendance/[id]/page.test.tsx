@@ -71,10 +71,17 @@ const sampleDay: AttendanceDay = {
   worked_on_holiday: false,
   worked_on_weekly_off: false,
   work_on_leave_flagged: false,
+  work_on_leave_resolution: null,
+  work_on_leave_resolution_reason: null,
+  work_on_leave_resolved_by: null,
+  work_on_leave_resolved_at: null,
   is_core_hours_breach: false,
   on_duty: false,
   on_duty_regularization_id: null,
   paid_day_fraction: "1",
+  leave_fraction: "0",
+  weekly_off_fraction: "0",
+  unpaid_off_fraction: "0",
   lop_fraction: "0",
   ot_minutes_detected: 0,
   ot_minutes_approved: 0,
@@ -190,10 +197,26 @@ describe("AttendanceDayDetailPage", () => {
     expect(screen.getByText("leave-app-1")).toBeInTheDocument();
   });
 
-  it("shows the flagged-for-review badge when work_on_leave_flagged is set", async () => {
+  it("shows the needs-HR-decision badge when work_on_leave_flagged is unresolved", async () => {
     mockDayAndProjections({ ...sampleDay, work_on_leave_flagged: true }, [sampleProjection]);
     render(<AttendanceDayDetailPage />);
 
-    expect(await screen.findByText(/flagged for leave review/i)).toBeInTheDocument();
+    expect(await screen.findByText(/worked on leave — needs hr decision/i)).toBeInTheDocument();
+  });
+
+  it("shows the leave-kept badge once HR resolved the conflict", async () => {
+    mockDayAndProjections(
+      {
+        ...sampleDay,
+        work_on_leave_flagged: true,
+        work_on_leave_resolution: "KEEP_LEAVE",
+        work_on_leave_resolution_reason: "Handover only",
+      },
+      [sampleProjection],
+    );
+    render(<AttendanceDayDetailPage />);
+
+    expect(await screen.findByText(/leave kept by hr/i)).toBeInTheDocument();
+    expect(screen.queryByText(/needs hr decision/i)).not.toBeInTheDocument();
   });
 });

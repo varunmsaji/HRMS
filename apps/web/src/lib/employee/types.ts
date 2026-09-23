@@ -64,6 +64,19 @@ export interface EmployeeWritableFields {
 export const EMPLOYMENT_STATUS_VALUES = ["ACTIVE", "TERMINATED"] as const;
 export type EmploymentStatus = (typeof EMPLOYMENT_STATUS_VALUES)[number];
 
+export const PAY_BASIS_VALUES = ["MONTHLY", "DAILY_WAGE"] as const;
+export type PayBasis = (typeof PAY_BASIS_VALUES)[number];
+
+export const PAY_BASIS_LABELS: Record<PayBasis, string> = {
+  MONTHLY: "Monthly salaried",
+  DAILY_WAGE: "Daily wage",
+};
+
+export const PAY_BASIS_DESCRIPTIONS: Record<PayBasis, string> = {
+  MONTHLY: "Holidays and weekly offs are paid.",
+  DAILY_WAGE: "Paid for public holidays only; weekly offs and company holidays are unpaid.",
+};
+
 export interface Employment {
   id: string;
   company_id: string;
@@ -74,6 +87,8 @@ export interface Employment {
   /** Purely informational (Employee confirmation, minimal slice) — nothing reads or
    * auto-computes this; HR sets/corrects it directly. */
   probation_end_date: string | null;
+  /** BUS-001 — decides which days off are paid (see `PAY_BASIS_LABELS`). */
+  pay_basis: PayBasis;
   status: string;
   previous_employment_id: string | null;
   version: number;

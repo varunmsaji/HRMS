@@ -1,7 +1,10 @@
+import type { PayBasis } from "@/lib/employee/types";
+
 export interface EmploymentFormValues {
   legalEntityId: string;
   joiningDate: string;
   probationEndDate: string;
+  payBasis: PayBasis;
 }
 
 export type EmploymentFormErrors = Partial<Record<keyof EmploymentFormValues, string>>;
@@ -10,6 +13,7 @@ export const EMPTY_EMPLOYMENT_FORM_VALUES: EmploymentFormValues = {
   legalEntityId: "",
   joiningDate: "",
   probationEndDate: "",
+  payBasis: "MONTHLY",
 };
 
 /** Full payload for `POST /employees/{id}/employments` — covers both first hire and rehire.
@@ -20,6 +24,7 @@ export function buildEmploymentCreatePayload(values: EmploymentFormValues): Reco
     legal_entity_id: values.legalEntityId,
     joining_date: values.joiningDate,
     probation_end_date: values.probationEndDate || null,
+    pay_basis: values.payBasis,
   };
 }
 

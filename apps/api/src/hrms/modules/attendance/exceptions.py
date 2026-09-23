@@ -693,3 +693,30 @@ class PunchTimeBeforeEmploymentError(ValidationError):
                 }
             ],
         )
+
+
+class AttendanceSummaryReconciliationError(ConflictError):
+    """PAY-003 — the summary about to be frozen does not reconcile (buckets != period days, or
+    paid + LOP != payable days). Validation makes this unreachable; raising rolls the whole
+    finalize transaction back instead of freezing figures Payroll would pay from."""
+
+    code = "ATTENDANCE_SUMMARY_RECONCILIATION_FAILED"
+
+
+class WorkOnLeaveNotFlaggedError(ConflictError):
+    """BUS-012 — the day has no punches-on-leave conflict to resolve."""
+
+    code = "ATTENDANCE_WORK_ON_LEAVE_NOT_FLAGGED"
+
+    def __init__(self, message: str = "This attendance day has no work-on-leave conflict") -> None:
+        super().__init__(message)
+
+
+class AttendanceRangeInFutureError(ValidationError):
+    """PAY-001 — a backfill may not run past the company's current business date: a future day
+    has no punches yet and would be computed ABSENT/INCOMPLETE."""
+
+    code = "ATTENDANCE_RANGE_IN_FUTURE"
+
+    def __init__(self, message: str = "date_to cannot be after today") -> None:
+        super().__init__(message)

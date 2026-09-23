@@ -557,6 +557,18 @@ class AttendanceDay(Base, TimestampMixin):
     # to see and decide whether to cancel the leave application — Attendance never writes the
     # leave ledger itself (architecture §21).
     work_on_leave_flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+    # BUS-012 — HR's decision on a flagged day. `KEEP_LEAVE` = the leave stands, punches ignored.
+    # (The other resolution — cancelling the leave — needs no column: the leave projection is
+    # cancelled, the day recomputes from its punches and the flag clears.) Not a derived field:
+    # `calculate()` preserves it while the day stays flagged and clears it once it isn't.
+    work_on_leave_resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    work_on_leave_resolution_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    work_on_leave_resolved_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id"), nullable=True
+    )
+    work_on_leave_resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # WD-32 decision 6 — real ON_DUTY status. Set inside `calculate()` from an approved
     # `ON_DUTY`-type `AttendanceRegularizationRequest` covering this date — a derived fact
@@ -579,6 +591,12 @@ class AttendanceDay(Base, TimestampMixin):
 
     paid_day_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
     lop_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
+    # PAY-003 — share of the day honoured as approved leave (`calculation.leave_fraction`).
+    leave_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
+    # PAY-012 — paid off share of a half-day weekly off (`calculation.weekly_off_fraction`).
+    weekly_off_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
+    # BUS-001 — share of the day that is an unpaid off day (`calculation.unpaid_off_fraction`).
+    unpaid_off_fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2), default=Decimal("0"))
 
     ot_minutes_detected: Mapped[int] = mapped_column(Integer, default=0)
     ot_minutes_approved: Mapped[int] = mapped_column(Integer, default=0)
@@ -955,6 +973,19 @@ class AttendancePeriodSummary(Base, TimestampMixin):
     weekly_off_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
     half_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
     lop_days: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    # PAY-002/PAY-003 — NULL on summaries frozen before these columns existed (their buckets used
+    # the old overlapping semantics); Payroll must refuse a summary whose `paid_days` is NULL.
+    # For every summary frozen since, the day buckets are mutually exclusive and satisfy:
+    #   present + half + absent + leave + on_duty + holiday + weekly_off + incomplete
+    #     + not_employed = calendar days in the period
+    #   paid_days + lop_days + unpaid_off_days = payable_days  (= employed days in the period)
+    on_duty_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    incomplete_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    not_employed_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    # BUS-001 — off days that are neither paid nor LOP (daily-wage weekly offs, unpaid holidays).
+    unpaid_off_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    paid_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    payable_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
 
     ot_minutes_normal: Mapped[int] = mapped_column(Integer, default=0)
     ot_minutes_weekly_off: Mapped[int] = mapped_column(Integer, default=0)

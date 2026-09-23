@@ -10,6 +10,7 @@ import { ReopenPeriodDialog } from "@/components/attendance-period/reopen-period
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +19,7 @@ import { ApiError, describeApiError } from "@/lib/api/errors";
 import {
   ATTENDANCE_PERIOD_ACTION_LABELS,
   ATTENDANCE_PERIOD_BLOCKING_REASON_LABELS,
+  ATTENDANCE_PERIOD_SUMMARY_COLUMNS as SUMMARY_COLUMNS,
   type AttendancePeriod,
   type AttendancePeriodSummaryRow,
   type AttendancePeriodValidation,
@@ -59,6 +61,8 @@ export default function AttendancePeriodDetailPage() {
 
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
+  const [calculating, setCalculating] = useState(false);
+  const { toast } = useToast();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,7 +108,32 @@ export default function AttendancePeriodDetailPage() {
     }
   }
 
+  /** PAY-001 — queues calculation of every employed day in the period (up to today) so it can
+   * be finalized; the job runs in the background and `Validate` shows when it has caught up. */
+  async function handleCalculateRange() {
+    if (!period) return;
+    const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local
+    const dateTo = period.period_end < today ? period.period_end : today;
+    setCalculating(true);
+    try {
+      await apiClient.post(`/attendance/days/calculate-range`, {
+        date_from: period.period_start,
+        date_to: dateTo,
+      });
+      toast({
+        title: "Attendance calculation queued",
+        description: `${period.period_start} – ${dateTo}. Run Validate in a few minutes to check progress.`,
+        variant: "success",
+      });
+    } catch (err) {
+      toast({ title: "Could not queue calculation", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setCalculating(false);
+    }
+  }
+
   const canManage = can("ATTENDANCE.LOCK");
+  const canRecompute = can("ATTENDANCE.RECOMPUTE");
   const canUnlock = can("ATTENDANCE.UNLOCK");
   const isOpen = period?.status === "OPEN";
   const isClosed = period?.status === "CLOSED";
@@ -123,6 +152,16 @@ export default function AttendancePeriodDetailPage() {
             >
               Back to periods
             </Button>
+            {isOpen && canRecompute ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleCalculateRange()}
+                disabled={calculating}
+              >
+                {calculating ? "Queuing…" : "Calculate attendance"}
+              </Button>
+            ) : null}
             {isOpen && canManage ? (
               <>
                 <Button type="button" variant="outline" onClick={() => void handleValidate()} disabled={validating}>
@@ -232,36 +271,25 @@ export default function AttendancePeriodDetailPage() {
                     <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                       <tr>
                         <th className="px-3 py-2 text-left font-medium">Employee</th>
-                        <th className="px-3 py-2 text-right font-medium">Present</th>
-                        <th className="px-3 py-2 text-right font-medium">Absent</th>
-                        <th className="px-3 py-2 text-right font-medium">Leave</th>
-                        <th className="px-3 py-2 text-right font-medium">Half day</th>
-                        <th className="px-3 py-2 text-right font-medium">LOP</th>
-                        <th className="px-3 py-2 text-right font-medium">Late count</th>
+                        {SUMMARY_COLUMNS.map((column) => (
+                          <th key={column.key} className="px-3 py-2 text-right font-medium">
+                            {column.label}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {summary.map((row) => (
                         <tr key={row.employee_id}>
                           <td className="px-3 py-2 font-medium text-foreground">{row.employee_id}</td>
-                          <td className="px-3 py-2 text-right text-foreground-secondary">
-                            {row.present_days}
-                          </td>
-                          <td className="px-3 py-2 text-right text-foreground-secondary">
-                            {row.absent_days}
-                          </td>
-                          <td className="px-3 py-2 text-right text-foreground-secondary">
-                            {row.leave_days}
-                          </td>
-                          <td className="px-3 py-2 text-right text-foreground-secondary">
-                            {row.half_days}
-                          </td>
-                          <td className="px-3 py-2 text-right text-foreground-secondary">
-                            {row.lop_days}
-                          </td>
-                          <td className="px-3 py-2 text-right text-foreground-secondary">
-                            {row.late_count}
-                          </td>
+                          {SUMMARY_COLUMNS.map((column) => (
+                            <td
+                              key={column.key}
+                              className="px-3 py-2 text-right text-foreground-secondary"
+                            >
+                              {row[column.key] ?? "—"}
+                            </td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>

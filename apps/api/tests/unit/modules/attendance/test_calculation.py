@@ -404,39 +404,19 @@ def test_detect_overtime_weekly_cap_exhausted_still_eligible_zero_minutes() -> N
 
 
 def test_classify_ot_day_holiday_wins_over_weekly_off_and_night() -> None:
-    assert (
-        classify_ot_day(is_holiday=True, is_weekly_off=True, is_night=True, night_ot_mode="BOTH")
-        == "HOLIDAY"
-    )
+    assert classify_ot_day(is_holiday=True, is_weekly_off=True, is_night=True) == "HOLIDAY"
 
 
 def test_classify_ot_day_weekly_off_wins_over_night() -> None:
-    assert (
-        classify_ot_day(is_holiday=False, is_weekly_off=True, is_night=True, night_ot_mode="BOTH")
-        == "WEEKLY_OFF"
-    )
+    assert classify_ot_day(is_holiday=False, is_weekly_off=True, is_night=True) == "WEEKLY_OFF"
 
 
-def test_classify_ot_day_night_requires_window_or_both_mode() -> None:
-    assert (
-        classify_ot_day(
-            is_holiday=False, is_weekly_off=False, is_night=True, night_ot_mode="SHIFT_FLAG"
-        )
-        == "NORMAL"
-    )
-    assert (
-        classify_ot_day(
-            is_holiday=False, is_weekly_off=False, is_night=True, night_ot_mode="WINDOW"
-        )
-        == "NIGHT"
-    )
+def test_classify_ot_day_night_when_resolved_night() -> None:
+    assert classify_ot_day(is_holiday=False, is_weekly_off=False, is_night=True) == "NIGHT"
 
 
 def test_classify_ot_day_normal_default() -> None:
-    assert (
-        classify_ot_day(is_holiday=False, is_weekly_off=False, is_night=False, night_ot_mode="BOTH")
-        == "NORMAL"
-    )
+    assert classify_ot_day(is_holiday=False, is_weekly_off=False, is_night=False) == "NORMAL"
 
 
 # ---------------------------------------------------------------------------
@@ -468,13 +448,19 @@ def _base_input(**overrides: object) -> AttendanceCalculationInput:
 
 
 def test_evaluate_day_not_joined() -> None:
+    """PAY-004 / BUS-002 — a day before joining is neither paid nor loss-of-pay."""
     result = evaluate_day(_base_input(population_status="NOT_JOINED"))
     assert result.attendance_status == "NOT_JOINED"
+    assert result.paid_day_fraction == "0.00"
+    assert result.lop_fraction == "0.00"
 
 
 def test_evaluate_day_exited() -> None:
+    """PAY-005 / BUS-002 — a day after exit is neither paid nor loss-of-pay."""
     result = evaluate_day(_base_input(population_status="EXITED"))
     assert result.attendance_status == "EXITED"
+    assert result.paid_day_fraction == "0.00"
+    assert result.lop_fraction == "0.00"
 
 
 def test_evaluate_day_config_error_no_calendar() -> None:

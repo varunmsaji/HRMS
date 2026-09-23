@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { KeepLeaveDialog } from "@/components/attendance/keep-leave-dialog";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -49,6 +50,7 @@ export default function AttendanceDayDetailPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [regularizeOpen, setRegularizeOpen] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
+  const [keepLeaveOpen, setKeepLeaveOpen] = useState(false);
   const [showSnapshot, setShowSnapshot] = useState(false);
 
   const load = useCallback(async () => {
@@ -127,6 +129,15 @@ export default function AttendanceDayDetailPage() {
                 Regularize
               </Button>
             ) : null}
+            {day &&
+            can("ATTENDANCE.RECOMPUTE") &&
+            day.work_on_leave_flagged &&
+            !day.work_on_leave_resolution &&
+            !day.is_locked ? (
+              <Button type="button" variant="outline" onClick={() => setKeepLeaveOpen(true)}>
+                Keep leave
+              </Button>
+            ) : null}
             {day && can("ATTENDANCE.RECOMPUTE") ? (
               <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)} disabled={day.is_locked}>
                 Recompute
@@ -160,8 +171,11 @@ export default function AttendanceDayDetailPage() {
             {day.worked_on_holiday ? <Badge variant="info">Worked on holiday</Badge> : null}
             {day.worked_on_weekly_off ? <Badge variant="info">Worked on weekly off</Badge> : null}
             {day.missing_punch ? <Badge variant="danger">Missing punch</Badge> : null}
-            {day.work_on_leave_flagged ? (
-              <Badge variant="warning">Flagged for Leave review</Badge>
+            {day.work_on_leave_flagged && !day.work_on_leave_resolution ? (
+              <Badge variant="warning">Worked on leave — needs HR decision</Badge>
+            ) : null}
+            {day.work_on_leave_flagged && day.work_on_leave_resolution === "KEEP_LEAVE" ? (
+              <Badge variant="secondary">Leave kept by HR</Badge>
             ) : null}
             {day.is_core_hours_breach ? <Badge variant="warning">Core hours breach</Badge> : null}
             {day.on_duty ? <Badge variant="info">On duty</Badge> : null}
@@ -241,6 +255,15 @@ export default function AttendanceDayDetailPage() {
                 <Field label="OT classification" value={day.ot_classification ?? "—"} />
                 <Field label="Comp-off earned" value={formatMinutes(day.comp_off_minutes_earned)} />
                 <Field label="Paid day fraction" value={day.paid_day_fraction} />
+                <Field label="Leave fraction" value={day.leave_fraction} />
+                <Field label="Weekly-off fraction" value={day.weekly_off_fraction} />
+                <Field label="Unpaid off fraction" value={day.unpaid_off_fraction} />
+                {day.work_on_leave_resolution ? (
+                  <Field
+                    label="Work-on-leave decision"
+                    value={`Leave kept — ${day.work_on_leave_resolution_reason ?? ""}`}
+                  />
+                ) : null}
                 <Field label="LOP fraction" value={day.lop_fraction} />
               </dl>
             </CardContent>
@@ -332,6 +355,10 @@ export default function AttendanceDayDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {day ? (
+        <KeepLeaveDialog open={keepLeaveOpen} onOpenChange={setKeepLeaveOpen} day={day} onDone={setDay} />
+      ) : null}
 
       {day ? (
         <RegularizationRequestDialog

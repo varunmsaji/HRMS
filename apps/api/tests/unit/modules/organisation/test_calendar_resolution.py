@@ -465,3 +465,56 @@ def test_exception_cancel_holiday_still_weekly_off_underneath() -> None:
     )
     assert result.day_type == "WEEKLY_OFF"
     assert result.holiday_on_weekly_off is False  # the holiday was cancelled, not just hidden
+
+
+# ---------------------------------------------------------------------------
+# PAY-012 — half-day weekly off fraction carried through classification
+# ---------------------------------------------------------------------------
+
+_HALF_SATURDAY = [
+    WeeklyOffRuleData(
+        weekday=5,
+        nth_in_month=None,
+        cycle_start_date=None,
+        off_fraction=Decimal("0.50"),
+        week_parity=None,
+    )
+]
+
+
+def test_half_day_weekly_off_carries_its_fraction() -> None:
+    result = classify_work_calendar_date(
+        target_date=date(2026, 8, 15),  # Saturday
+        ordered_holiday_lists=[],
+        weekly_off_rules=_HALF_SATURDAY,
+        restricted_holidays_are_off_by_default=False,
+        exception=None,
+    )
+    assert result.day_type == "WEEKLY_OFF"
+    assert result.weekly_off_fraction == Decimal("0.50")
+
+
+def test_hard_holiday_on_half_day_weekly_off_is_a_full_day_off() -> None:
+    result = classify_work_calendar_date(
+        target_date=date(2026, 8, 15),
+        ordered_holiday_lists=[[HolidayData(date(2026, 8, 15), "Independence Day", "NATIONAL")]],
+        weekly_off_rules=_HALF_SATURDAY,
+        restricted_holidays_are_off_by_default=False,
+        exception=None,
+    )
+    assert result.day_type == "WEEKLY_OFF"
+    assert result.holiday_on_weekly_off is True
+    assert result.weekly_off_fraction is None
+
+
+def test_holiday_carries_type_and_paid_flag() -> None:
+    result = classify_work_calendar_date(
+        target_date=date(2026, 8, 17),
+        ordered_holiday_lists=[[HolidayData(date(2026, 8, 17), "Founders Day", "COMPANY", False)]],
+        weekly_off_rules=_NO_RULES,
+        restricted_holidays_are_off_by_default=False,
+        exception=None,
+    )
+    assert result.day_type == "HOLIDAY"
+    assert result.holiday_type == "COMPANY"
+    assert result.holiday_is_paid is False

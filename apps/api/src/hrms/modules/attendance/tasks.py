@@ -21,7 +21,7 @@ multi-day outage, or a late-approved regularization is absorbed by the next run 
 manual step."""
 
 import asyncio
-from datetime import timedelta
+from datetime import date, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -114,3 +114,103 @@ def run_daily_calculation() -> int:
     for company_id in company_ids:
         calculate_company.delay(str(company_id))
     return len(company_ids)
+
+
+# ---------------------------------------------------------------------------
+# PAY-001 — date-range backfill (`POST /attendance/days/calculate-range`)
+# ---------------------------------------------------------------------------
+
+
+def _employed_dates(
+    span_start: date, span_end: date | None, date_from: date, date_to: date
+) -> list[date]:
+    start = max(span_start, date_from)
+    end = min(span_end or date_to, date_to)
+    return [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
+
+
+async def _calculate_range_async(
+    company_id: UUID,
+    date_from: date,
+    date_to: date,
+    employee_ids: list[UUID] | None,
+    actor_user_id: UUID | None,
+) -> dict[str, int]:
+    """Calculates every **employed** day in `[date_from, date_to]` for every employee with an
+    employment spell overlapping it (optionally narrowed to `employee_ids`) — exactly the set of
+    rows `AttendancePeriodService`'s EMPLOYEES_WITHOUT_ATTENDANCE gate requires, and no
+    NOT_JOINED/EXITED rows outside employment.
+
+    One transaction per employee (not one for the whole company, unlike the 3-day nightly
+    sweep): a month for a large company is tens of thousands of employee-dates, and a failure
+    late in the run must not roll back everything computed before it. Within an employee, each
+    date still gets its own `SAVEPOINT`, exactly as `_calculate_company_async` does."""
+    from hrms.modules.attendance.service import AttendanceDayService
+    from hrms.modules.employee.service import EmploymentService
+
+    async with session_scope(company_id=str(company_id)) as session:
+        spans = await EmploymentService(session).list_spans_overlapping(
+            company_id, date_from=date_from, date_to=date_to
+        )
+    wanted = set(employee_ids) if employee_ids is not None else None
+    dates_by_employee: dict[UUID, set[date]] = {}
+    for employee_id, joining_date, last_working_day in spans:
+        if wanted is not None and employee_id not in wanted:
+            continue
+        dates_by_employee.setdefault(employee_id, set()).update(
+            _employed_dates(joining_date, last_working_day, date_from, date_to)
+        )
+
+    counts = {
+        "employees": len(dates_by_employee),
+        "calculated": 0,
+        "skipped_locked": 0,
+        "failed": 0,
+    }
+    for employee_id, target_dates in dates_by_employee.items():
+        async with session_scope(company_id=str(company_id)) as session:
+            service = AttendanceDayService(session)
+            for target_date in sorted(target_dates):
+                try:
+                    async with session.begin_nested():
+                        await service.calculate(
+                            company_id, employee_id, target_date, actor_user_id=actor_user_id
+                        )
+                    counts["calculated"] += 1
+                except (AttendanceDayLockedError, AttendancePeriodClosedError):
+                    counts["skipped_locked"] += 1
+                except Exception:  # noqa: BLE001 - best-effort per employee-date, like the sweep
+                    counts["failed"] += 1
+                    _logger.warning(
+                        "attendance_range_calculate_failed",
+                        company_id=str(company_id),
+                        employee_id=str(employee_id),
+                        attendance_date=target_date.isoformat(),
+                    )
+    _logger.info(
+        "attendance_range_calculate_finished",
+        company_id=str(company_id),
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+        **counts,
+    )
+    return counts
+
+
+@celery_app.task(name="attendance.calculate_range")  # type: ignore[untyped-decorator]
+def calculate_range(
+    company_id: str,
+    date_from: str,
+    date_to: str,
+    employee_ids: list[str] | None,
+    actor_user_id: str | None,
+) -> dict[str, int]:
+    return asyncio.run(
+        _calculate_range_async(
+            UUID(company_id),
+            date.fromisoformat(date_from),
+            date.fromisoformat(date_to),
+            [UUID(e) for e in employee_ids] if employee_ids is not None else None,
+            UUID(actor_user_id) if actor_user_id else None,
+        )
+    )

@@ -154,6 +154,9 @@ class ShiftInputs:
     operates_on_weekly_off: bool
     is_cross_midnight: bool
     breaks: list[ShiftBreakData] = field(default_factory=list)
+    # ATT-005 — the explicit night-shift flag `night_ot_mode=SHIFT_FLAG` reads (architecture
+    # §9.5: "an explicit flag (night OT classification), not inferred solely from times").
+    is_night_shift: bool = False
     duty_blocks: list[ShiftDutyBlockData] = field(default_factory=list)
     core_start: time | None = None
     core_end: time | None = None
@@ -200,6 +203,15 @@ class AttendanceCalculationInput:
     # by `service.py` from `LeaveDayProjection` before calling this pure engine, mirroring how
     # the roster overrides above are resolved. Empty list => overlay is a no-op.
     leave_entries: list[LeaveOverlayEntry] = field(default_factory=list)
+    # PAY-012 — the calendar's `off_fraction` for a WEEKLY_OFF day (`0.50` = half-day weekly off,
+    # e.g. alternate half Saturdays). Ignored unless `calendar_day_type == "WEEKLY_OFF"`.
+    weekly_off_fraction: str = "1.00"
+    # BUS-001 — the employment's pay basis (`MONTHLY` | `DAILY_WAGE`) and, for a day off because
+    # of a holiday, that holiday's type and `is_paid` flag. Together they decide whether an off
+    # day is paid (`_off_day_is_paid`).
+    pay_basis: str = "MONTHLY"
+    holiday_type: str | None = None
+    holiday_is_paid: bool = True
     # WD-32 decision 2/3 — count of *prior* qualifying days (late-beyond-grace / excess-break)
     # for this employee within the policy's trailing counting window, excluding this date itself
     # (mirrors `OvertimePolicyInputs.remaining_weekly_minutes`'s "sibling-day sum computed by
@@ -286,6 +298,16 @@ class AttendanceCalculationResult:
     # flag" mode, mirroring `work_on_leave_flagged`'s own shape); the `on_duty_requires_punch
     # =False` short-circuit path sets `attendance_status="ON_DUTY"` directly instead.
     is_on_duty_flagged: bool = False
+    # PAY-003 — the share of this day `_apply_leave_overlay` actually honoured as leave (0.00 when
+    # no leave applied, or when `PRESENT_CANCEL_LEAVE_HINT` kept the punch-derived outcome). Lets
+    # the period summary split a half-day-leave day into its leave and non-leave halves.
+    leave_fraction: str = "0.00"
+    # PAY-012 — the share of the day that is a paid weekly off on a half-day weekly-off date
+    # (`0.50`); `0.00` otherwise, including full weekly offs (those are NOT_EXPECTED days).
+    weekly_off_fraction: str = "0.00"
+    # BUS-001 — the share of the day that is an unpaid off day (neither paid nor LOP): see
+    # `_off_day_is_paid`. Every employed day satisfies `paid + lop + unpaid_off = 1.00`.
+    unpaid_off_fraction: str = "0.00"
 
 
 # ---------------------------------------------------------------------------
@@ -705,21 +727,90 @@ def _harshest_band_classification(bands: list[BandData]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def classify_ot_day(
-    *, is_holiday: bool, is_weekly_off: bool, is_night: bool, night_ot_mode: str
-) -> str:
+def classify_ot_day(*, is_holiday: bool, is_weekly_off: bool, is_night: bool) -> str:
     """The day_class (NORMAL|WEEKLY_OFF|HOLIDAY|NIGHT) OT is classified against for rate-row
     lookup — extracted so `service.py` can recover it for `OvertimeRecord.day_class` (W7) without
-    `detect_overtime` needing to change its tested return shape."""
+    `detect_overtime` needing to change its tested return shape. `is_night` is already resolved
+    against the policy's `night_ot_mode` (`resolve_is_night_ot`)."""
     return (
         "HOLIDAY"
         if is_holiday
         else "WEEKLY_OFF"
         if is_weekly_off
         else "NIGHT"
-        if (is_night and night_ot_mode in ("WINDOW", "BOTH"))
+        if is_night
         else "NORMAL"
     )
+
+
+def _span_overlaps_daily_window(
+    span_start: datetime, span_end: datetime, window_start: time, window_end: time, tz: ZoneInfo
+) -> bool:
+    """True if `[span_start, span_end)` overlaps the local-time daily window on any local date
+    the span touches. A window with `end <= start` (e.g. 22:00-06:00) runs into the next day."""
+    if span_end <= span_start:
+        return False
+    local_start = span_start.astimezone(tz).date()
+    local_end = span_end.astimezone(tz).date()
+    day = local_start - timedelta(days=1)  # a window opened the previous evening
+    while day <= local_end:
+        win_start = datetime.combine(day, window_start, tzinfo=tz)
+        win_end_day = day if window_end > window_start else day + timedelta(days=1)
+        win_end = datetime.combine(win_end_day, window_end, tzinfo=tz)
+        if span_start < win_end and win_start < span_end:
+            return True
+        day += timedelta(days=1)
+    return False
+
+
+def resolve_is_night_ot(
+    *,
+    shift: ShiftInputs,
+    policy: OvertimePolicyInputs | None,
+    timezone: str,
+    scheduled_end: datetime | None,
+    last_out: datetime | None,
+    worked_minutes: int,
+    scheduled_minutes: int | None,
+) -> bool:
+    """ATT-005 / architecture §12.1 — honours `night_ot_mode`:
+
+    - `SHIFT_FLAG`: the shift's explicit `is_night_shift` flag.
+    - `WINDOW`: the overtime span overlaps the policy's `night_window_start`-`night_window_end`
+      (company-local time of the day's timezone). A window left unset never matches.
+    - `BOTH`: either.
+
+    The overtime span is the work after the scheduled end — `[scheduled_end, last_out)` — or,
+    with no scheduled end (FLEX/SPLIT), the trailing excess `[last_out - excess, last_out)`.
+    One classification per day (rate-row lookup is per day), so any overlap classifies the
+    day's OT as NIGHT."""
+    mode = policy.night_ot_mode if policy is not None else "SHIFT_FLAG"
+    by_flag = shift.is_night_shift
+    if mode == "SHIFT_FLAG":
+        return by_flag
+
+    by_window = False
+    if (
+        policy is not None
+        and policy.night_window_start is not None
+        and policy.night_window_end is not None
+        and last_out is not None
+    ):
+        if scheduled_end is not None:
+            span_start = scheduled_end
+        else:
+            excess = max(0, worked_minutes - (scheduled_minutes or worked_minutes))
+            span_start = last_out - timedelta(minutes=excess)
+        by_window = _span_overlaps_daily_window(
+            span_start,
+            last_out,
+            policy.night_window_start,
+            policy.night_window_end,
+            resolve_zoneinfo(timezone),
+        )
+    if mode == "WINDOW":
+        return by_window
+    return by_flag or by_window  # BOTH
 
 
 def detect_overtime(
@@ -757,14 +848,18 @@ def detect_overtime(
         excess = min(excess, policy.remaining_monthly_minutes)
 
     day_class = classify_ot_day(
-        is_holiday=is_holiday,
-        is_weekly_off=is_weekly_off,
-        is_night=is_night,
-        night_ot_mode=policy.night_ot_mode,
+        is_holiday=is_holiday, is_weekly_off=is_weekly_off, is_night=is_night
     )
     classification = next(
         (row.classification_code for row in policy.rate_rows if row.day_class == day_class), None
     )
+    if classification is None and day_class == "NIGHT":
+        # ATT-005 — a policy with no NIGHT rate row pays night OT at its NORMAL rate rather than
+        # leaving the minutes with no classification code at all.
+        classification = next(
+            (row.classification_code for row in policy.rate_rows if row.day_class == "NORMAL"),
+            None,
+        )
     return excess, classification, True
 
 
@@ -823,13 +918,8 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     # shift" branch below so a pure roster week-off row (shift_id NULL) doesn't fall through to
     # `missing_shift_behaviour` and get misread as an unresolved-shift config problem.
     if inputs.roster_week_off_override and not inputs.punches:
-        return _apply_leave_overlay(
-            _apply_on_duty_overlay(
-                _terminal_result(
-                    "NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override"
-                ),
-                inputs,
-            ),
+        return _apply_overlays(
+            _terminal_result("NOT_EXPECTED", inputs, snapshot, reason="roster_week_off_override"),
             inputs,
         )
 
@@ -840,18 +930,15 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
             behaviour = inputs.policy.missing_shift_behaviour
         if not inputs.punches:
             status = "ABSENT" if behaviour == "ABSENT" else "INCOMPLETE"
-            return _apply_leave_overlay(
-                _apply_on_duty_overlay(
-                    _terminal_result(status, inputs, snapshot, reason="missing_shift"), inputs
-                ),
-                inputs,
+            return _apply_overlays(
+                _terminal_result(status, inputs, snapshot, reason="missing_shift"), inputs
             )
         # Punches exist despite no shift — evaluate presence with no schedule to compare against.
-        return _apply_leave_overlay(
-            _apply_on_duty_overlay(_evaluate_no_schedule(inputs, snapshot), inputs), inputs
-        )
+        return _apply_overlays(_evaluate_no_schedule(inputs, snapshot), inputs)
 
-    day_type = inputs.calendar_day_type
+    # PAY-012 — a half-day weekly off is evaluated as a working day (the employee is expected to
+    # work the other half); `_apply_half_weekly_off` then credits the off half as paid.
+    day_type = "WORKING" if _is_half_weekly_off(inputs) else inputs.calendar_day_type
     # W5: roster overrides extend §19.1 step 8 without ever touching `calendar_day_type`
     # (WD-04/WD-07 — calendar type is Calendar's concern; roster only changes whether presence
     # is *expected*). `roster_holiday_working_override` mirrors what a per-shift
@@ -874,12 +961,9 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
 
     # §19.1 step 8 — not expected + shift does not operate + no punches => NOT_EXPECTED
     if not_expected and not shift_operates and not collapsed:
-        return _apply_leave_overlay(
-            _apply_on_duty_overlay(
-                _terminal_result(
-                    "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
-                ),
-                inputs,
+        return _apply_overlays(
+            _terminal_result(
+                "NOT_EXPECTED", inputs, snapshot, worked_on=day_type if not_expected else None
             ),
             inputs,
         )
@@ -895,7 +979,95 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     else:
         result = _evaluate_fixed_or_flex(inputs, pairing, snapshot, day_type, not_expected)
 
-    return _apply_leave_overlay(_apply_on_duty_overlay(result, inputs), inputs)
+    return _apply_overlays(result, inputs)
+
+
+#: BUS-001 — holiday types a daily-wage employee is paid for (national/festival holidays are
+#: entered as `PUBLIC`; a `SUBSTITUTE` holiday stands in for one).
+_DAILY_WAGE_PAID_HOLIDAY_TYPES = ("PUBLIC", "SUBSTITUTE")
+
+
+def _off_day_is_paid(inputs: AttendanceCalculationInput) -> bool:
+    """BUS-001 (`PAYROLL_BUSINESS_DECISIONS.md` #1) — whether a day off is paid.
+
+    - A holiday marked `is_paid = false` is unpaid for everyone.
+    - `MONTHLY`: every other day off (holiday, weekly off, shutdown) is paid.
+    - `DAILY_WAGE`: only `PUBLIC`/`SUBSTITUTE` holidays are paid; weekly offs, company
+      holidays and shutdowns are not.
+
+    A holiday landing on a weekly off follows the holiday rule."""
+    if inputs.holiday_type is not None and not inputs.holiday_is_paid:
+        return False
+    if inputs.pay_basis != "DAILY_WAGE":
+        return True
+    return inputs.holiday_type in _DAILY_WAGE_PAID_HOLIDAY_TYPES
+
+
+def _apply_off_day_pay(
+    result: AttendanceCalculationResult, inputs: AttendanceCalculationInput
+) -> AttendanceCalculationResult:
+    """An unworked full day off (`NOT_EXPECTED`) that `_off_day_is_paid` says is unpaid carries
+    0.00 paid / 0.00 LOP / 1.00 unpaid-off instead of the default 1.00 paid."""
+    if result.attendance_status != "NOT_EXPECTED" or _off_day_is_paid(inputs):
+        return result
+    return replace(
+        result, paid_day_fraction="0.00", lop_fraction="0.00", unpaid_off_fraction="1.00"
+    )
+
+
+def _is_half_weekly_off(inputs: AttendanceCalculationInput) -> bool:
+    return inputs.calendar_day_type == "WEEKLY_OFF" and Decimal(
+        inputs.weekly_off_fraction
+    ) < Decimal("1.00")
+
+
+def _apply_overlays(
+    result: AttendanceCalculationResult, inputs: AttendanceCalculationInput
+) -> AttendanceCalculationResult:
+    """Overlay order: off-day pay (BUS-001) → half-day weekly off (PAY-012) → ON_DUTY → leave
+    (§19.4, leave wins)."""
+    with_off_pay = _apply_half_weekly_off(_apply_off_day_pay(result, inputs), inputs)
+    return _apply_leave_overlay(_apply_on_duty_overlay(with_off_pay, inputs), inputs)
+
+
+def _apply_half_weekly_off(
+    result: AttendanceCalculationResult, inputs: AttendanceCalculationInput
+) -> AttendanceCalculationResult:
+    """PAY-012 / BUS-003 (`PAYROLL_BUSINESS_DECISIONS.md` #3) — half off, half working: the off
+    half is always paid; the working half is paid only if worked, else it is loss of pay.
+
+    The punch-derived outcome was computed as for a normal working day. Its paid share is
+    topped up by the off share (capped at 1.00): PRESENT stays 1.00; a band HALF_DAY (worked
+    half the shift) becomes a full paid day and therefore PRESENT; ABSENT becomes 0.50 paid /
+    0.50 LOP. INCOMPLETE keeps 0.00/0.00 — lock-time resolution reads `weekly_off_fraction`.
+    NOT_EXPECTED (a roster week-off override) is already a full paid off day."""
+    if not _is_half_weekly_off(inputs):
+        return result
+    if result.attendance_status in ("NOT_JOINED", "EXITED", "CONFIG_ERROR", "NOT_EXPECTED"):
+        return result
+    off = Decimal(inputs.weekly_off_fraction)
+    # BUS-001 — for a daily-wage employee the off half is unpaid rather than paid.
+    unpaid_off = Decimal("0.00") if _off_day_is_paid(inputs) else off
+    adjusted = replace(
+        result,
+        calendar_day_type=inputs.calendar_day_type,
+        weekly_off_fraction=str(off.quantize(Decimal("0.01"))),
+        unpaid_off_fraction=str(unpaid_off.quantize(Decimal("0.01"))),
+    )
+    if result.attendance_status == "INCOMPLETE":
+        return adjusted
+    # The worked outcome covers the working half first; the off half never adds LOP.
+    covered = min(Decimal("1.00"), Decimal(result.paid_day_fraction) + off)
+    paid = covered - unpaid_off
+    status = result.attendance_status
+    if status == "HALF_DAY" and covered == Decimal("1.00"):
+        status = "PRESENT"
+    return replace(
+        adjusted,
+        attendance_status=status,
+        paid_day_fraction=str(paid.quantize(Decimal("0.01"))),
+        lop_fraction=str((Decimal("1.00") - covered).quantize(Decimal("0.01"))),
+    )
 
 
 def _apply_leave_overlay(
@@ -915,10 +1087,12 @@ def _apply_leave_overlay(
     never touched; the caller skips this function entirely for the population-gate case, and it
     short-circuits below for the other two.
 
-    Punches despite full-day leave: `work_on_leave_behaviour=KEEP_LEAVE` (default) keeps
-    `attendance_status=LEAVE` and zeroes late/early (§19.3 — "full-day leave: late/early not
-    computed"); `PRESENT_CANCEL_LEAVE_HINT` keeps the punch-derived outcome untouched and only
-    raises `work_on_leave_flagged` for Leave to see (Attendance never cancels the leave itself).
+    Punches despite full-day leave: `attendance_status=LEAVE`, late/early and overtime zeroed
+    (§19.3 — "full-day leave: late/early not computed"; BUS-011 — no OT on a leave day), and
+    `work_on_leave_flagged` raised for HR to resolve before period close (BUS-012). Since
+    BUS-012 the policy's `work_on_leave_behaviour` no longer changes the outcome: the former
+    `PRESENT_CANCEL_LEAVE_HINT` mode paid the day as present while the leave stayed debited.
+    Attendance never cancels the leave itself.
 
     Half-day leave (0 < fraction < 1.00): the remaining half of the day is whatever the
     punch-derived outcome already computed, contributed as a flat 0.50 (documented
@@ -939,15 +1113,23 @@ def _apply_leave_overlay(
     )
     lop_from_leave = total_fraction - paid_from_leave
     has_work = result.worked_minutes > 0
-    behaviour = inputs.policy.work_on_leave_behaviour if inputs.policy else "KEEP_LEAVE"
-    hint = has_work and behaviour == "PRESENT_CANCEL_LEAVE_HINT"
 
     if total_fraction >= Decimal("1.00"):
-        if hint:
-            return replace(result, work_on_leave_flagged=True)
+        # BUS-011/BUS-012 (`PAYROLL_BUSINESS_DECISIONS.md` #4/#5) — an approved full-day leave
+        # always wins: the day is paid once, as leave, whatever `work_on_leave_behaviour` says,
+        # and overtime on it is never payable. Punches on it raise `work_on_leave_flagged`,
+        # which blocks period close until HR either cancels the leave (the day then recomputes
+        # from its punches) or confirms the leave stands (`work_on_leave_resolution`).
         return replace(
             result,
             attendance_status="LEAVE",
+            is_overtime=False,
+            ot_minutes_detected=0,
+            ot_minutes_approved=0,
+            ot_pending=False,
+            ot_classification=None,
+            ot_day_class=None,
+            comp_off_minutes_earned=0,
             late_minutes=0,
             late_classification=None,
             early_departure_minutes=0,
@@ -956,22 +1138,29 @@ def _apply_leave_overlay(
             is_early_out=False,
             paid_day_fraction=str(paid_from_leave.quantize(Decimal("0.01"))),
             lop_fraction=str(lop_from_leave.quantize(Decimal("0.01"))),
-            work_on_leave_flagged=False,
+            work_on_leave_flagged=has_work,
+            leave_fraction="1.00",
+            weekly_off_fraction="0.00",
+            unpaid_off_fraction="0.00",
         )
 
-    # Half-day leave (0 < total_fraction < 1.00).
-    if hint:
-        return replace(result, work_on_leave_flagged=True)
-    remaining = Decimal("1.00") - total_fraction
+    # Half-day leave (0 < total_fraction < 1.00) — working the other half is the expected case,
+    # not a conflict; the leave half is paid as leave and only the remainder from punches.
+    # PAY-012 — on a half-day weekly off the off half is already paid; leave covers (part of) the
+    # working half, so only what is left of the day after both can be worked or lost.
+    weekly_off = Decimal(result.weekly_off_fraction)
+    paid_off = weekly_off - Decimal(result.unpaid_off_fraction)  # BUS-001
+    remaining = max(Decimal("0.00"), Decimal("1.00") - total_fraction - weekly_off)
     work_paid = remaining if has_work else Decimal("0.00")
     work_lop = Decimal("0.00") if has_work else remaining
     status = "HALF_DAY" if has_work else "LEAVE"
     return replace(
         result,
         attendance_status=status,
-        paid_day_fraction=str((paid_from_leave + work_paid).quantize(Decimal("0.01"))),
+        paid_day_fraction=str((paid_from_leave + paid_off + work_paid).quantize(Decimal("0.01"))),
         lop_fraction=str((lop_from_leave + work_lop).quantize(Decimal("0.01"))),
         work_on_leave_flagged=False,
+        leave_fraction=str(total_fraction.quantize(Decimal("0.01"))),
     )
 
 
@@ -1021,12 +1210,10 @@ def _terminal_result(
 ) -> AttendanceCalculationResult:
     if reason:
         snapshot["terminal_reason"] = reason
-    paid_fraction = "1.00" if status in ("NOT_JOINED", "NOT_EXPECTED") else "0.00"
-    lop_fraction = (
-        "0.00"
-        if status in ("NOT_JOINED", "NOT_EXPECTED")
-        else ("1.00" if status in ("ABSENT", "EXITED") else "0.00")
-    )
+    # PAY-004/PAY-005 (BUS-002, PAYROLL_BUSINESS_DECISIONS.md #2): a day outside every employment
+    # spell is neither paid nor loss-of-pay — Payroll prorates on employed days instead.
+    paid_fraction = "1.00" if status == "NOT_EXPECTED" else "0.00"
+    lop_fraction = "1.00" if status == "ABSENT" else "0.00"
     return AttendanceCalculationResult(
         attendance_status=status,
         calendar_day_type=inputs.calendar_day_type,
@@ -1274,7 +1461,15 @@ def _evaluate_fixed_or_flex(
         else shift.required_minutes
     )
 
-    is_night = shift.is_cross_midnight
+    is_night = resolve_is_night_ot(
+        shift=shift,
+        policy=inputs.ot_policy,
+        timezone=inputs.timezone,
+        scheduled_end=inputs.scheduled_end,
+        last_out=last_out,
+        worked_minutes=worked_minutes,
+        scheduled_minutes=scheduled_minutes,
+    )
     ot_minutes, ot_classification, ot_eligible = detect_overtime(
         worked_minutes=worked_minutes,
         scheduled_minutes=scheduled_minutes,
@@ -1296,10 +1491,7 @@ def _evaluate_fixed_or_flex(
         if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
             comp_off_minutes = ot_minutes
         ot_day_class = classify_ot_day(
-            is_holiday=worked_on_holiday,
-            is_weekly_off=worked_on_weekly_off,
-            is_night=is_night,
-            night_ot_mode=inputs.ot_policy.night_ot_mode if inputs.ot_policy else "SHIFT_FLAG",
+            is_holiday=worked_on_holiday, is_weekly_off=worked_on_weekly_off, is_night=is_night
         )
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
@@ -1419,13 +1611,22 @@ def _evaluate_split(
     # is actually missing here: `scheduled_minutes=shift.required_minutes` is the same fallback
     # `_evaluate_fixed_or_flex` uses whenever no `scheduled_start`/`scheduled_end` is set, so the
     # detection call is wired in identically to that path.
+    is_night = resolve_is_night_ot(
+        shift=shift,
+        policy=inputs.ot_policy,
+        timezone=inputs.timezone,
+        scheduled_end=inputs.scheduled_end,
+        last_out=last_out,
+        worked_minutes=worked_minutes,
+        scheduled_minutes=shift.required_minutes,
+    )
     ot_minutes, ot_classification, ot_eligible = detect_overtime(
         worked_minutes=worked_minutes,
         scheduled_minutes=shift.required_minutes,
         is_shift_ot_eligible=shift.is_ot_eligible,
         is_holiday=worked_on_holiday,
         is_weekly_off=worked_on_weekly_off,
-        is_night=shift.is_cross_midnight,
+        is_night=is_night,
         policy=inputs.ot_policy,
     )
     ot_approved = 0
@@ -1440,10 +1641,7 @@ def _evaluate_split(
         if inputs.ot_policy is not None and inputs.ot_policy.comp_off_instead_of_pay:
             comp_off_minutes = ot_minutes
         ot_day_class = classify_ot_day(
-            is_holiday=worked_on_holiday,
-            is_weekly_off=worked_on_weekly_off,
-            is_night=shift.is_cross_midnight,
-            night_ot_mode=inputs.ot_policy.night_ot_mode if inputs.ot_policy else "SHIFT_FLAG",
+            is_holiday=worked_on_holiday, is_weekly_off=worked_on_weekly_off, is_night=is_night
         )
 
     return AttendanceCalculationResult(

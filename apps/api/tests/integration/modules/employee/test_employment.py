@@ -355,6 +355,35 @@ async def test_update_employment_success(client: AsyncClient, seeded_plan_catalo
         await _teardown(company_id=company_id, user_id=user_id)
 
 
+async def test_employment_pay_basis_defaults_monthly_and_is_correctable(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """BUS-001 — `pay_basis` defaults to MONTHLY, can be corrected to DAILY_WAGE, and rejects
+    unknown values and an explicit null."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, legal_entity = await _setup_employee_and_entity(client, headers)
+        employment = await _create_employment(
+            client, headers, employee_id=employee["id"], legal_entity_id=legal_entity["id"]
+        )
+        assert employment["pay_basis"] == "MONTHLY"
+        url = f"/v1/employees/{employee['id']}/employments/{employment['id']}"
+
+        response = await client.patch(
+            url,
+            headers={**headers, "If-Match": str(employment["version"])},
+            json={"pay_basis": "DAILY_WAGE"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["pay_basis"] == "DAILY_WAGE"
+
+        for bad in ({"pay_basis": "HOURLY"}, {"pay_basis": None}):
+            rejected = await client.patch(url, headers={**headers, "If-Match": "2"}, json=bad)
+            assert rejected.status_code == 422, rejected.text
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
 async def test_update_employment_mass_assignment_rejected(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:

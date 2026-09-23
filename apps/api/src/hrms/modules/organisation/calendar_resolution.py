@@ -67,6 +67,7 @@ class HolidayData:
     date: date
     name: str
     holiday_type: str
+    is_paid: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +138,7 @@ def classify_work_calendar_date(
 ) -> DayTypeRead:
     """architecture §6.3 precedence: CalendarException always wins > composed holiday union
     (first-list-wins tie-break) > weekly-off pattern > WORKING."""
-    is_off, _fraction = evaluate_weekly_off(target_date, weekly_off_rules)
+    is_off, off_fraction = evaluate_weekly_off(target_date, weekly_off_rules)
 
     if exception is not None:
         if exception.exception_type == "SHUTDOWN":
@@ -160,6 +161,8 @@ def classify_work_calendar_date(
                 day_type="HOLIDAY",
                 holiday_name=exception.name,
                 exception_type="SUBSTITUTE_HOLIDAY",
+                holiday_type="SUBSTITUTE",
+                holiday_is_paid=True,
             )
         # CANCEL_HOLIDAY: remove any holiday match for this date only, then fall through to
         # the weekly-off/working check below (architecture §7.3).
@@ -176,7 +179,9 @@ def classify_work_calendar_date(
 
     if matched_holiday is None:
         if is_off:
-            return DayTypeRead(date=target_date, day_type="WEEKLY_OFF")
+            return DayTypeRead(
+                date=target_date, day_type="WEEKLY_OFF", weekly_off_fraction=off_fraction
+            )
         return DayTypeRead(date=target_date, day_type="WORKING")
 
     if matched_holiday.holiday_type == "WORKING_HOLIDAY":
@@ -209,19 +214,29 @@ def classify_work_calendar_date(
         if is_off:
             # WD-05 — holiday landing on weekly-off stays WEEKLY_OFF with a flag; no
             # auto-substitution (PD-CAL-2, open — default is "stay WO", substitution is an
-            # explicit CalendarException pair).
+            # explicit CalendarException pair). `weekly_off_fraction` is left unset (a full day
+            # off): the holiday covers the working half of a half-day weekly off too.
             return DayTypeRead(
                 date=target_date,
                 day_type="WEEKLY_OFF",
                 holiday_name=matched_holiday.name,
                 holiday_on_weekly_off=True,
+                holiday_type=matched_holiday.holiday_type,
+                holiday_is_paid=matched_holiday.is_paid,
             )
-        return DayTypeRead(date=target_date, day_type="HOLIDAY", holiday_name=matched_holiday.name)
+        return DayTypeRead(
+            date=target_date,
+            day_type="HOLIDAY",
+            holiday_name=matched_holiday.name,
+            holiday_type=matched_holiday.holiday_type,
+            holiday_is_paid=matched_holiday.is_paid,
+        )
 
     if is_off:
         return DayTypeRead(
             date=target_date,
             day_type="WEEKLY_OFF",
+            weekly_off_fraction=off_fraction,
             optional_holiday_name=optional_name,
             restricted_holiday_name=restricted_name,
         )
@@ -332,7 +347,12 @@ class CalendarResolutionService:
         }
         for holiday in all_holidays:
             by_calendar[holiday.calendar_id].append(
-                HolidayData(date=holiday.date, name=holiday.name, holiday_type=holiday.holiday_type)
+                HolidayData(
+                    date=holiday.date,
+                    name=holiday.name,
+                    holiday_type=holiday.holiday_type,
+                    is_paid=holiday.is_paid,
+                )
             )
         return [by_calendar[link.holiday_calendar_id] for link in links]
 

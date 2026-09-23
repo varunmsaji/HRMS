@@ -341,7 +341,8 @@ async def test_full_day_leave_keep_leave_behaviour_overrides_punches(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
     """Default policy `work_on_leave_behaviour=KEEP_LEAVE` — a full day of punches despite
-    approved full-day leave does not cancel the leave; `attendance_status` stays `LEAVE`."""
+    approved full-day leave does not cancel the leave; `attendance_status` stays `LEAVE`, and
+    the conflict is flagged for HR (BUS-012)."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee(client, headers)
@@ -357,7 +358,7 @@ async def test_full_day_leave_keep_leave_behaviour_overrides_punches(
         )
         assert recompute.status_code == 200, recompute.text
         assert recompute.json()["data"]["attendance_status"] == "LEAVE"
-        assert recompute.json()["data"]["work_on_leave_flagged"] is False
+        assert recompute.json()["data"]["work_on_leave_flagged"] is True
         assert recompute.json()["data"]["late_minutes"] == 0
     finally:
         await _cleanup_leave_projection(company_id=company_id)
@@ -365,12 +366,12 @@ async def test_full_day_leave_keep_leave_behaviour_overrides_punches(
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
-async def test_full_day_leave_present_cancel_hint_flags_and_keeps_punch_status(
+async def test_full_day_leave_former_present_hint_mode_no_longer_pays_twice(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
-    """`work_on_leave_behaviour=PRESENT_CANCEL_LEAVE_HINT` — the punch-derived outcome (PRESENT)
-    wins, and `work_on_leave_flagged` is raised for Leave to see. Attendance never cancels the
-    leave application itself (architecture §19.3)."""
+    """BUS-012 (`PAYROLL_BUSINESS_DECISIONS.md` #5) — `PRESENT_CANCEL_LEAVE_HINT` used to keep the
+    punch-derived PRESENT while the leave stayed debited (paid twice). The leave now wins under
+    every behaviour; the conflict is flagged for HR instead."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         wired = await _build_wired_employee_with_leave_behaviour(
@@ -388,8 +389,111 @@ async def test_full_day_leave_present_cancel_hint_flags_and_keeps_punch_status(
         )
         assert recompute.status_code == 200, recompute.text
         data = recompute.json()["data"]
-        assert data["attendance_status"] == "PRESENT"
+        assert data["attendance_status"] == "LEAVE"
+        assert data["paid_day_fraction"] == "1.00"
+        assert data["leave_fraction"] == "1.00"
         assert data["work_on_leave_flagged"] is True
+    finally:
+        await _cleanup_leave_projection(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_work_on_leave_blocks_finalize_until_hr_keeps_leave(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """BUS-012 end to end — an unresolved punches-on-leave day blocks period close; HR's
+    keep-leave decision is audited, survives a recompute, and unblocks finalize."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        await _sync(client, headers, employee_id=employee_id, fraction="1.00", is_paid=True)
+        await _punch(client, headers, employee_id=employee_id, hour=9, minute=0, direction="IN")
+        await _punch(client, headers, employee_id=employee_id, hour=18, minute=0, direction="OUT")
+        day = (
+            await client.post(
+                "/v1/attendance/days/calculate",
+                headers=headers,
+                params={"employee_id": employee_id, "date": _DAY},
+            )
+        ).json()["data"]
+        assert day["work_on_leave_flagged"] is True
+        assert day["work_on_leave_resolution"] is None
+
+        period = await _create_period(client, headers)
+        validated = await client.post(
+            f"/v1/attendance-periods/{period['id']}/validate", headers=headers
+        )
+        assert [r["code"] for r in validated.json()["data"]["reasons"]] == [
+            "WORK_ON_LEAVE_UNRESOLVED"
+        ]
+
+        resolved = await client.post(
+            f"/v1/attendance/days/{day['id']}/work-on-leave/keep-leave",
+            headers=headers,
+            json={"reason": "Came in for a handover only; leave stands"},
+        )
+        assert resolved.status_code == 200, resolved.text
+        assert resolved.json()["data"]["work_on_leave_resolution"] == "KEEP_LEAVE"
+        assert resolved.json()["data"]["work_on_leave_resolved_by"] == str(user_id)
+
+        # The decision survives a recompute while the day is still flagged.
+        recomputed = await client.post(
+            f"/v1/attendance/days/{day['id']}/recompute", headers=headers
+        )
+        assert recomputed.json()["data"]["work_on_leave_resolution"] == "KEEP_LEAVE"
+
+        finalized = await client.post(
+            f"/v1/attendance-periods/{period['id']}/finalize",
+            headers={**headers, "If-Match": "1"},
+            json={},
+        )
+        assert finalized.status_code == 200, finalized.text
+
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            audit_count = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM audit_log WHERE company_id = :cid "
+                        "AND action = 'ATTENDANCE_WORK_ON_LEAVE_RESOLVED'"
+                    ),
+                    {"cid": str(company_id)},
+                )
+            ).scalar_one()
+        assert audit_count == 1
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _cleanup_leave_projection(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_keep_leave_refused_on_day_without_conflict(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        await _sync(client, headers, employee_id=employee_id, fraction="1.00", is_paid=True)
+        day = (
+            await client.post(
+                "/v1/attendance/days/calculate",
+                headers=headers,
+                params={"employee_id": employee_id, "date": _DAY},
+            )
+        ).json()["data"]
+        assert day["work_on_leave_flagged"] is False
+        refused = await client.post(
+            f"/v1/attendance/days/{day['id']}/work-on-leave/keep-leave",
+            headers=headers,
+            json={"reason": "n/a"},
+        )
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"]["code"] == "ATTENDANCE_WORK_ON_LEAVE_NOT_FLAGGED"
     finally:
         await _cleanup_leave_projection(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)

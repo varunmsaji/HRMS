@@ -571,6 +571,11 @@ database errors spike — nobody finds out until a user complains.
 
 ## CLIENT BUSINESS DECISIONS REQUIRED
 
+> **✅ RESOLVED 2026-09-23** — every BUS-xxx and PD-x item below has been signed off. See
+> [`PAYROLL_BUSINESS_DECISIONS.md`](./PAYROLL_BUSINESS_DECISIONS.md) for the approved answers,
+> derived summary rules, and agreed implementation order. The tables below are kept as the
+> original question record.
+
 These are **not** technical defects. Each is a genuine business question the code cannot answer, and each
 changes what Payroll must compute. **BUSINESS DECISION REQUIRED** — none has been decided silently.
 

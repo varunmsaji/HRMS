@@ -67,6 +67,8 @@ from hrms.modules.attendance.schemas import (
     AttendancePolicyVersionPublishRequest,
     AttendancePolicyVersionRead,
     AttendancePolicyVersionUpdate,
+    AttendanceRangeCalculateInput,
+    AttendanceRangeCalculateQueued,
     LeaveDayProjectionRead,
     LeaveProjectionCancelInput,
     LeaveProjectionSync,
@@ -97,6 +99,7 @@ from hrms.modules.attendance.schemas import (
     ShiftRosterCreate,
     ShiftRosterRead,
     ShiftRosterUpdate,
+    WorkOnLeaveKeepLeaveInput,
 )
 from hrms.modules.attendance.service import (
     AttendanceDayService,
@@ -944,6 +947,55 @@ async def recompute_attendance_day(
     data = await service.recompute(
         tenant.company_id,
         attendance_day_id,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/days/calculate-range", status_code=status.HTTP_202_ACCEPTED)
+async def calculate_attendance_range(
+    body: AttendanceRangeCalculateInput,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
+    service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
+) -> DataEnvelope[AttendanceRangeCalculateQueued]:
+    """PAY-001 — queues calculation of every employed day in the range (at most 62 days, not
+    past today) so a period can be finalized without one call per employee-date. Privileged
+    (`ATTENDANCE.RECOMPUTE`, COMPANY). Locked days are skipped. Progress is visible through the
+    period's `validate` verdict."""
+    data = await service.queue_range_calculation(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/attendance/days/{attendance_day_id}/work-on-leave/keep-leave",
+    status_code=status.HTTP_200_OK,
+)
+async def keep_leave_over_punches(
+    attendance_day_id: UUID,
+    body: WorkOnLeaveKeepLeaveInput,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
+    service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
+) -> DataEnvelope[AttendanceDayRead]:
+    """BUS-012 — HR confirms an approved full-day leave stands over punches on the same day
+    (same privileged `ATTENDANCE.RECOMPUTE` authority as recompute). Clears the
+    `WORK_ON_LEAVE_UNRESOLVED` finalize blocker for this day. 409 if the day is locked or has no
+    conflict to resolve."""
+    data = await service.keep_leave_over_punches(
+        tenant.company_id,
+        attendance_day_id,
+        body,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),

@@ -142,6 +142,10 @@ class Employment(Base, TimestampMixin):
     # auto-computes this; HR sets/corrects it directly. Not a trigger for anything: the actual
     # PROBATION -> ACTIVE transition is the explicit `EmployeeService.confirm_employee` action.
     probation_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # BUS-001 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` #1) — `MONTHLY` (salaried: holidays and
+    # weekly offs paid) or `DAILY_WAGE` (paid for PUBLIC holidays only; weekly offs, company
+    # holidays and shutdowns unpaid). Read by Attendance to set each day's paid share.
+    pay_basis: Mapped[str] = mapped_column(String(20), default="MONTHLY")
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
     previous_employment_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("employment.id"), nullable=True

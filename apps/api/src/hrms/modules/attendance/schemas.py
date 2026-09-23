@@ -1416,12 +1416,19 @@ class AttendanceDayRead(BaseModel):
     worked_on_holiday: bool
     worked_on_weekly_off: bool
     work_on_leave_flagged: bool
+    work_on_leave_resolution: str | None
+    work_on_leave_resolution_reason: str | None
+    work_on_leave_resolved_by: UUID | None
+    work_on_leave_resolved_at: str | None
     is_core_hours_breach: bool
     on_duty: bool
     on_duty_regularization_id: UUID | None
 
     paid_day_fraction: str
     lop_fraction: str
+    leave_fraction: str
+    weekly_off_fraction: str
+    unpaid_off_fraction: str
 
     ot_minutes_detected: int
     ot_minutes_approved: int
@@ -1485,11 +1492,18 @@ def attendance_day_to_read(
         worked_on_holiday=row.worked_on_holiday,
         worked_on_weekly_off=row.worked_on_weekly_off,
         work_on_leave_flagged=row.work_on_leave_flagged,
+        work_on_leave_resolution=row.work_on_leave_resolution,
+        work_on_leave_resolution_reason=row.work_on_leave_resolution_reason,
+        work_on_leave_resolved_by=row.work_on_leave_resolved_by,
+        work_on_leave_resolved_at=_format_timestamp(row.work_on_leave_resolved_at),
         is_core_hours_breach=row.is_core_hours_breach,
         on_duty=row.on_duty,
         on_duty_regularization_id=row.on_duty_regularization_id,
         paid_day_fraction=str(row.paid_day_fraction),
         lop_fraction=str(row.lop_fraction),
+        leave_fraction=str(row.leave_fraction),
+        weekly_off_fraction=str(row.weekly_off_fraction),
+        unpaid_off_fraction=str(row.unpaid_off_fraction),
         ot_minutes_detected=row.ot_minutes_detected,
         ot_minutes_approved=row.ot_minutes_approved,
         ot_pending=row.ot_pending,
@@ -1866,6 +1880,45 @@ class AttendancePeriodCreate(BaseModel):
         return self
 
 
+#: PAY-001 — the longest range one backfill request may cover (two months), bounding a single
+#: queued job for a large company to a size that finishes in reasonable time.
+RANGE_CALCULATE_MAX_DAYS = 62
+
+
+class AttendanceRangeCalculateInput(BaseModel):
+    """PAY-001 — backfill every employed day in `[date_from, date_to]` (company-local business
+    dates), optionally only for `employee_ids`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date_from: date
+    date_to: date
+    employee_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "AttendanceRangeCalculateInput":
+        if self.date_to < self.date_from:
+            raise ValueError("date_to must be on or after date_from")
+        if (self.date_to - self.date_from).days + 1 > RANGE_CALCULATE_MAX_DAYS:
+            raise ValueError(f"A range may cover at most {RANGE_CALCULATE_MAX_DAYS} days")
+        return self
+
+
+class AttendanceRangeCalculateQueued(BaseModel):
+    task_id: str
+    date_from: date
+    date_to: date
+    employee_ids: list[UUID] | None
+
+
+class WorkOnLeaveKeepLeaveInput(BaseModel):
+    """BUS-012 — HR confirms an approved full-day leave stands over punches on the same day."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=1000)
+
+
 class AttendancePeriodReopenInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1974,6 +2027,14 @@ class AttendancePeriodSummaryRead(BaseModel):
     weekly_off_days: str
     half_days: str
     lop_days: str
+    # PAY-002/PAY-003 — None only on a summary frozen before these fields existed (old,
+    # overlapping bucket semantics); Payroll must refuse such a summary.
+    on_duty_days: str | None
+    incomplete_days: str | None
+    not_employed_days: str | None
+    unpaid_off_days: str | None
+    paid_days: str | None
+    payable_days: str | None
     ot_minutes_normal: int
     ot_minutes_weekly_off: int
     ot_minutes_holiday: int
@@ -1983,6 +2044,10 @@ class AttendancePeriodSummaryRead(BaseModel):
     worked_minutes_total: int
     generated_at: str
     frozen: bool
+
+
+def _optional_decimal_str(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
 
 
 def attendance_period_summary_to_read(
@@ -1997,6 +2062,12 @@ def attendance_period_summary_to_read(
         weekly_off_days=str(row.weekly_off_days),
         half_days=str(row.half_days),
         lop_days=str(row.lop_days),
+        on_duty_days=_optional_decimal_str(row.on_duty_days),
+        incomplete_days=_optional_decimal_str(row.incomplete_days),
+        not_employed_days=_optional_decimal_str(row.not_employed_days),
+        unpaid_off_days=_optional_decimal_str(row.unpaid_off_days),
+        paid_days=_optional_decimal_str(row.paid_days),
+        payable_days=_optional_decimal_str(row.payable_days),
         ot_minutes_normal=row.ot_minutes_normal,
         ot_minutes_weekly_off=row.ot_minutes_weekly_off,
         ot_minutes_holiday=row.ot_minutes_holiday,

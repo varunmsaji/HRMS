@@ -68,6 +68,7 @@ def _employment(**overrides: object) -> Employment:
         "legal_entity_id": uuid4(),
         "joining_date": date(2027, 6, 1),
         "last_working_day": None,
+        "pay_basis": "MONTHLY",
         "status": "ACTIVE",
         "previous_employment_id": None,
         "deleted_at": None,

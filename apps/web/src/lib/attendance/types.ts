@@ -113,11 +113,19 @@ export interface AttendanceDay {
   worked_on_holiday: boolean;
   worked_on_weekly_off: boolean;
   work_on_leave_flagged: boolean;
+  /** BUS-012 — `KEEP_LEAVE` once HR confirmed the leave stands over the punches. */
+  work_on_leave_resolution: "KEEP_LEAVE" | null;
+  work_on_leave_resolution_reason: string | null;
+  work_on_leave_resolved_by: string | null;
+  work_on_leave_resolved_at: string | null;
   is_core_hours_breach: boolean;
   on_duty: boolean;
   on_duty_regularization_id: string | null;
 
   paid_day_fraction: string;
+  leave_fraction: string;
+  weekly_off_fraction: string;
+  unpaid_off_fraction: string;
   lop_fraction: string;
 
   ot_minutes_detected: number;

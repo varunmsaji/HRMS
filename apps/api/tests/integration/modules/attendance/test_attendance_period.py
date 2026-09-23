@@ -460,6 +460,93 @@ async def test_finalize_resolves_incomplete_with_default_treat_absent_policy(
         assert locked_day["attendance_status"] == "INCOMPLETE"
         assert locked_day["paid_day_fraction"] == "0.00"
         assert locked_day["lop_fraction"] == "1.00"
+
+        # PAY-007 — the frozen summary reflects the resolution, not the pre-lock 0.00/0.00.
+        frozen = await client.get(f"/v1/attendance-periods/{period['id']}/summary", headers=headers)
+        frozen_row = next(r for r in frozen.json()["data"] if r["employee_id"] == employee_id)
+        assert frozen_row["lop_days"] == "1.00"
+        assert frozen_row["paid_days"] == "0.00"
+        assert frozen_row["payable_days"] == "1.00"
+        assert frozen_row["absent_days"] == "1.00"
+        assert frozen_row["incomplete_days"] == "0.00"
+
+        # PAY-007 — the lock-time rewrite is audited, per resolved day.
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            audit_after = (
+                await session.execute(
+                    text(
+                        "SELECT after_json FROM audit_log WHERE company_id = :cid "
+                        "AND action = 'ATTENDANCE_INCOMPLETE_RESOLVED_AT_LOCK'"
+                    ),
+                    {"cid": str(company_id)},
+                )
+            ).scalar_one()
+        resolved = audit_after["resolved_days"]
+        assert len(resolved) == 1
+        assert resolved[0]["behaviour"] == "TREAT_ABSENT"
+        assert resolved[0]["before"] == {"paid_day_fraction": "0.00", "lop_fraction": "0.00"}
+        assert resolved[0]["after"] == {"paid_day_fraction": "0.00", "lop_fraction": "1.00"}
+    finally:
+        await _cleanup_attendance_period(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_mid_period_joiner_gate_and_frozen_summary(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """PAY-002/PAY-003/PAY-004 end to end — an employee joining on day 2 of a 3-day period.
+
+    The NOT_JOINED day before joining must not satisfy the missing-attendance gate for an
+    uncalculated employed day (the old row-count check let it), must carry 0.00 paid / 0.00
+    LOP, and the frozen summary must report it as not-employed with paid + LOP = payable."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers, joining_date="2026-08-11")
+        employee_id = wired["employee"]["id"]
+
+        before_joining = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-10"},
+        )
+        assert before_joining.status_code == 200, before_joining.text
+        assert before_joining.json()["data"]["attendance_status"] == "NOT_JOINED"
+        assert before_joining.json()["data"]["paid_day_fraction"] == "0.00"
+        assert before_joining.json()["data"]["lop_fraction"] == "0.00"
+
+        await _full_calculate(client, headers, employee_id=employee_id, day="2026-08-11")
+        period = await _create_period(
+            client, headers, period_start="2026-08-10", period_end="2026-08-12"
+        )
+
+        # 2 rows for 2 employed days, but 2026-08-12 is uncalculated — must block.
+        validated = await client.post(
+            f"/v1/attendance-periods/{period['id']}/validate", headers=headers
+        )
+        assert validated.json()["data"]["status"] == "BLOCKED"
+        assert [r["code"] for r in validated.json()["data"]["reasons"]] == [
+            "EMPLOYEES_WITHOUT_ATTENDANCE"
+        ]
+
+        await _full_calculate(client, headers, employee_id=employee_id, day="2026-08-12")
+        finalized = await client.post(
+            f"/v1/attendance-periods/{period['id']}/finalize",
+            headers={**headers, "If-Match": "1"},
+            json={},
+        )
+        assert finalized.status_code == 200, finalized.text
+
+        frozen = await client.get(f"/v1/attendance-periods/{period['id']}/summary", headers=headers)
+        row = next(r for r in frozen.json()["data"] if r["employee_id"] == employee_id)
+        assert row["frozen"] is True
+        assert row["present_days"] == "2.00"
+        assert row["not_employed_days"] == "1.00"
+        assert row["payable_days"] == "2.00"
+        assert row["paid_days"] == "2.00"
+        assert row["lop_days"] == "0.00"
     finally:
         await _cleanup_attendance_period(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)

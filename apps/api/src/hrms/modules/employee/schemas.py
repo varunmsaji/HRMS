@@ -242,6 +242,10 @@ def build_employee_update_values(patch: EmployeeUpdate) -> dict[str, Any]:
 EMPLOYMENT_STATUS_VALUES = ("ACTIVE", "TERMINATED")
 
 
+#: BUS-001 — see `Employment.pay_basis`.
+PayBasis = Literal["MONTHLY", "DAILY_WAGE"]
+
+
 class EmploymentCreate(BaseModel):
     """Creates a new employment episode for an existing employee — covers both a first hire
     (no prior employment rows) and a rehire (at least one prior, necessarily `TERMINATED`,
@@ -258,6 +262,7 @@ class EmploymentCreate(BaseModel):
     legal_entity_id: UUID
     joining_date: date
     probation_end_date: date | None = None
+    pay_basis: PayBasis = "MONTHLY"
 
 
 class EmploymentUpdate(BaseModel):
@@ -275,6 +280,16 @@ class EmploymentUpdate(BaseModel):
 
     legal_entity_id: UUID | None = None
     probation_end_date: date | None = None
+    # Correctable: a wrong pay basis is a data-entry error. Unlocked attendance days pick the new
+    # value up on their next recompute; days in a closed period keep the value they were
+    # computed with.
+    pay_basis: PayBasis | None = None
+
+    @model_validator(mode="after")
+    def pay_basis_not_null(self) -> "EmploymentUpdate":
+        if "pay_basis" in self.model_fields_set and self.pay_basis is None:
+            raise ValueError("pay_basis cannot be null")
+        return self
 
 
 class EmploymentTerminate(BaseModel):
@@ -291,6 +306,7 @@ class EmploymentRead(BaseModel):
     joining_date: date
     last_working_day: date | None
     probation_end_date: date | None
+    pay_basis: str
     status: str
     previous_employment_id: UUID | None
     version: int
@@ -307,6 +323,7 @@ def employment_to_read(employment: "Employment") -> EmploymentRead:
         joining_date=employment.joining_date,
         last_working_day=employment.last_working_day,
         probation_end_date=employment.probation_end_date,
+        pay_basis=employment.pay_basis,
         status=employment.status,
         previous_employment_id=employment.previous_employment_id,
         version=employment.version,

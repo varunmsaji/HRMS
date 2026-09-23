@@ -2028,6 +2028,13 @@ class DayTypeRead(BaseModel):
     is_holiday_named: bool = False
     optional_holiday_name: str | None = None
     restricted_holiday_name: str | None = None
+    # PAY-012 — set only when `day_type == "WEEKLY_OFF"`: `1.00` full day off, `0.50` half.
+    weekly_off_fraction: Decimal | None = None
+    # BUS-001 — set only for a day off because of a holiday (`HOLIDAY`, or `WEEKLY_OFF` with
+    # `holiday_on_weekly_off`): the holiday's type (`SUBSTITUTE` for a substitute-holiday
+    # exception) and its `is_paid` flag.
+    holiday_type: str | None = None
+    holiday_is_paid: bool | None = None
 
 
 class CalendarResolutionRead(BaseModel):

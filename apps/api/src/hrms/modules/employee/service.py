@@ -868,6 +868,7 @@ class EmploymentService:
                     "legal_entity_id": body.legal_entity_id,
                     "joining_date": body.joining_date,
                     "probation_end_date": body.probation_end_date,
+                    "pay_basis": body.pay_basis,
                     "status": "ACTIVE",
                     "previous_employment_id": previous_employment_id,
                     "version": 1,
