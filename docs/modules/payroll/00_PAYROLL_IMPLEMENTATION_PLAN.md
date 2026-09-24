@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **APPROVED 2026-09-23** — D1–D6 accepted as recommended (product owner: varun). D8 decided 2026-09-24 (no net-pay rounding); D9 confirmed 2026-09-24 (maker–checker stays mandatory, no toggle — deliberately not made admin-configurable, unlike other payroll policy inputs, since it's a financial control); D7, D10, D11 built as recommended in Phase 5.2, **awaiting confirmation** |
+| Status | **APPROVED 2026-09-23** — D1–D6 accepted as recommended (product owner: varun). D8 decided 2026-09-24 (no net-pay rounding); D9 confirmed 2026-09-24 (maker–checker stays mandatory, no toggle — deliberately not made admin-configurable, unlike other payroll policy inputs, since it's a financial control); D7, D10, D11 confirmed 2026-09-24 as built — **all 11 decisions now signed off, nothing left awaiting confirmation** |
 | Date | 2026-09-23 |
 | Scope source | `docs/product/17_SRS_Phase1_Core_Modules.md` §7 (FR-PAY-001…025), `docs/product/VERSION_1_ROADMAP.md` rows 16, 37–44 |
 | Binding rules | `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` (decisions 1–18, PD-2), `docs/adr/0005-payroll-snapshot-immutability.md`, `docs/audits/PAYROLL_FOUNDATION_CONTRACT.md` Part C (C1–C10) |
@@ -377,6 +377,7 @@ the user who computes a run cannot approve it.
 **2026-09-23:** D1–D6 approved as recommended. **2026-09-24:** D8 decided — no net-pay rounding
 for now. D9 confirmed — maker–checker stays a hard rule, deliberately not exposed as a company
 setting even though the base-version principle is that admin-needed policy should be
-configurable (a financial-control exception, not an oversight). D7, D10, D11 built as recommended
-in Phase 5.2 — awaiting the product owner's confirmation; changing any of them later is a small,
-local change (D10's threshold is already a company setting).
+configurable (a financial-control exception, not an oversight). D7, D10, D11 confirmed as built —
+next-month arrears for late corrections, 15% variance threshold (already a company setting), pay
+date defaulting to the first weekday after month-end (editable per run). All 11 decisions (D1–D11)
+are now signed off; changing any of them later is a small, local change.

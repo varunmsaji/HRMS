@@ -164,3 +164,4 @@ Follow-ups found during step 3 (not yet done):
 | Date | Change | Approved by |
 |---|---|---|
 | 2026-09-23 | Initial sign-off of all 18 business decisions and 3 product decisions | varun |
+| 2026-09-24 | Payroll module decisions D1–D11 ([`00_PAYROLL_IMPLEMENTATION_PLAN.md`](../modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md)) all signed off: D1–D6 (2026-09-23), D8–D9 decided/confirmed, D7/D10/D11 confirmed as built | varun |
