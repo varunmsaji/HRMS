@@ -110,9 +110,12 @@ Follow-ups found during step 1 (not yet done):
 
 - ~~`work_on_leave_behaviour = PRESENT_CANCEL_LEAVE_HINT` no longer changes the outcome (decision 5)
   — hide it with the other inert settings in step 4~~ — hidden in step 4.
-- `pay_basis` is set on employment create/PATCH and shown in the employment panel, but not yet
+- ~~`pay_basis` is set on employment create/PATCH and shown in the employment panel, but not yet
   collected by the onboarding wizard or the CSV import (both default to MONTHLY), and the web UI
-  has no employment-edit dialog to correct it (API only).
+  has no employment-edit dialog to correct it (API only)~~ — post-creation correction fixed
+  2026-09-24: an Edit dialog on the employment panel now calls the existing `PATCH` (legal entity,
+  probation end date, pay basis). The onboarding wizard and CSV import still default to MONTHLY
+  and don't collect it — that part is still open.
 - PAY-006 reminders reach only employees with an active login (`employee.user_id` → `user.email`);
   the others are counted in the HR digest. There is no in-app notification yet — the emails go
   through the onboarding `EmailSender` (logged, not sent, until `email_provider = "ses"`).
