@@ -49,17 +49,27 @@ export function validateTerminateForm(values: TerminateFormValues): Partial<Reco
 
 export interface EmploymentCorrectionValues {
   legalEntityId: string;
+  probationEndDate: string;
+  payBasis: PayBasis;
 }
 
 /** Diff-only payload for `PATCH /employees/{id}/employments/{employmentId}` — only
- * `legal_entity_id` is correctable post-creation. */
+ * `legal_entity_id`, `probation_end_date` and `pay_basis` are correctable post-creation
+ * (see `EmploymentUpdate` on the backend). */
 export function buildEmploymentCorrectionPatch(
   values: EmploymentCorrectionValues,
-  employment: { legal_entity_id: string },
+  employment: { legal_entity_id: string; probation_end_date: string | null; pay_basis: PayBasis },
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (values.legalEntityId && values.legalEntityId !== employment.legal_entity_id) {
     patch.legal_entity_id = values.legalEntityId;
+  }
+  const probationEndDate = values.probationEndDate || null;
+  if (probationEndDate !== employment.probation_end_date) {
+    patch.probation_end_date = probationEndDate;
+  }
+  if (values.payBasis !== employment.pay_basis) {
+    patch.pay_basis = values.payBasis;
   }
   return patch;
 }

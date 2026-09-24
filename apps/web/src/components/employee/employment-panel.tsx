@@ -32,9 +32,11 @@ import {
 import {
   EMPTY_EMPLOYMENT_FORM_VALUES,
   EMPTY_TERMINATE_FORM_VALUES,
+  buildEmploymentCorrectionPatch,
   buildEmploymentCreatePayload,
   validateEmploymentForm,
   validateTerminateForm,
+  type EmploymentCorrectionValues,
   type EmploymentFormErrors,
   type EmploymentFormValues,
   type TerminateFormValues,
@@ -63,6 +65,15 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
   const [terminateValues, setTerminateValues] = useState<TerminateFormValues>(EMPTY_TERMINATE_FORM_VALUES);
   const [terminateErrors, setTerminateErrors] = useState<Partial<Record<"lastWorkingDay", string>>>({});
   const [terminating, setTerminating] = useState(false);
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editValues, setEditValues] = useState<EmploymentCorrectionValues>({
+    legalEntityId: "",
+    probationEndDate: "",
+    payBasis: "MONTHLY",
+  });
+  const [editErrors, setEditErrors] = useState<EmploymentFormErrors>({});
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -203,7 +214,67 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
     }
   }
 
+  function openEdit() {
+    if (!current) return;
+    setEditValues({
+      legalEntityId: current.legal_entity_id,
+      probationEndDate: current.probation_end_date ?? "",
+      payBasis: current.pay_basis,
+    });
+    setEditErrors({});
+    setEditOpen(true);
+  }
+
+  async function handleEdit() {
+    if (!current) return;
+    const patch = buildEmploymentCorrectionPatch(editValues, current);
+    if (Object.keys(patch).length === 0) {
+      setEditOpen(false);
+      return;
+    }
+
+    setEditing(true);
+    setEditErrors({});
+    try {
+      await apiClient.patch<Employment>(`/employees/${employeeId}/employments/${current.id}`, patch, {
+        ifMatch: String(current.version),
+      });
+      setEditOpen(false);
+      toast({ title: "Employment updated", variant: "success" });
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 422) {
+          setEditErrors({
+            legalEntityId: getFieldError(err.details, "legal_entity_id"),
+            probationEndDate: getFieldError(err.details, "probation_end_date"),
+          });
+          return;
+        }
+        if (err.status === 403) {
+          setEditOpen(false);
+          toast({ title: "You don't have permission to do that", variant: "danger" });
+          return;
+        }
+        if (err.status === 409 && err.code === "STALE_RESOURCE") {
+          toast({
+            title: "Could not update employment",
+            description: "This employment record was changed by someone else. Reload and try again.",
+            variant: "danger",
+          });
+          setEditOpen(false);
+          void load();
+          return;
+        }
+      }
+      toast({ title: "Could not update employment", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setEditing(false);
+    }
+  }
+
   const canCreate = can("EMPLOYEE.CREATE");
+  const canUpdate = can("EMPLOYEE.UPDATE");
   const canTerminate = can("EMPLOYEE.TERMINATE");
 
   return (
@@ -241,6 +312,11 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                   {canCreate && (!employments.length || isRehire) ? (
                     <Button type="button" size="sm" onClick={openHire}>
                       {isRehire ? "Rehire" : "Create first employment"}
+                    </Button>
+                  ) : null}
+                  {canUpdate && current ? (
+                    <Button type="button" size="sm" variant="outline" onClick={openEdit}>
+                      Edit
                     </Button>
                   ) : null}
                   {canTerminate && current ? (
@@ -392,6 +468,70 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
             </Button>
             <Button type="button" onClick={() => void handleHire()} disabled={hiring}>
               {hiring ? "Saving…" : isRehire ? "Rehire" : "Create employment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={(open) => (!editing ? setEditOpen(open) : null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit employment</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-foreground-muted">
+            Joining date is a historical fact and can&apos;t be changed here. Legal entity, probation end date and
+            pay basis are correctable.
+          </p>
+          <div className="grid grid-cols-1 gap-4">
+            <FormField id="edit-legal-entity" label="Legal entity" required error={editErrors.legalEntityId}>
+              <NativeSelect
+                value={editValues.legalEntityId}
+                onChange={(e) => setEditValues({ ...editValues, legalEntityId: e.target.value })}
+              >
+                <option value="">Select a legal entity</option>
+                {legalEntities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+            <FormField
+              id="edit-pay-basis"
+              label="Pay basis"
+              required
+              description={PAY_BASIS_DESCRIPTIONS[editValues.payBasis]}
+            >
+              <NativeSelect
+                value={editValues.payBasis}
+                onChange={(e) => setEditValues({ ...editValues, payBasis: e.target.value as PayBasis })}
+              >
+                {PAY_BASIS_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {PAY_BASIS_LABELS[value]}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+            <FormField
+              id="edit-probation-end-date"
+              label="Probation end date"
+              description="Optional — purely informational, doesn't gate anything."
+              error={editErrors.probationEndDate}
+            >
+              <Input
+                type="date"
+                value={editValues.probationEndDate}
+                onChange={(e) => setEditValues({ ...editValues, probationEndDate: e.target.value })}
+              />
+            </FormField>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={editing}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleEdit()} disabled={editing}>
+              {editing ? "Saving…" : "Save changes"}
             </Button>
           </DialogFooter>
         </DialogContent>
