@@ -62,6 +62,8 @@ from hrms.modules.payroll.exceptions import (
     SalaryStructureVersionNotDraftError,
     SalaryStructureVersionNotFoundError,
     StalePayrollResourceError,
+    StatutoryRateInvalidError,
+    StatutoryRateNotFoundError,
 )
 from hrms.modules.payroll.models import (
     PayRun,
@@ -70,6 +72,7 @@ from hrms.modules.payroll.models import (
     SalaryStructure,
     SalaryStructureLine,
     SalaryStructureVersion,
+    StatutoryRate,
 )
 from hrms.modules.payroll.repository import (
     EmployeeSalaryRepository,
@@ -77,6 +80,7 @@ from hrms.modules.payroll.repository import (
     PayRunRepository,
     SalaryComponentRepository,
     SalaryStructureRepository,
+    StatutoryRateRepository,
 )
 from hrms.modules.payroll.schemas import (
     EmployeeSalaryBreakupRead,
@@ -107,6 +111,9 @@ from hrms.modules.payroll.schemas import (
     SalaryStructureVersionCreate,
     SalaryStructureVersionPublish,
     SalaryStructureVersionRead,
+    StatutoryRateCreate,
+    StatutoryRateRead,
+    StatutoryRateUpdate,
     employee_salary_to_read,
     pay_run_employee_to_read,
     pay_run_line_to_read,
@@ -116,6 +123,8 @@ from hrms.modules.payroll.schemas import (
     salary_structure_line_to_read,
     salary_structure_to_read,
     salary_structure_version_to_read,
+    statutory_rate_to_read,
+    validate_statutory_parameters,
 )
 from hrms.shared.business_time import business_today
 
@@ -1863,6 +1872,14 @@ class PayRunService:
                         if line.component_code in components
                         else 0
                     ),
+                    "is_pf_wage": (
+                        line.component_code in components
+                        and components[line.component_code].is_pf_wage
+                    ),
+                    "is_esi_wage": (
+                        line.component_code in components
+                        and components[line.component_code].is_esi_wage
+                    ),
                     "basis": line.basis,
                 }
                 for line in breakup.lines
@@ -1890,6 +1907,57 @@ class PayRunService:
             "ifsc": bank.ifsc,
             "account_last4": account[-4:] if account else None,
             "verification_status": bank.verification_status,
+        }
+
+    async def _statutory(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        spans: list[tuple[date, date]],
+        month_end: date,
+        *,
+        date_of_birth: date | None,
+        gender: str | None,
+    ) -> dict[str, Any]:
+        """Phase 5.3 — what `statutory.compute_statutory` needs: the statutory profile as of the
+        employee's last day in this entity in the month, the employee facts it depends on, and
+        the rates in force at month end (PT and LWF for the profile's PT state)."""
+        from hrms.modules.employee.service import EmployeeService, EmployeeStatutoryService
+
+        as_of = max((end for _start, end in spans), default=month_end)
+        profile = await EmployeeStatutoryService(self._session).get_statutory_as_of(
+            company_id, employee_id, as_of
+        )
+        pt_state = profile.pt_state_code.upper() if profile and profile.pt_state_code else None
+        profile_data = (
+            {
+                "statutory_id": str(profile.id),
+                "is_pf_applicable": profile.is_pf_applicable,
+                "pf_wage_ceiling_opt_out": profile.pf_wage_ceiling_opt_out,
+                "vpf_amount": profile.vpf_amount,
+                "vpf_percentage": (
+                    str(profile.vpf_percentage) if profile.vpf_percentage is not None else None
+                ),
+                "is_esi_applicable": profile.is_esi_applicable,
+                "esi_ip_number": profile.esi_ip_number,
+                "pt_state_code": pt_state,
+                "is_lwf_applicable": profile.is_lwf_applicable,
+            }
+            if profile is not None
+            else None
+        )
+        rates = await StatutoryRateService(self._session).rates_for(company_id, month_end, pt_state)
+        return {
+            "month_end": month_end.isoformat(),
+            "profile": profile_data,
+            "employee": {
+                "uan_number": await EmployeeService(self._session).get_uan_number(
+                    company_id, employee_id
+                ),
+                "date_of_birth": date_of_birth.isoformat() if date_of_birth else None,
+                "gender": gender.upper() if gender else None,
+            },
+            "rates": rates,
         }
 
     async def _build_snapshots(
@@ -1971,6 +2039,14 @@ class PayRunService:
                 "overtime": overtime.get(employee_id, []),
                 "encashments": encashments.get(employee_id, []),
                 "bank": await self._bank(company_id, employee_id, run.period_end),
+                "statutory": await self._statutory(
+                    company_id,
+                    employee_id,
+                    own_spans.get(employee_id, []),
+                    run.period_end,
+                    date_of_birth=employee.date_of_birth,
+                    gender=employee.gender,
+                ),
                 "issues": issues,
             }
             valid = [s for s in segments if s["valid"]]
@@ -2469,3 +2545,327 @@ class PayRunService:
             extra={"rollback_reason": body.reason},
         )
         return after
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.3 — statutory rates
+# ---------------------------------------------------------------------------
+
+#: Seeded per company on first use, **unverified** — compliance must check each against the
+#: current notifications and verify it before a pay run using it can be approved (FR-PAY-005).
+DEFAULT_STATUTORY_RATES: tuple[tuple[str, str | None, date, dict[str, Any], str], ...] = (
+    (
+        "PF",
+        None,
+        date(2014, 9, 1),
+        {"employee_percent": "12", "employer_percent": "12", "eps_percent": "8.33",
+         "wage_ceiling_minor": 1_500_000, "edli_percent": "0.5", "admin_percent": "0.5",
+         "eps_age_limit": 58},
+        "EPF & MP Act: 12 % / 12 %, EPS 8.33 % on wages up to ₹15,000 (from 1 Sep 2014), EDLI "
+        "0.5 %, admin charges 0.5 % (from 1 Jun 2018; the ₹500 monthly establishment minimum is "
+        "not applied per employee). Verify before use.",
+    ),
+    (
+        "ESI",
+        None,
+        date(2019, 7, 1),
+        {"employee_percent": "0.75", "employer_percent": "3.25",
+         "wage_ceiling_minor": 2_100_000, "employee_exempt_daily_wage_minor": 17_600},
+        "ESI Act: employee 0.75 %, employer 3.25 % (from 1 Jul 2019); wage ceiling ₹21,000; no "
+        "employee share at an average daily wage up to ₹176. Verify before use.",
+    ),
+    (
+        "PT",
+        "MH",
+        date(2023, 7, 1),
+        {"slabs": [
+            {"min_minor": 0, "max_minor": 750_000, "amount_minor": 0},
+            {"min_minor": 750_001, "max_minor": 1_000_000, "amount_minor": 17_500},
+            {"min_minor": 1_000_001, "max_minor": None, "amount_minor": 20_000,
+             "month_amounts": {"2": 30_000}},
+            {"min_minor": 0, "max_minor": 2_500_000, "amount_minor": 0, "gender": "FEMALE"},
+            {"min_minor": 2_500_001, "max_minor": None, "amount_minor": 20_000,
+             "gender": "FEMALE", "month_amounts": {"2": 30_000}},
+        ]},
+        "Maharashtra: up to ₹7,500 nil, ₹7,501–10,000 ₹175, above ₹10,000 ₹200 (₹300 in "
+        "February); women up to ₹25,000 nil. Verify before use.",
+    ),
+    (
+        "PT",
+        "KA",
+        date(2025, 4, 1),
+        {"slabs": [
+            {"min_minor": 0, "max_minor": 2_499_999, "amount_minor": 0},
+            {"min_minor": 2_500_000, "max_minor": None, "amount_minor": 20_000,
+             "month_amounts": {"2": 30_000}},
+        ]},
+        "Karnataka: below ₹25,000 nil, ₹25,000 and above ₹200 (₹300 in February, from 1 Apr "
+        "2025). Verify before use.",
+    ),
+)  # fmt: skip
+
+
+class StatutoryRateService:
+    """Phase 5.3 — the effective-dated statutory rate master (FR-PAY-005, BR-10) and the rates a
+    pay run snapshots. Rates are per company so each company records its own compliance sign-off
+    (`verify`); any edit clears it."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = StatutoryRateRepository()
+        self._audit = AuditService()
+
+    async def ensure_defaults(self, company_id: UUID) -> None:
+        existing = {
+            (row.scheme, row.state_code)
+            for row in await self._repo.list_for_company(self._session, company_id=company_id)
+        }
+        now = datetime.now(UTC)
+        for scheme, state, effective_from, parameters, notes in DEFAULT_STATUTORY_RATES:
+            if (scheme, state) in existing:
+                continue
+            try:
+                async with self._session.begin_nested():
+                    await self._repo.insert(
+                        self._session,
+                        data={
+                            "id": uuid4(),
+                            "company_id": company_id,
+                            "scheme": scheme,
+                            "state_code": state,
+                            "effective_from": effective_from,
+                            "parameters": validate_statutory_parameters(scheme, parameters),
+                            "notes": notes,
+                            "is_seeded": True,
+                            "version": 1,
+                            "created_at": now,
+                            "updated_at": now,
+                        },
+                    )
+            except IntegrityError:
+                continue  # a concurrent request seeded it first
+
+    async def list_rates(
+        self, company_id: UUID, *, scheme: str | None = None
+    ) -> list[StatutoryRateRead]:
+        await self.ensure_defaults(company_id)
+        rows = await self._repo.list_for_company(
+            self._session, company_id=company_id, scheme=scheme
+        )
+        return [statutory_rate_to_read(row) for row in rows]
+
+    async def _get_row(self, company_id: UUID, rate_id: UUID) -> StatutoryRate:
+        row = await self._repo.get(self._session, company_id=company_id, rate_id=rate_id)
+        if row is None:
+            raise StatutoryRateNotFoundError()
+        return row
+
+    async def _record(
+        self,
+        company_id: UUID,
+        rate_id: UUID,
+        action: str,
+        *,
+        before: StatutoryRateRead | None,
+        after: StatutoryRateRead,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="statutory_rate",
+            entity_id=rate_id,
+            before=before.model_dump(mode="json") if before is not None else None,
+            after=after.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def create(
+        self,
+        company_id: UUID,
+        body: StatutoryRateCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> StatutoryRateRead:
+        await self.ensure_defaults(company_id)
+        now = datetime.now(UTC)
+        current = await self._repo.get_open(
+            self._session, company_id=company_id, scheme=body.scheme, state_code=body.state_code
+        )
+        if current is not None:
+            if body.effective_from <= current.effective_from:
+                raise StatutoryRateInvalidError(
+                    "effective_from must be after the current rate's start "
+                    f"({current.effective_from.isoformat()})"
+                )
+            await self._repo.update(
+                self._session,
+                company_id=company_id,
+                rate_id=current.id,
+                values={"effective_to": body.effective_from - timedelta(days=1)},
+                expected_version=None,
+                now=now,
+            )
+        rate_id = uuid4()
+        try:
+            async with self._session.begin_nested():
+                row = await self._repo.insert(
+                    self._session,
+                    data={
+                        "id": rate_id,
+                        "company_id": company_id,
+                        "scheme": body.scheme,
+                        "state_code": body.state_code,
+                        "effective_from": body.effective_from,
+                        "parameters": body.parameters,
+                        "notes": body.notes,
+                        "is_seeded": False,
+                        "version": 1,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+        except IntegrityError as exc:
+            raise StatutoryRateInvalidError(
+                "Another rate for this scheme and state already covers effective_from"
+            ) from exc
+        read = statutory_rate_to_read(row)
+        await self._record(
+            company_id,
+            rate_id,
+            "PAYROLL_STATUTORY_RATE_CREATED",
+            before=None,
+            after=read,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def update(
+        self,
+        company_id: UUID,
+        rate_id: UUID,
+        body: StatutoryRateUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> StatutoryRateRead:
+        """Corrects a rate in place. Pay runs keep the copy they snapshotted; the rate needs
+        verifying again."""
+        row = await self._get_row(company_id, rate_id)
+        before = statutory_rate_to_read(row)
+        values: dict[str, Any] = {"verified_at": None, "verified_by_user_id": None}
+        if body.parameters is not None:
+            try:
+                values["parameters"] = validate_statutory_parameters(row.scheme, body.parameters)
+            except ValueError as exc:
+                raise StatutoryRateInvalidError(str(exc), field="parameters") from exc
+        if "notes" in body.model_fields_set:
+            values["notes"] = body.notes
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            rate_id=rate_id,
+            values=values,
+            expected_version=expected_version,
+            now=datetime.now(UTC),
+        )
+        if updated is None:
+            raise StalePayrollResourceError(
+                "This statutory rate has been modified by another request",
+                current=before.model_dump(mode="json"),
+            )
+        after = statutory_rate_to_read(updated)
+        await self._record(
+            company_id,
+            rate_id,
+            "PAYROLL_STATUTORY_RATE_UPDATED",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    async def verify(
+        self,
+        company_id: UUID,
+        rate_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> StatutoryRateRead:
+        """Compliance sign-off (FR-PAY-005): the actor confirms the rate matches the law in force
+        for its dates."""
+        row = await self._get_row(company_id, rate_id)
+        before = statutory_rate_to_read(row)
+        updated = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            rate_id=rate_id,
+            values={"verified_at": datetime.now(UTC), "verified_by_user_id": actor_user_id},
+            expected_version=expected_version,
+            now=datetime.now(UTC),
+        )
+        if updated is None:
+            raise StalePayrollResourceError(
+                "This statutory rate has been modified by another request",
+                current=before.model_dump(mode="json"),
+            )
+        after = statutory_rate_to_read(updated)
+        await self._record(
+            company_id,
+            rate_id,
+            "PAYROLL_STATUTORY_RATE_VERIFIED",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    async def rates_for(
+        self, company_id: UUID, as_of: date, state_code: str | None
+    ) -> dict[str, dict[str, Any] | None]:
+        """The rates a pay run snapshots for one employee: PF and ESI in force on `as_of`, and PT
+        and LWF for the employee's state."""
+        await self.ensure_defaults(company_id)
+        rates: dict[str, dict[str, Any] | None] = {}
+        for scheme, state in (("PF", None), ("ESI", None), ("PT", state_code), ("LWF", state_code)):
+            row = (
+                None
+                if scheme in ("PT", "LWF") and not state
+                else await self._repo.get_as_of(
+                    self._session,
+                    company_id=company_id,
+                    scheme=scheme,
+                    state_code=state,
+                    as_of=as_of,
+                )
+            )
+            rates[scheme] = (
+                {
+                    "id": str(row.id),
+                    "state_code": row.state_code,
+                    "effective_from": row.effective_from.isoformat(),
+                    "parameters": row.parameters,
+                    "verified": row.verified_at is not None,
+                }
+                if row is not None
+                else None
+            )
+        return rates

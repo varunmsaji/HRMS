@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         SalaryStructure,
         SalaryStructureLine,
         SalaryStructureVersion,
+        StatutoryRate,
     )
 
 
@@ -636,3 +637,182 @@ class PayRunEmployeeDetailRead(PayRunEmployeeRead):
 
     lines: list[PayRunLineRead]
     snapshot: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.3 — statutory rates
+# ---------------------------------------------------------------------------
+
+STATUTORY_SCHEMES = ("PF", "ESI", "PT", "LWF")
+
+_Percent = Field(ge=0, le=100, decimal_places=4)
+
+
+class PfParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_percent: Decimal = _Percent
+    employer_percent: Decimal = _Percent
+    eps_percent: Decimal = _Percent
+    wage_ceiling_minor: int = Field(gt=0)
+    edli_percent: Decimal = _Percent
+    admin_percent: Decimal = _Percent
+    eps_age_limit: int = Field(ge=18, le=100)
+
+    @model_validator(mode="after")
+    def validate_split(self) -> "PfParameters":
+        if self.eps_percent > self.employer_percent:
+            raise ValueError("eps_percent cannot exceed employer_percent")
+        return self
+
+
+class EsiParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    employee_percent: Decimal = _Percent
+    employer_percent: Decimal = _Percent
+    wage_ceiling_minor: int = Field(gt=0)
+    employee_exempt_daily_wage_minor: int = Field(ge=0)
+
+
+def _check_slab_range(min_minor: int, max_minor: int | None) -> None:
+    if max_minor is not None and max_minor < min_minor:
+        raise ValueError("max_minor must be at least min_minor")
+
+
+class PtSlab(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_minor: int = Field(ge=0)
+    max_minor: int | None = Field(default=None, ge=0)
+    amount_minor: int = Field(ge=0)
+    gender: str | None = None
+    #: Month number (as a string, "1"–"12") → amount for that month instead of `amount_minor`.
+    month_amounts: dict[str, int] | None = None
+
+    @model_validator(mode="after")
+    def validate_slab(self) -> "PtSlab":
+        _check_slab_range(self.min_minor, self.max_minor)
+        _check_choice("gender", self.gender, ("MALE", "FEMALE"))
+        for month, amount in (self.month_amounts or {}).items():
+            if not month.isdigit() or not 1 <= int(month) <= 12 or amount < 0:
+                raise ValueError("month_amounts maps a month 1–12 to a non-negative amount")
+        return self
+
+
+class PtParameters(BaseModel):
+    """An empty `slabs` list records that the state levies no professional tax."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    slabs: list[PtSlab] = Field(default_factory=list, max_length=50)
+
+
+class LwfSlab(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_minor: int = Field(ge=0)
+    max_minor: int | None = Field(default=None, ge=0)
+    employee_minor: int = Field(ge=0)
+    employer_minor: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_slab(self) -> "LwfSlab":
+        _check_slab_range(self.min_minor, self.max_minor)
+        return self
+
+
+class LwfParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    months: list[int] = Field(min_length=1, max_length=12)
+    slabs: list[LwfSlab] = Field(min_length=1, max_length=50)
+
+    @field_validator("months")
+    @classmethod
+    def validate_months(cls, value: list[int]) -> list[int]:
+        if any(not 1 <= m <= 12 for m in value) or len(set(value)) != len(value):
+            raise ValueError("months are distinct month numbers 1–12")
+        return sorted(value)
+
+
+STATUTORY_PARAMETER_MODELS: dict[str, type[BaseModel]] = {
+    "PF": PfParameters,
+    "ESI": EsiParameters,
+    "PT": PtParameters,
+    "LWF": LwfParameters,
+}
+
+
+def validate_statutory_parameters(scheme: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    """Validates `parameters` for `scheme` and returns them JSON-ready (percentages as strings)."""
+    model = STATUTORY_PARAMETER_MODELS[scheme].model_validate(parameters)
+    return dict(model.model_dump(mode="json"))
+
+
+class StatutoryRateCreate(BaseModel):
+    """A new effective-dated rate. When a rate for the same scheme and state is open, it ends the
+    day before `effective_from`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scheme: str
+    state_code: str | None = Field(default=None, min_length=2, max_length=10)
+    effective_from: date
+    parameters: dict[str, Any]
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_rate(self) -> "StatutoryRateCreate":
+        _check_choice("scheme", self.scheme, STATUTORY_SCHEMES)
+        if (self.scheme in ("PT", "LWF")) != (self.state_code is not None):
+            raise ValueError("state_code is required for PT and LWF, and not allowed for PF/ESI")
+        if self.state_code is not None:
+            self.state_code = self.state_code.upper()
+        self.parameters = validate_statutory_parameters(self.scheme, self.parameters)
+        return self
+
+
+class StatutoryRateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parameters: dict[str, Any] | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class StatutoryRateRead(BaseModel):
+    id: UUID
+    company_id: UUID
+    scheme: str
+    state_code: str | None
+    effective_from: date
+    effective_to: date | None
+    parameters: dict[str, Any]
+    notes: str | None
+    is_seeded: bool
+    verified: bool
+    verified_at: str | None
+    verified_by_user_id: UUID | None
+    version: int
+    created_at: str
+    updated_at: str
+
+
+def statutory_rate_to_read(row: "StatutoryRate") -> StatutoryRateRead:
+    return StatutoryRateRead(
+        id=row.id,
+        company_id=row.company_id,
+        scheme=row.scheme,
+        state_code=row.state_code,
+        effective_from=row.effective_from,
+        effective_to=row.effective_to,
+        parameters=row.parameters,
+        notes=row.notes,
+        is_seeded=row.is_seeded,
+        verified=row.verified_at is not None,
+        verified_at=_format_timestamp(row.verified_at),
+        verified_by_user_id=row.verified_by_user_id,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+        updated_at=_format_timestamp(row.updated_at) or "",
+    )

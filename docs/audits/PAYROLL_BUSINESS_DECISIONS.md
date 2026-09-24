@@ -97,10 +97,11 @@ Following from decisions 2, 3, 5, 16 and 17, the frozen `attendance_period_summa
 | 2026-09-23 | Step 4 | PD-1 — settings the engine does not apply are hidden from the policy screens (DB columns kept; stored values round-trip unchanged on edit). Attendance policy: punch rounding + minutes (ATT-001), auto-close minutes / uses-shift-end and the AUTO_CLOSE option (ATT-002, option still listed on a version that already uses it), half-day split + boundary (ATT-003), excess-break behaviour (ATT-004), early-out-uses-core-end, split-shift block flags, WFH flags (ATT-006), work-on-leave behaviour (inert since decision 5), bands' "counts toward cap". Overtime: requires pre-approval, GRADE_VIA_ASSIGNMENT eligibility (behaves like ALWAYS; listed only if already used). Regularization: auto-approve-within-minutes. Re-verified against code first; every dev-DB version held defaults for all of them. `ATTENDANCE_V1_CONFIGURATION_CATALOG.md` rewritten to match (also corrects rows now built: night OT window, core-hours breach, on-duty punch, lates-to-half-day, early-departure approval, legal-entity locking). Late/excess-break count windows (ATT-007) stay — `MONTH` is the only accepted value and is what runs | none |
 | 2026-09-24 | Step 5.1 | Salary components, versioned salary structures (D1/D2 defaults seeded), employee salary assignment (structure or daily rate, D5), CTC breakup — see [`00_PAYROLL_IMPLEMENTATION_PLAN.md`](../modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md) | `20261004105000` |
 | 2026-09-24 | Step 5.2 | Pay run per legal entity and month: lock inputs only from a `CLOSED` period (PD-2), snapshot, pure compute (decision 17 proration, D3 OT, D4 encashment; D8 — net pay not rounded), validation incl. D6, variance gate (D10), maker ≠ checker (D9), finalise → attendance period reopen refused (decision 15), pay date default (D11). D7, D9–D11 built as recommended, awaiting confirmation | `20261004106000` |
+| 2026-09-24 | Step 5.3 | Statutory rate master (effective-dated per company; PF/ESI/PT/LWF; seeded unverified, compliance sign-off required before a run using a rate can be approved) and PF/VPF/ESI/PT/LWF deductions and employer contributions in the pay run; D6's blanket block replaced | `20261004107000` |
 
 Step 1 is complete. Step 2 is complete except decision 13's step rule (see the follow-ups below).
-Step 3 is complete. Step 4 is complete. Step 5 is in progress: 5.1 (salary structure) and 5.2
-(pay run core) are built; next is 5.3, statutory deductions.
+Step 3 is complete. Step 4 is complete. Step 5 is in progress: 5.1 (salary structure), 5.2 (pay run core)
+and 5.3 (statutory deductions) are built; next is 5.4, payslips and bank advice.
 
 Follow-ups found during step 1 (not yet done):
 

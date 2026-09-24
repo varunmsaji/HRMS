@@ -13,7 +13,19 @@ from hrms.modules.payroll.engine import (
     employee_input_from_snapshot,
 )
 
+_PF = {
+    "employee_percent": "12",
+    "employer_percent": "12",
+    "eps_percent": "8.33",
+    "wage_ceiling_minor": 1_500_000,
+    "edli_percent": "0",
+    "admin_percent": "0",
+    "eps_age_limit": 58,
+}
+
 _BANK = {"payment_mode": "BANK", "account_last4": "1234"}
+# A statutory block for an employee with no statutory profile — nothing deducted.
+_NO_STATUTORY = {"month_end": date(2026, 9, 30), "profile": None, "employee": {}, "rates": {}}
 
 
 def _lines(basic: int, hra: int, special: int, *, special_prorated: bool = True) -> tuple:
@@ -50,6 +62,7 @@ def _input(segments: tuple, paid: str | None, **kwargs: object) -> EmployeeInput
         has_summary=True,
         segments=segments,
         bank=kwargs.pop("bank", _BANK),  # type: ignore[arg-type]
+        statutory=kwargs.pop("statutory", _NO_STATUTORY),  # type: ignore[arg-type]
         **kwargs,  # type: ignore[arg-type]
     )
 
@@ -172,11 +185,34 @@ def test_net_pay_is_not_rounded_to_the_rupee() -> None:
     assert "NET_ROUNDING" not in _amounts(result)
 
 
-def test_statutory_applicable_employee_blocks_the_run() -> None:
-    """D6 — no finalise before statutory deductions (Phase 5.3)."""
-    result = compute_employee(_input((_september(_lines(3_000_000, 0, 0), pf=True),), "30"))
-    assert "STATUTORY_PENDING" in _codes(result)
-    assert result.has_error
+def test_statutory_deductions_and_structure_employer_pf_is_replaced() -> None:
+    """Phase 5.3 — the structure's EMPLOYER_PF line only splits CTC; the run computes PF from the
+    statute on earned PF wages (Basic ₹30,000 → capped at ₹15,000)."""
+    lines = (
+        SegmentLine("BASIC", "Basic", "EARNING", 3_000_000, True, 10, is_pf_wage=True,
+                    is_esi_wage=True),
+        SegmentLine("EMPLOYER_PF", "Employer PF", "EMPLOYER_CONTRIBUTION", 180_000, True, 90),
+    )  # fmt: skip
+    statutory = {
+        "month_end": date(2026, 9, 30),
+        "profile": {"is_pf_applicable": True, "pt_state_code": None},
+        "employee": {"uan_number": "100200300400"},
+        "rates": {"PF": {"id": "pf", "verified": True, "parameters": _PF}},
+    }
+    result = compute_employee(_input((_september(lines),), "30", statutory=statutory))
+    amounts = _amounts(result)
+    assert "EMPLOYER_PF" not in amounts
+    assert amounts["PF_EMPLOYEE"] == 180_000
+    assert amounts["EPS_EMPLOYER"] == 125_000
+    assert amounts["EPF_EMPLOYER"] == 55_000
+    assert result.deductions_minor == 180_000
+    assert result.net_minor == 3_000_000 - 180_000
+    assert not result.issues
+
+
+def test_inputs_locked_before_statutory_are_refused() -> None:
+    result = compute_employee(_input((_september(_lines(3_000_000, 0, 0)),), "30", statutory=None))
+    assert "STATUTORY_NOT_SNAPSHOTTED" in _codes(result)
 
 
 def test_bank_details_are_required_unless_paid_in_cash() -> None:
@@ -243,6 +279,7 @@ def test_snapshot_round_trip() -> None:
         "encashments": [],
         "bank": _BANK,
         "issues": [],
+        "statutory": {"month_end": "2026-09-30", "profile": None, "employee": {}, "rates": {}},
     }
     result = compute_employee(employee_input_from_snapshot(snapshot, 30))
     # Basic ₹30,000 + 1 h × ₹125 × 1.5 = ₹187.50, not rounded (D8).

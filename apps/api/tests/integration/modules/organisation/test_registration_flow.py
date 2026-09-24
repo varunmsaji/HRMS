@@ -323,6 +323,8 @@ async def test_registration_success_full_row_graph(
                 "PAYROLL.RUN_VIEW",
                 "PAYROLL.RUN_PROCESS",
                 "PAYROLL.RUN_APPROVE",
+                # Payroll Phase 5.3 — statutory rate master.
+                "PAYROLL.STATUTORY_MANAGE",
             }
 
             setup_progress = (
@@ -684,6 +686,7 @@ async def test_registration_seeds_hr_admin_approval_grants(
         assert grants["PAYROLL.SETUP_MANAGE"] == "COMPANY"
         assert grants["PAYROLL.RUN_VIEW"] == "COMPANY"
         assert grants["PAYROLL.RUN_PROCESS"] == "COMPANY"
+        assert grants["PAYROLL.STATUTORY_MANAGE"] == "COMPANY"
         # D9 — approving a pay run stays with COMPANY_ADMIN.
         assert "PAYROLL.RUN_APPROVE" not in grants
     finally:

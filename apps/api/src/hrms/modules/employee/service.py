@@ -193,6 +193,14 @@ class EmployeeService:
         )
         return employee.id if employee is not None else None
 
+    async def get_uan_number(self, company_id: UUID, employee_id: UUID) -> str | None:
+        """Payroll 5.3 — the UAN a PF-applicable employee is reported under. Internal, unscoped
+        cross-module fact (UAN is stored in plain text, like `EmployeeIdentityRead.uan_number`)."""
+        employee = await self._repo.get_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return employee.uan_number if employee is not None else None
+
     async def find_employee_by_code_or_email(
         self, company_id: UUID, value: str
     ) -> EmployeeRead | None:

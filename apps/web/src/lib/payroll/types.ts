@@ -332,3 +332,69 @@ export function payRunActions(status: PayRunStatus): {
     remove: status === "DRAFT",
   };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5.3 — statutory rates
+// ---------------------------------------------------------------------------
+
+export const STATUTORY_SCHEMES = ["PF", "ESI", "PT", "LWF"] as const;
+export type StatutoryScheme = (typeof STATUTORY_SCHEMES)[number];
+
+export const STATUTORY_SCHEME_LABELS: Record<StatutoryScheme, string> = {
+  PF: "Provident Fund",
+  ESI: "Employees' State Insurance",
+  PT: "Professional tax",
+  LWF: "Labour welfare fund",
+};
+
+export interface PtSlab {
+  min_minor: number;
+  max_minor: number | null;
+  amount_minor: number;
+  gender?: "MALE" | "FEMALE" | null;
+  month_amounts?: Record<string, number> | null;
+}
+
+export interface LwfSlab {
+  min_minor: number;
+  max_minor: number | null;
+  employee_minor: number;
+  employer_minor: number;
+}
+
+export interface StatutoryRate {
+  id: string;
+  company_id: string;
+  scheme: StatutoryScheme;
+  state_code: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  parameters: Record<string, unknown>;
+  notes: string | null;
+  is_seeded: boolean;
+  verified: boolean;
+  verified_at: string | null;
+  verified_by_user_id: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One-line summary of a rate's figures for the list. */
+export function summariseStatutoryRate(rate: StatutoryRate): string {
+  const p = rate.parameters as Record<string, unknown>;
+  switch (rate.scheme) {
+    case "PF":
+      return `Employee ${p.employee_percent}% · employer ${p.employer_percent}% (EPS ${p.eps_percent}%) · ceiling ${formatInr(Number(p.wage_ceiling_minor))}`;
+    case "ESI":
+      return `Employee ${p.employee_percent}% · employer ${p.employer_percent}% · ceiling ${formatInr(Number(p.wage_ceiling_minor))}`;
+    case "PT": {
+      const slabs = (p.slabs as PtSlab[] | undefined) ?? [];
+      return slabs.length === 0 ? "No professional tax in this state" : `${slabs.length} slab(s)`;
+    }
+    case "LWF": {
+      const months = (p.months as number[] | undefined) ?? [];
+      return `Deducted in month(s) ${months.join(", ")}`;
+    }
+  }
+}

@@ -310,3 +310,34 @@ class PayRunLine(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.3 — statutory rate master
+# ---------------------------------------------------------------------------
+
+
+class StatutoryRate(Base, TimestampMixin):
+    """Effective-dated statutory rates per company (FR-PAY-005, BR-10): `PF`/`ESI` national
+    (`state_code` NULL), `PT`/`LWF` per state. `parameters` holds the scheme's numbers, validated
+    per scheme by the service. `verified_at` is the compliance sign-off — a pay run using an
+    unverified rate cannot be approved; any edit clears it."""
+
+    __tablename__ = "statutory_rate"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    scheme: Mapped[str] = mapped_column(String(10))
+    state_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    effective_from: Mapped[date] = mapped_column(Date)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_seeded: Mapped[bool] = mapped_column(Boolean, default=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)

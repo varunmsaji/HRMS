@@ -5,7 +5,9 @@ gated by `PAYROLL.SETUP_MANAGE`. An employee's salary history and breakup are co
 read under `EMPLOYEE.VIEW_COMPENSATION` with its `DataScope` applied to the target employee.
 
 Phase 5.2: pay runs — `PAYROLL.RUN_VIEW` to read, `PAYROLL.RUN_PROCESS` to prepare,
-`PAYROLL.RUN_APPROVE` to approve, finalise and mark paid. Lifecycle transitions carry `If-Match`."""
+`PAYROLL.RUN_APPROVE` to approve, finalise and mark paid. Lifecycle transitions carry `If-Match`.
+
+Phase 5.3: the statutory rate master under `PAYROLL.STATUTORY_MANAGE`."""
 
 from datetime import date
 from typing import Annotated
@@ -27,12 +29,14 @@ from hrms.modules.payroll.dependencies import (
     get_payroll_setting_service,
     get_salary_component_service,
     get_salary_structure_service,
+    get_statutory_rate_service,
 )
 from hrms.modules.payroll.permissions import (
     PAYROLL_RUN_APPROVE,
     PAYROLL_RUN_PROCESS,
     PAYROLL_RUN_VIEW,
     PAYROLL_SETUP_MANAGE,
+    PAYROLL_STATUTORY_MANAGE,
 )
 from hrms.modules.payroll.schemas import (
     EmployeeSalaryBreakupRead,
@@ -60,6 +64,9 @@ from hrms.modules.payroll.schemas import (
     SalaryStructureVersionCreate,
     SalaryStructureVersionLinesUpdate,
     SalaryStructureVersionPublish,
+    StatutoryRateCreate,
+    StatutoryRateRead,
+    StatutoryRateUpdate,
 )
 from hrms.modules.payroll.service import (
     EmployeeSalaryService,
@@ -67,6 +74,7 @@ from hrms.modules.payroll.service import (
     PayRunService,
     SalaryComponentService,
     SalaryStructureService,
+    StatutoryRateService,
 )
 from hrms.shared.pagination import DataEnvelope, ListEnvelope, ResponseMeta
 
@@ -83,6 +91,8 @@ _RunView = Annotated[object, Depends(require_permission(PAYROLL_RUN_VIEW))]
 _RunProcess = Annotated[object, Depends(require_permission(PAYROLL_RUN_PROCESS))]
 _RunApprove = Annotated[object, Depends(require_permission(PAYROLL_RUN_APPROVE))]
 _IfMatch = Annotated[str, Header(alias="If-Match")]
+_Statutory = Annotated[StatutoryRateService, Depends(get_statutory_rate_service)]
+_StatutoryScope = Annotated[object, Depends(require_permission(PAYROLL_STATUTORY_MANAGE))]
 
 
 def _meta() -> ResponseMeta:
@@ -616,6 +626,76 @@ async def acknowledge_pay_run_variance(
         run_id,
         employee_id,
         body,
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.3 — statutory rates
+# ---------------------------------------------------------------------------
+
+
+@router.get("/payroll/statutory-rates", status_code=status.HTTP_200_OK)
+async def list_statutory_rates(
+    tenant: _Tenant,
+    _scope: _StatutoryScope,
+    service: _Statutory,
+    scheme: Annotated[str | None, Query()] = None,
+) -> ListEnvelope[StatutoryRateRead]:
+    data = await service.list_rates(tenant.company_id, scheme=scheme)
+    return ListEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/statutory-rates", status_code=status.HTTP_201_CREATED)
+async def create_statutory_rate(
+    body: StatutoryRateCreate,
+    request: Request,
+    tenant: _Tenant,
+    _scope: _StatutoryScope,
+    service: _Statutory,
+) -> DataEnvelope[StatutoryRateRead]:
+    data = await service.create(
+        tenant.company_id, body, actor_user_id=tenant.user_id, **_client(request)
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.patch("/payroll/statutory-rates/{rate_id}", status_code=status.HTTP_200_OK)
+async def update_statutory_rate(
+    rate_id: UUID,
+    body: StatutoryRateUpdate,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _StatutoryScope,
+    service: _Statutory,
+) -> DataEnvelope[StatutoryRateRead]:
+    data = await service.update(
+        tenant.company_id,
+        rate_id,
+        body,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/statutory-rates/{rate_id}/verify", status_code=status.HTTP_200_OK)
+async def verify_statutory_rate(
+    rate_id: UUID,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _StatutoryScope,
+    service: _Statutory,
+) -> DataEnvelope[StatutoryRateRead]:
+    data = await service.verify(
+        tenant.company_id,
+        rate_id,
+        expected_version=int(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )

@@ -222,3 +222,22 @@ class PayRunMakerCheckerError(PermissionDeniedError):
         self, message: str = "The user who computed this pay run cannot approve it"
     ) -> None:
         super().__init__(message)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.3 — statutory rates
+# ---------------------------------------------------------------------------
+
+
+class StatutoryRateNotFoundError(NotFoundError):
+    code = "STATUTORY_RATE_NOT_FOUND"
+
+    def __init__(self, message: str = "Statutory rate not found") -> None:
+        super().__init__(message)
+
+
+class StatutoryRateInvalidError(ValidationError):
+    code = "STATUTORY_RATE_INVALID"
+
+    def __init__(self, message: str, *, field: str = "effective_from") -> None:
+        super().__init__(message, details=_detail(field, self.code, message))

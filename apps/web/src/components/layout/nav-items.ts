@@ -15,6 +15,7 @@ import {
   Coins,
   FileClock,
   LayoutDashboard,
+  Landmark,
   Layers,
   Link2,
   ClipboardCheck,
@@ -113,6 +114,7 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     items: [
       { href: "/app/payroll/salary-components", label: "Salary Components", icon: Coins },
       { href: "/app/payroll/salary-structures", label: "Salary Structures", icon: LayoutList },
+      { href: "/app/payroll/statutory-rates", label: "Statutory Rates", icon: Landmark },
     ],
   },
   {

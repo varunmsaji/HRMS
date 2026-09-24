@@ -198,6 +198,42 @@ confirmation. As built:
 - Engine: employee PF/ESI/PT/LWF deductions and employer contributions from the component flags.
 - Validation: PF/ESI applicability mismatch, missing UAN/IP number.
 
+**Status: built 2026-09-24** (migration `20261004107000`). As built:
+
+- Table `statutory_rate` (per company, RLS): `scheme` `PF` / `ESI` (national) or `PT` / `LWF`
+  (per `state_code`), effective-dated with a GiST no-overlap per scheme and state, `parameters`
+  JSONB validated per scheme, `notes`, `is_seeded`, and `verified_at` / `verified_by_user_id` —
+  the compliance sign-off. A new rate from a later date closes the open one; correcting a rate in
+  place clears its verification. Permission `PAYROLL.STATUTORY_MANAGE` (COMPANY_ADMIN, HR_ADMIN).
+- **Seeded unverified** on first use (`DEFAULT_STATUTORY_RATES`): PF (12 % / 12 %, EPS 8.33 %,
+  ceiling ₹15,000, EDLI 0.5 %, admin 0.5 %, no EPS from 58) from 2014-09-01; ESI (0.75 % /
+  3.25 %, ceiling ₹21,000, no employee share up to ₹176 a day) from 2019-07-01; PT Maharashtra
+  from 2023-07-01 and Karnataka from 2025-04-01. No LWF rates are seeded. **Every seeded value
+  must be checked by compliance before it is verified.**
+- **Engine** (`statutory.py`, pure): PF on earned `is_pf_wage` components (a daily-wage
+  employee's wages count) capped at the ceiling unless the employee contributes on higher wages
+  (`pf_wage_ceiling_opt_out`); employer share split into EPS (on wages up to the ceiling) and
+  EPF; EDLI and admin charges; VPF (fixed or %). PF amounts round half-up to the rupee. ESI on
+  earned `is_esi_wage` components plus overtime, rounded up to the next rupee, no employee share
+  at or below the daily exemption. Coverage is the statutory profile's `is_esi_applicable`; a
+  gross above the ceiling is a warning, since coverage runs to the end of the contribution period.
+  PT by the profile's `pt_state_code` on the month's gross, by gender where a slab says so, with
+  per-month overrides (the February instalment). LWF in the rate's months, same state.
+- The structure's `EMPLOYER_PF` / `EMPLOYER_ESI` lines still split CTC (D2) but are no longer
+  paid in a run — the run computes employer contributions from the statute on earned wages.
+- Snapshot: each employee's lock-time snapshot now carries `statutory` — the profile as of their
+  last day in the entity in the month, UAN, date of birth, gender, and the rates in force at month
+  end. Inputs locked before 5.3 are refused (`STATUTORY_NOT_SNAPSHOTTED`).
+- Validation: `PF_RATE_MISSING`, `ESI_RATE_MISSING`, `LWF_RATE_MISSING`, `STATUTORY_UNVERIFIED`
+  (errors — block approval); `PT_RATE_MISSING`, `UAN_MISSING`, `ESI_IP_MISSING`,
+  `ESI_ABOVE_CEILING` (warnings). D6's blanket `STATUTORY_PENDING` block is gone.
+- Web: Settings → Payroll → **Statutory Rates** (list with verified status, new rate, correct,
+  verify; forms per scheme with slab editors). The pay run breakdown shows deductions and the
+  employer contributions.
+- Known limits: the ₹500 PF admin minimum per establishment is not applied; EPS eligibility is
+  only the age rule (members who joined after Sep 2014 above the ceiling are not excluded); LWF
+  uses the PT state; the web slab editor keeps one month override per PT slab.
+
 ### Phase 5.4 — Payslips and bank advice
 
 *FR-PAY-017 (PDF, publish to ESS), FR-PAY-018 (generic CSV first).*

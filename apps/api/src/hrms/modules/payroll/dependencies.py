@@ -12,6 +12,7 @@ from hrms.modules.payroll.service import (
     PayRunService,
     SalaryComponentService,
     SalaryStructureService,
+    StatutoryRateService,
 )
 
 
@@ -43,3 +44,9 @@ def get_pay_run_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PayRunService:
     return PayRunService(session)
+
+
+def get_statutory_rate_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> StatutoryRateService:
+    return StatutoryRateService(session)

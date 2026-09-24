@@ -21,8 +21,10 @@ Rules applied here:
 - **Daily-wage** (D5): daily rate × paid days.
 - **No net rounding** (D8, decided 2026-09-24): net pay is paid to the paisa. Each line is
   rounded half-up to the paisa; nothing is rounded to the rupee.
-- **D6**: statutory deductions arrive in Phase 5.3; until then an employee who is PF- or
-  ESI-applicable in the month is an error, so such a run cannot be approved or finalised.
+- **Statutory** (Phase 5.3, `statutory.py`): PF, VPF, ESI, professional tax and LWF on the
+  month's earned wages, from rates snapshotted with the run. The structure's `EMPLOYER_PF` /
+  `EMPLOYER_ESI` lines only split CTC (D2) and are not paid as such — the run computes the
+  employer contributions from the statute instead.
 
 Money is integer paise; days and rates are `Decimal` until the final rounding to paise
 (ROUND_HALF_UP)."""
@@ -32,12 +34,18 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from hrms.modules.payroll.statutory import compute_statutory
+
 ERROR = "ERROR"
 WARNING = "WARNING"
 
 _ZERO = Decimal(0)
 _HOURS_PER_DAY = Decimal(8)
 _MINUTES_PER_HOUR = Decimal(60)
+
+#: Structure lines that only split CTC (D2); in a pay run they are replaced by the statutory
+#: computation on earned wages (Phase 5.3).
+_STATUTORY_STRUCTURE_LINES = frozenset({"EMPLOYER_PF", "EMPLOYER_ESI"})
 
 
 @dataclass(frozen=True)
@@ -60,6 +68,8 @@ class SegmentLine:
     monthly_minor: int
     is_prorated: bool
     display_order: int
+    is_pf_wage: bool = False
+    is_esi_wage: bool = False
 
 
 @dataclass(frozen=True)
@@ -103,6 +113,9 @@ class EmployeeInput:
     encashments: tuple[EncashmentInput, ...] = ()
     bank: dict[str, Any] | None = None
     snapshot_issues: tuple[Issue, ...] = ()
+    # Phase 5.3 — `{"month_end", "profile", "employee", "rates"}` (see `statutory.py`); `None`
+    # only for inputs locked before statutory deductions existed, which are refused.
+    statutory: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +161,8 @@ class _Accumulator:
     full: Decimal = _ZERO
     amount: Decimal = _ZERO
     parts: list[dict[str, Any]] = field(default_factory=list)
+    is_pf_wage: bool = False
+    is_esi_wage: bool = False
 
 
 def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
@@ -179,7 +194,6 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
     gross_full = _ZERO
     daily_rate: Decimal | None = None
     basis_of_last: str | None = None
-    statutory = False
 
     for segment in inputs.segments:
         weight = Decimal(segment.employed_days) / Decimal(total_employed)
@@ -187,7 +201,6 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
         if not segment.valid:
             continue
         basis_of_last = segment.pay_basis
-        statutory = statutory or segment.pf_applicable or segment.esi_applicable
         span = {
             "from": segment.date_from.isoformat(),
             "to": segment.date_to.isoformat(),
@@ -197,15 +210,26 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
         if segment.pay_basis == "DAILY_WAGE":
             rate = Decimal(segment.daily_rate_minor or 0)
             daily_rate = rate
-            acc = accumulators.setdefault("DAILY_WAGES", _Accumulator("Daily wages", "EARNING", 5))
+            acc = accumulators.setdefault(
+                "DAILY_WAGES",
+                _Accumulator("Daily wages", "EARNING", 5, is_pf_wage=True, is_esi_wage=True),
+            )
             acc.amount += rate * paid
             acc.parts.append({**span, "daily_rate_minor": int(rate)})
             continue
         for line in segment.lines:
+            if line.component_code in _STATUTORY_STRUCTURE_LINES:
+                continue  # splits CTC only; the run computes these from the statute (5.3)
             monthly = Decimal(line.monthly_minor)
             acc = accumulators.setdefault(
                 line.component_code,
-                _Accumulator(line.component_name, line.component_type, line.display_order),
+                _Accumulator(
+                    line.component_name,
+                    line.component_type,
+                    line.display_order,
+                    is_pf_wage=line.is_pf_wage,
+                    is_esi_wage=line.is_esi_wage,
+                ),
             )
             full = monthly * weight
             acc.full += full
@@ -216,13 +240,6 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
                 gross_full += full
                 if line.component_code == "BASIC":
                     basic_full += full
-
-    if statutory:
-        issues.append(Issue(
-            "STATUTORY_PENDING", ERROR,
-            "PF or ESI applies to this employee — statutory deductions are not available yet "
-            "(Phase 5.3), so this run cannot be finalised (D6)",
-        ))  # fmt: skip
 
     # Base for overtime and encashment rates.
     if basis_of_last == "DAILY_WAGE" and daily_rate is not None:
@@ -263,7 +280,12 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
         })  # fmt: skip
     if overtime_parts:
         accumulators["OVERTIME"] = _Accumulator(
-            "Overtime", "EARNING", 80, amount=overtime_amount, parts=overtime_parts
+            "Overtime",
+            "EARNING",
+            80,
+            amount=overtime_amount,
+            parts=overtime_parts,
+            is_esi_wage=True,  # ESI wages include overtime; PF wages do not
         )
 
     encash_parts: list[dict[str, Any]] = []
@@ -307,6 +329,42 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
         ))  # fmt: skip
 
     gross = sum(line.amount_minor for line in lines if line.line_type == "EARNING")
+
+    # Phase 5.3 — statutory deductions and employer contributions on the month's earned wages.
+    if inputs.statutory is None:
+        issues.append(Issue(
+            "STATUTORY_NOT_SNAPSHOTTED", ERROR,
+            "These inputs were locked before statutory deductions existed — roll the run back to "
+            "draft and lock its inputs again",
+        ))  # fmt: skip
+    else:
+        pf_wages = sum(_paise(a.amount) for a in accumulators.values() if a.is_pf_wage)
+        esi_wages = sum(_paise(a.amount) for a in accumulators.values() if a.is_esi_wage)
+        stat = inputs.statutory
+        result = compute_statutory(
+            month_end=stat["month_end"],
+            paid_days=inputs.paid_days,
+            gross_minor=gross,
+            pf_wages_minor=pf_wages,
+            esi_wages_minor=esi_wages,
+            profile=stat.get("profile"),
+            employee=stat.get("employee") or {},
+            rates=stat.get("rates") or {},
+        )
+        issues.extend(Issue(i.code, i.severity, i.message) for i in result.issues)
+        lines.extend(
+            ComputedLine(
+                component_code=line.component_code,
+                component_name=line.component_name,
+                line_type=line.line_type,
+                full_monthly_minor=None,
+                amount_minor=line.amount_minor,
+                display_order=line.display_order,
+                trace=line.trace,
+            )
+            for line in result.lines
+        )
+
     deductions = sum(line.amount_minor for line in lines if line.line_type == "DEDUCTION")
     employer = sum(line.amount_minor for line in lines if line.line_type == "EMPLOYER_CONTRIBUTION")
     # D8 (2026-09-24): net pay is not rounded — it is paid to the paisa. `rounding_minor` and the
@@ -375,6 +433,8 @@ def employee_input_from_snapshot(snapshot: dict[str, Any], days_in_month: int) -
                         monthly_minor=int(line["monthly_minor"]),
                         is_prorated=bool(line["is_prorated"]),
                         display_order=int(line["display_order"]),
+                        is_pf_wage=bool(line.get("is_pf_wage")),
+                        is_esi_wage=bool(line.get("is_esi_wage")),
                     )
                     for line in s.get("lines", [])
                 ),
@@ -401,4 +461,14 @@ def employee_input_from_snapshot(snapshot: dict[str, Any], days_in_month: int) -
         snapshot_issues=tuple(
             Issue(i["code"], i["severity"], i["message"]) for i in snapshot.get("issues", [])
         ),
+        statutory=_statutory_from_snapshot(snapshot.get("statutory")),
     )
+
+
+def _statutory_from_snapshot(block: dict[str, Any] | None) -> dict[str, Any] | None:
+    if block is None:
+        return None
+    employee = dict(block.get("employee") or {})
+    if employee.get("date_of_birth"):
+        employee["date_of_birth"] = date.fromisoformat(employee["date_of_birth"])
+    return {**block, "month_end": date.fromisoformat(block["month_end"]), "employee": employee}

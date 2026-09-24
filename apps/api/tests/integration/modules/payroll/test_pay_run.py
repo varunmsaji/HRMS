@@ -40,6 +40,7 @@ async def _cleanup_pay_runs(*, company_id: UUID) -> None:
             "leave_type",
             "pay_run_line",
             "pay_run_employee",
+            "statutory_rate",
             "pay_run",
             "payroll_setting",
             "attendance_period_summary",
@@ -80,8 +81,15 @@ async def _employee(
     pf: bool = False,
     bank: bool = True,
     salary: bool = True,
+    pt_state: str | None = None,
+    gender: str | None = None,
+    uan: str | None = None,
 ) -> str:
-    employee = await client.post("/v1/employees", headers=headers, json={"first_name": name})
+    employee = await client.post(
+        "/v1/employees",
+        headers=headers,
+        json={"first_name": name, **({"gender": gender} if gender else {})},
+    )
     assert employee.status_code == 201, employee.text
     employee_id = str(employee.json()["data"]["id"])
     employment = await client.post(
@@ -112,9 +120,19 @@ async def _employee(
             "is_lwf_applicable": False,
             "tax_regime": "NEW",
             "revision_reason": "Initial statutory profile",
+            **({"pt_state_code": pt_state} if pt_state else {}),
         },
     )
     assert statutory.status_code == 201, statutory.text
+    if uan:
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, headers["X-Company-Id"])
+            await session.execute(
+                text("UPDATE employee SET uan_number = :uan WHERE id = :id"),
+                {"uan": uan, "id": employee_id},
+            )
+            await session.commit()
     if bank:
         created = await client.post(
             f"/v1/employees/{employee_id}/bank",
@@ -429,7 +447,7 @@ async def test_validation_errors_block_approval(
             return {issue["code"] for issue in employees[employee_id]["issues"]}
 
         assert "SALARY_MISSING" in codes(no_salary)
-        assert "STATUTORY_PENDING" in codes(pf)  # D6
+        assert "STATUTORY_UNVERIFIED" in codes(pf)  # seeded PF rate not yet signed off
         assert "BANK_MISSING" in codes(no_bank)
         assert "NOT_IN_ATTENDANCE" in codes(missing_summary)
 

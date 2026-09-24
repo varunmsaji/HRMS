@@ -24,6 +24,7 @@ from hrms.modules.payroll.models import (
     SalaryStructure,
     SalaryStructureLine,
     SalaryStructureVersion,
+    StatutoryRate,
 )
 
 
@@ -622,3 +623,99 @@ class PayRunRepository:
             .order_by(PayRunLine.employee_id, PayRunLine.display_order, PayRunLine.component_code)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.3 — statutory rates
+# ---------------------------------------------------------------------------
+
+
+class StatutoryRateRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> StatutoryRate:
+        row = StatutoryRate(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, rate_id: UUID
+    ) -> StatutoryRate | None:
+        stmt = select(StatutoryRate).where(
+            StatutoryRate.id == rate_id, StatutoryRate.company_id == company_id
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_for_company(
+        self, session: AsyncSession, *, company_id: UUID, scheme: str | None = None
+    ) -> list[StatutoryRate]:
+        conditions = [StatutoryRate.company_id == company_id]
+        if scheme is not None:
+            conditions.append(StatutoryRate.scheme == scheme)
+        stmt = (
+            select(StatutoryRate)
+            .where(*conditions)
+            .order_by(
+                StatutoryRate.scheme,
+                StatutoryRate.state_code.nulls_first(),
+                StatutoryRate.effective_from.desc(),
+            )
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_as_of(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        scheme: str,
+        state_code: str | None,
+        as_of: date,
+    ) -> StatutoryRate | None:
+        stmt = select(StatutoryRate).where(
+            StatutoryRate.company_id == company_id,
+            StatutoryRate.scheme == scheme,
+            (
+                StatutoryRate.state_code.is_(None)
+                if state_code is None
+                else StatutoryRate.state_code == state_code
+            ),
+            StatutoryRate.effective_from <= as_of,
+            or_(StatutoryRate.effective_to.is_(None), StatutoryRate.effective_to >= as_of),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_open(
+        self, session: AsyncSession, *, company_id: UUID, scheme: str, state_code: str | None
+    ) -> StatutoryRate | None:
+        stmt = select(StatutoryRate).where(
+            StatutoryRate.company_id == company_id,
+            StatutoryRate.scheme == scheme,
+            (
+                StatutoryRate.state_code.is_(None)
+                if state_code is None
+                else StatutoryRate.state_code == state_code
+            ),
+            StatutoryRate.effective_to.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        rate_id: UUID,
+        values: dict[str, Any],
+        expected_version: int | None,
+        now: datetime,
+    ) -> StatutoryRate | None:
+        conditions = [StatutoryRate.id == rate_id, StatutoryRate.company_id == company_id]
+        if expected_version is not None:
+            conditions.append(StatutoryRate.version == expected_version)
+        stmt = (
+            update(StatutoryRate)
+            .where(*conditions)
+            .values(**values, version=StatutoryRate.version + 1, updated_at=now)
+            .returning(StatutoryRate)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
