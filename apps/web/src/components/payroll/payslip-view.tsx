@@ -45,7 +45,12 @@ function Lines({
         ) : (
           lines.map((line) => (
             <tr key={line.component_code}>
-              <td className="py-1 text-foreground">{line.component_name}</td>
+              <td className="py-1 text-foreground">
+                {line.component_name}
+                {line.note ? (
+                  <div className="text-xs text-foreground-muted">{line.note}</div>
+                ) : null}
+              </td>
               {showFull ? (
                 <td className="py-1 text-right tabular-nums text-foreground-secondary">
                   {line.full_monthly_minor !== null ? formatInr(line.full_monthly_minor) : ""}

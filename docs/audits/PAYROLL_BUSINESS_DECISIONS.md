@@ -99,10 +99,12 @@ Following from decisions 2, 3, 5, 16 and 17, the frozen `attendance_period_summa
 | 2026-09-24 | Step 5.2 | Pay run per legal entity and month: lock inputs only from a `CLOSED` period (PD-2), snapshot, pure compute (decision 17 proration, D3 OT, D4 encashment; D8 — net pay not rounded), validation incl. D6, variance gate (D10), maker ≠ checker (D9), finalise → attendance period reopen refused (decision 15), pay date default (D11). D7, D9–D11 built as recommended, awaiting confirmation | `20261004106000` |
 | 2026-09-24 | Step 5.3 | Statutory rate master (effective-dated per company; PF/ESI/PT/LWF; seeded unverified, compliance sign-off required before a run using a rate can be approved) and PF/VPF/ESI/PT/LWF deductions and employer contributions in the pay run; D6's blanket block replaced | `20261004107000` |
 | 2026-09-24 | Step 5.4 | Payslips (frozen at finalise, HR preview, employee self-service for finalised runs only, print-to-PDF page) and bank advice CSV (COMPANY_ADMIN, on demand, audited) | `20261004108000` |
+| 2026-09-24 | Step 5.5 | Arrears: backdated salary changes and D7 day corrections to finalised months (attendance stays closed) recomputed and paid as per-component arrears lines with month-wise breakup; never paid twice | `20261004109000` |
 
 Step 1 is complete. Step 2 is complete except decision 13's step rule (see the follow-ups below).
 Step 3 is complete. Step 4 is complete. Step 5 is in progress: 5.1 (salary structure), 5.2 (pay run core)
-5.3 (statutory deductions) and 5.4 (payslips, bank advice) are built; next is 5.5, arrears.
+5.3 (statutory deductions), 5.4 (payslips, bank advice) and 5.5 (arrears) are built; next is
+5.6, income tax (TDS).
 
 Follow-ups found during step 1 (not yet done):
 

@@ -12,7 +12,11 @@ Phase 5.3: the statutory rate master under `PAYROLL.STATUTORY_MANAGE`.
 Phase 5.4: payslips — HR reads any computed run's payslips under `PAYROLL.RUN_VIEW`; an employee
 reads only their own finalised ones under `/me/payslips` (`PAYROLL.PAYSLIP_VIEW_OWN`, the caller's
 `employee_id` from the token, never a path parameter). The bank advice CSV needs
-`PAYROLL.BANK_ADVICE_DOWNLOAD`."""
+`PAYROLL.BANK_ADVICE_DOWNLOAD`.
+
+Phase 5.5: day corrections to finalised months (`/payroll/adjustments`) — read under
+`PAYROLL.RUN_VIEW`, recorded and withdrawn under `PAYROLL.RUN_PROCESS`; arrears themselves are
+computed inside the pay run."""
 
 from datetime import date
 from typing import Annotated
@@ -30,6 +34,7 @@ from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.payroll.dependencies import (
     get_employee_salary_service,
+    get_pay_adjustment_service,
     get_pay_run_service,
     get_payroll_setting_service,
     get_payslip_service,
@@ -52,6 +57,8 @@ from hrms.modules.payroll.schemas import (
     EmployeeSalaryBulkResult,
     EmployeeSalaryCreate,
     EmployeeSalaryRead,
+    PayAdjustmentCreate,
+    PayAdjustmentRead,
     PayrollSettingRead,
     PayrollSettingUpdate,
     PayRunCreate,
@@ -80,6 +87,7 @@ from hrms.modules.payroll.schemas import (
 )
 from hrms.modules.payroll.service import (
     EmployeeSalaryService,
+    PayAdjustmentService,
     PayrollSettingService,
     PayRunService,
     PayslipService,
@@ -108,6 +116,7 @@ _Payslips = Annotated[PayslipService, Depends(get_payslip_service)]
 _OwnPayslipScope = Annotated[object, Depends(require_permission(PAYROLL_PAYSLIP_VIEW_OWN))]
 _BankAdviceScope = Annotated[object, Depends(require_permission(PAYROLL_BANK_ADVICE_DOWNLOAD))]
 _User = Annotated[AuthenticatedUser, Depends(get_current_user)]
+_Adjustments = Annotated[PayAdjustmentService, Depends(get_pay_adjustment_service)]
 
 
 def _meta() -> ResponseMeta:
@@ -767,3 +776,53 @@ async def get_my_payslip(
 ) -> DataEnvelope[PayslipRead]:
     data = await service.get_own(tenant.company_id, run_id, user.employee_id)
     return DataEnvelope(data=data, meta=_meta())
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.5 — day corrections (paid as arrears)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/payroll/adjustments", status_code=status.HTTP_200_OK)
+async def list_pay_adjustments(
+    tenant: _Tenant,
+    _scope: _RunView,
+    service: _Adjustments,
+    source_pay_run_id: Annotated[UUID | None, Query()] = None,
+    legal_entity_id: Annotated[UUID | None, Query()] = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+) -> ListEnvelope[PayAdjustmentRead]:
+    data = await service.list_adjustments(
+        tenant.company_id,
+        source_pay_run_id=source_pay_run_id,
+        legal_entity_id=legal_entity_id,
+        status=status_filter,
+    )
+    return ListEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/adjustments", status_code=status.HTTP_201_CREATED)
+async def create_pay_adjustment(
+    body: PayAdjustmentCreate,
+    request: Request,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Adjustments,
+) -> DataEnvelope[PayAdjustmentRead]:
+    data = await service.create(
+        tenant.company_id, body, actor_user_id=tenant.user_id, **_client(request)
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.delete("/payroll/adjustments/{adjustment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pay_adjustment(
+    adjustment_id: UUID,
+    request: Request,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Adjustments,
+) -> None:
+    await service.delete(
+        tenant.company_id, adjustment_id, actor_user_id=tenant.user_id, **_client(request)
+    )

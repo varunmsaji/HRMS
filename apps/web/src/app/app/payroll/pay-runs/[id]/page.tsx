@@ -32,6 +32,7 @@ import {
   formatInr,
   formatPayMonth,
   payRunActions,
+  type PayAdjustment,
   type PayRun,
   type PayRunEmployee,
 } from "@/lib/payroll/types";
@@ -94,6 +95,10 @@ export default function PayRunDetailPage() {
   const [payDateOpen, setPayDateOpen] = useState(false);
   const [payDate, setPayDate] = useState("");
   const [dialogError, setDialogError] = useState<string | null>(null);
+  const [corrections, setCorrections] = useState<PayAdjustment[]>([]);
+  const [correctEmployee, setCorrectEmployee] = useState<PayRunEmployee | null>(null);
+  const [correctDelta, setCorrectDelta] = useState("");
+  const [correctReason, setCorrectReason] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -105,6 +110,15 @@ export default function PayRunDetailPage() {
       ]);
       setRun(runData);
       setEmployees(employeeData);
+      // Phase 5.5 — day corrections recorded against this (finalised) month.
+      if (runData.status === "FINALISED" || runData.status === "PAID") {
+        apiClient
+          .get<PayAdjustment[]>(`/payroll/adjustments?source_pay_run_id=${runData.id}`)
+          .then(setCorrections)
+          .catch(() => setCorrections([]));
+      } else {
+        setCorrections([]);
+      }
       apiClient
         .get<LegalEntity>(`/legal-entities/${runData.legal_entity_id}`)
         .then((entity) => setEntityName(entity.name))
@@ -200,6 +214,41 @@ export default function PayRunDetailPage() {
       await load();
     } catch (err) {
       setDialogError(describeApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** D7 — a finalised month's paid days are corrected here and paid as arrears by the legal
+   * entity's next pay run; the attendance period stays closed. */
+  async function handleCorrect() {
+    if (!run || !correctEmployee) return;
+    setBusy(true);
+    setDialogError(null);
+    try {
+      await apiClient.post<PayAdjustment>("/payroll/adjustments", {
+        source_pay_run_id: run.id,
+        employee_id: correctEmployee.employee_id,
+        paid_days_delta: correctDelta.trim(),
+        reason: correctReason.trim(),
+      });
+      setCorrectEmployee(null);
+      toast({ title: "Correction recorded", description: "It is paid in the next pay run.", variant: "success" });
+      await load();
+    } catch (err) {
+      setDialogError(describeApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function withdrawCorrection(correction: PayAdjustment) {
+    setBusy(true);
+    try {
+      await apiClient.delete(`/payroll/adjustments/${correction.id}`);
+      await load();
+    } catch (err) {
+      toast({ title: "Could not withdraw", description: describeApiError(err), variant: "danger" });
     } finally {
       setBusy(false);
     }
@@ -508,6 +557,22 @@ export default function PayRunDetailPage() {
                               Payslip
                             </Link>
                           ) : null}
+                          {canProcess &&
+                          (run.status === "FINALISED" || run.status === "PAID") &&
+                          employee.paid_days !== null ? (
+                            <button
+                              type="button"
+                              className="text-sm font-medium text-primary hover:underline"
+                              onClick={() => {
+                                setCorrectEmployee(employee);
+                                setCorrectDelta("");
+                                setCorrectReason("");
+                                setDialogError(null);
+                              }}
+                            >
+                              Correct days
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -518,6 +583,84 @@ export default function PayRunDetailPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      {corrections.length > 0 ? (
+        <Card>
+          <CardContent className="space-y-2 pt-6">
+            <h3 className="text-sm font-medium text-foreground">Day corrections for this month</h3>
+            <ul className="divide-y divide-border rounded-md border border-border text-sm">
+              {corrections.map((correction) => {
+                const employee = employees.find((e) => e.employee_id === correction.employee_id);
+                return (
+                  <li key={correction.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                    <span>
+                      <span className="font-medium text-foreground">
+                        {employee?.employee_name ?? "Employee"}
+                      </span>{" "}
+                      {Number(correction.paid_days_delta) > 0 ? "+" : ""}
+                      {correction.paid_days_delta} day(s) ·{" "}
+                      <span className="text-foreground-muted">{correction.reason}</span>
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <Badge variant={correction.status === "APPLIED" ? "success" : "warning"}>
+                        {correction.status === "APPLIED" ? "Paid as arrears" : "Pending — next run"}
+                      </Badge>
+                      {canProcess && correction.status === "PENDING" ? (
+                        <button
+                          type="button"
+                          className="text-xs text-primary hover:underline"
+                          disabled={busy}
+                          onClick={() => void withdrawCorrection(correction)}
+                        >
+                          Withdraw
+                        </button>
+                      ) : null}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Dialog
+        open={correctEmployee !== null}
+        onOpenChange={(next) => !busy && !next && setCorrectEmployee(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Correct paid days</DialogTitle>
+            <DialogDescription>
+              {correctEmployee
+                ? `${correctEmployee.employee_name ?? "Employee"} was paid for ${correctEmployee.paid_days} of ${correctEmployee.payable_days} days in ${formatPayMonth(run.month)}. `
+                : null}
+              This month is finalised and its attendance stays closed — the difference is paid (or
+              recovered) as arrears in the next pay run.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <FormField id="correct-delta" label="Change in paid days" required description="e.g. 1, 0.5 or -1">
+              <Input inputMode="decimal" value={correctDelta} onChange={(e) => setCorrectDelta(e.target.value)} />
+            </FormField>
+            <FormField id="correct-reason" label="Reason" required error={dialogError ?? undefined}>
+              <Input value={correctReason} maxLength={1000} onChange={(e) => setCorrectReason(e.target.value)} />
+            </FormField>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCorrectEmployee(null)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={busy || !/^-?\d+(\.5|\.0)?$/.test(correctDelta.trim()) || !correctReason.trim()}
+              onClick={() => void handleCorrect()}
+            >
+              Record correction
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PayRunEmployeeDialog
         runId={run.id}

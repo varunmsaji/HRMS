@@ -38,6 +38,8 @@ async def _cleanup_pay_runs(*, company_id: UUID) -> None:
             "overtime_policy",
             "leave_ledger",
             "leave_type",
+            "pay_run_arrear",
+            "pay_adjustment",
             "pay_run_line",
             "pay_run_employee",
             "statutory_rate",

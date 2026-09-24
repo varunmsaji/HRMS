@@ -343,3 +343,61 @@ class StatutoryRate(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.5 — arrears
+# ---------------------------------------------------------------------------
+
+
+class PayAdjustment(Base, TimestampMixin):
+    """D7 — a correction to a finalised month's paid days. The finalised attendance period stays
+    closed; the entity's next pay run pays (or recovers) the difference as arrears. `PENDING`
+    until that run is finalised, then `APPLIED`."""
+
+    __tablename__ = "pay_adjustment"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    legal_entity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("legal_entity.id")
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    for_month: Mapped[date] = mapped_column(Date)
+    source_pay_run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("pay_run.id"))
+    paid_days_delta: Mapped[Decimal] = mapped_column(Numeric(6, 2))
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING")
+    applied_pay_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("pay_run.id"), nullable=True
+    )
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class PayRunArrear(Base):
+    """Attribution of a run's arrears: which month, from which earlier finalised run, per
+    component. Written by compute, replaced on recompute."""
+
+    __tablename__ = "pay_run_arrear"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    pay_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("pay_run.id", ondelete="CASCADE")
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    for_month: Mapped[date] = mapped_column(Date)
+    source_pay_run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("pay_run.id"))
+    component_code: Mapped[str] = mapped_column(String(30))
+    line_type: Mapped[str] = mapped_column(String(25))
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

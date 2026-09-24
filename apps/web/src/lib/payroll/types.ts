@@ -408,6 +408,8 @@ export interface PayslipLine {
   component_name: string;
   full_monthly_minor: number | null;
   amount_minor: number;
+  /** Arrears lines — the months they are for. */
+  note?: string | null;
 }
 
 export interface Payslip {
@@ -455,4 +457,23 @@ export interface PayslipSummary {
   pay_date: string;
   net_minor: number;
   status: PayRunStatus;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5.5 — day corrections (paid as arrears)
+// ---------------------------------------------------------------------------
+
+export interface PayAdjustment {
+  id: string;
+  legal_entity_id: string;
+  employee_id: string;
+  month: string;
+  source_pay_run_id: string;
+  paid_days_delta: string;
+  reason: string;
+  status: "PENDING" | "APPLIED";
+  applied_pay_run_id: string | null;
+  created_by_user_id: string | null;
+  version: number;
+  created_at: string;
 }

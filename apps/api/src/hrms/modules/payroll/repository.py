@@ -10,14 +10,16 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.payroll.models import (
     EmployeeSalary,
+    PayAdjustment,
     PayrollSetting,
     PayRun,
+    PayRunArrear,
     PayRunEmployee,
     PayRunLine,
     SalaryComponent,
@@ -735,3 +737,128 @@ class StatutoryRateRepository:
             .returning(StatutoryRate)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.5 — arrears
+# ---------------------------------------------------------------------------
+
+
+class PayAdjustmentRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> PayAdjustment:
+        row = PayAdjustment(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(
+        self, session: AsyncSession, *, company_id: UUID, adjustment_id: UUID
+    ) -> PayAdjustment | None:
+        stmt = select(PayAdjustment).where(
+            PayAdjustment.id == adjustment_id, PayAdjustment.company_id == company_id
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        legal_entity_id: UUID | None = None,
+        source_pay_run_id: UUID | None = None,
+        status: str | None = None,
+        employee_id: UUID | None = None,
+    ) -> list[PayAdjustment]:
+        conditions = [PayAdjustment.company_id == company_id]
+        if legal_entity_id is not None:
+            conditions.append(PayAdjustment.legal_entity_id == legal_entity_id)
+        if source_pay_run_id is not None:
+            conditions.append(PayAdjustment.source_pay_run_id == source_pay_run_id)
+        if status is not None:
+            conditions.append(PayAdjustment.status == status)
+        if employee_id is not None:
+            conditions.append(PayAdjustment.employee_id == employee_id)
+        stmt = (
+            select(PayAdjustment)
+            .where(*conditions)
+            .order_by(PayAdjustment.for_month, PayAdjustment.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def delete_pending(
+        self, session: AsyncSession, *, company_id: UUID, adjustment_id: UUID
+    ) -> bool:
+        result = await session.execute(
+            delete(PayAdjustment).where(
+                PayAdjustment.id == adjustment_id,
+                PayAdjustment.company_id == company_id,
+                PayAdjustment.status == "PENDING",
+            )
+        )
+        return bool(getattr(result, "rowcount", 0))
+
+    async def mark_applied(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        adjustment_ids: list[UUID],
+        pay_run_id: UUID,
+        now: datetime,
+    ) -> int:
+        """Only still-`PENDING` rows — the count tells the caller whether another run got there
+        first."""
+        if not adjustment_ids:
+            return 0
+        result = await session.execute(
+            update(PayAdjustment)
+            .where(
+                PayAdjustment.company_id == company_id,
+                PayAdjustment.id.in_(adjustment_ids),
+                PayAdjustment.status == "PENDING",
+            )
+            .values(
+                status="APPLIED",
+                applied_pay_run_id=pay_run_id,
+                version=PayAdjustment.version + 1,
+                updated_at=now,
+            )
+        )
+        return int(getattr(result, "rowcount", 0))
+
+
+class PayRunArrearRepository:
+    async def replace_for_run(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID, rows: list[dict[str, Any]]
+    ) -> None:
+        mutable = select(PayRun.id).where(PayRun.id == run_id, PayRun.status.in_(_MUTABLE))
+        await session.execute(
+            delete(PayRunArrear).where(
+                PayRunArrear.company_id == company_id, PayRunArrear.pay_run_id.in_(mutable)
+            )
+        )
+        if rows:
+            session.add_all([PayRunArrear(**row) for row in rows])
+            await session.flush()
+
+    async def delete_for_run(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID
+    ) -> None:
+        await self.replace_for_run(session, company_id=company_id, run_id=run_id, rows=[])
+
+    async def paid_for_month(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, for_month: date
+    ) -> dict[str, int]:
+        """Arrears already paid for `for_month`, per component, by `FINALISED`/`PAID` runs."""
+        stmt = (
+            select(PayRunArrear.component_code, func.sum(PayRunArrear.amount_minor))
+            .join(PayRun, PayRun.id == PayRunArrear.pay_run_id)
+            .where(
+                PayRunArrear.company_id == company_id,
+                PayRunArrear.employee_id == employee_id,
+                PayRunArrear.for_month == for_month,
+                PayRun.status.in_(("FINALISED", "PAID")),
+            )
+            .group_by(PayRunArrear.component_code)
+        )
+        return {code: int(total) for code, total in (await session.execute(stmt)).all()}

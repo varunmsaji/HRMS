@@ -13,6 +13,7 @@ from hrms.modules.payroll.breakup import APPLIES_WHEN, CALCULATION_TYPES, COMPON
 if TYPE_CHECKING:
     from hrms.modules.payroll.models import (
         EmployeeSalary,
+        PayAdjustment,
         PayrollSetting,
         PayRun,
         PayRunEmployee,
@@ -828,6 +829,8 @@ class PayslipLineRead(BaseModel):
     component_name: str
     full_monthly_minor: int | None
     amount_minor: int
+    #: Arrears lines — the months they are for, e.g. "Aug 2026: ₹5,000.00" (FR-PAY-010).
+    note: str | None = None
 
 
 class PayslipLeaveBalanceRead(BaseModel):
@@ -884,3 +887,59 @@ class PayslipSummaryRead(BaseModel):
     pay_date: date
     net_minor: int
     status: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.5 — arrears
+# ---------------------------------------------------------------------------
+
+
+class PayAdjustmentCreate(BaseModel):
+    """D7 — correct a finalised month's paid days for one employee; paid as arrears by the
+    legal entity's next pay run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_pay_run_id: UUID
+    employee_id: UUID
+    paid_days_delta: Decimal = Field(ge=-31, le=31, decimal_places=2)
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("paid_days_delta")
+    @classmethod
+    def validate_delta(cls, value: Decimal) -> Decimal:
+        if value == 0 or (value * 2) % 1 != 0:
+            raise ValueError("paid_days_delta is a non-zero multiple of 0.5")
+        return value
+
+
+class PayAdjustmentRead(BaseModel):
+    id: UUID
+    legal_entity_id: UUID
+    employee_id: UUID
+    month: str
+    source_pay_run_id: UUID
+    paid_days_delta: str
+    reason: str
+    status: str
+    applied_pay_run_id: UUID | None
+    created_by_user_id: UUID | None
+    version: int
+    created_at: str
+
+
+def pay_adjustment_to_read(row: "PayAdjustment") -> PayAdjustmentRead:
+    return PayAdjustmentRead(
+        id=row.id,
+        legal_entity_id=row.legal_entity_id,
+        employee_id=row.employee_id,
+        month=row.for_month.strftime("%Y-%m"),
+        source_pay_run_id=row.source_pay_run_id,
+        paid_days_delta=format(row.paid_days_delta.normalize(), "f"),
+        reason=row.reason,
+        status=row.status,
+        applied_pay_run_id=row.applied_pay_run_id,
+        created_by_user_id=row.created_by_user_id,
+        version=row.version,
+        created_at=_format_timestamp(row.created_at) or "",
+    )

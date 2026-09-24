@@ -241,3 +241,38 @@ class StatutoryRateInvalidError(ValidationError):
 
     def __init__(self, message: str, *, field: str = "effective_from") -> None:
         super().__init__(message, details=_detail(field, self.code, message))
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.5 — arrears
+# ---------------------------------------------------------------------------
+
+
+class PayAdjustmentNotFoundError(NotFoundError):
+    code = "PAY_ADJUSTMENT_NOT_FOUND"
+
+    def __init__(self, message: str = "Pay adjustment not found") -> None:
+        super().__init__(message)
+
+
+class PayAdjustmentInvalidError(ValidationError):
+    code = "PAY_ADJUSTMENT_INVALID"
+
+    def __init__(self, message: str, *, field: str = "paid_days_delta") -> None:
+        super().__init__(message, details=_detail(field, self.code, message))
+
+
+class PayRunArrearsStaleError(ConflictError):
+    """Another run paid arrears for the same month, or applied the same day correction, after
+    this run's inputs were locked."""
+
+    code = "PAY_RUN_ARREARS_STALE"
+
+    def __init__(
+        self,
+        message: str = (
+            "Arrears in this run were paid or applied by another run after its inputs were "
+            "locked — roll it back to draft and lock its inputs again"
+        ),
+    ) -> None:
+        super().__init__(message, details=_detail("arrears", self.code, message))

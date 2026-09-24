@@ -4,9 +4,11 @@ from datetime import date
 from decimal import Decimal
 
 from hrms.modules.payroll.engine import (
+    ArrearsInput,
     EmployeeInput,
     EncashmentInput,
     OvertimeInput,
+    PaidLine,
     Segment,
     SegmentLine,
     compute_employee,
@@ -297,3 +299,57 @@ def test_snapshot_round_trip() -> None:
         )  # fmt: skip
     )
     assert _codes(missing) == {"NOT_IN_ATTENDANCE"}
+
+
+def _august(basic: int, paid: str = "31") -> EmployeeInput:
+    segment = _segment(date(2026, 8, 1), date(2026, 8, 31), _lines(basic, 0, 0))
+    return EmployeeInput(
+        days_in_month=31,
+        paid_days=Decimal(paid),
+        has_summary=True,
+        segments=(segment,),
+        bank=_BANK,
+        statutory={**_NO_STATUTORY, "month_end": date(2026, 8, 31)},
+    )
+
+
+def test_arrears_pay_the_difference_for_an_earlier_month() -> None:
+    """A backdated raise: August was paid on Basic ₹30,000; it should have been ₹31,000."""
+    paid = {"BASIC": PaidLine(3_000_000, "EARNING", "Basic", 10)}
+    arrears = (ArrearsInput("2026-08", "run-aug", ("SALARY_REVISED",), _august(3_100_000), paid),)
+    result = compute_employee(_input((_september(_lines(3_100_000, 0, 0)),), "30", arrears=arrears))
+    amounts = _amounts(result)
+    assert amounts["ARR_BASIC"] == 100_000
+    assert result.gross_minor == 3_200_000
+    line = next(line for line in result.lines if line.component_code == "ARR_BASIC")
+    assert line.component_name == "Basic arrears"
+    assert line.trace["parts"][0]["month"] == "2026-08"
+    assert line.trace["parts"][0]["paid_minor"] == 3_000_000
+
+
+def test_arrears_for_a_day_correction_and_nothing_when_already_paid() -> None:
+    """A day correction: August recomputed with 31 paid days instead of 30 (LOP reversed)."""
+    paid = {"BASIC": PaidLine(3_000_000 * 30 // 31, "EARNING", "Basic", 10)}
+    arrears = (ArrearsInput("2026-08", "run-aug", ("DAYS_CORRECTED",), _august(3_000_000), paid),)
+    result = compute_employee(_input((_september(_lines(3_000_000, 0, 0)),), "30", arrears=arrears))
+    assert _amounts(result)["ARR_BASIC"] == 3_000_000 - 3_000_000 * 30 // 31
+
+    settled = {"BASIC": PaidLine(3_000_000, "EARNING", "Basic", 10)}
+    none_due = compute_employee(_input(
+        (_september(_lines(3_000_000, 0, 0)),), "30",
+        arrears=(ArrearsInput("2026-08", "run-aug", (), _august(3_000_000), settled),),
+    ))  # fmt: skip
+    assert not any(code.startswith("ARR_") for code in _amounts(none_due))
+
+
+def test_arrears_recover_an_overpayment_and_a_removed_component() -> None:
+    paid = {
+        "BASIC": PaidLine(3_000_000, "EARNING", "Basic", 10),
+        "HRA": PaidLine(500_000, "EARNING", "House Rent Allowance", 20),
+    }
+    arrears = (ArrearsInput("2026-08", "run-aug", (), _august(2_900_000), paid),)
+    result = compute_employee(_input((_september(_lines(3_000_000, 0, 0)),), "30", arrears=arrears))
+    amounts = _amounts(result)
+    assert amounts["ARR_BASIC"] == -100_000
+    assert amounts["ARR_HRA"] == -500_000
+    assert result.net_minor == 3_000_000 - 600_000

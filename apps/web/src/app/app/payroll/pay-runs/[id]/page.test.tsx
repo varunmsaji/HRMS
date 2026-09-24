@@ -168,4 +168,27 @@ describe("PayRunDetailPage", () => {
       }),
     );
   });
+
+  it("records a day correction on a finalised run", async () => {
+    const finalised = { ...computedRun, status: "FINALISED" as const, variance_open_count: 0 };
+    mockLoad(finalised, [{ ...flagged, variance_reason: "ok" }]);
+    mockedPost.mockResolvedValue({});
+    const user = userEvent.setup();
+    render(<PayRunDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Correct days" }));
+    expect(screen.getByText(/paid for 15 of 30 days in September 2026/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Change in paid days/), "1.5");
+    await user.type(screen.getByLabelText(/^Reason/), "Missed punches");
+    await user.click(screen.getByRole("button", { name: "Record correction" }));
+
+    await waitFor(() =>
+      expect(mockedPost).toHaveBeenCalledWith("/payroll/adjustments", {
+        source_pay_run_id: "run-1",
+        employee_id: "emp-1",
+        paid_days_delta: "1.5",
+        reason: "Missed punches",
+      }),
+    );
+  });
 });

@@ -279,6 +279,35 @@ confirmation. As built:
 - Compute the per-component, per-month differential and post it as `ARREARS` lines in the next
   run, with a month-wise breakup on the payslip.
 
+**Status: built 2026-09-24** (migration `20261004109000`). As built:
+
+- **What triggers arrears** (checked when a run locks its inputs, for each earlier finalised run
+  of the same legal entity in the last 12 months that the employee is in):
+  - a **backdated salary change** — a compensation (CTC), statutory profile or salary assignment
+    row overlapping that month, or a structure version published for it, recorded *after* the
+    month was finalised, and which actually changes the month's resolved salary; or
+  - a **day correction** (D7, `pay_adjustment`): HR records `±n` paid days against a finalised
+    run for one employee, with a reason (half-day steps; the result must stay within the month's
+    payable days). The finalised attendance period stays closed.
+- **How much:** the month is re-snapshotted — current salary data over its frozen attendance
+  (plus all day corrections for it, paid or pending), its own statutory rates — and recomputed in
+  full by the same engine. The difference from what was paid for it (the month's own lines plus
+  arrears for it in finalised runs since) is paid as `ARR_<component>` lines of the same type:
+  earnings raise gross, statutory differences (e.g. PF on arrear wages) are deductions or
+  employer contributions. A negative difference recovers an overpayment.
+- **Never twice:** `pay_run_arrear` attributes every arrears amount to its month and source run.
+  Finalising re-checks that nothing has been paid for those months since the inputs were locked,
+  and marks the day corrections applied — only if they are still pending; otherwise
+  `PAY_RUN_ARREARS_STALE` (roll back and lock again).
+- Payslip: arrears lines carry the month-wise breakup ("Aug 2026: ₹5,000.00").
+- API: `GET/POST /v1/payroll/adjustments`, `DELETE /v1/payroll/adjustments/{id}` (pending only)
+  — `PAYROLL.RUN_VIEW` / `PAYROLL.RUN_PROCESS`.
+- Web: on a finalised run, **Correct days** per employee and a list of the month's corrections
+  (pending / paid as arrears, withdraw while pending).
+- Known limits: arrears are paid only to employees in the current run — a leaver's arrears wait
+  for full & final settlement (5.7); corrections other than paid days (OT, encashment) are not
+  supported; the lookback is 12 months.
+
 ### Phase 5.6 — Income tax (TDS)
 
 *FR-PAY-011.* Both regimes, slabs/surcharge/cess as effective-dated data, annual projection,

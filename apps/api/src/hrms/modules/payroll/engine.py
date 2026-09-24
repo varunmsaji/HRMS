@@ -21,6 +21,9 @@ Rules applied here:
 - **Daily-wage** (D5): daily rate × paid days.
 - **No net rounding** (D8, decided 2026-09-24): net pay is paid to the paisa. Each line is
   rounded half-up to the paisa; nothing is rounded to the rupee.
+- **Arrears** (Phase 5.5): each earlier finalised month in `arrears` is recomputed in full and
+  the difference from what was paid for it becomes `ARR_<component>` lines. Statutory amounts on
+  arrear wages come from that month's own recompute, not the current month's.
 - **Statutory** (Phase 5.3, `statutory.py`): PF, VPF, ESI, professional tax and LWF on the
   month's earned wages, from rates snapshotted with the run. The structure's `EMPLOYER_PF` /
   `EMPLOYER_ESI` lines only split CTC (D2) and are not paid as such — the run computes the
@@ -46,6 +49,13 @@ _MINUTES_PER_HOUR = Decimal(60)
 #: Structure lines that only split CTC (D2); in a pay run they are replaced by the statutory
 #: computation on earned wages (Phase 5.3).
 _STATUTORY_STRUCTURE_LINES = frozenset({"EMPLOYER_PF", "EMPLOYER_ESI"})
+
+#: Issues from recomputing an earlier month that do not stop its arrears being paid.
+_ARREARS_IGNORED_ISSUES = frozenset(
+    {"BANK_MISSING", "BANK_ACCOUNT_MISSING", "NEGATIVE_NET", "ZERO_NET", "UAN_MISSING",
+     "ESI_IP_MISSING", "ESI_ABOVE_CEILING", "PT_RATE_MISSING", "BASIC_MISSING"}
+)  # fmt: skip
+ARREARS_PREFIX = "ARR_"
 
 
 @dataclass(frozen=True)
@@ -116,6 +126,29 @@ class EmployeeInput:
     # Phase 5.3 — `{"month_end", "profile", "employee", "rates"}` (see `statutory.py`); `None`
     # only for inputs locked before statutory deductions existed, which are refused.
     statutory: dict[str, Any] | None = None
+    # Phase 5.5 — earlier finalised months to recompute and pay the difference for.
+    arrears: tuple["ArrearsInput", ...] = ()
+
+
+@dataclass(frozen=True)
+class PaidLine:
+    amount_minor: int
+    line_type: str
+    component_name: str
+    display_order: int
+
+
+@dataclass(frozen=True)
+class ArrearsInput:
+    """One earlier month: its inputs as they should have been (current salary data, the frozen
+    attendance plus any day corrections, that month's statutory rates) and what has already been
+    paid for it — the month's run plus arrears paid for it since."""
+
+    month: str  # YYYY-MM
+    pay_run_id: str
+    reasons: tuple[str, ...]
+    inputs: EmployeeInput
+    paid: dict[str, PaidLine]
 
 
 @dataclass(frozen=True)
@@ -365,6 +398,11 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
             for line in result.lines
         )
 
+    arrear_lines, arrear_issues = _arrears(inputs.arrears)
+    lines.extend(arrear_lines)
+    issues.extend(arrear_issues)
+    gross = sum(line.amount_minor for line in lines if line.line_type == "EARNING")
+
     deductions = sum(line.amount_minor for line in lines if line.line_type == "DEDUCTION")
     employer = sum(line.amount_minor for line in lines if line.line_type == "EMPLOYER_CONTRIBUTION")
     # D8 (2026-09-24): net pay is not rounded — it is paid to the paisa. `rounding_minor` and the
@@ -399,6 +437,67 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
         net_minor=net,
         issues=issues,
     )
+
+
+def _arrears(items: tuple[ArrearsInput, ...]) -> tuple[list[ComputedLine], list[Issue]]:
+    """FR-PAY-010 — for each earlier month, recompute it in full and pay the difference from
+    what was paid, per component, as `ARR_<component>` lines of the same type (earnings add to
+    gross, deductions such as PF on arrear wages add to deductions). One line per component
+    across months; the month-wise breakup is in its trace."""
+    lines: dict[str, dict[str, Any]] = {}
+    issues: list[Issue] = []
+    for item in items:
+        result = compute_employee(item.inputs)
+        for issue in result.issues:
+            if issue.severity == ERROR and issue.code not in _ARREARS_IGNORED_ISSUES:
+                issues.append(Issue(
+                    "ARREARS_FAILED", ERROR, f"Arrears for {item.month}: {issue.message}"
+                ))  # fmt: skip
+        recomputed = {
+            line.component_code: PaidLine(
+                line.amount_minor, line.line_type, line.component_name, line.display_order
+            )
+            for line in result.lines
+            if line.line_type != "ROUNDING"
+        }
+        for code in sorted(set(recomputed) | set(item.paid)):
+            now_line = recomputed.get(code)
+            paid_line = item.paid.get(code)
+            ref = now_line or paid_line
+            assert ref is not None
+            new_amount = now_line.amount_minor if now_line else 0
+            paid_amount = paid_line.amount_minor if paid_line else 0
+            difference = new_amount - paid_amount
+            if difference == 0:
+                continue
+            key = (ARREARS_PREFIX + code)[:30]
+            entry = lines.setdefault(key, {
+                "name": f"{ref.component_name} arrears", "type": ref.line_type,
+                "order": 300 + ref.display_order, "amount": 0, "parts": [],
+            })  # fmt: skip
+            entry["amount"] += difference
+            entry["parts"].append({
+                "month": item.month, "pay_run_id": item.pay_run_id, "component_code": code,
+                "recomputed_minor": new_amount, "paid_minor": paid_amount,
+                "amount_minor": difference, "reasons": list(item.reasons),
+            })  # fmt: skip
+    computed = [
+        ComputedLine(
+            component_code=code,
+            component_name=entry["name"],
+            line_type=entry["type"],
+            full_monthly_minor=None,
+            amount_minor=entry["amount"],
+            display_order=entry["order"],
+            trace={
+                "formula": "recomputed month less what was paid for it",
+                "parts": entry["parts"],
+            },
+        )
+        for code, entry in lines.items()
+        if entry["amount"] != 0 or len(entry["parts"]) > 1
+    ]
+    return computed, issues
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +561,24 @@ def employee_input_from_snapshot(snapshot: dict[str, Any], days_in_month: int) -
             Issue(i["code"], i["severity"], i["message"]) for i in snapshot.get("issues", [])
         ),
         statutory=_statutory_from_snapshot(snapshot.get("statutory")),
+        arrears=tuple(
+            ArrearsInput(
+                month=item["month"],
+                pay_run_id=item["pay_run_id"],
+                reasons=tuple(item.get("reasons", [])),
+                inputs=employee_input_from_snapshot(item["snapshot"], int(item["days_in_month"])),
+                paid={
+                    code: PaidLine(
+                        int(p["amount_minor"]),
+                        p["line_type"],
+                        p["component_name"],
+                        int(p["display_order"]),
+                    )
+                    for code, p in item["paid"].items()
+                },
+            )
+            for item in snapshot.get("arrears", [])
+        ),
     )
 
 

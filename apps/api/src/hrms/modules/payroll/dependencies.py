@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.db.session import get_session
 from hrms.modules.payroll.service import (
     EmployeeSalaryService,
+    PayAdjustmentService,
     PayrollSettingService,
     PayRunService,
     PayslipService,
@@ -57,3 +58,9 @@ def get_payslip_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PayslipService:
     return PayslipService(session)
+
+
+def get_pay_adjustment_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> PayAdjustmentService:
+    return PayAdjustmentService(session)

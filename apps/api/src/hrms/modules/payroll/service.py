@@ -33,6 +33,7 @@ from hrms.modules.payroll.breakup import (
     validate_structure,
 )
 from hrms.modules.payroll.engine import (
+    ARREARS_PREFIX,
     ERROR,
     WARNING,
     Issue,
@@ -41,7 +42,10 @@ from hrms.modules.payroll.engine import (
 )
 from hrms.modules.payroll.exceptions import (
     EmployeeSalaryInvalidError,
+    PayAdjustmentInvalidError,
+    PayAdjustmentNotFoundError,
     PayRunAlreadyExistsError,
+    PayRunArrearsStaleError,
     PayRunAttendanceChangedError,
     PayRunBlockedError,
     PayRunEmployeeNotFoundError,
@@ -76,7 +80,9 @@ from hrms.modules.payroll.models import (
 )
 from hrms.modules.payroll.repository import (
     EmployeeSalaryRepository,
+    PayAdjustmentRepository,
     PayrollSettingRepository,
+    PayRunArrearRepository,
     PayRunRepository,
     SalaryComponentRepository,
     SalaryStructureRepository,
@@ -89,6 +95,8 @@ from hrms.modules.payroll.schemas import (
     EmployeeSalaryBulkSkip,
     EmployeeSalaryCreate,
     EmployeeSalaryRead,
+    PayAdjustmentCreate,
+    PayAdjustmentRead,
     PayrollSettingRead,
     PayrollSettingUpdate,
     PayRunCreate,
@@ -119,6 +127,7 @@ from hrms.modules.payroll.schemas import (
     StatutoryRateRead,
     StatutoryRateUpdate,
     employee_salary_to_read,
+    pay_adjustment_to_read,
     pay_run_employee_to_read,
     pay_run_line_to_read,
     pay_run_to_read,
@@ -1366,6 +1375,15 @@ def month_bounds(month: str) -> tuple[date, date, int]:
     return date(year, number, 1), date(year, number, days), days
 
 
+#: How far back a pay run looks for earlier months to pay arrears for (FR-PAY-010).
+ARREARS_LOOKBACK_MONTHS = 12
+
+
+def _add_months(first_of_month: date, months: int) -> date:
+    index = first_of_month.year * 12 + first_of_month.month - 1 + months
+    return date(index // 12, index % 12 + 1, 1)
+
+
 def default_pay_date(period_end: date) -> date:
     """D11 — the first weekday (Mon–Fri) after the month ends. Holidays are not consulted; the
     date is editable on the run until it is finalised."""
@@ -1458,6 +1476,8 @@ class PayRunService:
         self._structure_repo = SalaryStructureRepository()
         self._component_repo = SalaryComponentRepository()
         self._structures = SalaryStructureService(session)
+        self._adjustment_repo = PayAdjustmentRepository()
+        self._arrear_repo = PayRunArrearRepository()
         self._audit = AuditService()
 
     # -- reads -----------------------------------------------------------------------
@@ -1965,6 +1985,231 @@ class PayRunService:
             "rates": rates,
         }
 
+    # -- arrears (Phase 5.5) -------------------------------------------------------------
+
+    async def _paid_for(self, prior: PayRun, employee_id: UUID) -> dict[str, dict[str, Any]]:
+        """What has been paid for `prior`'s month: its own lines plus arrears for that month in
+        finalised runs since, per component."""
+        paid: dict[str, dict[str, Any]] = {}
+        for line in await self._repo.list_lines(
+            self._session, company_id=prior.company_id, run_id=prior.id, employee_id=employee_id
+        ):
+            if line.line_type == "ROUNDING" or line.component_code.startswith(ARREARS_PREFIX):
+                continue
+            paid[line.component_code] = {
+                "amount_minor": line.amount_minor,
+                "line_type": line.line_type,
+                "component_name": line.component_name,
+                "display_order": line.display_order,
+            }
+        extra = await self._arrear_repo.paid_for_month(
+            self._session,
+            company_id=prior.company_id,
+            employee_id=employee_id,
+            for_month=prior.period_month,
+        )
+        for code, amount in extra.items():
+            entry = paid.setdefault(
+                code,
+                {"amount_minor": 0, "line_type": "EARNING", "component_name": code,
+                 "display_order": 0},
+            )  # fmt: skip
+            entry["amount_minor"] += amount
+        return paid
+
+    async def _changed_since(self, company_id: UUID, employee_id: UUID, prior: PayRun) -> bool:
+        """Whether any salary input covering `prior`'s month — CTC, statutory profile, salary
+        assignment, or a structure version — was recorded after that run was finalised."""
+        from hrms.modules.employee.service import (
+            EmployeeCompensationService,
+            EmployeeStatutoryService,
+        )
+
+        if prior.finalised_at is None:
+            return False
+        cutoff = prior.finalised_at
+        start, end = prior.period_start, prior.period_end
+
+        def overlaps(frm: date | None, to: date | None) -> bool:
+            return frm is not None and frm <= end and (to is None or to >= start)
+
+        def after_cutoff(stamp: str | datetime | None) -> bool:
+            if stamp is None:
+                return False
+            value = (
+                stamp if isinstance(stamp, datetime)
+                else datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            )  # fmt: skip
+            return value > cutoff
+
+        for row in await EmployeeCompensationService(self._session).list_compensations(
+            company_id, employee_id
+        ):
+            if overlaps(row.effective_from, row.effective_to) and after_cutoff(row.updated_at):
+                return True
+        for statutory in await EmployeeStatutoryService(self._session).list_statutories(
+            company_id, employee_id
+        ):
+            if overlaps(statutory.effective_from, statutory.effective_to) and after_cutoff(
+                statutory.updated_at
+            ):
+                return True
+        salaries = await self._salary_repo.list_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        for salary in salaries:
+            if overlaps(salary.effective_from, salary.effective_to) and after_cutoff(
+                salary.updated_at
+            ):
+                return True
+        structure_ids = sorted(
+            {
+                s.salary_structure_id
+                for s in salaries
+                if s.salary_structure_id is not None and overlaps(s.effective_from, s.effective_to)
+            },
+            key=str,
+        )
+        for version in await self._structure_repo.list_versions(
+            self._session, company_id=company_id, structure_ids=structure_ids
+        ):
+            if (
+                version.status == "PUBLISHED"
+                and overlaps(version.effective_from, version.effective_to)
+                and after_cutoff(version.published_at)
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _segment_key(segments: list[dict[str, Any]]) -> list[Any]:
+        return [
+            (
+                s.get("from"), s.get("to"), s.get("pay_basis"), s.get("valid"),
+                s.get("daily_rate_minor"), bool(s.get("pf_applicable")),
+                bool(s.get("esi_applicable")),
+                sorted(
+                    (line["component_code"], line["monthly_minor"], line.get("is_prorated"))
+                    for line in s.get("lines", [])
+                ),
+            )
+            for s in segments
+        ]  # fmt: skip
+
+    async def _arrears_for(
+        self, run: PayRun, employee_id: UUID, components: dict[str, SalaryComponent]
+    ) -> list[dict[str, Any]]:
+        """FR-PAY-010 — earlier months of this legal entity (up to `ARREARS_LOOKBACK_MONTHS`)
+        whose pay should now differ: a salary input recorded after the month was finalised
+        (backdated revision), or a pending day correction (D7). Each is re-snapshotted with
+        current salary data over the month's frozen attendance and statutory rates, alongside
+        what has been paid for it; the engine pays the difference."""
+        from hrms.modules.employee.service import EmployeeStatutoryService, EmploymentService
+
+        company_id = run.company_id
+        earliest = _add_months(run.period_month, -ARREARS_LOOKBACK_MONTHS)
+        priors = [
+            (prior, row)
+            for prior, row in await self._repo.list_final_for_employee(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            if prior.legal_entity_id == run.legal_entity_id
+            and earliest <= prior.period_month < run.period_month
+        ]
+        if not priors:
+            return []
+        # Every day correction counts towards a month's recompute — applied ones were already
+        # paid, and leaving them out would reverse them; only pending ones trigger a recompute.
+        corrections = await self._adjustment_repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            legal_entity_id=run.legal_entity_id,
+            employee_id=employee_id,
+        )
+        items: list[dict[str, Any]] = []
+        for prior, row in sorted(priors, key=lambda pair: pair[0].period_month):
+            for_month = [a for a in corrections if a.source_pay_run_id == prior.id]
+            adjustments = [a for a in for_month if a.status == "PENDING"]
+            changed = await self._changed_since(company_id, employee_id, prior)
+            if not adjustments and not changed:
+                continue
+            spans = [
+                (max(joining, prior.period_start), min(last or prior.period_end, prior.period_end))
+                for emp, le, joining, last in await EmploymentService(
+                    self._session
+                ).list_legal_entity_spans(
+                    company_id,
+                    date_from=prior.period_start,
+                    date_to=prior.period_end,
+                    employee_id=employee_id,
+                )
+                if le == run.legal_entity_id and emp == employee_id
+            ]
+            month_issues: list[dict[str, str]] = []
+            segments = await self._segments(
+                company_id, employee_id, spans, components, month_issues
+            )
+            statutory = dict(row.snapshot.get("statutory") or {
+                "month_end": prior.period_end.isoformat(), "profile": None, "employee": {},
+                "rates": {},
+            })  # fmt: skip
+            if row.snapshot.get("statutory") is not None:
+                profile = await EmployeeStatutoryService(self._session).get_statutory_as_of(
+                    company_id,
+                    employee_id,
+                    max((end for _s, end in spans), default=prior.period_end),
+                )
+                old_profile = statutory.get("profile") or {}
+                statutory["profile"] = (
+                    {
+                        **old_profile,
+                        "is_pf_applicable": profile.is_pf_applicable,
+                        "pf_wage_ceiling_opt_out": profile.pf_wage_ceiling_opt_out,
+                        "vpf_amount": profile.vpf_amount,
+                        "vpf_percentage": (
+                            str(profile.vpf_percentage)
+                            if profile.vpf_percentage is not None
+                            else None
+                        ),
+                        "is_esi_applicable": profile.is_esi_applicable,
+                        "esi_ip_number": profile.esi_ip_number,
+                        "is_lwf_applicable": profile.is_lwf_applicable,
+                    }
+                    if profile is not None
+                    else None
+                )
+            same_salary = self._segment_key(segments) == self._segment_key(
+                row.snapshot.get("segments", [])
+            ) and statutory.get("profile") == (row.snapshot.get("statutory") or {}).get("profile")
+            if not adjustments and same_salary:
+                continue
+            summary = dict(row.snapshot.get("summary") or {})
+            delta = sum((a.paid_days_delta for a in for_month), Decimal(0))
+            if summary.get("paid_days") is not None and delta:
+                summary["paid_days"] = format(
+                    (Decimal(summary["paid_days"]) + delta).normalize(), "f"
+                )
+            reasons = (["SALARY_CHANGED"] if not same_salary else []) + (
+                ["DAYS_CORRECTED"] if adjustments else []
+            )
+            items.append({
+                "month": prior.period_month.strftime("%Y-%m"),
+                "pay_run_id": str(prior.id),
+                "days_in_month": prior.days_in_month,
+                "reasons": reasons,
+                "adjustment_ids": [str(a.id) for a in adjustments],
+                "snapshot": {
+                    **row.snapshot,
+                    "summary": summary,
+                    "segments": segments,
+                    "statutory": statutory,
+                    "issues": month_issues,
+                    "arrears": [],
+                },
+                "paid": await self._paid_for(prior, employee_id),
+            })  # fmt: skip
+        return items
+
     async def _build_snapshots(
         self, run: PayRun, inputs: "PayrollPeriodInputs", now: datetime
     ) -> list[dict[str, Any]]:
@@ -2052,6 +2297,7 @@ class PayRunService:
                     date_of_birth=employee.date_of_birth,
                     gender=employee.gender,
                 ),
+                "arrears": await self._arrears_for(run, employee_id, components),
                 "issues": issues,
             }
             valid = [s for s in segments if s["valid"]]
@@ -2273,6 +2519,29 @@ class PayRunService:
         await self._repo.replace_lines(
             self._session, company_id=company_id, run_id=run_id, rows=line_rows
         )
+        # Phase 5.5 — which month and earlier run each arrears amount belongs to.
+        await self._arrear_repo.replace_for_run(
+            self._session,
+            company_id=company_id,
+            run_id=run_id,
+            rows=[
+                {
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "pay_run_id": run_id,
+                    "employee_id": line["employee_id"],
+                    "for_month": date.fromisoformat(f"{part['month']}-01"),
+                    "source_pay_run_id": UUID(part["pay_run_id"]),
+                    "component_code": part["component_code"],
+                    "line_type": line["line_type"],
+                    "amount_minor": part["amount_minor"],
+                    "created_at": now,
+                }
+                for line in line_rows
+                if line["component_code"].startswith(ARREARS_PREFIX)
+                for part in line["trace"]["parts"]
+            ],
+        )
         after = pay_run_to_read(updated)
         await self._record(
             run_id,
@@ -2418,9 +2687,28 @@ class PayRunService:
         # still be written; the status-guarded transition below then makes them permanent.
         payslips = PayslipService(self._session)
         now = datetime.now(UTC)
-        for employee in await self._repo.list_employees(
+        employees = await self._repo.list_employees(
             self._session, company_id=company_id, run_id=run_id
-        ):
+        )
+        # Phase 5.5 — nothing this run pays as arrears may have been paid since its inputs were
+        # locked, and each day correction is applied exactly once.
+        adjustment_ids: list[UUID] = []
+        for employee in employees:
+            for item in employee.snapshot.get("arrears", []):
+                prior = await self._get_row(company_id, UUID(item["pay_run_id"]))
+                if await self._paid_for(prior, employee.employee_id) != item["paid"]:
+                    raise PayRunArrearsStaleError()
+                adjustment_ids.extend(UUID(a) for a in item.get("adjustment_ids", []))
+        applied = await self._adjustment_repo.mark_applied(
+            self._session,
+            company_id=company_id,
+            adjustment_ids=adjustment_ids,
+            pay_run_id=run_id,
+            now=now,
+        )
+        if applied != len(adjustment_ids):
+            raise PayRunArrearsStaleError()
+        for employee in employees:
             await self._repo.update_employee(
                 self._session,
                 company_id=company_id,
@@ -2527,6 +2815,7 @@ class PayRunService:
             run, values=values, expected_version=expected_version, from_statuses=allowed
         )
         await self._repo.delete_lines(self._session, company_id=company_id, run_id=run_id)
+        await self._arrear_repo.delete_for_run(self._session, company_id=company_id, run_id=run_id)
         if body.to_status == "DRAFT":
             await self._repo.delete_employees(self._session, company_id=company_id, run_id=run_id)
         else:
@@ -2904,6 +3193,17 @@ def _csv_cell(value: str) -> str:
     return f"'{value}" if value[:1] in ("=", "+", "-", "@") else value
 
 
+def _arrears_note(trace: dict[str, Any]) -> str:
+    """ "Aug 2026: ₹5,000.00; Jul 2026: -₹200.00" — the month-wise breakup of an arrears line."""
+    parts = []
+    for part in trace.get("parts", []):
+        label = date.fromisoformat(f"{part['month']}-01").strftime("%b %Y")
+        amount = int(part["amount_minor"])
+        sign = "-" if amount < 0 else ""
+        parts.append(f"{label}: {sign}₹{abs(amount) // 100:,}.{abs(amount) % 100:02d}")
+    return "; ".join(parts)
+
+
 class PayslipService:
     """FR-PAY-017 — payslips. The figures come from the run's lines and snapshot; the header
     facts (designation, department, joining date, masked PAN, legal entity) and month-end leave
@@ -2976,6 +3276,9 @@ class PayslipService:
                     component_name=line.component_name,
                     full_monthly_minor=line.full_monthly_minor,
                     amount_minor=line.amount_minor,
+                    note=_arrears_note(line.trace)
+                    if line.component_code.startswith(ARREARS_PREFIX)
+                    else None,
                 )
                 for line in lines
                 if line.line_type in types
@@ -3149,3 +3452,138 @@ class PayslipService:
             user_agent=user_agent,
         )
         return filename, buffer.getvalue()
+
+
+class PayAdjustmentService:
+    """Phase 5.5 / D7 — corrections to a finalised month's paid days. The attendance period stays
+    closed; the legal entity's next pay run recomputes that month with the correction and pays
+    or recovers the difference as arrears. A pending correction can be withdrawn."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = PayAdjustmentRepository()
+        self._runs = PayRunRepository()
+        self._audit = AuditService()
+
+    async def list_adjustments(
+        self,
+        company_id: UUID,
+        *,
+        source_pay_run_id: UUID | None = None,
+        legal_entity_id: UUID | None = None,
+        status: str | None = None,
+    ) -> list[PayAdjustmentRead]:
+        rows = await self._repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            source_pay_run_id=source_pay_run_id,
+            legal_entity_id=legal_entity_id,
+            status=status,
+        )
+        return [pay_adjustment_to_read(row) for row in rows]
+
+    async def create(
+        self,
+        company_id: UUID,
+        body: PayAdjustmentCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayAdjustmentRead:
+        run = await self._runs.get(
+            self._session, company_id=company_id, run_id=body.source_pay_run_id
+        )
+        if run is None or run.status not in ("FINALISED", "PAID"):
+            raise PayAdjustmentInvalidError(
+                "Corrections are made against a finalised pay run — before finalising, reopen "
+                "the attendance period instead",
+                field="source_pay_run_id",
+            )
+        row = await self._runs.get_employee(
+            self._session, company_id=company_id, run_id=run.id, employee_id=body.employee_id
+        )
+        if row is None or row.paid_days is None or row.payable_days is None:
+            raise PayAdjustmentInvalidError(
+                "This employee has no paid days in that pay run", field="employee_id"
+            )
+        earlier = await self._repo.list_filtered(
+            self._session,
+            company_id=company_id,
+            source_pay_run_id=run.id,
+            employee_id=body.employee_id,
+        )
+        corrected = row.paid_days + sum((a.paid_days_delta for a in earlier), Decimal(0))
+        result = corrected + body.paid_days_delta
+        if result < 0 or result > row.payable_days:
+            raise PayAdjustmentInvalidError(
+                f"Paid days would become {format(result.normalize(), 'f')}; they must stay "
+                f"between 0 and {format(row.payable_days.normalize(), 'f')}"
+            )
+        now = datetime.now(UTC)
+        adjustment = await self._repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "legal_entity_id": run.legal_entity_id,
+                "employee_id": body.employee_id,
+                "for_month": run.period_month,
+                "source_pay_run_id": run.id,
+                "paid_days_delta": body.paid_days_delta,
+                "reason": body.reason,
+                "status": "PENDING",
+                "created_by_user_id": actor_user_id,
+                "version": 1,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        read = pay_adjustment_to_read(adjustment)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="PAYROLL_PAY_ADJUSTMENT_CREATED",
+            entity_type="pay_adjustment",
+            entity_id=adjustment.id,
+            after=read.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def delete(
+        self,
+        company_id: UUID,
+        adjustment_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        row = await self._repo.get(
+            self._session, company_id=company_id, adjustment_id=adjustment_id
+        )
+        if row is None:
+            raise PayAdjustmentNotFoundError()
+        before = pay_adjustment_to_read(row)
+        if not await self._repo.delete_pending(
+            self._session, company_id=company_id, adjustment_id=adjustment_id
+        ):
+            raise PayAdjustmentInvalidError(
+                "An applied correction has been paid and cannot be withdrawn — record an "
+                "opposite correction instead",
+                field="status",
+            )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="PAYROLL_PAY_ADJUSTMENT_DELETED",
+            entity_type="pay_adjustment",
+            entity_id=adjustment_id,
+            before=before.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
