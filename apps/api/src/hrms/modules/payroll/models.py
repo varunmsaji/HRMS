@@ -281,6 +281,8 @@ class PayRunEmployee(Base, TimestampMixin):
     variance_acknowledged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Phase 5.4 — payslip header facts and month-end leave balances, captured at finalise.
+    payslip_details: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
 
 class PayRunLine(Base):

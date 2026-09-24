@@ -7,13 +7,18 @@ read under `EMPLOYEE.VIEW_COMPENSATION` with its `DataScope` applied to the targ
 Phase 5.2: pay runs — `PAYROLL.RUN_VIEW` to read, `PAYROLL.RUN_PROCESS` to prepare,
 `PAYROLL.RUN_APPROVE` to approve, finalise and mark paid. Lifecycle transitions carry `If-Match`.
 
-Phase 5.3: the statutory rate master under `PAYROLL.STATUTORY_MANAGE`."""
+Phase 5.3: the statutory rate master under `PAYROLL.STATUTORY_MANAGE`.
+
+Phase 5.4: payslips — HR reads any computed run's payslips under `PAYROLL.RUN_VIEW`; an employee
+reads only their own finalised ones under `/me/payslips` (`PAYROLL.PAYSLIP_VIEW_OWN`, the caller's
+`employee_id` from the token, never a path parameter). The bank advice CSV needs
+`PAYROLL.BANK_ADVICE_DOWNLOAD`."""
 
 from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
@@ -27,11 +32,14 @@ from hrms.modules.payroll.dependencies import (
     get_employee_salary_service,
     get_pay_run_service,
     get_payroll_setting_service,
+    get_payslip_service,
     get_salary_component_service,
     get_salary_structure_service,
     get_statutory_rate_service,
 )
 from hrms.modules.payroll.permissions import (
+    PAYROLL_BANK_ADVICE_DOWNLOAD,
+    PAYROLL_PAYSLIP_VIEW_OWN,
     PAYROLL_RUN_APPROVE,
     PAYROLL_RUN_PROCESS,
     PAYROLL_RUN_VIEW,
@@ -53,6 +61,8 @@ from hrms.modules.payroll.schemas import (
     PayRunRollback,
     PayRunUpdate,
     PayRunVarianceAcknowledge,
+    PayslipRead,
+    PayslipSummaryRead,
     SalaryBreakupPreviewInput,
     SalaryBreakupRead,
     SalaryComponentCreate,
@@ -72,6 +82,7 @@ from hrms.modules.payroll.service import (
     EmployeeSalaryService,
     PayrollSettingService,
     PayRunService,
+    PayslipService,
     SalaryComponentService,
     SalaryStructureService,
     StatutoryRateService,
@@ -93,6 +104,10 @@ _RunApprove = Annotated[object, Depends(require_permission(PAYROLL_RUN_APPROVE))
 _IfMatch = Annotated[str, Header(alias="If-Match")]
 _Statutory = Annotated[StatutoryRateService, Depends(get_statutory_rate_service)]
 _StatutoryScope = Annotated[object, Depends(require_permission(PAYROLL_STATUTORY_MANAGE))]
+_Payslips = Annotated[PayslipService, Depends(get_payslip_service)]
+_OwnPayslipScope = Annotated[object, Depends(require_permission(PAYROLL_PAYSLIP_VIEW_OWN))]
+_BankAdviceScope = Annotated[object, Depends(require_permission(PAYROLL_BANK_ADVICE_DOWNLOAD))]
+_User = Annotated[AuthenticatedUser, Depends(get_current_user)]
 
 
 def _meta() -> ResponseMeta:
@@ -699,4 +714,56 @@ async def verify_statutory_rate(
         actor_user_id=tenant.user_id,
         **_client(request),
     )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.4 — payslips and bank advice
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/payroll/pay-runs/{run_id}/employees/{employee_id}/payslip", status_code=status.HTTP_200_OK
+)
+async def get_pay_run_payslip(
+    run_id: UUID, employee_id: UUID, tenant: _Tenant, _scope: _RunView, service: _Payslips
+) -> DataEnvelope[PayslipRead]:
+    data = await service.get_for_run(tenant.company_id, run_id, employee_id)
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.get("/payroll/pay-runs/{run_id}/bank-advice", status_code=status.HTTP_200_OK)
+async def download_bank_advice(
+    run_id: UUID,
+    request: Request,
+    tenant: _Tenant,
+    _scope: _BankAdviceScope,
+    service: _Payslips,
+) -> Response:
+    filename, content = await service.bank_advice(
+        tenant.company_id, run_id, actor_user_id=tenant.user_id, **_client(request)
+    )
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/me/payslips", status_code=status.HTTP_200_OK)
+async def list_my_payslips(
+    tenant: _Tenant, user: _User, _scope: _OwnPayslipScope, service: _Payslips
+) -> ListEnvelope[PayslipSummaryRead]:
+    data = await service.list_own(tenant.company_id, user.employee_id)
+    return ListEnvelope(data=data, meta=_meta())
+
+
+@router.get("/me/payslips/{run_id}", status_code=status.HTTP_200_OK)
+async def get_my_payslip(
+    run_id: UUID, tenant: _Tenant, user: _User, _scope: _OwnPayslipScope, service: _Payslips
+) -> DataEnvelope[PayslipRead]:
+    data = await service.get_own(tenant.company_id, run_id, user.employee_id)
     return DataEnvelope(data=data, meta=_meta())

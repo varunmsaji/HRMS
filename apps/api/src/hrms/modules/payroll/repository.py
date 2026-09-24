@@ -543,6 +543,22 @@ class PayRunRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def list_final_for_employee(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[tuple[PayRun, PayRunEmployee]]:
+        """Payroll 5.4 — the employee's rows in `FINALISED`/`PAID` runs, newest month first."""
+        stmt = (
+            select(PayRun, PayRunEmployee)
+            .join(PayRunEmployee, PayRunEmployee.pay_run_id == PayRun.id)
+            .where(
+                PayRun.company_id == company_id,
+                PayRun.status.in_(("FINALISED", "PAID")),
+                PayRunEmployee.employee_id == employee_id,
+            )
+            .order_by(PayRun.period_month.desc())
+        )
+        return [(run, row) for run, row in (await session.execute(stmt)).all()]
+
     async def get_employee(
         self, session: AsyncSession, *, company_id: UUID, run_id: UUID, employee_id: UUID
     ) -> PayRunEmployee | None:

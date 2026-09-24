@@ -14,6 +14,7 @@ import {
   Clock,
   Coins,
   FileClock,
+  FileText,
   LayoutDashboard,
   Landmark,
   Layers,
@@ -56,6 +57,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/me", label: "My Profile", icon: UserCircle, requiresEmployeeId: true },
+  { href: "/app/me/payslips", label: "My Payslips", icon: FileText, requiresEmployeeId: true },
   { href: "/app/employees", label: "Employees", icon: Users },
   { href: "/app/onboarding", label: "Onboarding", icon: UserPlus },
   { href: "/app/rosters", label: "Shift Rosters", icon: CalendarCheck },

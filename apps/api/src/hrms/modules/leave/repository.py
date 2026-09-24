@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import CursorResult, delete, func, or_, select, update
+from sqlalchemy import CursorResult, delete, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -473,7 +473,12 @@ class LeaveLedgerRepository:
         return list((await session.execute(stmt)).scalars().all())
 
     async def get_balances(
-        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        as_of: date | None = None,
     ) -> list[LeaveBalanceRow]:
         """Every active, `requires_balance` leave type for the company, left-joined against this
         one employee's ledger entries and summed — a type with zero activity still appears, with
@@ -492,7 +497,9 @@ class LeaveLedgerRepository:
                 LeaveLedgerEntry,
                 (LeaveLedgerEntry.leave_type_id == LeaveType.id)
                 & (LeaveLedgerEntry.employee_id == employee_id)
-                & (LeaveLedgerEntry.company_id == company_id),
+                & (LeaveLedgerEntry.company_id == company_id)
+                # Payroll 5.4 — a payslip shows the balance on its last day.
+                & (LeaveLedgerEntry.effective_date <= as_of if as_of is not None else true()),
             )
             .where(
                 LeaveType.company_id == company_id,

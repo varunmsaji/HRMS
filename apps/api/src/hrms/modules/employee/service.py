@@ -201,6 +201,23 @@ class EmployeeService:
         )
         return employee.uan_number if employee is not None else None
 
+    async def get_masked_pan(self, company_id: UUID, employee_id: UUID) -> str | None:
+        """Payroll 5.4 — the PAN as printed on a payslip: all but the last four characters
+        masked. Decrypts only the PAN (never Aadhaar); the plaintext never leaves this method."""
+        employee = await self._repo.get_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if employee is None or not employee.pan_number_enc:
+            return None
+        pan = await self._crypto.decrypt_column(
+            self._session,
+            ciphertext=employee.pan_number_enc,
+            table="employee",
+            column="pan_number_enc",
+            record_id=employee.id,
+        )
+        return ("*" * (len(pan) - 4) + pan[-4:]) if pan else None
+
     async def find_employee_by_code_or_email(
         self, company_id: UUID, value: str
     ) -> EmployeeRead | None:

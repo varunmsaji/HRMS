@@ -1120,6 +1120,17 @@ class LeaveLedgerService:
         self._app_repo = LeaveApplicationRepository()
         self._policy_repo = LeavePolicyRepository()
 
+    async def balances_as_of(
+        self, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> list[tuple[str, str, Decimal]]:
+        """Payroll 5.4 — `(leave type code, name, balance)` for every balance-tracked leave type,
+        counting only ledger entries effective on or before `as_of` (the payslip's month end).
+        Internal, unscoped cross-module fact query."""
+        rows = await self._repo.get_balances(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+        )
+        return [(row.leave_type_code, row.leave_type_name, row.balance) for row in rows]
+
     async def list_encashments_between(
         self, company_id: UUID, date_from: date, date_to: date
     ) -> list[tuple[UUID, UUID, UUID, Decimal, date]]:

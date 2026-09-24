@@ -74,6 +74,7 @@ export default function PayRunDetailPage() {
   const { can } = usePermissions();
   const canProcess = can("PAYROLL.RUN_PROCESS");
   const canApprove = can("PAYROLL.RUN_APPROVE");
+  const canBankAdvice = can("PAYROLL.BANK_ADVICE_DOWNLOAD");
 
   const [run, setRun] = useState<PayRun | null>(null);
   const [employees, setEmployees] = useState<PayRunEmployee[]>([]);
@@ -204,6 +205,25 @@ export default function PayRunDetailPage() {
     }
   }
 
+  /** FR-PAY-018 — built on demand, never stored; the server audits each download. */
+  async function downloadBankAdvice() {
+    if (!run) return;
+    setBusy(true);
+    try {
+      const file = await apiClient.download(`/payroll/pay-runs/${run.id}/bank-advice`);
+      const url = URL.createObjectURL(file.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.filename ?? `bank-advice-${run.month}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast({ title: "Could not download", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleDelete() {
     if (!run) return;
     setBusy(true);
@@ -292,6 +312,16 @@ export default function PayRunDetailPage() {
                 }}
               >
                 Roll back
+              </Button>
+            ) : null}
+            {canBankAdvice && (run.status === "FINALISED" || run.status === "PAID") ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void downloadBankAdvice()}
+              >
+                Bank advice (CSV)
               </Button>
             ) : null}
             {canProcess && actions.remove ? (
@@ -462,13 +492,23 @@ export default function PayRunDetailPage() {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <button
-                          type="button"
-                          className="text-sm font-medium text-primary hover:underline"
-                          onClick={() => setDetailEmployeeId(employee.employee_id)}
-                        >
-                          View
-                        </button>
+                        <div className="flex justify-end gap-3">
+                          <button
+                            type="button"
+                            className="text-sm font-medium text-primary hover:underline"
+                            onClick={() => setDetailEmployeeId(employee.employee_id)}
+                          >
+                            View
+                          </button>
+                          {computed && employee.is_computed ? (
+                            <Link
+                              href={`/app/payroll/pay-runs/${run.id}/payslips/${employee.employee_id}`}
+                              className="text-sm font-medium text-primary hover:underline"
+                            >
+                              Payslip
+                            </Link>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}

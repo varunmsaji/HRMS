@@ -98,6 +98,10 @@ from hrms.modules.payroll.schemas import (
     PayRunRollback,
     PayRunUpdate,
     PayRunVarianceAcknowledge,
+    PayslipLeaveBalanceRead,
+    PayslipLineRead,
+    PayslipRead,
+    PayslipSummaryRead,
     SalaryBreakupLineRead,
     SalaryBreakupPreviewInput,
     SalaryBreakupRead,
@@ -126,6 +130,7 @@ from hrms.modules.payroll.schemas import (
     statutory_rate_to_read,
     validate_statutory_parameters,
 )
+from hrms.modules.payroll.words import rupees_in_words
 from hrms.shared.business_time import business_today
 
 if TYPE_CHECKING:
@@ -2409,6 +2414,21 @@ class PayRunService:
         self._require_status(run, "APPROVED")
         await self._assert_attendance_unchanged(run)
         before = pay_run_to_read(run)
+        # Phase 5.4 — freeze each payslip's header facts and leave balances while the run can
+        # still be written; the status-guarded transition below then makes them permanent.
+        payslips = PayslipService(self._session)
+        now = datetime.now(UTC)
+        for employee in await self._repo.list_employees(
+            self._session, company_id=company_id, run_id=run_id
+        ):
+            await self._repo.update_employee(
+                self._session,
+                company_id=company_id,
+                run_id=run_id,
+                row_id=employee.id,
+                values={"payslip_details": await payslips.details(run, employee.employee_id)},
+                now=now,
+            )
         updated = await self._transition(
             run,
             values={
@@ -2869,3 +2889,263 @@ class StatutoryRateService:
                 else None
             )
         return rates
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.4 — payslips and bank advice
+# ---------------------------------------------------------------------------
+
+_FINAL_STATUSES = ("FINALISED", "PAID")
+_PAYSLIP_STATUSES = ("COMPUTED", "APPROVED", *_FINAL_STATUSES)
+
+
+def _csv_cell(value: str) -> str:
+    """Neutralises spreadsheet formula injection in a free-text cell."""
+    return f"'{value}" if value[:1] in ("=", "+", "-", "@") else value
+
+
+class PayslipService:
+    """FR-PAY-017 — payslips. The figures come from the run's lines and snapshot; the header
+    facts (designation, department, joining date, masked PAN, legal entity) and month-end leave
+    balances are captured into `payslip_details` when the run is finalised, so a published
+    payslip never changes. Employees see only their own, and only from finalised runs; HR can
+    preview a computed run's payslips (`is_final` false)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = PayRunRepository()
+        self._audit = AuditService()
+
+    async def details(self, run: PayRun, employee_id: UUID) -> dict[str, Any]:
+        from hrms.modules.employee.service import (
+            EmployeeAssignmentService,
+            EmployeeService,
+            EmploymentService,
+        )
+        from hrms.modules.leave.service import LeaveLedgerService
+        from hrms.modules.organisation.service import OrganisationService
+
+        company_id = run.company_id
+        org = OrganisationService(self._session)
+        entity = await org.get_legal_entity(company_id, run.legal_entity_id)
+        company = await org.get_company_profile(company_id)
+        assignment = await EmployeeAssignmentService(self._session).get_assignment_as_of(
+            company_id, employee_id, run.period_end
+        )
+        designation = department = None
+        if assignment is not None and assignment.designation_id is not None:
+            designation = (await org.get_designation(company_id, assignment.designation_id)).title
+        if assignment is not None and assignment.department_id is not None:
+            department = (await org.get_department(company_id, assignment.department_id)).name
+        employment = await EmploymentService(self._session).get_latest_employment_on_or_before(
+            company_id, employee_id, run.period_end
+        )
+        balances = await LeaveLedgerService(self._session).balances_as_of(
+            company_id, employee_id, run.period_end
+        )
+        return {
+            "company_name": company.legal_name or company.name,
+            "legal_entity": {
+                "name": entity.name,
+                "address": entity.registered_address,
+                "pan": entity.pan,
+                "tan": entity.tan,
+            },
+            "designation": designation,
+            "department": department,
+            "date_of_joining": employment.joining_date.isoformat() if employment else None,
+            "pan_masked": await EmployeeService(self._session).get_masked_pan(
+                company_id, employee_id
+            ),
+            "leave_balances": [
+                {"code": code, "name": name, "balance": format(balance.normalize(), "f")}
+                for code, name, balance in balances
+            ],
+        }
+
+    async def _build(self, run: PayRun, row: PayRunEmployee) -> PayslipRead:
+        details = row.payslip_details or await self.details(run, row.employee_id)
+        lines = await self._repo.list_lines(
+            self._session, company_id=run.company_id, run_id=run.id, employee_id=row.employee_id
+        )
+
+        def of(*types: str) -> list[PayslipLineRead]:
+            return [
+                PayslipLineRead(
+                    component_code=line.component_code,
+                    component_name=line.component_name,
+                    full_monthly_minor=line.full_monthly_minor,
+                    amount_minor=line.amount_minor,
+                )
+                for line in lines
+                if line.line_type in types
+            ]
+
+        bank = row.snapshot.get("bank") or {}
+        statutory = row.snapshot.get("statutory") or {}
+        profile = statutory.get("profile") or {}
+        entity = details.get("legal_entity") or {}
+        joining = details.get("date_of_joining")
+        return PayslipRead(
+            pay_run_id=run.id,
+            month=run.period_month.strftime("%Y-%m"),
+            period_start=run.period_start,
+            period_end=run.period_end,
+            pay_date=run.pay_date,
+            status=run.status,
+            is_final=run.status in _FINAL_STATUSES,
+            company_name=details.get("company_name"),
+            legal_entity_name=entity.get("name"),
+            legal_entity_address=entity.get("address"),
+            legal_entity_pan=entity.get("pan"),
+            legal_entity_tan=entity.get("tan"),
+            employee_id=row.employee_id,
+            employee_code=row.employee_code,
+            employee_name=row.employee_name,
+            designation=details.get("designation"),
+            department=details.get("department"),
+            date_of_joining=date.fromisoformat(joining) if joining else None,
+            pan_masked=details.get("pan_masked"),
+            uan_number=(statutory.get("employee") or {}).get("uan_number"),
+            esi_ip_number=profile.get("esi_ip_number")
+            if profile.get("is_esi_applicable")
+            else None,
+            payment_mode=bank.get("payment_mode"),
+            bank_name=bank.get("bank_name"),
+            account_last4=bank.get("account_last4"),
+            days_in_month=run.days_in_month,
+            paid_days=format(row.paid_days.normalize(), "f") if row.paid_days is not None else None,
+            lop_days=format(row.lop_days.normalize(), "f") if row.lop_days is not None else None,
+            earnings=of("EARNING"),
+            deductions=of("DEDUCTION", "ROUNDING"),
+            employer_contributions=of("EMPLOYER_CONTRIBUTION"),
+            gross_minor=row.gross_minor,
+            deductions_minor=row.deductions_minor,
+            net_minor=row.net_minor,
+            net_in_words=rupees_in_words(row.net_minor),
+            leave_balances=[
+                PayslipLeaveBalanceRead(**balance) for balance in details.get("leave_balances", [])
+            ],
+        )
+
+    async def get_for_run(self, company_id: UUID, run_id: UUID, employee_id: UUID) -> PayslipRead:
+        """HR view (`PAYROLL.RUN_VIEW`) — any computed run; a preview until finalised."""
+        run = await self._repo.get(self._session, company_id=company_id, run_id=run_id)
+        if run is None:
+            raise PayRunNotFoundError()
+        if run.status not in _PAYSLIP_STATUSES:
+            raise PayRunInvalidTransitionError("Payslips exist once the pay run is computed")
+        row = await self._repo.get_employee(
+            self._session, company_id=company_id, run_id=run_id, employee_id=employee_id
+        )
+        if row is None:
+            raise PayRunEmployeeNotFoundError()
+        return await self._build(run, row)
+
+    async def list_own(
+        self, company_id: UUID, employee_id: UUID | None
+    ) -> list[PayslipSummaryRead]:
+        if employee_id is None:
+            return []
+        rows = await self._repo.list_final_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [
+            PayslipSummaryRead(
+                pay_run_id=run.id,
+                month=run.period_month.strftime("%Y-%m"),
+                legal_entity_id=run.legal_entity_id,
+                pay_date=run.pay_date,
+                net_minor=employee.net_minor,
+                status=run.status,
+            )
+            for run, employee in rows
+        ]
+
+    async def get_own(
+        self, company_id: UUID, run_id: UUID, employee_id: UUID | None
+    ) -> PayslipRead:
+        """Self-service — only the caller's own payslip, only from a finalised run; anything
+        else is indistinguishable from not found."""
+        run = await self._repo.get(self._session, company_id=company_id, run_id=run_id)
+        if employee_id is None or run is None or run.status not in _FINAL_STATUSES:
+            raise PayRunNotFoundError("Payslip not found")
+        row = await self._repo.get_employee(
+            self._session, company_id=company_id, run_id=run_id, employee_id=employee_id
+        )
+        if row is None:
+            raise PayRunNotFoundError("Payslip not found")
+        return await self._build(run, row)
+
+    async def bank_advice(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> tuple[str, str]:
+        """FR-PAY-018 — a generic bank transfer file (CSV) for a finalised run: every employee
+        paid by bank transfer with a positive net pay. Built on demand from the encrypted bank
+        record the snapshot references and never stored; each download is audited (without
+        account numbers). Returns `(filename, csv text)`."""
+        import csv
+        import io
+
+        from hrms.modules.employee.service import EmployeeBankService
+        from hrms.modules.organisation.service import OrganisationService
+
+        run = await self._repo.get(self._session, company_id=company_id, run_id=run_id)
+        if run is None:
+            raise PayRunNotFoundError()
+        if run.status not in _FINAL_STATUSES:
+            raise PayRunInvalidTransitionError("The bank advice exists once the run is finalised")
+        banks = EmployeeBankService(self._session)
+        month_label = run.period_month.strftime("%b %Y")
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([
+            "Employee code", "Employee name", "Account holder", "Account number", "IFSC",
+            "Bank", "Amount", "Narration",
+        ])  # fmt: skip
+        count = total = skipped = 0
+        for row in await self._repo.list_employees(
+            self._session, company_id=company_id, run_id=run_id
+        ):
+            bank = row.snapshot.get("bank") or {}
+            if row.net_minor <= 0 or bank.get("payment_mode") != "BANK":
+                skipped += int(row.net_minor > 0)
+                continue
+            record = await banks.get_bank(
+                company_id, row.employee_id, UUID(bank["employee_bank_id"])
+            )
+            writer.writerow([
+                _csv_cell(row.employee_code or ""),
+                _csv_cell(row.employee_name or ""),
+                _csv_cell(record.account_holder_name or row.employee_name or ""),
+                record.account_number_enc or "",
+                record.ifsc or "",
+                _csv_cell(record.bank_name or ""),
+                f"{row.net_minor // 100}.{row.net_minor % 100:02d}",
+                f"Salary {month_label}",
+            ])  # fmt: skip
+            count += 1
+            total += row.net_minor
+        entity = await OrganisationService(self._session).get_legal_entity(
+            company_id, run.legal_entity_id
+        )
+        slug = "".join(ch if ch.isalnum() else "-" for ch in entity.name.lower()).strip("-")
+        filename = f"bank-advice-{slug or 'entity'}-{run.period_month.strftime('%Y-%m')}.csv"
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="PAYROLL_BANK_ADVICE_DOWNLOADED",
+            entity_type="pay_run",
+            entity_id=run_id,
+            after={"rows": count, "total_minor": total, "not_by_bank_transfer": skipped},
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return filename, buffer.getvalue()

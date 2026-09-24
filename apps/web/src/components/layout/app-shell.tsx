@@ -17,7 +17,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <aside className="hidden w-60 shrink-0 border-r border-border bg-surface md:block">
+      <aside className="hidden w-60 shrink-0 border-r border-border bg-surface md:block print:hidden">
         <div className="flex h-14 items-center border-b border-border px-4">
           <Link href="/app/dashboard" className="text-md font-semibold text-foreground">
             HRMS Platform
@@ -27,7 +27,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4">
+        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4 print:hidden">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
@@ -43,7 +43,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <UserMenu />
         </header>
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 print:p-0">
           <div className="mx-auto w-full max-w-[1280px]">{children}</div>
         </main>
       </div>

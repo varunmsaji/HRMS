@@ -816,3 +816,71 @@ def statutory_rate_to_read(row: "StatutoryRate") -> StatutoryRateRead:
         created_at=_format_timestamp(row.created_at) or "",
         updated_at=_format_timestamp(row.updated_at) or "",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.4 — payslips
+# ---------------------------------------------------------------------------
+
+
+class PayslipLineRead(BaseModel):
+    component_code: str
+    component_name: str
+    full_monthly_minor: int | None
+    amount_minor: int
+
+
+class PayslipLeaveBalanceRead(BaseModel):
+    code: str
+    name: str
+    balance: str
+
+
+class PayslipRead(BaseModel):
+    """One employee's payslip for one pay run (FR-PAY-017). `is_final` is false for an HR preview
+    of a run not yet finalised — employees only ever see final ones."""
+
+    pay_run_id: UUID
+    month: str
+    period_start: date
+    period_end: date
+    pay_date: date
+    status: str
+    is_final: bool
+    company_name: str | None
+    legal_entity_name: str | None
+    legal_entity_address: str | None
+    legal_entity_pan: str | None
+    legal_entity_tan: str | None
+    employee_id: UUID
+    employee_code: str | None
+    employee_name: str | None
+    designation: str | None
+    department: str | None
+    date_of_joining: date | None
+    pan_masked: str | None
+    uan_number: str | None
+    esi_ip_number: str | None
+    payment_mode: str | None
+    bank_name: str | None
+    account_last4: str | None
+    days_in_month: int
+    paid_days: str | None
+    lop_days: str | None
+    earnings: list[PayslipLineRead]
+    deductions: list[PayslipLineRead]
+    employer_contributions: list[PayslipLineRead]
+    gross_minor: int
+    deductions_minor: int
+    net_minor: int
+    net_in_words: str
+    leave_balances: list[PayslipLeaveBalanceRead]
+
+
+class PayslipSummaryRead(BaseModel):
+    pay_run_id: UUID
+    month: str
+    legal_entity_id: UUID
+    pay_date: date
+    net_minor: int
+    status: str

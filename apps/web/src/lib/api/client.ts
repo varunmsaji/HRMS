@@ -22,6 +22,14 @@ interface RequestOptions {
   /** Return the raw envelope instead of unwrapping `.data` — list endpoints need `.pagination`
    * too (API-01). */
   rawEnvelope?: boolean;
+  /** Return the response body as a file (`DownloadedFile`) instead of JSON. */
+  responseType?: "json" | "file";
+}
+
+/** A file returned by `apiClient.download` — the filename comes from `Content-Disposition`. */
+export interface DownloadedFile {
+  blob: Blob;
+  filename: string | null;
 }
 
 /** 1-indexed `page`/`per_page` query params for a paginated list endpoint (API-01). */
@@ -84,6 +92,13 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     });
   } catch {
     throw new NetworkError();
+  }
+
+  if (options.responseType === "file" && response.ok) {
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    const file: DownloadedFile = { blob: await response.blob(), filename: match?.[1] ?? null };
+    return file as T;
   }
 
   if (response.status === 204) {
@@ -190,4 +205,7 @@ export const apiClient = {
     apiRequest<T>(path, { ...options, method: "PUT", body }),
   delete: <T>(path: string, options?: Omit<RequestOptions, "method" | "body">) =>
     apiRequest<T>(path, { ...options, method: "DELETE" }),
+  /** GET a file (CSV, PDF, …) with the usual auth and refresh handling. */
+  download: (path: string) =>
+    apiRequest<DownloadedFile>(path, { method: "GET", responseType: "file" }),
 };

@@ -10,6 +10,7 @@ from hrms.modules.payroll.service import (
     EmployeeSalaryService,
     PayrollSettingService,
     PayRunService,
+    PayslipService,
     SalaryComponentService,
     SalaryStructureService,
     StatutoryRateService,
@@ -50,3 +51,9 @@ def get_statutory_rate_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> StatutoryRateService:
     return StatutoryRateService(session)
+
+
+def get_payslip_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> PayslipService:
+    return PayslipService(session)

@@ -398,3 +398,61 @@ export function summariseStatutoryRate(rate: StatutoryRate): string {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5.4 — payslips
+// ---------------------------------------------------------------------------
+
+export interface PayslipLine {
+  component_code: string;
+  component_name: string;
+  full_monthly_minor: number | null;
+  amount_minor: number;
+}
+
+export interface Payslip {
+  pay_run_id: string;
+  month: string;
+  period_start: string;
+  period_end: string;
+  pay_date: string;
+  status: PayRunStatus;
+  is_final: boolean;
+  company_name: string | null;
+  legal_entity_name: string | null;
+  legal_entity_address: string | null;
+  legal_entity_pan: string | null;
+  legal_entity_tan: string | null;
+  employee_id: string;
+  employee_code: string | null;
+  employee_name: string | null;
+  designation: string | null;
+  department: string | null;
+  date_of_joining: string | null;
+  pan_masked: string | null;
+  uan_number: string | null;
+  esi_ip_number: string | null;
+  payment_mode: string | null;
+  bank_name: string | null;
+  account_last4: string | null;
+  days_in_month: number;
+  paid_days: string | null;
+  lop_days: string | null;
+  earnings: PayslipLine[];
+  deductions: PayslipLine[];
+  employer_contributions: PayslipLine[];
+  gross_minor: number;
+  deductions_minor: number;
+  net_minor: number;
+  net_in_words: string;
+  leave_balances: { code: string; name: string; balance: string }[];
+}
+
+export interface PayslipSummary {
+  pay_run_id: string;
+  month: string;
+  legal_entity_id: string;
+  pay_date: string;
+  net_minor: number;
+  status: PayRunStatus;
+}

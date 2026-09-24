@@ -10,13 +10,19 @@ variances, roll back); `RUN_APPROVE` approves, finalises and marks it paid. D9 â
 the user who last computed a run can never approve it, whatever permissions they hold.
 
 Phase 5.3: `STATUTORY_MANAGE` edits the statutory rate master and records compliance sign-off
-(verification) of each rate."""
+(verification) of each rate.
+
+Phase 5.4: `PAYSLIP_VIEW_OWN` (the EMPLOYEE role, SELF) reads one's own finalised payslips;
+`BANK_ADVICE_DOWNLOAD` (COMPANY_ADMIN only) downloads the bank file, which carries full account
+numbers."""
 
 PAYROLL_SETUP_MANAGE = "PAYROLL.SETUP_MANAGE"
 PAYROLL_RUN_VIEW = "PAYROLL.RUN_VIEW"
 PAYROLL_RUN_PROCESS = "PAYROLL.RUN_PROCESS"
 PAYROLL_RUN_APPROVE = "PAYROLL.RUN_APPROVE"
 PAYROLL_STATUTORY_MANAGE = "PAYROLL.STATUTORY_MANAGE"
+PAYROLL_PAYSLIP_VIEW_OWN = "PAYROLL.PAYSLIP_VIEW_OWN"
+PAYROLL_BANK_ADVICE_DOWNLOAD = "PAYROLL.BANK_ADVICE_DOWNLOAD"
 
 PAYROLL_PERMISSIONS: list[tuple[str, str, str]] = [
     (
@@ -35,6 +41,12 @@ PAYROLL_PERMISSIONS: list[tuple[str, str, str]] = [
         PAYROLL_STATUTORY_MANAGE,
         "PAYROLL",
         "Manage and verify statutory rates (PF, ESI, professional tax, LWF)",
+    ),
+    (PAYROLL_PAYSLIP_VIEW_OWN, "PAYROLL", "View one's own payslips from finalised pay runs"),
+    (
+        PAYROLL_BANK_ADVICE_DOWNLOAD,
+        "PAYROLL",
+        "Download a finalised pay run's bank advice (full account numbers)",
     ),
 ]
 

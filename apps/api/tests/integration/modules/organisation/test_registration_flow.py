@@ -325,6 +325,9 @@ async def test_registration_success_full_row_graph(
                 "PAYROLL.RUN_APPROVE",
                 # Payroll Phase 5.3 — statutory rate master.
                 "PAYROLL.STATUTORY_MANAGE",
+                # Payroll Phase 5.4 — payslips and bank advice.
+                "PAYROLL.PAYSLIP_VIEW_OWN",
+                "PAYROLL.BANK_ADVICE_DOWNLOAD",
             }
 
             setup_progress = (
@@ -687,6 +690,10 @@ async def test_registration_seeds_hr_admin_approval_grants(
         assert grants["PAYROLL.RUN_VIEW"] == "COMPANY"
         assert grants["PAYROLL.RUN_PROCESS"] == "COMPANY"
         assert grants["PAYROLL.STATUTORY_MANAGE"] == "COMPANY"
+        assert "PAYROLL.BANK_ADVICE_DOWNLOAD" not in grants
+        # Payroll 5.4 — every employee reads their own payslips.
+        employee_grants = await _role_grants(company_id, "EMPLOYEE")
+        assert employee_grants["PAYROLL.PAYSLIP_VIEW_OWN"] == "SELF"
         # D9 — approving a pay run stays with COMPANY_ADMIN.
         assert "PAYROLL.RUN_APPROVE" not in grants
     finally:

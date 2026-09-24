@@ -243,6 +243,32 @@ confirmation. As built:
 - Bank advice: generic CSV/NEFT file, encrypted download with access log. Bank-specific formats
   later.
 
+**Status: built 2026-09-24** (migration `20261004108000`). As built:
+
+- **Payslip data** comes from the run's lines and input snapshot. At finalise, each employee's
+  `pay_run_employee.payslip_details` captures the header facts — company and legal entity (name,
+  address, PAN, TAN), designation, department, joining date, masked PAN (only the last four
+  characters; Aadhaar is never decrypted) — and leave balances on the last day of the month.
+  A published payslip therefore never changes. Net pay is also shown in words (Indian numbering,
+  `payroll/words.py`).
+- **Who sees what:** HR (`PAYROLL.RUN_VIEW`) views any computed run's payslips — a preview
+  (`is_final` false) until the run is finalised. Employees (`PAYROLL.PAYSLIP_VIEW_OWN`, granted
+  to the EMPLOYEE role at SELF scope) list and open only their own, only from `FINALISED`/`PAID`
+  runs, via `/v1/me/payslips` using the employee id from their token; anything else is a 404.
+- **PDF:** the payslip is a print-ready web page — "Print / save as PDF" uses the browser, and the
+  app shell is hidden in print. No server-side PDF library was added; generating PDFs on the
+  server (e.g. for emailing payslips) needs a new dependency and is a follow-up.
+- **Bank advice** (`GET /v1/payroll/pay-runs/{id}/bank-advice`, `PAYROLL.BANK_ADVICE_DOWNLOAD`,
+  COMPANY_ADMIN only): a generic CSV (code, name, account holder, account number, IFSC, bank,
+  amount, narration) for every employee paid by bank transfer with a positive net, for a
+  `FINALISED`/`PAID` run. The full account number is decrypted from the bank record the snapshot
+  references; the file is built on demand, never stored, sent with `Cache-Control: no-store`,
+  free-text cells are guarded against spreadsheet formula injection, and every download writes a
+  `PAYROLL_BANK_ADVICE_DOWNLOADED` audit row (row count and total, no account numbers). Cash and
+  cheque employees are left out, to be paid separately. Bank-specific formats are a follow-up.
+- Web: **My Payslips** in the main nav (employees with a linked record); a **Payslip** link per
+  employee and a **Bank advice (CSV)** button on the pay run page.
+
 ### Phase 5.5 — Arrears
 
 *FR-PAY-010, AC-PAY-023.1.*

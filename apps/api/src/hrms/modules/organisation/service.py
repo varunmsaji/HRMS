@@ -491,6 +491,7 @@ class OrganisationService:
         # Same live-registration-path rationale as `onboarding_permission_rows` above.
         from hrms.modules.payroll.permissions import (
             PAYROLL_HR_ADMIN_PERMISSIONS,
+            PAYROLL_PAYSLIP_VIEW_OWN,
             PAYROLL_PERMISSIONS,
         )
 
@@ -754,6 +755,15 @@ class OrganisationService:
                 permission_id=employee_permission_by_code[code].id,
                 data_scope=DataScopeLevel.SELF,
             )
+        # Payroll 5.4 — every employee reads their own finalised payslips.
+        for perm in payroll_permission_rows:
+            if perm.code == PAYROLL_PAYSLIP_VIEW_OWN:
+                await self._repo.insert_role_permission(
+                    self._session,
+                    role_id=employee_role.id,
+                    permission_id=perm.id,
+                    data_scope=DataScopeLevel.SELF,
+                )
 
         await self._repo.insert_setup_progress(self._session, company_id=company_id, now=now)
 
