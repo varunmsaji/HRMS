@@ -2,7 +2,10 @@
 
 Phase 5.1: salary setup. Components, structures and salary assignment are COMPANY-scoped config
 gated by `PAYROLL.SETUP_MANAGE`. An employee's salary history and breakup are compensation data,
-read under `EMPLOYEE.VIEW_COMPENSATION` with its `DataScope` applied to the target employee."""
+read under `EMPLOYEE.VIEW_COMPENSATION` with its `DataScope` applied to the target employee.
+
+Phase 5.2: pay runs — `PAYROLL.RUN_VIEW` to read, `PAYROLL.RUN_PROCESS` to prepare,
+`PAYROLL.RUN_APPROVE` to approve, finalise and mark paid. Lifecycle transitions carry `If-Match`."""
 
 from datetime import date
 from typing import Annotated
@@ -20,16 +23,32 @@ from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.payroll.dependencies import (
     get_employee_salary_service,
+    get_pay_run_service,
+    get_payroll_setting_service,
     get_salary_component_service,
     get_salary_structure_service,
 )
-from hrms.modules.payroll.permissions import PAYROLL_SETUP_MANAGE
+from hrms.modules.payroll.permissions import (
+    PAYROLL_RUN_APPROVE,
+    PAYROLL_RUN_PROCESS,
+    PAYROLL_RUN_VIEW,
+    PAYROLL_SETUP_MANAGE,
+)
 from hrms.modules.payroll.schemas import (
     EmployeeSalaryBreakupRead,
     EmployeeSalaryBulkAssign,
     EmployeeSalaryBulkResult,
     EmployeeSalaryCreate,
     EmployeeSalaryRead,
+    PayrollSettingRead,
+    PayrollSettingUpdate,
+    PayRunCreate,
+    PayRunEmployeeDetailRead,
+    PayRunEmployeeRead,
+    PayRunRead,
+    PayRunRollback,
+    PayRunUpdate,
+    PayRunVarianceAcknowledge,
     SalaryBreakupPreviewInput,
     SalaryBreakupRead,
     SalaryComponentCreate,
@@ -44,6 +63,8 @@ from hrms.modules.payroll.schemas import (
 )
 from hrms.modules.payroll.service import (
     EmployeeSalaryService,
+    PayrollSettingService,
+    PayRunService,
     SalaryComponentService,
     SalaryStructureService,
 )
@@ -56,6 +77,12 @@ _Tenant = Annotated[TenantContext, Depends(get_tenant_context)]
 _Components = Annotated[SalaryComponentService, Depends(get_salary_component_service)]
 _Structures = Annotated[SalaryStructureService, Depends(get_salary_structure_service)]
 _Salaries = Annotated[EmployeeSalaryService, Depends(get_employee_salary_service)]
+_Settings = Annotated[PayrollSettingService, Depends(get_payroll_setting_service)]
+_Runs = Annotated[PayRunService, Depends(get_pay_run_service)]
+_RunView = Annotated[object, Depends(require_permission(PAYROLL_RUN_VIEW))]
+_RunProcess = Annotated[object, Depends(require_permission(PAYROLL_RUN_PROCESS))]
+_RunApprove = Annotated[object, Depends(require_permission(PAYROLL_RUN_APPROVE))]
+_IfMatch = Annotated[str, Header(alias="If-Match")]
 
 
 def _meta() -> ResponseMeta:
@@ -340,5 +367,256 @@ async def bulk_assign_salary_structure(
 ) -> DataEnvelope[EmployeeSalaryBulkResult]:
     data = await service.bulk_assign(
         tenant.company_id, body, actor_user_id=tenant.user_id, **_client(request)
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.2 — settings and pay runs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/payroll/settings", status_code=status.HTTP_200_OK)
+async def get_payroll_settings(
+    tenant: _Tenant, _scope: _SetupScope, service: _Settings
+) -> DataEnvelope[PayrollSettingRead]:
+    return DataEnvelope(data=await service.get(tenant.company_id), meta=_meta())
+
+
+@router.put("/payroll/settings", status_code=status.HTTP_200_OK)
+async def update_payroll_settings(
+    body: PayrollSettingUpdate,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _SetupScope,
+    service: _Settings,
+) -> DataEnvelope[PayrollSettingRead]:
+    data = await service.update(
+        tenant.company_id,
+        body,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.get("/payroll/pay-runs", status_code=status.HTTP_200_OK)
+async def list_pay_runs(
+    tenant: _Tenant,
+    _scope: _RunView,
+    service: _Runs,
+    legal_entity_id: Annotated[UUID | None, Query()] = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+) -> ListEnvelope[PayRunRead]:
+    data = await service.list_runs(
+        tenant.company_id, legal_entity_id=legal_entity_id, status=status_filter
+    )
+    return ListEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/pay-runs", status_code=status.HTTP_201_CREATED)
+async def create_pay_run(
+    body: PayRunCreate,
+    request: Request,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.create(
+        tenant.company_id, body, actor_user_id=tenant.user_id, **_client(request)
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.get("/payroll/pay-runs/{run_id}", status_code=status.HTTP_200_OK)
+async def get_pay_run(
+    run_id: UUID, tenant: _Tenant, _scope: _RunView, service: _Runs
+) -> DataEnvelope[PayRunRead]:
+    return DataEnvelope(data=await service.get(tenant.company_id, run_id), meta=_meta())
+
+
+@router.patch("/payroll/pay-runs/{run_id}", status_code=status.HTTP_200_OK)
+async def update_pay_run(
+    run_id: UUID,
+    body: PayRunUpdate,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.update(
+        tenant.company_id,
+        run_id,
+        body,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.delete("/payroll/pay-runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_pay_run(
+    run_id: UUID, request: Request, tenant: _Tenant, _scope: _RunProcess, service: _Runs
+) -> None:
+    await service.delete(
+        tenant.company_id, run_id, actor_user_id=tenant.user_id, **_client(request)
+    )
+
+
+@router.post("/payroll/pay-runs/{run_id}/lock-inputs", status_code=status.HTTP_200_OK)
+async def lock_pay_run_inputs(
+    run_id: UUID,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.lock_inputs(
+        tenant.company_id,
+        run_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/pay-runs/{run_id}/compute", status_code=status.HTTP_200_OK)
+async def compute_pay_run(
+    run_id: UUID,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.compute(
+        tenant.company_id,
+        run_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/pay-runs/{run_id}/approve", status_code=status.HTTP_200_OK)
+async def approve_pay_run(
+    run_id: UUID,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _RunApprove,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.approve(
+        tenant.company_id,
+        run_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/pay-runs/{run_id}/finalise", status_code=status.HTTP_200_OK)
+async def finalise_pay_run(
+    run_id: UUID,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _RunApprove,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.finalise(
+        tenant.company_id,
+        run_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/pay-runs/{run_id}/mark-paid", status_code=status.HTTP_200_OK)
+async def mark_pay_run_paid(
+    run_id: UUID,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _RunApprove,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.mark_paid(
+        tenant.company_id,
+        run_id,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/payroll/pay-runs/{run_id}/rollback", status_code=status.HTTP_200_OK)
+async def rollback_pay_run(
+    run_id: UUID,
+    body: PayRunRollback,
+    request: Request,
+    if_match: _IfMatch,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Runs,
+) -> DataEnvelope[PayRunRead]:
+    data = await service.rollback(
+        tenant.company_id,
+        run_id,
+        body,
+        expected_version=int(if_match),
+        actor_user_id=tenant.user_id,
+        **_client(request),
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.get("/payroll/pay-runs/{run_id}/employees", status_code=status.HTTP_200_OK)
+async def list_pay_run_employees(
+    run_id: UUID, tenant: _Tenant, _scope: _RunView, service: _Runs
+) -> ListEnvelope[PayRunEmployeeRead]:
+    return ListEnvelope(data=await service.list_employees(tenant.company_id, run_id), meta=_meta())
+
+
+@router.get("/payroll/pay-runs/{run_id}/employees/{employee_id}", status_code=status.HTTP_200_OK)
+async def get_pay_run_employee(
+    run_id: UUID, employee_id: UUID, tenant: _Tenant, _scope: _RunView, service: _Runs
+) -> DataEnvelope[PayRunEmployeeDetailRead]:
+    data = await service.get_employee(tenant.company_id, run_id, employee_id)
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post(
+    "/payroll/pay-runs/{run_id}/employees/{employee_id}/acknowledge-variance",
+    status_code=status.HTTP_200_OK,
+)
+async def acknowledge_pay_run_variance(
+    run_id: UUID,
+    employee_id: UUID,
+    body: PayRunVarianceAcknowledge,
+    request: Request,
+    tenant: _Tenant,
+    _scope: _RunProcess,
+    service: _Runs,
+) -> DataEnvelope[PayRunEmployeeRead]:
+    data = await service.acknowledge_variance(
+        tenant.company_id,
+        run_id,
+        employee_id,
+        body,
+        actor_user_id=tenant.user_id,
+        **_client(request),
     )
     return DataEnvelope(data=data, meta=_meta())

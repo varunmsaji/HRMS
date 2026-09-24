@@ -315,6 +315,21 @@ class LeaveLedgerRepository:
         await session.flush()
         return row
 
+    async def list_encashments_between(
+        self, session: AsyncSession, *, company_id: UUID, date_from: date, date_to: date
+    ) -> list[LeaveLedgerEntry]:
+        stmt = (
+            select(LeaveLedgerEntry)
+            .where(
+                LeaveLedgerEntry.company_id == company_id,
+                LeaveLedgerEntry.entry_type == "ENCASHMENT",
+                LeaveLedgerEntry.effective_date >= date_from,
+                LeaveLedgerEntry.effective_date <= date_to,
+            )
+            .order_by(LeaveLedgerEntry.effective_date, LeaveLedgerEntry.created_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def insert_if_absent(self, session: AsyncSession, *, data: dict[str, Any]) -> bool:
         """DAT-001 — for system-written entries guarded by a partial unique index (one
         `ACCRUAL`/`CARRY_FORWARD` per cycle, one `COMP_OFF_CREDIT` per overtime record). A

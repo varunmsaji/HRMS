@@ -1266,6 +1266,47 @@ class AttendanceDayRepository:
             )
         )
 
+    async def list_payable_overtime_for_period(
+        self, session: AsyncSession, *, company_id: UUID, attendance_period_id: UUID
+    ) -> list[tuple[UUID, str, Decimal | None, int]]:
+        """Payroll 5.2 (D3) — `(employee_id, ot_day_class, multiplier, minutes)` summed over the
+        days a `CLOSED` period locked: approved OT minutes that were not converted to comp-off
+        (a comp-off day is paid in leave, never also in money), grouped by the multiplier of the
+        overtime policy version that applied that day. `multiplier` is `None` when that version
+        has no rate row (or no multiplier) for the day class."""
+        stmt = (
+            select(
+                AttendanceDay.employee_id,
+                AttendanceDay.ot_day_class,
+                OvertimePolicyRateRow.multiplier_decimal,
+                func.sum(AttendanceDay.ot_minutes_approved),
+            )
+            .outerjoin(
+                OvertimePolicyRateRow,
+                (
+                    OvertimePolicyRateRow.policy_version_id
+                    == AttendanceDay.overtime_policy_version_id
+                )
+                & (OvertimePolicyRateRow.day_class == AttendanceDay.ot_day_class)
+                & (OvertimePolicyRateRow.company_id == AttendanceDay.company_id),
+            )
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.locked_period_id == attendance_period_id,
+                AttendanceDay.ot_minutes_approved > 0,
+                AttendanceDay.comp_off_minutes_earned == 0,
+            )
+            .group_by(
+                AttendanceDay.employee_id,
+                AttendanceDay.ot_day_class,
+                OvertimePolicyRateRow.multiplier_decimal,
+            )
+        )
+        return [
+            (row[0], row[1] or "NORMAL", row[2], int(row[3] or 0))
+            for row in (await session.execute(stmt)).all()
+        ]
+
     async def set_lock_time_incomplete_resolution(
         self,
         session: AsyncSession,
@@ -1902,6 +1943,25 @@ class AttendancePeriodRepository:
             .order_by(AttendancePeriod.period_start.desc())
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def get_for_range(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        legal_entity_id: UUID,
+        period_start: date,
+        period_end: date,
+    ) -> AttendancePeriod | None:
+        """The legal entity's period covering exactly `[period_start, period_end]`, if any (at
+        most one — periods of one entity never overlap)."""
+        stmt = select(AttendancePeriod).where(
+            AttendancePeriod.company_id == company_id,
+            AttendancePeriod.legal_entity_id == legal_entity_id,
+            AttendancePeriod.period_start == period_start,
+            AttendancePeriod.period_end == period_end,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     async def list_closed_overlapping(
         self, session: AsyncSession, *, company_id: UUID, date_from: date, date_to: date

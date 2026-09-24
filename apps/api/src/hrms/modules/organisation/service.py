@@ -489,7 +489,10 @@ class OrganisationService:
 
         # Payroll Phase 5.1 — `PAYROLL.*` (docs/modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md).
         # Same live-registration-path rationale as `onboarding_permission_rows` above.
-        from hrms.modules.payroll.permissions import PAYROLL_PERMISSIONS
+        from hrms.modules.payroll.permissions import (
+            PAYROLL_HR_ADMIN_PERMISSIONS,
+            PAYROLL_PERMISSIONS,
+        )
 
         payroll_permission_rows = [
             await self._repo.get_or_create_permission(
@@ -616,13 +619,14 @@ class OrganisationService:
         # operations" — granting it here at `COMPANY` scope is what actually lets that persona do
         # the job the role's name implies.
         # Decision 10 — HR cancels approved leave after it has started (employees only before).
-        # Payroll 5.1 — HR sets up salary structures and assigns salaries.
+        # Payroll 5.1/5.2 — HR sets up salaries and prepares pay runs; approving a run
+        # (`PAYROLL.RUN_APPROVE`) stays with COMPANY_ADMIN (D9).
         for perm in (
             attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
             attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_CANCEL_APPROVED],
-            *payroll_permission_rows,
+            *(p for p in payroll_permission_rows if p.code in PAYROLL_HR_ADMIN_PERMISSIONS),
         ):
             await self._repo.insert_role_permission(
                 self._session,

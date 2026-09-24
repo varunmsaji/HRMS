@@ -1,5 +1,8 @@
 """Business logic for the Payroll module — the public interface for other modules.
 
+Phase 5.2 (same plan): payroll settings and the monthly pay run (`PayRunService`), computed by
+the pure `engine.compute_employee` over inputs snapshotted at lock-inputs.
+
 Phase 5.1 (`docs/modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md`): salary components, salary
 structures (draft → publish, effective-dated) and employee salary assignment, plus the CTC
 breakup built on the pure `breakup.compute_breakup`.
@@ -9,10 +12,11 @@ new company and an existing one get exactly the same rows from one definition:
 the five system components, and — only while the company has no structure at all — two
 published structures, `STANDARD` (HRA 40 % of Basic) and `STANDARD_METRO` (HRA 50 %)."""
 
+import calendar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
-from typing import Any
+from decimal import ROUND_HALF_UP, Decimal
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -28,8 +32,24 @@ from hrms.modules.payroll.breakup import (
     compute_breakup,
     validate_structure,
 )
+from hrms.modules.payroll.engine import (
+    ERROR,
+    WARNING,
+    Issue,
+    compute_employee,
+    employee_input_from_snapshot,
+)
 from hrms.modules.payroll.exceptions import (
     EmployeeSalaryInvalidError,
+    PayRunAlreadyExistsError,
+    PayRunAttendanceChangedError,
+    PayRunBlockedError,
+    PayRunEmployeeNotFoundError,
+    PayRunInputsUnavailableError,
+    PayRunInvalidTransitionError,
+    PayRunLegalEntityInvalidError,
+    PayRunMakerCheckerError,
+    PayRunNotFoundError,
     SalaryBreakupUnavailableError,
     SalaryComponentCodeAlreadyExistsError,
     SalaryComponentNotFoundError,
@@ -44,6 +64,8 @@ from hrms.modules.payroll.exceptions import (
     StalePayrollResourceError,
 )
 from hrms.modules.payroll.models import (
+    PayRun,
+    PayRunEmployee,
     SalaryComponent,
     SalaryStructure,
     SalaryStructureLine,
@@ -51,6 +73,8 @@ from hrms.modules.payroll.models import (
 )
 from hrms.modules.payroll.repository import (
     EmployeeSalaryRepository,
+    PayrollSettingRepository,
+    PayRunRepository,
     SalaryComponentRepository,
     SalaryStructureRepository,
 )
@@ -61,6 +85,15 @@ from hrms.modules.payroll.schemas import (
     EmployeeSalaryBulkSkip,
     EmployeeSalaryCreate,
     EmployeeSalaryRead,
+    PayrollSettingRead,
+    PayrollSettingUpdate,
+    PayRunCreate,
+    PayRunEmployeeDetailRead,
+    PayRunEmployeeRead,
+    PayRunRead,
+    PayRunRollback,
+    PayRunUpdate,
+    PayRunVarianceAcknowledge,
     SalaryBreakupLineRead,
     SalaryBreakupPreviewInput,
     SalaryBreakupRead,
@@ -75,12 +108,19 @@ from hrms.modules.payroll.schemas import (
     SalaryStructureVersionPublish,
     SalaryStructureVersionRead,
     employee_salary_to_read,
+    pay_run_employee_to_read,
+    pay_run_line_to_read,
+    pay_run_to_read,
+    payroll_setting_to_read,
     salary_component_to_read,
     salary_structure_line_to_read,
     salary_structure_to_read,
     salary_structure_version_to_read,
 )
 from hrms.shared.business_time import business_today
+
+if TYPE_CHECKING:
+    from hrms.modules.attendance.service import PayrollPeriodInputs
 
 # ---------------------------------------------------------------------------
 # Defaults (D1/D2)
@@ -1247,3 +1287,1185 @@ class EmployeeSalaryService:
                 continue
             assigned.append(employee_id)
         return EmployeeSalaryBulkResult(assigned=assigned, skipped=skipped)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.2 — payroll settings and pay runs
+# ---------------------------------------------------------------------------
+
+
+class PayrollSettingService:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = PayrollSettingRepository()
+        self._audit = AuditService()
+
+    async def get(self, company_id: UUID) -> PayrollSettingRead:
+        row = await self._repo.get_or_create(
+            self._session, company_id=company_id, now=datetime.now(UTC)
+        )
+        return payroll_setting_to_read(row)
+
+    async def update(
+        self,
+        company_id: UUID,
+        body: PayrollSettingUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayrollSettingRead:
+        before = await self.get(company_id)
+        row = await self._repo.update(
+            self._session,
+            company_id=company_id,
+            values={"variance_threshold_percent": body.variance_threshold_percent},
+            expected_version=expected_version,
+            now=datetime.now(UTC),
+        )
+        if row is None:
+            raise StalePayrollResourceError(
+                "Payroll settings have been modified by another request",
+                current=before.model_dump(mode="json"),
+            )
+        after = payroll_setting_to_read(row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="PAYROLL_SETTING_UPDATED",
+            entity_type="payroll_setting",
+            entity_id=company_id,
+            before=before.model_dump(mode="json"),
+            after=after.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+
+def month_bounds(month: str) -> tuple[date, date, int]:
+    """`YYYY-MM` → `(first day, last day, days in month)`."""
+    year, number = (int(part) for part in month.split("-"))
+    days = calendar.monthrange(year, number)[1]
+    return date(year, number, 1), date(year, number, days), days
+
+
+def default_pay_date(period_end: date) -> date:
+    """D11 — the first weekday (Mon–Fri) after the month ends. Holidays are not consulted; the
+    date is editable on the run until it is finalised."""
+    day = period_end + timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day
+
+
+def _owning_entity(spans: list[tuple[UUID, date, date | None]], day: date) -> UUID | None:
+    """Decision 14's ownership rule for an employee-date (the same rule attendance periods use):
+    the entity of the employment covering it, else of the latest spell ended before it, else of
+    the first spell starting after it."""
+    covering = [le for le, start, end in spans if start <= day and (end is None or day <= end)]
+    if covering:
+        return covering[0]
+    before = [(end, le) for le, _start, end in spans if end is not None and end < day]
+    if before:
+        return max(before, key=lambda item: item[0])[1]
+    after = [(start, le) for le, start, _end in spans if start > day]
+    if after:
+        return min(after, key=lambda item: item[0])[1]
+    return None
+
+
+def _issue(code: str, message: str, severity: str = ERROR) -> dict[str, str]:
+    return Issue(code, severity, message).to_dict()
+
+
+_ROLLBACK_FROM: dict[str, tuple[str, ...]] = {
+    "DRAFT": ("INPUTS_LOCKED", "COMPUTED", "APPROVED"),
+    "INPUTS_LOCKED": ("COMPUTED", "APPROVED"),
+}
+
+_RESET_COMPUTED: dict[str, Any] = {
+    "is_computed": False,
+    "gross_minor": 0,
+    "deductions_minor": 0,
+    "employer_contributions_minor": 0,
+    "net_before_rounding_minor": 0,
+    "rounding_minor": 0,
+    "net_minor": 0,
+    "previous_net_minor": None,
+    "variance_percent": None,
+    "variance_flagged": False,
+    "variance_reason": None,
+    "variance_acknowledged_by_user_id": None,
+    "variance_acknowledged_at": None,
+}
+
+_RESET_RUN_TOTALS: dict[str, Any] = {
+    "gross_minor": 0,
+    "deductions_minor": 0,
+    "employer_contributions_minor": 0,
+    "net_minor": 0,
+    "variance_flag_count": 0,
+    "variance_open_count": 0,
+    "computed_at": None,
+    "computed_by_user_id": None,
+    "approved_at": None,
+    "approved_by_user_id": None,
+    "previous_pay_run_id": None,
+    "variance_threshold_percent": None,
+}
+
+
+class PayRunService:
+    """Payroll Phase 5.2 — the monthly pay run of one legal entity (plan §3–4, FR-PAY-007/008/
+    009/014/015/023/024/025).
+
+    - **lock inputs** (`DRAFT → INPUTS_LOCKED`): refuses unless the entity's attendance period
+      for exactly that month is `CLOSED` (PD-2); snapshots, per employee, the frozen summary, the
+      salary per segment of the month (structure version + breakup, or daily rate), statutory
+      applicability, payable overtime with multipliers, leave encashments and a bank reference.
+      Nothing after this reads live data.
+    - **compute** (`INPUTS_LOCKED`/`COMPUTED → COMPUTED`): `engine.compute_employee` over each
+      snapshot; validation issues; variance against the entity's previous finalised run.
+    - **approve** (`COMPUTED → APPROVED`): no employee with an error, every flagged variance
+      acknowledged, the attendance period unchanged since the snapshot, and the approver is not
+      the user who computed (D9).
+    - **finalise** (`APPROVED → FINALISED`): immutable from here; the attendance period can no
+      longer be reopened (decision 15). **mark paid** (`FINALISED → PAID`).
+    - **rollback** to `DRAFT` or `INPUTS_LOCKED`, allowed only before `FINALISED`."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._repo = PayRunRepository()
+        self._settings = PayrollSettingService(session)
+        self._salary_repo = EmployeeSalaryRepository()
+        self._structure_repo = SalaryStructureRepository()
+        self._component_repo = SalaryComponentRepository()
+        self._structures = SalaryStructureService(session)
+        self._audit = AuditService()
+
+    # -- reads -----------------------------------------------------------------------
+
+    async def _get_row(self, company_id: UUID, run_id: UUID) -> PayRun:
+        row = await self._repo.get(self._session, company_id=company_id, run_id=run_id)
+        if row is None:
+            raise PayRunNotFoundError()
+        return row
+
+    async def get(self, company_id: UUID, run_id: UUID) -> PayRunRead:
+        return pay_run_to_read(await self._get_row(company_id, run_id))
+
+    async def list_runs(
+        self,
+        company_id: UUID,
+        *,
+        legal_entity_id: UUID | None = None,
+        status: str | None = None,
+    ) -> list[PayRunRead]:
+        rows = await self._repo.list_for_company(
+            self._session, company_id=company_id, legal_entity_id=legal_entity_id, status=status
+        )
+        return [pay_run_to_read(row) for row in rows]
+
+    async def list_employees(self, company_id: UUID, run_id: UUID) -> list[PayRunEmployeeRead]:
+        await self._get_row(company_id, run_id)
+        rows = await self._repo.list_employees(self._session, company_id=company_id, run_id=run_id)
+        return [pay_run_employee_to_read(row) for row in rows]
+
+    async def get_employee(
+        self, company_id: UUID, run_id: UUID, employee_id: UUID
+    ) -> PayRunEmployeeDetailRead:
+        await self._get_row(company_id, run_id)
+        row = await self._repo.get_employee(
+            self._session, company_id=company_id, run_id=run_id, employee_id=employee_id
+        )
+        if row is None:
+            raise PayRunEmployeeNotFoundError()
+        lines = await self._repo.list_lines(
+            self._session, company_id=company_id, run_id=run_id, employee_id=employee_id
+        )
+        return PayRunEmployeeDetailRead(
+            **pay_run_employee_to_read(row).model_dump(),
+            lines=[pay_run_line_to_read(line) for line in lines],
+            snapshot=row.snapshot,
+        )
+
+    async def has_finalised_run_for_period(self, company_id: UUID, period_id: UUID) -> bool:
+        """Decision 15 — `AttendancePeriodService.reopen` refuses when this is true."""
+        return await self._repo.has_finalised_for_period(
+            self._session, company_id=company_id, attendance_period_id=period_id
+        )
+
+    # -- helpers ---------------------------------------------------------------------
+
+    async def _transition(
+        self,
+        run: PayRun,
+        *,
+        values: dict[str, Any],
+        expected_version: int | None,
+        from_statuses: tuple[str, ...],
+    ) -> PayRun:
+        updated = await self._repo.update(
+            self._session,
+            company_id=run.company_id,
+            run_id=run.id,
+            values=values,
+            expected_version=expected_version,
+            now=datetime.now(UTC),
+            from_statuses=from_statuses,
+        )
+        if updated is not None:
+            return updated
+        latest = await self._get_row(run.company_id, run.id)
+        if latest.status not in from_statuses:
+            raise PayRunInvalidTransitionError(
+                f"The pay run is {latest.status}; this action needs {' or '.join(from_statuses)}"
+            )
+        raise StalePayrollResourceError(
+            "This pay run has been modified by another request",
+            current=pay_run_to_read(latest).model_dump(mode="json"),
+        )
+
+    def _require_status(self, run: PayRun, *statuses: str) -> None:
+        if run.status not in statuses:
+            raise PayRunInvalidTransitionError(
+                f"The pay run is {run.status}; this action needs {' or '.join(statuses)}"
+            )
+
+    async def _record(
+        self,
+        run_id: UUID,
+        company_id: UUID,
+        action: str,
+        *,
+        before: PayRunRead | None,
+        after: PayRunRead | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        after_payload = after.model_dump(mode="json") if after is not None else None
+        if extra and after_payload is not None:
+            after_payload = {**after_payload, **extra}
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="pay_run",
+            entity_id=run_id,
+            before=before.model_dump(mode="json") if before is not None else None,
+            after=after_payload,
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def _assert_attendance_unchanged(self, run: PayRun) -> None:
+        from hrms.modules.attendance.service import AttendancePeriodService
+
+        if run.attendance_period_id is None:
+            raise PayRunAttendanceChangedError()
+        state = await AttendancePeriodService(self._session).period_state(
+            run.company_id, run.attendance_period_id
+        )
+        if state != ("CLOSED", run.attendance_period_version):
+            raise PayRunAttendanceChangedError()
+
+    # -- create / edit / delete ------------------------------------------------------
+
+    async def create(
+        self,
+        company_id: UUID,
+        body: PayRunCreate,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        from hrms.modules.organisation.service import OrganisationService
+
+        try:
+            entity = await OrganisationService(self._session).get_legal_entity(
+                company_id, body.legal_entity_id
+            )
+        except NotFoundError as exc:
+            raise PayRunLegalEntityInvalidError() from exc
+        if not entity.is_active:
+            raise PayRunLegalEntityInvalidError()
+        start, end, days = month_bounds(body.month)
+        now = datetime.now(UTC)
+        run_id = uuid4()
+        try:
+            async with self._session.begin_nested():
+                row = await self._repo.insert(
+                    self._session,
+                    data={
+                        "id": run_id,
+                        "company_id": company_id,
+                        "legal_entity_id": body.legal_entity_id,
+                        "period_month": start,
+                        "period_start": start,
+                        "period_end": end,
+                        "days_in_month": days,
+                        "status": "DRAFT",
+                        "pay_date": body.pay_date or default_pay_date(end),
+                        "created_by_user_id": actor_user_id,
+                        "version": 1,
+                        "created_at": now,
+                        "updated_at": now,
+                    },
+                )
+        except IntegrityError as exc:
+            raise PayRunAlreadyExistsError() from exc
+        read = pay_run_to_read(row)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_CREATED",
+            before=None,
+            after=read,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def update(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        body: PayRunUpdate,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        run = await self._get_row(company_id, run_id)
+        before = pay_run_to_read(run)
+        if body.pay_date < run.period_end:
+            raise PayRunInvalidTransitionError("The pay date cannot be before the month ends")
+        updated = await self._transition(
+            run,
+            values={"pay_date": body.pay_date},
+            expected_version=expected_version,
+            from_statuses=("DRAFT", "INPUTS_LOCKED", "COMPUTED", "APPROVED"),
+        )
+        after = pay_run_to_read(updated)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_UPDATED",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    async def delete(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        run = await self._get_row(company_id, run_id)
+        self._require_status(run, "DRAFT")
+        before = pay_run_to_read(run)
+        if not await self._repo.delete_draft(self._session, company_id=company_id, run_id=run_id):
+            raise PayRunInvalidTransitionError("Only a DRAFT pay run can be deleted")
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_DELETED",
+            before=before,
+            after=None,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    # -- lock inputs (snapshot) ------------------------------------------------------
+
+    async def _segments(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        spans: list[tuple[date, date]],
+        components: dict[str, SalaryComponent],
+        issues: list[dict[str, str]],
+    ) -> list[dict[str, Any]]:
+        """Splits the employee's days in this entity into segments over which employment, CTC,
+        statutory profile, salary assignment and structure version are all constant, and resolves
+        the pay of each."""
+        from hrms.modules.employee.service import (
+            EmployeeCompensationService,
+            EmployeeStatutoryService,
+        )
+
+        if not spans:
+            return []
+        compensations = await EmployeeCompensationService(self._session).list_compensations(
+            company_id, employee_id
+        )
+        statutories = await EmployeeStatutoryService(self._session).list_statutories(
+            company_id, employee_id
+        )
+        salaries = await self._salary_repo.list_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        versions = await self._structure_repo.list_versions(
+            self._session,
+            company_id=company_id,
+            structure_ids=sorted(
+                {s.salary_structure_id for s in salaries if s.salary_structure_id is not None},
+                key=str,
+            ),
+        )
+        cuts: set[date] = set()
+        dated: list[tuple[date | None, date | None]] = [
+            *((r.effective_from, r.effective_to) for r in compensations),
+            *((r.effective_from, r.effective_to) for r in statutories),
+            *((r.effective_from, r.effective_to) for r in salaries),
+            *((v.effective_from, v.effective_to) for v in versions if v.status == "PUBLISHED"),
+        ]
+        for start, end in dated:
+            if start is not None:
+                cuts.add(start)
+            if end is not None:
+                cuts.add(end + timedelta(days=1))
+
+        segments: list[dict[str, Any]] = []
+        for span_from, span_to in spans:
+            points = sorted(c for c in cuts if span_from < c <= span_to)
+            starts = [span_from, *points]
+            for index, seg_from in enumerate(starts):
+                seg_to = (
+                    starts[index + 1] - timedelta(days=1) if index + 1 < len(starts) else span_to
+                )
+                segments.append(
+                    await self._segment(
+                        company_id, employee_id, seg_from, seg_to, components, issues
+                    )
+                )
+        return segments
+
+    async def _segment(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        seg_from: date,
+        seg_to: date,
+        components: dict[str, SalaryComponent],
+        issues: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        from hrms.modules.employee.service import (
+            EmployeeCompensationService,
+            EmployeeStatutoryService,
+            EmploymentService,
+        )
+
+        label = (
+            seg_from.isoformat()
+            if seg_from == seg_to
+            else f"{seg_from.isoformat()} to {seg_to.isoformat()}"
+        )
+        segment: dict[str, Any] = {
+            "from": seg_from.isoformat(),
+            "to": seg_to.isoformat(),
+            "employed_days": (seg_to - seg_from).days + 1,
+            "pay_basis": None,
+            "valid": False,
+        }
+        employment = await EmploymentService(self._session).get_employment_as_of(
+            company_id, employee_id, seg_from
+        )
+        if employment is None:
+            issues.append(_issue("EMPLOYMENT_MISSING", f"No employment covers {label}"))
+            return segment
+        segment["pay_basis"] = employment.pay_basis
+        statutory = await EmployeeStatutoryService(self._session).get_statutory_as_of(
+            company_id, employee_id, seg_from
+        )
+        pf = bool(statutory and statutory.is_pf_applicable)
+        esi = bool(statutory and statutory.is_esi_applicable)
+        segment.update(pf_applicable=pf, esi_applicable=esi)
+        salary = await self._salary_repo.get_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=seg_from
+        )
+        if salary is None:
+            issues.append(_issue("SALARY_MISSING", f"No salary is assigned for {label}"))
+            return segment
+        segment["employee_salary_id"] = str(salary.id)
+        if employment.pay_basis == "DAILY_WAGE":
+            if salary.daily_rate_minor is None:
+                issues.append(_issue(
+                    "SALARY_BASIS_MISMATCH",
+                    f"Daily-wage employee has a salary structure, not a daily rate, for {label}",
+                ))  # fmt: skip
+                return segment
+            segment.update(valid=True, daily_rate_minor=salary.daily_rate_minor)
+            return segment
+        if salary.salary_structure_id is None:
+            issues.append(_issue(
+                "SALARY_BASIS_MISMATCH",
+                f"Monthly-paid employee has a daily rate, not a salary structure, for {label}",
+            ))  # fmt: skip
+            return segment
+        compensation = await EmployeeCompensationService(self._session).get_compensation_as_of(
+            company_id, employee_id, seg_from
+        )
+        if compensation is None:
+            issues.append(_issue("CTC_MISSING", f"No CTC is recorded for {label}"))
+            return segment
+        try:
+            version_id, breakup = await self._structures.breakup_as_of(
+                company_id,
+                salary.salary_structure_id,
+                seg_from,
+                annual_ctc_minor=compensation.annual_ctc_minor,
+                pf_applicable=pf,
+                esi_applicable=esi,
+            )
+        except SalaryBreakupUnavailableError as exc:
+            issues.append(_issue("BREAKUP_FAILED", f"{exc.message} ({label})"))
+            return segment
+        except BreakupError as exc:
+            issues.append(_issue("BREAKUP_FAILED", f"{exc} ({label})"))
+            return segment
+        segment.update(
+            valid=True,
+            salary_structure_id=str(salary.salary_structure_id),
+            salary_structure_version_id=str(version_id),
+            employee_compensation_id=str(compensation.id),
+            annual_ctc_minor=compensation.annual_ctc_minor,
+            lines=[
+                {
+                    "component_code": line.component_code,
+                    "component_name": line.component_name,
+                    "component_type": line.component_type,
+                    "monthly_minor": line.monthly_minor,
+                    "is_prorated": (
+                        components[line.component_code].is_prorated
+                        if line.component_code in components
+                        else True
+                    ),
+                    "display_order": (
+                        components[line.component_code].display_order
+                        if line.component_code in components
+                        else 0
+                    ),
+                    "basis": line.basis,
+                }
+                for line in breakup.lines
+            ],
+        )
+        return segment
+
+    async def _bank(
+        self, company_id: UUID, employee_id: UUID, as_of: date
+    ) -> dict[str, Any] | None:
+        """A reference to the payout account — never the account number itself (last four digits
+        only; the bank advice in 5.4 reads the encrypted record by id)."""
+        from hrms.modules.employee.service import EmployeeBankService
+
+        bank = await EmployeeBankService(self._session).get_bank_as_of(
+            company_id, employee_id, as_of
+        )
+        if bank is None:
+            return None
+        account = bank.account_number_enc
+        return {
+            "employee_bank_id": str(bank.id),
+            "payment_mode": bank.payment_mode,
+            "bank_name": bank.bank_name,
+            "ifsc": bank.ifsc,
+            "account_last4": account[-4:] if account else None,
+            "verification_status": bank.verification_status,
+        }
+
+    async def _build_snapshots(
+        self, run: PayRun, inputs: "PayrollPeriodInputs", now: datetime
+    ) -> list[dict[str, Any]]:
+        from hrms.modules.employee.service import EmployeeService, EmploymentService
+        from hrms.modules.leave.service import LeaveLedgerService
+
+        company_id = run.company_id
+        all_spans = await EmploymentService(self._session).list_legal_entity_spans(
+            company_id, date_from=run.period_start, date_to=run.period_end
+        )
+        spans_by_employee: dict[UUID, list[tuple[UUID, date, date | None]]] = {}
+        own_spans: dict[UUID, list[tuple[date, date]]] = {}
+        for employee_id, legal_entity_id, joining, last_day in all_spans:
+            spans_by_employee.setdefault(employee_id, []).append(
+                (legal_entity_id, joining, last_day)
+            )
+            if legal_entity_id != run.legal_entity_id:
+                continue
+            start = max(joining, run.period_start)
+            end = min(last_day, run.period_end) if last_day is not None else run.period_end
+            if start <= end:
+                own_spans.setdefault(employee_id, []).append((start, end))
+        summaries = {s.employee_id: s for s in inputs.summaries}
+        overtime: dict[UUID, list[dict[str, Any]]] = {}
+        for employee_id, day_class, multiplier, minutes in inputs.overtime:
+            overtime.setdefault(employee_id, []).append(
+                {
+                    "day_class": day_class,
+                    "multiplier": (
+                        format(multiplier.normalize(), "f") if multiplier is not None else None
+                    ),
+                    "minutes": minutes,
+                }
+            )
+        encashments: dict[UUID, list[dict[str, Any]]] = {}
+        for entry_id, employee_id, leave_type_id, days, effective in await LeaveLedgerService(
+            self._session
+        ).list_encashments_between(company_id, run.period_start, run.period_end):
+            if _owning_entity(spans_by_employee.get(employee_id, []), effective) != (
+                run.legal_entity_id
+            ):
+                continue
+            encashments.setdefault(employee_id, []).append({
+                "ledger_entry_id": str(entry_id), "leave_type_id": str(leave_type_id),
+                "days": format(days.normalize(), "f"), "effective_date": effective.isoformat(),
+            })  # fmt: skip
+        components = {
+            c.code: c
+            for c in await self._component_repo.list_for_company(
+                self._session, company_id=company_id
+            )
+        }
+
+        employees = EmployeeService(self._session)
+        rows: list[dict[str, Any]] = []
+        for employee_id in sorted(set(own_spans) | set(summaries), key=str):
+            issues: list[dict[str, str]] = []
+            summary = summaries.get(employee_id)
+            if summary is None:
+                issues.append(_issue(
+                    "NOT_IN_ATTENDANCE",
+                    "Employed in this legal entity during the month but missing from the closed "
+                    "attendance period's summary",
+                ))  # fmt: skip
+            segments = await self._segments(
+                company_id, employee_id, own_spans.get(employee_id, []), components, issues
+            )
+            employee = await employees.get_employee(
+                company_id, employee_id, scope=None, caller_employee_id=None
+            )
+            name = employee.display_name or " ".join(
+                part for part in (employee.first_name, employee.last_name) if part
+            )
+            snapshot = {
+                "summary": summary.model_dump(mode="json") if summary is not None else None,
+                "segments": segments,
+                "overtime": overtime.get(employee_id, []),
+                "encashments": encashments.get(employee_id, []),
+                "bank": await self._bank(company_id, employee_id, run.period_end),
+                "issues": issues,
+            }
+            valid = [s for s in segments if s["valid"]]
+            rows.append({
+                "id": uuid4(),
+                "company_id": company_id,
+                "pay_run_id": run.id,
+                "employee_id": employee_id,
+                "employee_code": employee.employee_code,
+                "employee_name": name,
+                "pay_basis": valid[-1]["pay_basis"] if valid else None,
+                "paid_days": Decimal(summary.paid_days) if summary and summary.paid_days else None,
+                "lop_days": Decimal(summary.lop_days) if summary else None,
+                "payable_days": (
+                    Decimal(summary.payable_days) if summary and summary.payable_days else None
+                ),
+                "snapshot": snapshot,
+                "issues": issues,
+                "has_error": any(i["severity"] == ERROR for i in issues),
+                "created_at": now,
+                "updated_at": now,
+            })  # fmt: skip
+        return rows
+
+    async def lock_inputs(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        from hrms.modules.attendance.service import AttendancePeriodService
+
+        run = await self._get_row(company_id, run_id)
+        self._require_status(run, "DRAFT")
+        before = pay_run_to_read(run)
+        inputs = await AttendancePeriodService(self._session).closed_period_for_month(
+            company_id, run.legal_entity_id, run.period_start, run.period_end
+        )
+        if inputs is None:
+            raise PayRunInputsUnavailableError()
+        now = datetime.now(UTC)
+        rows = await self._build_snapshots(run, inputs, now)
+        updated = await self._transition(
+            run,
+            values={
+                "status": "INPUTS_LOCKED",
+                "attendance_period_id": inputs.attendance_period_id,
+                "attendance_period_version": inputs.version,
+                "inputs_locked_at": now,
+                "inputs_locked_by_user_id": actor_user_id,
+                "employee_count": len(rows),
+                "error_count": sum(1 for r in rows if r["has_error"]),
+                "warning_count": 0,
+                "last_rollback_reason": None,
+                **_RESET_RUN_TOTALS,
+            },
+            expected_version=expected_version,
+            from_statuses=("DRAFT",),
+        )
+        await self._repo.insert_employees(self._session, rows=rows)
+        after = pay_run_to_read(updated)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_INPUTS_LOCKED",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    # -- compute ---------------------------------------------------------------------
+
+    async def compute(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        run = await self._get_row(company_id, run_id)
+        self._require_status(run, "INPUTS_LOCKED", "COMPUTED")
+        before = pay_run_to_read(run)
+        threshold = Decimal((await self._settings.get(company_id)).variance_threshold_percent)
+        previous = await self._repo.get_previous_finalised(
+            self._session,
+            company_id=company_id,
+            legal_entity_id=run.legal_entity_id,
+            before=run.period_month,
+        )
+        previous_net: dict[UUID, int] = {}
+        if previous is not None:
+            previous_net = {
+                e.employee_id: e.net_minor
+                for e in await self._repo.list_employees(
+                    self._session, company_id=company_id, run_id=previous.id
+                )
+            }
+        employees = await self._repo.list_employees(
+            self._session, company_id=company_id, run_id=run_id
+        )
+
+        now = datetime.now(UTC)
+        updates: list[tuple[PayRunEmployee, dict[str, Any]]] = []
+        line_rows: list[dict[str, Any]] = []
+        totals = {"gross": 0, "deductions": 0, "employer": 0, "net": 0}
+        errors = warnings = flagged_count = open_count = 0
+        for employee in employees:
+            result = compute_employee(
+                employee_input_from_snapshot(employee.snapshot, run.days_in_month)
+            )
+            prev = previous_net.get(employee.employee_id)
+            percent: Decimal | None = None
+            flagged = False
+            if prev is not None:
+                if prev == 0:
+                    flagged = result.net_minor != 0
+                else:
+                    percent = (Decimal(result.net_minor - prev) / Decimal(prev) * 100).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                    )
+                    flagged = abs(percent) > threshold
+            # An acknowledgement survives a recompute only if the net pay it explained is unchanged.
+            keep_ack = (
+                flagged
+                and employee.variance_reason is not None
+                and employee.is_computed
+                and employee.net_minor == result.net_minor
+            )
+            values = {
+                "is_computed": True,
+                "gross_minor": result.gross_minor,
+                "deductions_minor": result.deductions_minor,
+                "employer_contributions_minor": result.employer_contributions_minor,
+                "net_before_rounding_minor": result.net_before_rounding_minor,
+                "rounding_minor": result.rounding_minor,
+                "net_minor": result.net_minor,
+                "issues": [issue.to_dict() for issue in result.issues],
+                "has_error": result.has_error,
+                "previous_net_minor": prev,
+                "variance_percent": percent,
+                "variance_flagged": flagged,
+                "variance_reason": employee.variance_reason if keep_ack else None,
+                "variance_acknowledged_by_user_id": (
+                    employee.variance_acknowledged_by_user_id if keep_ack else None
+                ),
+                "variance_acknowledged_at": employee.variance_acknowledged_at if keep_ack else None,
+            }
+            updates.append((employee, values))
+            line_rows.extend(
+                {
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "pay_run_id": run_id,
+                    "pay_run_employee_id": employee.id,
+                    "employee_id": employee.employee_id,
+                    "component_code": line.component_code,
+                    "component_name": line.component_name,
+                    "line_type": line.line_type,
+                    "full_monthly_minor": line.full_monthly_minor,
+                    "amount_minor": line.amount_minor,
+                    "display_order": line.display_order,
+                    "trace": line.trace,
+                    "created_at": now,
+                }
+                for line in result.lines
+            )
+            totals["gross"] += result.gross_minor
+            totals["deductions"] += result.deductions_minor
+            totals["employer"] += result.employer_contributions_minor
+            totals["net"] += result.net_minor
+            errors += int(result.has_error)
+            warnings += sum(1 for issue in result.issues if issue.severity == WARNING)
+            flagged_count += int(flagged)
+            open_count += int(flagged and not keep_ack)
+
+        # The status-guarded run write goes first: if the run moved on, nothing else is written.
+        updated = await self._transition(
+            run,
+            values={
+                "status": "COMPUTED",
+                "computed_at": now,
+                "computed_by_user_id": actor_user_id,
+                "approved_at": None,
+                "approved_by_user_id": None,
+                "variance_threshold_percent": threshold,
+                "previous_pay_run_id": previous.id if previous is not None else None,
+                "employee_count": len(employees),
+                "gross_minor": totals["gross"],
+                "deductions_minor": totals["deductions"],
+                "employer_contributions_minor": totals["employer"],
+                "net_minor": totals["net"],
+                "error_count": errors,
+                "warning_count": warnings,
+                "variance_flag_count": flagged_count,
+                "variance_open_count": open_count,
+            },
+            expected_version=expected_version,
+            from_statuses=("INPUTS_LOCKED", "COMPUTED"),
+        )
+        for employee, values in updates:
+            await self._repo.update_employee(
+                self._session,
+                company_id=company_id,
+                run_id=run_id,
+                row_id=employee.id,
+                values=values,
+                now=now,
+            )
+        await self._repo.replace_lines(
+            self._session, company_id=company_id, run_id=run_id, rows=line_rows
+        )
+        after = pay_run_to_read(updated)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_COMPUTED",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    async def acknowledge_variance(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        employee_id: UUID,
+        body: PayRunVarianceAcknowledge,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunEmployeeRead:
+        """FR-PAY-014 — a flagged change in net pay needs a reason before approval."""
+        run = await self._get_row(company_id, run_id)
+        self._require_status(run, "COMPUTED")
+        row = await self._repo.get_employee(
+            self._session, company_id=company_id, run_id=run_id, employee_id=employee_id
+        )
+        if row is None:
+            raise PayRunEmployeeNotFoundError()
+        if not row.variance_flagged:
+            raise PayRunInvalidTransitionError("This employee's pay has no flagged variance")
+        before = pay_run_employee_to_read(row)
+        now = datetime.now(UTC)
+        was_open = row.variance_reason is None
+        updated_row = await self._repo.update_employee(
+            self._session,
+            company_id=company_id,
+            run_id=run_id,
+            row_id=row.id,
+            values={
+                "variance_reason": body.reason,
+                "variance_acknowledged_by_user_id": actor_user_id,
+                "variance_acknowledged_at": now,
+            },
+            now=now,
+        )
+        if updated_row is None:
+            raise PayRunInvalidTransitionError("The pay run can no longer change")
+        if was_open:
+            await self._transition(
+                run,
+                values={"variance_open_count": max(run.variance_open_count - 1, 0)},
+                expected_version=None,
+                from_statuses=("COMPUTED",),
+            )
+        after = pay_run_employee_to_read(updated_row)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="PAYROLL_PAY_RUN_VARIANCE_ACKNOWLEDGED",
+            entity_type="pay_run_employee",
+            entity_id=row.id,
+            before=before.model_dump(mode="json"),
+            after=after.model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    # -- approve / finalise / paid ---------------------------------------------------
+
+    async def approve(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        run = await self._get_row(company_id, run_id)
+        self._require_status(run, "COMPUTED")
+        if actor_user_id is not None and actor_user_id == run.computed_by_user_id:
+            raise PayRunMakerCheckerError()
+        reasons: list[dict[str, Any]] = []
+        if run.error_count:
+            reasons.append({"code": "EMPLOYEE_ERRORS", "count": run.error_count,
+                            "message": f"{run.error_count} employee(s) have errors"})  # fmt: skip
+        if run.variance_open_count:
+            reasons.append({
+                "code": "VARIANCE_UNACKNOWLEDGED", "count": run.variance_open_count,
+                "message": f"{run.variance_open_count} flagged variance(s) need a reason",
+            })  # fmt: skip
+        if reasons:
+            raise PayRunBlockedError("This pay run cannot be approved yet", reasons=reasons)
+        await self._assert_attendance_unchanged(run)
+        before = pay_run_to_read(run)
+        updated = await self._transition(
+            run,
+            values={
+                "status": "APPROVED",
+                "approved_at": datetime.now(UTC),
+                "approved_by_user_id": actor_user_id,
+            },
+            expected_version=expected_version,
+            from_statuses=("COMPUTED",),
+        )
+        after = pay_run_to_read(updated)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_APPROVED",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    async def finalise(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        """Immutable from here (ADR-0005). The attendance period can no longer be reopened
+        (decision 15) — later corrections are arrears (Phase 5.5)."""
+        run = await self._get_row(company_id, run_id)
+        self._require_status(run, "APPROVED")
+        await self._assert_attendance_unchanged(run)
+        before = pay_run_to_read(run)
+        updated = await self._transition(
+            run,
+            values={
+                "status": "FINALISED",
+                "finalised_at": datetime.now(UTC),
+                "finalised_by_user_id": actor_user_id,
+            },
+            expected_version=expected_version,
+            from_statuses=("APPROVED",),
+        )
+        after = pay_run_to_read(updated)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_FINALISED",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    async def mark_paid(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        run = await self._get_row(company_id, run_id)
+        self._require_status(run, "FINALISED")
+        before = pay_run_to_read(run)
+        updated = await self._transition(
+            run,
+            values={
+                "status": "PAID",
+                "paid_at": datetime.now(UTC),
+                "paid_by_user_id": actor_user_id,
+            },
+            expected_version=expected_version,
+            from_statuses=("FINALISED",),
+        )
+        after = pay_run_to_read(updated)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_PAID",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return after
+
+    # -- rollback --------------------------------------------------------------------
+
+    async def rollback(
+        self,
+        company_id: UUID,
+        run_id: UUID,
+        body: PayRunRollback,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PayRunRead:
+        run = await self._get_row(company_id, run_id)
+        allowed = _ROLLBACK_FROM[body.to_status]
+        if run.status not in allowed:
+            raise PayRunInvalidTransitionError(
+                f"A {run.status} pay run cannot be rolled back to {body.to_status}"
+            )
+        before = pay_run_to_read(run)
+        values: dict[str, Any] = {
+            "status": body.to_status,
+            "last_rollback_reason": body.reason,
+            **_RESET_RUN_TOTALS,
+        }
+        if body.to_status == "DRAFT":
+            values.update(
+                attendance_period_id=None,
+                attendance_period_version=None,
+                inputs_locked_at=None,
+                inputs_locked_by_user_id=None,
+                employee_count=0,
+                error_count=0,
+                warning_count=0,
+            )
+        updated = await self._transition(
+            run, values=values, expected_version=expected_version, from_statuses=allowed
+        )
+        await self._repo.delete_lines(self._session, company_id=company_id, run_id=run_id)
+        if body.to_status == "DRAFT":
+            await self._repo.delete_employees(self._session, company_id=company_id, run_id=run_id)
+        else:
+            now = datetime.now(UTC)
+            error_count = 0
+            for employee in await self._repo.list_employees(
+                self._session, company_id=company_id, run_id=run_id
+            ):
+                snapshot_issues = employee.snapshot.get("issues", [])
+                has_error = any(i["severity"] == ERROR for i in snapshot_issues)
+                error_count += int(has_error)
+                await self._repo.update_employee(
+                    self._session,
+                    company_id=company_id,
+                    run_id=run_id,
+                    row_id=employee.id,
+                    values={**_RESET_COMPUTED, "issues": snapshot_issues, "has_error": has_error},
+                    now=now,
+                )
+            updated = await self._transition(
+                updated,
+                values={"error_count": error_count, "warning_count": 0},
+                expected_version=None,
+                from_statuses=("INPUTS_LOCKED",),
+            )
+        after = pay_run_to_read(updated)
+        await self._record(
+            run_id,
+            company_id,
+            "PAYROLL_PAY_RUN_ROLLED_BACK",
+            before=before,
+            after=after,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            extra={"rollback_reason": body.reason},
+        )
+        return after

@@ -1120,6 +1120,21 @@ class LeaveLedgerService:
         self._app_repo = LeaveApplicationRepository()
         self._policy_repo = LeavePolicyRepository()
 
+    async def list_encashments_between(
+        self, company_id: UUID, date_from: date, date_to: date
+    ) -> list[tuple[UUID, UUID, UUID, Decimal, date]]:
+        """Payroll 5.2 (decision 11, D4) — every `ENCASHMENT` entry effective in
+        `[date_from, date_to]`, HR-entered and year-end system entries alike:
+        `(entry_id, employee_id, leave_type_id, days, effective_date)` with `days` positive.
+        Internal, unscoped cross-module fact query (the pay run is COMPANY-scoped)."""
+        rows = await self._repo.list_encashments_between(
+            self._session, company_id=company_id, date_from=date_from, date_to=date_to
+        )
+        return [
+            (row.id, row.employee_id, row.leave_type_id, -row.amount, row.effective_date)
+            for row in rows
+        ]
+
     async def _resolve_visible_employee_ids(
         self, company_id: UUID, scope: DataScope, caller_employee_id: UUID | None
     ) -> frozenset[UUID] | None:

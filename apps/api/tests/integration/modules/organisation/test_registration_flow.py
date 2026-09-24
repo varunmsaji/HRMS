@@ -319,6 +319,10 @@ async def test_registration_success_full_row_graph(
                 "ONBOARDING.CANCEL",
                 # Payroll Phase 5.1 — salary components, structures and assignment.
                 "PAYROLL.SETUP_MANAGE",
+                # Payroll Phase 5.2 — pay runs.
+                "PAYROLL.RUN_VIEW",
+                "PAYROLL.RUN_PROCESS",
+                "PAYROLL.RUN_APPROVE",
             }
 
             setup_progress = (
@@ -678,5 +682,9 @@ async def test_registration_seeds_hr_admin_approval_grants(
         assert grants["LEAVE.APPLICATION_APPROVE"] == "COMPANY"
         assert grants["LEAVE.APPLICATION_CANCEL_APPROVED"] == "COMPANY"
         assert grants["PAYROLL.SETUP_MANAGE"] == "COMPANY"
+        assert grants["PAYROLL.RUN_VIEW"] == "COMPANY"
+        assert grants["PAYROLL.RUN_PROCESS"] == "COMPANY"
+        # D9 — approving a pay run stays with COMPANY_ADMIN.
+        assert "PAYROLL.RUN_APPROVE" not in grants
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)

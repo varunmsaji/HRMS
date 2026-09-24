@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **APPROVED 2026-09-23** — D1–D6 accepted as recommended (product owner: varun); D7–D11 still open, needed by the end of Phase 5.2 |
+| Status | **APPROVED 2026-09-23** — D1–D6 accepted as recommended (product owner: varun). D8 decided 2026-09-24 (no net-pay rounding); D7, D9, D10, D11 built as recommended in Phase 5.2, **awaiting confirmation** |
 | Date | 2026-09-23 |
 | Scope source | `docs/product/17_SRS_Phase1_Core_Modules.md` §7 (FR-PAY-001…025), `docs/product/VERSION_1_ROADMAP.md` rows 16, 37–44 |
 | Binding rules | `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` (decisions 1–18, PD-2), `docs/adr/0005-payroll-snapshot-immutability.md`, `docs/audits/PAYROLL_FOUNDATION_CONTRACT.md` Part C (C1–C10) |
@@ -126,6 +126,67 @@ as possible, and every later phase adds to it without reworking it.
 - Web: pay run list per entity, run detail (employees, totals, validation, variance
   acknowledgement), per-employee breakdown with trace.
 
+**Status: built 2026-09-24** (migration `20261004106000`). D8 decided (no rounding); D7, D9,
+D10 and D11 were implemented as recommended in §8 and still need the product owner's
+confirmation. As built:
+
+- Tables `payroll_setting` (variance threshold, default 15 %), `pay_run` (unique per company,
+  legal entity and month), `pay_run_employee` (input snapshot JSONB, totals, issues, variance) and
+  `pay_run_line` (per component, with a JSONB trace). RLS `tenant_isolation` on all four.
+- Lifecycle `DRAFT → INPUTS_LOCKED → COMPUTED → APPROVED → FINALISED → PAID`; rollback to `DRAFT`
+  (drops the snapshot) or `INPUTS_LOCKED` (drops computed pay) before `FINALISED`; a `DRAFT` run
+  can be deleted. Every transition carries `If-Match` and writes an audit row.
+- **Immutability** is enforced in `PayRunRepository`: every write to a run, its employees or its
+  lines is conditioned on the run not being `FINALISED`/`PAID` (only `mark_paid` moves
+  `FINALISED → PAID`). There is no database trigger — the codebase has none elsewhere and the
+  append-only `leave_ledger` is protected the same way.
+- **Lock inputs** reads the entity's attendance period covering exactly the month and refuses
+  unless it is `CLOSED` (PD-2, `AttendancePeriodService.closed_period_for_month`). Per employee
+  (employed in the entity during the month, or present in the frozen summary) it snapshots: the
+  summary; the month split into **segments** wherever employment, CTC, statutory profile, salary
+  assignment or structure version changes, each with its resolved breakup or daily rate; payable
+  overtime per day class with the multiplier of the OT policy version that applied that day
+  (approved minutes not taken as comp-off, from the days the period locked); leave `ENCASHMENT`
+  entries effective in the month and owned by the entity (decision 14's ownership rule); a bank
+  reference with the last four digits only.
+- **Compute** is `engine.compute_employee`, a pure function of the snapshot: calendar-day
+  proration (decision 17) — LOP is excluded by proration, so there is no separate LOP line; paid
+  days apportioned across segments by employed days; OT per D3 (full-month Basic ÷ (days × 8) ×
+  multiplier; daily rate ÷ 8 for daily-wage); encashment per D4; daily wage per D5. Net pay is
+  **not rounded** — paid to the paisa (D8, decided 2026-09-24; `rounding_minor` stays in the
+  schema, always 0, so rounding can be switched on later without a migration). Deductions are
+  zero until 5.3.
+- **Validation** (errors block approval): `NOT_IN_ATTENDANCE`, `EMPLOYMENT_MISSING`,
+  `SALARY_MISSING`, `SALARY_BASIS_MISMATCH`, `CTC_MISSING`, `BREAKUP_FAILED`,
+  `SUMMARY_UNUSABLE` (a summary frozen before `paid_days`), `NOT_EMPLOYED`,
+  `OT_MULTIPLIER_MISSING`, `STATUTORY_PENDING` (D6 — any PF/ESI-applicable employee),
+  `NEGATIVE_NET`, `BANK_MISSING`, `BANK_ACCOUNT_MISSING`. Warnings: `ZERO_NET`, `BASIC_MISSING`.
+- **Variance** (D10) against the entity's previous finalised run: flagged when net pay changes by
+  more than the company threshold (or moves off zero). Each flag needs a reason before approval;
+  an acknowledgement survives a recompute only if the net pay is unchanged.
+- **Approve** (D9): refused to the user who last computed the run, and while any employee has an
+  error or a variance is unacknowledged, or if the attendance period was reopened since the inputs
+  were locked (its version moved). **Finalise** re-checks the period; once finalised,
+  `AttendancePeriodService.reopen` refuses with `ATTENDANCE_PERIOD_PAYROLL_FINALISED`
+  (decision 15). Late corrections wait for arrears (5.5, D7).
+- **Pay date** (D11): defaults to the first weekday after the month ends and can be changed
+  until finalised. Holidays are not consulted, and there is no per-entity default rule yet.
+- Permissions: `PAYROLL.RUN_VIEW`, `PAYROLL.RUN_PROCESS` (COMPANY_ADMIN, HR_ADMIN) and
+  `PAYROLL.RUN_APPROVE` (COMPANY_ADMIN only). `GET/PUT /v1/payroll/settings` uses
+  `PAYROLL.SETUP_MANAGE`.
+- API: `/v1/payroll/pay-runs` (list, create), `/{id}` (get, `PATCH` pay date, `DELETE` draft),
+  `/{id}/lock-inputs`, `/compute`, `/approve`, `/finalise`, `/mark-paid`, `/rollback`,
+  `/{id}/employees`, `/{id}/employees/{employee_id}` (lines, trace, snapshot),
+  `/{id}/employees/{employee_id}/acknowledge-variance`.
+- Web: a **Payroll** item in the main nav → pay run list (entity filter, create, variance
+  threshold setting) and run detail (totals, blocking banner, actions by status and permission,
+  employee table with issues and variance acknowledgement, per-employee breakdown with trace,
+  rollback, pay date).
+- Known limits: lock-inputs runs synchronously with several queries per employee (fine for
+  hundreds of employees, not tens of thousands); an encashment entry dated in a month whose run
+  is already finalised is not picked up by a later run until arrears (5.5) exist; an employee
+  who left before the month but has an encashment dated in it is not paid by any run (F&F, 5.7).
+
 ### Phase 5.3 — Statutory deductions
 
 *FR-PAY-005, 006 (profile exists).*
@@ -217,9 +278,12 @@ the user who computes a run cannot approve it.
 | D5 | Daily-wage employees: how is their rate stored? | Daily rate on the salary assignment; pay = daily rate × paid days |
 | D6 | May a run be finalised before statutory deductions (5.3) exist? | No — 5.2 ships behind 5.3 for any entity with PF/ESI-applicable employees |
 | D7 | After a month is finalised, where does a late attendance correction go? | It is made in the next open period as an arrears adjustment; the finalised period stays closed |
-| D8 | Net pay rounding | Round to the nearest rupee; the difference shown as a rounding line |
+| D8 | Net pay rounding | ~~Round to the nearest rupee~~ — **decided 2026-09-24: no rounding for now**, net pay is paid to the paisa |
 | D9 | Who approves a pay run? | HR prepares, a separate user with `PAYROLL.RUN_APPROVE` (Finance / Company Admin) approves; same user cannot do both |
 | D10 | Variance threshold | 15 % per employee net pay, configurable per company |
 | D11 | Pay date | Configurable per legal entity; default the 1st working day of the next month |
 
-**2026-09-23:** D1–D6 approved as recommended. D7–D11 are needed by the end of Phase 5.2.
+**2026-09-23:** D1–D6 approved as recommended. **2026-09-24:** D8 decided — no net-pay rounding
+for now. D7, D9, D10, D11 built as recommended in Phase 5.2 — awaiting the product owner's
+confirmation; changing any of them later is a small,
+local change (D10's threshold is already a company setting).

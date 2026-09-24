@@ -1,5 +1,10 @@
 """SQLAlchemy queries for the Payroll module. Every query carries a `company_id` predicate; RLS is
-the backstop."""
+the backstop.
+
+Pay runs (Phase 5.2): a `FINALISED`/`PAID` run is immutable (ADR-0005, decision 15). Every write in
+`PayRunRepository` that touches a run's employees or lines, or the run itself, is conditioned on
+the run's status (`_MUTABLE`), so no code path can change a finalised run — only
+`mark_paid` moves `FINALISED → PAID`."""
 
 from datetime import date, datetime
 from typing import Any
@@ -11,6 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.payroll.models import (
     EmployeeSalary,
+    PayrollSetting,
+    PayRun,
+    PayRunEmployee,
+    PayRunLine,
     SalaryComponent,
     SalaryStructure,
     SalaryStructureLine,
@@ -373,3 +382,243 @@ class EmployeeSalaryRepository:
                 updated_at=now,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.2 — settings and pay runs
+# ---------------------------------------------------------------------------
+
+_MUTABLE = ("DRAFT", "INPUTS_LOCKED", "COMPUTED", "APPROVED")
+
+
+class PayrollSettingRepository:
+    async def get_or_create(
+        self, session: AsyncSession, *, company_id: UUID, now: datetime
+    ) -> PayrollSetting:
+        await session.execute(
+            pg_insert(PayrollSetting)
+            .values(company_id=company_id, version=1, created_at=now, updated_at=now)
+            .on_conflict_do_nothing(index_elements=["company_id"])
+        )
+        stmt = select(PayrollSetting).where(PayrollSetting.company_id == company_id)
+        return (await session.execute(stmt)).scalar_one()
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        values: dict[str, Any],
+        expected_version: int,
+        now: datetime,
+    ) -> PayrollSetting | None:
+        stmt = (
+            update(PayrollSetting)
+            .where(
+                PayrollSetting.company_id == company_id,
+                PayrollSetting.version == expected_version,
+            )
+            .values(**values, version=expected_version + 1, updated_at=now)
+            .returning(PayrollSetting)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class PayRunRepository:
+    # -- run --
+
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> PayRun:
+        row = PayRun(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get(self, session: AsyncSession, *, company_id: UUID, run_id: UUID) -> PayRun | None:
+        stmt = select(PayRun).where(PayRun.id == run_id, PayRun.company_id == company_id)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_for_company(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        legal_entity_id: UUID | None = None,
+        status: str | None = None,
+    ) -> list[PayRun]:
+        conditions = [PayRun.company_id == company_id]
+        if legal_entity_id is not None:
+            conditions.append(PayRun.legal_entity_id == legal_entity_id)
+        if status is not None:
+            conditions.append(PayRun.status == status)
+        stmt = (
+            select(PayRun)
+            .where(*conditions)
+            .order_by(PayRun.period_month.desc(), PayRun.created_at.desc())
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_previous_finalised(
+        self, session: AsyncSession, *, company_id: UUID, legal_entity_id: UUID, before: date
+    ) -> PayRun | None:
+        """The latest `FINALISED`/`PAID` run of the entity for a month before `before` — the
+        variance baseline (FR-PAY-014)."""
+        stmt = (
+            select(PayRun)
+            .where(
+                PayRun.company_id == company_id,
+                PayRun.legal_entity_id == legal_entity_id,
+                PayRun.period_month < before,
+                PayRun.status.in_(("FINALISED", "PAID")),
+            )
+            .order_by(PayRun.period_month.desc())
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def has_finalised_for_period(
+        self, session: AsyncSession, *, company_id: UUID, attendance_period_id: UUID
+    ) -> bool:
+        stmt = (
+            select(PayRun.id)
+            .where(
+                PayRun.company_id == company_id,
+                PayRun.attendance_period_id == attendance_period_id,
+                PayRun.status.in_(("FINALISED", "PAID")),
+            )
+            .limit(1)
+        )
+        return (await session.execute(stmt)).first() is not None
+
+    async def update(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        run_id: UUID,
+        values: dict[str, Any],
+        expected_version: int | None,
+        now: datetime,
+        from_statuses: tuple[str, ...] = _MUTABLE,
+    ) -> PayRun | None:
+        """Version-guarded (when `expected_version` is given) and status-guarded: `None` when the
+        run moved on or is not in one of `from_statuses`. Never matches a finalised run unless the
+        caller names `FINALISED` explicitly (only `mark_paid` does)."""
+        conditions = [
+            PayRun.id == run_id,
+            PayRun.company_id == company_id,
+            PayRun.status.in_(from_statuses),
+        ]
+        if expected_version is not None:
+            conditions.append(PayRun.version == expected_version)
+        stmt = (
+            update(PayRun)
+            .where(*conditions)
+            .values(**values, version=PayRun.version + 1, updated_at=now)
+            .returning(PayRun)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_draft(self, session: AsyncSession, *, company_id: UUID, run_id: UUID) -> bool:
+        stmt = delete(PayRun).where(
+            PayRun.id == run_id, PayRun.company_id == company_id, PayRun.status == "DRAFT"
+        )
+        result = await session.execute(stmt)
+        return bool(getattr(result, "rowcount", 0))
+
+    # -- employees --
+
+    async def insert_employees(self, session: AsyncSession, *, rows: list[dict[str, Any]]) -> None:
+        if rows:
+            session.add_all([PayRunEmployee(**row) for row in rows])
+            await session.flush()
+
+    async def list_employees(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID
+    ) -> list[PayRunEmployee]:
+        stmt = (
+            select(PayRunEmployee)
+            .where(PayRunEmployee.company_id == company_id, PayRunEmployee.pay_run_id == run_id)
+            .order_by(PayRunEmployee.employee_code, PayRunEmployee.employee_name)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def get_employee(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID, employee_id: UUID
+    ) -> PayRunEmployee | None:
+        stmt = select(PayRunEmployee).where(
+            PayRunEmployee.company_id == company_id,
+            PayRunEmployee.pay_run_id == run_id,
+            PayRunEmployee.employee_id == employee_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    def _run_mutable(self, run_id: UUID) -> Any:
+        return select(PayRun.id).where(PayRun.id == run_id, PayRun.status.in_(_MUTABLE))
+
+    async def update_employee(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        run_id: UUID,
+        row_id: UUID,
+        values: dict[str, Any],
+        now: datetime,
+    ) -> PayRunEmployee | None:
+        stmt = (
+            update(PayRunEmployee)
+            .where(
+                PayRunEmployee.id == row_id,
+                PayRunEmployee.company_id == company_id,
+                PayRunEmployee.pay_run_id.in_(self._run_mutable(run_id)),
+            )
+            .values(**values, updated_at=now)
+            .returning(PayRunEmployee)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def delete_employees(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID
+    ) -> None:
+        await session.execute(
+            delete(PayRunEmployee).where(
+                PayRunEmployee.company_id == company_id,
+                PayRunEmployee.pay_run_id.in_(self._run_mutable(run_id)),
+            )
+        )
+
+    # -- lines --
+
+    async def replace_lines(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID, rows: list[dict[str, Any]]
+    ) -> None:
+        await self.delete_lines(session, company_id=company_id, run_id=run_id)
+        if rows:
+            session.add_all([PayRunLine(**row) for row in rows])
+            await session.flush()
+
+    async def delete_lines(self, session: AsyncSession, *, company_id: UUID, run_id: UUID) -> None:
+        await session.execute(
+            delete(PayRunLine).where(
+                PayRunLine.company_id == company_id,
+                PayRunLine.pay_run_id.in_(self._run_mutable(run_id)),
+            )
+        )
+
+    async def list_lines(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        run_id: UUID,
+        employee_id: UUID | None = None,
+    ) -> list[PayRunLine]:
+        conditions = [PayRunLine.company_id == company_id, PayRunLine.pay_run_id == run_id]
+        if employee_id is not None:
+            conditions.append(PayRunLine.employee_id == employee_id)
+        stmt = (
+            select(PayRunLine)
+            .where(*conditions)
+            .order_by(PayRunLine.employee_id, PayRunLine.display_order, PayRunLine.component_code)
+        )
+        return list((await session.execute(stmt)).scalars().all())

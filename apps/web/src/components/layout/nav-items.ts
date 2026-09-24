@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  Banknote,
   Briefcase,
   Building,
   Building2,
@@ -62,6 +63,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/app/overtime", label: "Overtime", icon: AlarmClock },
   { href: "/app/leave-applications", label: "Leave", icon: Palmtree },
   { href: "/app/leave-balances", label: "Leave Balances", icon: Wallet },
+  { href: "/app/payroll/pay-runs", label: "Payroll", icon: Banknote },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 

@@ -515,6 +515,24 @@ class AttendancePeriodLegalEntityInvalidError(ValidationError):
         )
 
 
+class AttendancePeriodPayrollFinalisedError(ConflictError):
+    """Decision 15 — once the pay run that read a period is finalised, the period never reopens;
+    a late correction flows as arrears in a later pay run instead."""
+
+    code = "ATTENDANCE_PERIOD_PAYROLL_FINALISED"
+
+    def __init__(
+        self,
+        message: str = (
+            "Payroll for this period is finalised — it cannot be reopened. Make the correction "
+            "in a later period; it is paid as arrears"
+        ),
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "status", "code": self.code, "message": message}]
+        )
+
+
 class AttendancePeriodInvalidTransitionError(ConflictError):
     """Raised when finalize/reopen is attempted against a period that is not in the state that
     action requires (e.g. finalizing an already-`CLOSED` period, reopening an `OPEN` one)."""

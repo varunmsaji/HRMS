@@ -29,6 +29,7 @@ from hrms.modules.attendance.exceptions import (
     AttendancePeriodLegalEntityInvalidError,
     AttendancePeriodNotFoundError,
     AttendancePeriodOverlapError,
+    AttendancePeriodPayrollFinalisedError,
     AttendanceRangeInFutureError,
     AttendanceSummaryReconciliationError,
     DuplicatePunchIdempotencyKeyError,
@@ -5208,6 +5209,19 @@ class _PeriodScope:
         return _owning_legal_entity(spans, target_date) == self.legal_entity_id
 
 
+@dataclass(frozen=True)
+class PayrollPeriodInputs:
+    """What Payroll reads from a `CLOSED` period: its identity and version (to detect a later
+    reopen), the frozen per-employee summaries, and the payable overtime per employee, day class
+    and multiplier (`AttendanceDayRepository.list_payable_overtime_for_period` — the days are
+    locked while the period is closed, so this is as frozen as the summary)."""
+
+    attendance_period_id: UUID
+    version: int
+    summaries: list[AttendancePeriodSummaryRead]
+    overtime: list[tuple[UUID, str, Decimal | None, int]]
+
+
 class AttendancePeriodService:
     """Period lifecycle (`OPEN` -> `CLOSED`), finalization validation, and the payroll-facing
     `AttendancePeriodSummary` snapshot. `CLOSED` *is* locked — closing a period is what actually
@@ -5827,6 +5841,42 @@ class AttendancePeriodService:
             for employee_id, agg in aggregates.items()
         ]
 
+    # -- payroll seams (payroll plan Phase 5.2) ---------------------------------------
+
+    async def closed_period_for_month(
+        self, company_id: UUID, legal_entity_id: UUID, period_start: date, period_end: date
+    ) -> "PayrollPeriodInputs | None":
+        """PD-2 — the only way Payroll reads attendance: the legal entity's period covering
+        exactly the pay month, and only when it is `CLOSED`, with its frozen summary rows.
+        `None` when there is no such period or it is still open."""
+        period = await self._repo.get_for_range(
+            self._session,
+            company_id=company_id,
+            legal_entity_id=legal_entity_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        if period is None or period.status != "CLOSED":
+            return None
+        rows = await self._summary_repo.list_for_period(
+            self._session, company_id=company_id, attendance_period_id=period.id
+        )
+        overtime = await self._day_repo.list_payable_overtime_for_period(
+            self._session, company_id=company_id, attendance_period_id=period.id
+        )
+        return PayrollPeriodInputs(
+            attendance_period_id=period.id,
+            version=period.version,
+            summaries=[attendance_period_summary_to_read(row, frozen=True) for row in rows],
+            overtime=overtime,
+        )
+
+    async def period_state(self, company_id: UUID, period_id: UUID) -> tuple[str, int] | None:
+        """`(status, version)` — Payroll re-checks this before approving or finalising a run, so a
+        period reopened after the run's inputs were locked is caught."""
+        period = await self._repo.get(self._session, company_id=company_id, period_id=period_id)
+        return (period.status, period.version) if period is not None else None
+
     # -- finalize / reopen --------------------------------------------------------
 
     async def _apply_incomplete_lock_resolution(
@@ -6046,6 +6096,11 @@ class AttendancePeriodService:
         period = await self._get_or_404(company_id, period_id)
         if period.status != "CLOSED":
             raise AttendancePeriodInvalidTransitionError("Only a CLOSED period can be reopened")
+        # Decision 15 — a month whose payroll is finalised never reopens.
+        from hrms.modules.payroll.service import PayRunService
+
+        if await PayRunService(self._session).has_finalised_run_for_period(company_id, period_id):
+            raise AttendancePeriodPayrollFinalisedError()
 
         before_read = await self._read(period)
         now = datetime.now(UTC)

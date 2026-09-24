@@ -1,6 +1,6 @@
-/** Mirrors `apps/api/src/hrms/modules/payroll/schemas.py` (payroll Phase 5.1 — salary setup,
- * `docs/modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md`). Money is integer paise
- * (`*_minor`). */
+/** Mirrors `apps/api/src/hrms/modules/payroll/schemas.py` (payroll Phase 5.1 — salary setup;
+ * Phase 5.2 — pay runs; `docs/modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md`). Money is
+ * integer paise (`*_minor`). */
 
 export const COMPONENT_TYPES = ["EARNING", "DEDUCTION", "EMPLOYER_CONTRIBUTION"] as const;
 export type ComponentType = (typeof COMPONENT_TYPES)[number];
@@ -177,4 +177,158 @@ export function currentVersion(structure: SalaryStructure): SalaryStructureVersi
 
 export function draftVersion(structure: SalaryStructure): SalaryStructureVersion | null {
   return structure.versions.find((v) => v.status === "DRAFT") ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5.2 — pay runs
+// ---------------------------------------------------------------------------
+
+export const PAY_RUN_STATUSES = [
+  "DRAFT",
+  "INPUTS_LOCKED",
+  "COMPUTED",
+  "APPROVED",
+  "FINALISED",
+  "PAID",
+] as const;
+export type PayRunStatus = (typeof PAY_RUN_STATUSES)[number];
+
+export const PAY_RUN_STATUS_LABELS: Record<PayRunStatus, string> = {
+  DRAFT: "Draft",
+  INPUTS_LOCKED: "Inputs locked",
+  COMPUTED: "Computed",
+  APPROVED: "Approved",
+  FINALISED: "Finalised",
+  PAID: "Paid",
+};
+
+export interface PayrollSetting {
+  company_id: string;
+  variance_threshold_percent: string;
+  version: number;
+}
+
+export interface PayRun {
+  id: string;
+  company_id: string;
+  legal_entity_id: string;
+  /** `YYYY-MM` */
+  month: string;
+  period_start: string;
+  period_end: string;
+  days_in_month: number;
+  status: PayRunStatus;
+  pay_date: string;
+  attendance_period_id: string | null;
+  variance_threshold_percent: string | null;
+  previous_pay_run_id: string | null;
+  employee_count: number;
+  gross_minor: number;
+  deductions_minor: number;
+  employer_contributions_minor: number;
+  net_minor: number;
+  error_count: number;
+  warning_count: number;
+  variance_flag_count: number;
+  variance_open_count: number;
+  created_by_user_id: string | null;
+  inputs_locked_at: string | null;
+  inputs_locked_by_user_id: string | null;
+  computed_at: string | null;
+  computed_by_user_id: string | null;
+  approved_at: string | null;
+  approved_by_user_id: string | null;
+  finalised_at: string | null;
+  finalised_by_user_id: string | null;
+  paid_at: string | null;
+  paid_by_user_id: string | null;
+  last_rollback_reason: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PayRunIssue {
+  code: string;
+  severity: "ERROR" | "WARNING";
+  message: string;
+}
+
+export interface PayRunEmployee {
+  id: string;
+  employee_id: string;
+  employee_code: string | null;
+  employee_name: string | null;
+  pay_basis: "MONTHLY" | "DAILY_WAGE" | null;
+  paid_days: string | null;
+  lop_days: string | null;
+  payable_days: string | null;
+  is_computed: boolean;
+  gross_minor: number;
+  deductions_minor: number;
+  employer_contributions_minor: number;
+  rounding_minor: number;
+  net_minor: number;
+  issues: PayRunIssue[];
+  has_error: boolean;
+  previous_net_minor: number | null;
+  variance_percent: string | null;
+  variance_flagged: boolean;
+  variance_reason: string | null;
+  variance_acknowledged_by_user_id: string | null;
+  variance_acknowledged_at: string | null;
+}
+
+export interface PayRunLine {
+  component_code: string;
+  component_name: string;
+  line_type: "EARNING" | "DEDUCTION" | "EMPLOYER_CONTRIBUTION" | "ROUNDING";
+  full_monthly_minor: number | null;
+  amount_minor: number;
+  display_order: number;
+  trace: Record<string, unknown> & { formula?: string };
+}
+
+export interface PayRunEmployeeDetail extends PayRunEmployee {
+  lines: PayRunLine[];
+  snapshot: Record<string, unknown>;
+}
+
+/** "2026-09" → "September 2026". */
+export function formatPayMonth(month: string): string {
+  const [year, number] = month.split("-").map(Number);
+  return new Date(Date.UTC(year, number - 1, 1)).toLocaleString("en-IN", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** Which lifecycle actions a run's status allows — the backend still decides; this only hides
+ * buttons that could never succeed. */
+export function payRunActions(status: PayRunStatus): {
+  lockInputs: boolean;
+  compute: boolean;
+  approve: boolean;
+  finalise: boolean;
+  markPaid: boolean;
+  rollbackTo: ("DRAFT" | "INPUTS_LOCKED")[];
+  editPayDate: boolean;
+  remove: boolean;
+} {
+  return {
+    lockInputs: status === "DRAFT",
+    compute: status === "INPUTS_LOCKED" || status === "COMPUTED",
+    approve: status === "COMPUTED",
+    finalise: status === "APPROVED",
+    markPaid: status === "FINALISED",
+    rollbackTo:
+      status === "COMPUTED" || status === "APPROVED"
+        ? ["INPUTS_LOCKED", "DRAFT"]
+        : status === "INPUTS_LOCKED"
+          ? ["DRAFT"]
+          : [],
+    editPayDate: !["FINALISED", "PAID"].includes(status),
+    remove: status === "DRAFT",
+  };
 }

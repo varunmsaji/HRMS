@@ -11,10 +11,14 @@ Phase 5.1 (`docs/modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md`) — salary 
   employee from a date. CTC itself stays on `employee_compensation`; this table never stores it
   (one source of truth for CTC).
 
+Phase 5.2 — pay runs: `PayrollSetting`, `PayRun`, `PayRunEmployee` (input snapshot + totals),
+`PayRunLine` (per component, with trace).
+
 Money is integer paise (`BIGINT`), percentages `NUMERIC(7,4)`."""
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
@@ -27,7 +31,9 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -141,3 +147,166 @@ class EmployeeSalary(Base, TimestampMixin):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5.2 — pay runs
+# ---------------------------------------------------------------------------
+
+
+class PayrollSetting(Base, TimestampMixin):
+    """One row per company, created on first read. D10 — the per-employee net-pay change that
+    flags a variance for acknowledgement before approval."""
+
+    __tablename__ = "payroll_setting"
+
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), primary_key=True
+    )
+    variance_threshold_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(15))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class PayRun(Base, TimestampMixin):
+    """One per (legal entity, calendar month) (decisions 14/18). Lifecycle
+    `DRAFT → INPUTS_LOCKED → COMPUTED → APPROVED → FINALISED → PAID`; a rollback returns to
+    `DRAFT` or `INPUTS_LOCKED` before `FINALISED`. A `FINALISED`/`PAID` run never changes other
+    than being marked paid (ADR-0005) — `PayRunRepository` conditions every write on that.
+
+    `attendance_period_id`/`attendance_period_version` record the `CLOSED` attendance period the
+    inputs were snapshotted from; approval and finalisation refuse if that period has since been
+    reopened (its version moved)."""
+
+    __tablename__ = "pay_run"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    legal_entity_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("legal_entity.id"), index=True
+    )
+    period_month: Mapped[date] = mapped_column(Date)
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    days_in_month: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="DRAFT")
+    pay_date: Mapped[date] = mapped_column(Date)
+    attendance_period_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_period.id"), nullable=True
+    )
+    attendance_period_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    variance_threshold_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    previous_pay_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("pay_run.id"), nullable=True
+    )
+    employee_count: Mapped[int] = mapped_column(Integer, default=0)
+    gross_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    deductions_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    employer_contributions_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    net_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)
+    warning_count: Mapped[int] = mapped_column(Integer, default=0)
+    variance_flag_count: Mapped[int] = mapped_column(Integer, default=0)
+    variance_open_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    inputs_locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    inputs_locked_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    computed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    computed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    finalised_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finalised_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    last_rollback_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class PayRunEmployee(Base, TimestampMixin):
+    """One employee in a run: the input snapshot taken at lock-inputs (`snapshot`, the only thing
+    computation reads), the computed totals, validation issues, and the variance against the
+    previous finalised run of the same legal entity."""
+
+    __tablename__ = "pay_run_employee"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    pay_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("pay_run.id", ondelete="CASCADE"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    employee_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    employee_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    pay_basis: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    paid_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    lop_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    payable_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    is_computed: Mapped[bool] = mapped_column(Boolean, default=False)
+    gross_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    deductions_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    employer_contributions_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    net_before_rounding_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    rounding_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    net_minor: Mapped[int] = mapped_column(BigInteger, default=0)
+    issues: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    has_error: Mapped[bool] = mapped_column(Boolean, default=False)
+    previous_net_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    variance_percent: Mapped[Decimal | None] = mapped_column(Numeric(9, 2), nullable=True)
+    variance_flagged: Mapped[bool] = mapped_column(Boolean, default=False)
+    variance_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    variance_acknowledged_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    variance_acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class PayRunLine(Base):
+    """One component of one employee's pay, with how it was reached (`trace`). Written by compute,
+    replaced on recompute, never edited."""
+
+    __tablename__ = "pay_run_line"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    pay_run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("pay_run.id", ondelete="CASCADE"), index=True
+    )
+    pay_run_employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("pay_run_employee.id", ondelete="CASCADE")
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    component_code: Mapped[str] = mapped_column(String(30))
+    component_name: Mapped[str] = mapped_column(String(150))
+    line_type: Mapped[str] = mapped_column(String(25))
+    full_monthly_minor: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    amount_minor: Mapped[int] = mapped_column(BigInteger)
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+    trace: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
