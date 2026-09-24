@@ -126,6 +126,7 @@ def create_app() -> FastAPI:
     from hrms.modules.onboarding.public_router import router as onboarding_public_router
     from hrms.modules.onboarding.router import router as onboarding_router
     from hrms.modules.organisation.router import router as organisation_router
+    from hrms.modules.payroll.router import router as payroll_router
 
     app.include_router(health_router)
     app.include_router(identity_router, prefix="/v1")
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(employee_import_router, prefix="/v1")
     app.include_router(attendance_router, prefix="/v1")
     app.include_router(leave_router, prefix="/v1")
+    app.include_router(payroll_router, prefix="/v1")
     app.include_router(onboarding_router, prefix="/v1")
     app.include_router(onboarding_public_router, prefix="/v1")
     app.include_router(account_invite_router, prefix="/v1")

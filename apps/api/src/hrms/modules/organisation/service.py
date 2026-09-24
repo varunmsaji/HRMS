@@ -487,6 +487,17 @@ class OrganisationService:
             for code, domain, description in ONBOARDING_PERMISSIONS
         ]
 
+        # Payroll Phase 5.1 — `PAYROLL.*` (docs/modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md).
+        # Same live-registration-path rationale as `onboarding_permission_rows` above.
+        from hrms.modules.payroll.permissions import PAYROLL_PERMISSIONS
+
+        payroll_permission_rows = [
+            await self._repo.get_or_create_permission(
+                self._session, code=code, domain=domain, description=description
+            )
+            for code, domain, description in PAYROLL_PERMISSIONS
+        ]
+
         role = await self._repo.insert_role(
             self._session,
             company_id=company_id,
@@ -539,6 +550,10 @@ class OrganisationService:
                 self._session, role_id=role.id, permission_id=perm.id
             )
         for perm in onboarding_permission_rows:
+            await self._repo.insert_role_permission(
+                self._session, role_id=role.id, permission_id=perm.id
+            )
+        for perm in payroll_permission_rows:
             await self._repo.insert_role_permission(
                 self._session, role_id=role.id, permission_id=perm.id
             )
@@ -601,11 +616,13 @@ class OrganisationService:
         # operations" — granting it here at `COMPANY` scope is what actually lets that persona do
         # the job the role's name implies.
         # Decision 10 — HR cancels approved leave after it has started (employees only before).
+        # Payroll 5.1 — HR sets up salary structures and assigns salaries.
         for perm in (
             attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
             attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_CANCEL_APPROVED],
+            *payroll_permission_rows,
         ):
             await self._repo.insert_role_permission(
                 self._session,

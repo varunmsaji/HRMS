@@ -317,6 +317,8 @@ async def test_registration_success_full_row_graph(
                 "ONBOARDING.REVIEW",
                 "ONBOARDING.ACTIVATE",
                 "ONBOARDING.CANCEL",
+                # Payroll Phase 5.1 — salary components, structures and assignment.
+                "PAYROLL.SETUP_MANAGE",
             }
 
             setup_progress = (
@@ -675,5 +677,6 @@ async def test_registration_seeds_hr_admin_approval_grants(
         assert grants["ATTENDANCE.OVERTIME_APPROVE"] == "COMPANY"
         assert grants["LEAVE.APPLICATION_APPROVE"] == "COMPANY"
         assert grants["LEAVE.APPLICATION_CANCEL_APPROVED"] == "COMPANY"
+        assert grants["PAYROLL.SETUP_MANAGE"] == "COMPANY"
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)

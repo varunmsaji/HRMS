@@ -11,6 +11,7 @@ import {
   ClipboardEdit,
   ClipboardList,
   Clock,
+  Coins,
   FileClock,
   LayoutDashboard,
   Layers,
@@ -30,6 +31,7 @@ import {
   UserCircle,
   UserCog,
   UserPlus,
+  LayoutList,
   Users,
   Wallet,
   type LucideIcon,
@@ -102,6 +104,13 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
       { href: "/app/leave-combination-rules", label: "Leave Combination Rules", icon: GitMerge },
       { href: "/app/leave-year-setting", label: "Leave Year", icon: CalendarHeart },
       { href: "/app/statutory-leave-minimums", label: "Statutory Minimums", icon: Scale },
+    ],
+  },
+  {
+    label: "Payroll",
+    items: [
+      { href: "/app/payroll/salary-components", label: "Salary Components", icon: Coins },
+      { href: "/app/payroll/salary-structures", label: "Salary Structures", icon: LayoutList },
     ],
   },
   {

@@ -9,6 +9,7 @@ import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-con
 import { AssignmentPanel } from "@/components/employee/assignment-panel";
 import { BankingPanel } from "@/components/employee/banking-panel";
 import { CompensationPanel } from "@/components/employee/compensation-panel";
+import { SalaryPanel } from "@/components/payroll/salary-panel";
 import { EmployeeForm } from "@/components/employee/employee-form";
 import { EmployeeOverview } from "@/components/employee/employee-overview";
 import { EmployeeStatusBadge } from "@/components/employee/employee-status-badge";
@@ -47,6 +48,7 @@ type TabKey =
   | "employment"
   | "assignment"
   | "compensation"
+  | "salary"
   | "statutory"
   | "banking"
   | "attendance";
@@ -56,6 +58,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "employment", label: "Employment" },
   { key: "assignment", label: "Assignment" },
   { key: "compensation", label: "Compensation" },
+  { key: "salary", label: "Salary" },
   { key: "statutory", label: "Statutory" },
   { key: "banking", label: "Banking" },
   { key: "attendance", label: "Attendance" },
@@ -431,6 +434,7 @@ export default function EmployeeDetailPage() {
           {tab === "employment" ? <EmploymentPanel employeeId={employee.id} /> : null}
           {tab === "assignment" ? <AssignmentPanel employeeId={employee.id} /> : null}
           {tab === "compensation" ? <CompensationPanel employeeId={employee.id} /> : null}
+          {tab === "salary" ? <SalaryPanel employeeId={employee.id} /> : null}
           {tab === "statutory" ? <StatutoryPanel employeeId={employee.id} /> : null}
           {tab === "banking" ? <BankingPanel employeeId={employee.id} /> : null}
           {tab === "attendance" ? (

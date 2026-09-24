@@ -23,6 +23,7 @@ from hrms.modules.identity.permissions import B1_PERMISSIONS
 from hrms.modules.leave.permissions import LEAVE_PERMISSIONS
 from hrms.modules.onboarding.permissions import ONBOARDING_PERMISSIONS
 from hrms.modules.organisation.permissions import ORGANISATION_PERMISSIONS
+from hrms.modules.payroll.permissions import PAYROLL_PERMISSIONS
 from hrms.seed.constants import (
     ADMIN_EMAIL,
     ADMIN_USER_ID,
@@ -61,6 +62,7 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
         *ATTENDANCE_PERMISSIONS,
         *LEAVE_PERMISSIONS,
         *ONBOARDING_PERMISSIONS,
+        *PAYROLL_PERMISSIONS,
     ]:
         row = (
             await session.execute(select(Permission).where(Permission.code == code))
