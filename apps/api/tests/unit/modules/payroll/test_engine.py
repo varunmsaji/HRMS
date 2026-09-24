@@ -217,6 +217,40 @@ def test_inputs_locked_before_statutory_are_refused() -> None:
     assert "STATUTORY_NOT_SNAPSHOTTED" in _codes(result)
 
 
+def test_income_tax_is_deducted_from_gross_including_arrears() -> None:
+    """Phase 5.6 — wiring only (the tax math itself is `test_income_tax.py`): a high monthly
+    gross produces a TDS_EMPLOYEE deduction line that reduces net pay."""
+    income_tax = {
+        "period_month": date(2026, 4, 1),
+        "profile": {"tax_regime": "NEW", "has_pan": True},
+        "ytd_taxable_earnings_minor": 0,
+        "ytd_tds_deducted_minor": 0,
+        "rate": {"id": "tds", "verified": True, "parameters": {
+            "regime": "NEW", "standard_deduction_minor": 7_500_000,
+            "rebate_taxable_income_limit_minor": 120_000_000, "cess_percent": "4",
+            "surcharge_warning_income_minor": 500_000_000,
+            "slabs": [
+                {"min_minor": 0, "max_minor": 40_000_000, "percent": "0"},
+                {"min_minor": 40_000_000, "max_minor": None, "percent": "30"},
+            ],
+        }},
+    }  # fmt: skip
+    lines = (_september(_lines(20_000_000, 0, 0)),)
+    result = compute_employee(_input(lines, "30", income_tax=income_tax))
+    assert not result.issues
+    assert "TDS_EMPLOYEE" in _amounts(result)
+    assert result.deductions_minor == _amounts(result)["TDS_EMPLOYEE"]
+    assert result.net_minor == result.gross_minor - result.deductions_minor
+
+
+def test_income_tax_absent_is_silent() -> None:
+    """Unlike a missing `statutory` block, a missing `income_tax` block (inputs locked before
+    this phase existed, or an arrears item's own historical month) is never an error."""
+    result = compute_employee(_input((_september(_lines(3_000_000, 0, 0)),), "30"))
+    assert "TDS_EMPLOYEE" not in _amounts(result)
+    assert not any("INCOME_TAX" in issue.code for issue in result.issues)
+
+
 def test_bank_details_are_required_unless_paid_in_cash() -> None:
     lines = (_september(_lines(3_000_000, 0, 0)),)
     assert "BANK_MISSING" in _codes(compute_employee(_input(lines, "30", bank=None)))

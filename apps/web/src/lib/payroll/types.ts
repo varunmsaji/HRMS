@@ -337,7 +337,7 @@ export function payRunActions(status: PayRunStatus): {
 // Phase 5.3 — statutory rates
 // ---------------------------------------------------------------------------
 
-export const STATUTORY_SCHEMES = ["PF", "ESI", "PT", "LWF"] as const;
+export const STATUTORY_SCHEMES = ["PF", "ESI", "PT", "LWF", "TDS"] as const;
 export type StatutoryScheme = (typeof STATUTORY_SCHEMES)[number];
 
 export const STATUTORY_SCHEME_LABELS: Record<StatutoryScheme, string> = {
@@ -345,6 +345,7 @@ export const STATUTORY_SCHEME_LABELS: Record<StatutoryScheme, string> = {
   ESI: "Employees' State Insurance",
   PT: "Professional tax",
   LWF: "Labour welfare fund",
+  TDS: "Income tax (TDS)",
 };
 
 export interface PtSlab {
@@ -360,6 +361,12 @@ export interface LwfSlab {
   max_minor: number | null;
   employee_minor: number;
   employer_minor: number;
+}
+
+export interface TdsSlab {
+  min_minor: number;
+  max_minor: number | null;
+  percent: string;
 }
 
 export interface StatutoryRate {
@@ -395,6 +402,11 @@ export function summariseStatutoryRate(rate: StatutoryRate): string {
     case "LWF": {
       const months = (p.months as number[] | undefined) ?? [];
       return `Deducted in month(s) ${months.join(", ")}`;
+    }
+    case "TDS": {
+      const slabs = (p.slabs as TdsSlab[] | undefined) ?? [];
+      const top = slabs.length > 0 ? slabs[slabs.length - 1].percent : "0";
+      return `${p.regime ?? "NEW"} regime · standard deduction ${formatInr(Number(p.standard_deduction_minor))} · up to ${top}%`;
     }
   }
 }

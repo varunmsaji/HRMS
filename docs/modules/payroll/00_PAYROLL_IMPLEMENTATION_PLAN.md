@@ -313,6 +313,45 @@ confirmation. As built:
 *FR-PAY-011.* Both regimes, slabs/surcharge/cess as effective-dated data, annual projection,
 declarations and proofs, previous-employer income, monthly TDS. The largest single phase.
 
+**Status: built 2026-09-24** (migration `20261004110000` — widens the two `statutory_rate` CHECK
+constraints to a fifth scheme; no new table). Deliberately a **base-version v1**, not the full
+FR-PAY-011: new tax regime only, no declarations, no previous-employer income, no surcharge
+computation, no marginal relief on the 87A rebate. As built:
+
+- **`TDS` reuses `statutory_rate`** as a fifth national scheme (`state_code` NULL, like PF/ESI) —
+  same effective-dated, seeded-unverified, compliance-signs-off-before-use shape as PF/ESI/PT/LWF.
+  Seeded per company on first use: FY 2025-26 new-regime slabs (nil to ₹4L, 5–30% up to ₹24L+),
+  ₹75,000 standard deduction, full Section 87A rebate at or below ₹12L taxable, 4% cess, a
+  surcharge warning above ₹50L (not computed).
+- **Engine** (`income_tax.py`, pure): Section 192's average-rate method — projects the year's
+  income from what has actually been paid so far (queried from `pay_run_line` on the same
+  employee/legal-entity's `FINALISED`/`PAID` runs this financial year — arrears are already
+  ordinary lines in the run that pays them, so no separate query) plus this month's rate
+  continuing for the rest of the year; taxes the projection net of the standard deduction; divides
+  what's still owed by the months left to collect it. Runs on the month's gross *after* arrears are
+  folded in — correct under cash-basis TDS. Never recomputed for an arrears item's own historical
+  month (only the outer, current month gets a TDS line).
+- **Verification is required only once real tax is actually due** — an employee under the rebate
+  threshold isn't blocked by an unverified slab table they'll never need (same reasoning as why
+  PF/ESI/PT only gate on verification when applicable to that employee).
+- **Old regime blocks the run** (`TDS_OLD_REGIME_NOT_SUPPORTED`) rather than being silently
+  mis-taxed. **No PAN blocks the run** when tax is actually due (`PAN_MISSING_FOR_TDS`) instead of
+  auto-deducting the Section 206AA penal flat rate. **High projected income only warns**
+  (`TDS_SURCHARGE_NOT_COMPUTED`) — surcharge itself isn't computed.
+- Tests: `tests/unit/modules/payroll/test_income_tax.py` (the pure tax math — rebate, slabs, cess,
+  YTD carry-forward arithmetic, old regime, missing PAN, unverified-only-when-due, surcharge
+  warning), `tests/integration/modules/payroll/test_income_tax.py` (a real high earner taxed and
+  blocked until verified; YTD proven to read an actually finalised prior run, not re-derive it).
+- Web: Settings → Payroll → Statutory Rates gained a TDS row (seed summary, Verify, and a
+  scheme-specific edit form — standard deduction/rebate limit/cess/surcharge threshold plus a
+  from/to/percent slab editor).
+- Known limits (the v1 scope, not bugs): no Chapter VI-A declarations or proofs, no HRA/LTA
+  exemption, no previous-employer income (Form 12B) — an employee who joined mid-year from another
+  employer is under-withheld relative to their true annual income unless HR handles it manually;
+  no old-regime support; no marginal relief smoothing just above the 87A rebate threshold; no
+  surcharge; arrears are not re-taxed for their original month (see above — this is by design, not
+  an oversight).
+
 ### Phase 5.7 — Everything else
 
 Statutory files (PF ECR, ESI, PT challan, Form 24Q / Form 16), accounting voucher, payroll reports

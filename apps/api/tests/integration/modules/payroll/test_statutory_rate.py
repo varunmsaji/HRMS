@@ -43,13 +43,15 @@ async def test_statutory_rate_master(client: AsyncClient, seeded_plan_catalogue:
     headers, company_id, user_id = await _register_tenant(client)
     try:
         rates = await _rates(client, headers)
-        assert set(rates) == {("PF", None), ("ESI", None), ("PT", "MH"), ("PT", "KA")}
+        assert set(rates) == {
+            ("PF", None), ("ESI", None), ("TDS", None), ("PT", "MH"), ("PT", "KA"),
+        }  # fmt: skip
         assert all(r["is_seeded"] and not r["verified"] for r in rates.values())
         pf = rates[("PF", None)]
         assert pf["parameters"]["wage_ceiling_minor"] == 1_500_000
         assert pf["parameters"]["employee_percent"] == "12"
         # Listing again seeds nothing new.
-        assert len(await _rates(client, headers)) == 4
+        assert len(await _rates(client, headers)) == 5
 
         await _verify(client, headers, pf)
 

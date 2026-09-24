@@ -644,7 +644,7 @@ class PayRunEmployeeDetailRead(PayRunEmployeeRead):
 # Phase 5.3 — statutory rates
 # ---------------------------------------------------------------------------
 
-STATUTORY_SCHEMES = ("PF", "ESI", "PT", "LWF")
+STATUTORY_SCHEMES = ("PF", "ESI", "PT", "LWF", "TDS")
 
 _Percent = Field(ge=0, le=100, decimal_places=4)
 
@@ -737,11 +737,48 @@ class LwfParameters(BaseModel):
         return sorted(value)
 
 
+class TdsSlab(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_minor: int = Field(ge=0)
+    max_minor: int | None = Field(default=None, ge=0)
+    percent: Decimal = _Percent
+
+    @model_validator(mode="after")
+    def validate_slab(self) -> "TdsSlab":
+        _check_slab_range(self.min_minor, self.max_minor)
+        return self
+
+
+class TdsParameters(BaseModel):
+    """Phase 5.6 — new tax regime only (`income_tax.py` documents the full v1 scope: no
+    declarations, no previous-employer income, no surcharge or marginal relief). `slabs` are
+    on annual taxable income (gross received this financial year, minus the standard deduction);
+    a taxable income at or below `rebate_taxable_income_limit_minor` owes nothing (Section 87A,
+    no marginal-relief smoothing above it); `surcharge_warning_income_minor` only flags a warning
+    — surcharge itself is not computed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    regime: str = "NEW"
+    standard_deduction_minor: int = Field(ge=0)
+    rebate_taxable_income_limit_minor: int = Field(ge=0)
+    cess_percent: Decimal = _Percent
+    surcharge_warning_income_minor: int = Field(gt=0)
+    slabs: list[TdsSlab] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_regime(self) -> "TdsParameters":
+        _check_choice("regime", self.regime, ("NEW",))
+        return self
+
+
 STATUTORY_PARAMETER_MODELS: dict[str, type[BaseModel]] = {
     "PF": PfParameters,
     "ESI": EsiParameters,
     "PT": PtParameters,
     "LWF": LwfParameters,
+    "TDS": TdsParameters,
 }
 
 

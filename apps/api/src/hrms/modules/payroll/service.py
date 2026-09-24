@@ -69,6 +69,7 @@ from hrms.modules.payroll.exceptions import (
     StatutoryRateInvalidError,
     StatutoryRateNotFoundError,
 )
+from hrms.modules.payroll.income_tax import financial_year_start
 from hrms.modules.payroll.models import (
     PayRun,
     PayRunEmployee,
@@ -1985,6 +1986,50 @@ class PayRunService:
             "rates": rates,
         }
 
+    async def _income_tax(
+        self,
+        company_id: UUID,
+        legal_entity_id: UUID,
+        employee_id: UUID,
+        spans: list[tuple[date, date]],
+        month_end: date,
+        period_month: date,
+    ) -> dict[str, Any]:
+        """Phase 5.6 — what `income_tax.compute_tds` needs: the employee's tax regime and
+        whether they have a PAN on file, what has actually been paid and deducted so far this
+        financial year in this legal entity's finalised runs, and the TDS slab rate in force."""
+        from hrms.modules.employee.service import EmployeeService, EmployeeStatutoryService
+
+        as_of = max((end for _start, end in spans), default=month_end)
+        profile = await EmployeeStatutoryService(self._session).get_statutory_as_of(
+            company_id, employee_id, as_of
+        )
+        profile_data = (
+            {
+                "tax_regime": profile.tax_regime,
+                "has_pan": await EmployeeService(self._session).has_pan(company_id, employee_id),
+            }
+            if profile is not None
+            else None
+        )
+        fy_start = financial_year_start(period_month)
+        ytd = await self._repo.ytd_income_tax_totals(
+            self._session,
+            company_id=company_id,
+            legal_entity_id=legal_entity_id,
+            employee_id=employee_id,
+            fy_start=fy_start,
+            before_month=period_month,
+        )
+        rates = await StatutoryRateService(self._session).rates_for(company_id, month_end, None)
+        return {
+            "period_month": period_month.isoformat(),
+            "profile": profile_data,
+            "ytd_taxable_earnings_minor": ytd["gross_minor"],
+            "ytd_tds_deducted_minor": ytd["tds_minor"],
+            "rate": rates.get("TDS"),
+        }
+
     # -- arrears (Phase 5.5) -------------------------------------------------------------
 
     async def _paid_for(self, prior: PayRun, employee_id: UUID) -> dict[str, dict[str, Any]]:
@@ -2296,6 +2341,14 @@ class PayRunService:
                     run.period_end,
                     date_of_birth=employee.date_of_birth,
                     gender=employee.gender,
+                ),
+                "income_tax": await self._income_tax(
+                    company_id,
+                    run.legal_entity_id,
+                    employee_id,
+                    own_spans.get(employee_id, []),
+                    run.period_end,
+                    run.period_month,
                 ),
                 "arrears": await self._arrears_for(run, employee_id, components),
                 "issues": issues,
@@ -2911,6 +2964,27 @@ DEFAULT_STATUTORY_RATES: tuple[tuple[str, str | None, date, dict[str, Any], str]
         "Karnataka: below ₹25,000 nil, ₹25,000 and above ₹200 (₹300 in February, from 1 Apr "
         "2025). Verify before use.",
     ),
+    (
+        "TDS",
+        None,
+        date(2025, 4, 1),
+        {"regime": "NEW", "standard_deduction_minor": 7_500_000,
+         "rebate_taxable_income_limit_minor": 120_000_000, "cess_percent": "4",
+         "surcharge_warning_income_minor": 500_000_000,
+         "slabs": [
+             {"min_minor": 0, "max_minor": 40_000_000, "percent": "0"},
+             {"min_minor": 40_000_000, "max_minor": 80_000_000, "percent": "5"},
+             {"min_minor": 80_000_000, "max_minor": 120_000_000, "percent": "10"},
+             {"min_minor": 120_000_000, "max_minor": 160_000_000, "percent": "15"},
+             {"min_minor": 160_000_000, "max_minor": 200_000_000, "percent": "20"},
+             {"min_minor": 200_000_000, "max_minor": 240_000_000, "percent": "25"},
+             {"min_minor": 240_000_000, "max_minor": None, "percent": "30"},
+         ]},
+        "New tax regime, FY 2025-26 slabs (from 1 Apr 2025): nil to ₹4L, 5% to ₹8L, 10% to ₹12L, "
+        "15% to ₹16L, 20% to ₹20L, 25% to ₹24L, 30% above; standard deduction ₹75,000; full "
+        "Section 87A rebate at or below ₹12L taxable (no marginal relief); 4% health & education "
+        "cess; surcharge above ₹50L is not computed — only flagged. Verify before use.",
+    ),
 )  # fmt: skip
 
 
@@ -3150,11 +3224,13 @@ class StatutoryRateService:
     async def rates_for(
         self, company_id: UUID, as_of: date, state_code: str | None
     ) -> dict[str, dict[str, Any] | None]:
-        """The rates a pay run snapshots for one employee: PF and ESI in force on `as_of`, and PT
-        and LWF for the employee's state."""
+        """The rates a pay run snapshots for one employee: PF, ESI and TDS in force on `as_of`,
+        and PT and LWF for the employee's state."""
         await self.ensure_defaults(company_id)
         rates: dict[str, dict[str, Any] | None] = {}
-        for scheme, state in (("PF", None), ("ESI", None), ("PT", state_code), ("LWF", state_code)):
+        for scheme, state in (
+            ("PF", None), ("ESI", None), ("TDS", None), ("PT", state_code), ("LWF", state_code)
+        ):  # fmt: skip
             row = (
                 None
                 if scheme in ("PT", "LWF") and not state

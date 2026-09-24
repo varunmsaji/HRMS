@@ -642,6 +642,45 @@ class PayRunRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def ytd_income_tax_totals(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        legal_entity_id: UUID,
+        employee_id: UUID,
+        fy_start: date,
+        before_month: date,
+    ) -> dict[str, int]:
+        """Phase 5.6 — gross earnings actually paid and TDS actually deducted for this employee
+        in this legal entity's `FINALISED`/`PAID` runs from `fy_start` up to (not including)
+        `before_month` — what Section 192's average-rate method needs as "already paid so far
+        this year". Reads `pay_run_line` (not `pay_run_arrear`) because arrears are themselves
+        materialised as ordinary lines in the run that pays them — correct under cash-basis TDS,
+        since money is taxed in the month it is actually received."""
+        stmt = (
+            select(PayRunLine.line_type, PayRunLine.component_code,
+                   func.sum(PayRunLine.amount_minor))  # fmt: skip
+            .join(PayRun, PayRun.id == PayRunLine.pay_run_id)
+            .where(
+                PayRunLine.company_id == company_id,
+                PayRun.legal_entity_id == legal_entity_id,
+                PayRunLine.employee_id == employee_id,
+                PayRun.period_month >= fy_start,
+                PayRun.period_month < before_month,
+                PayRun.status.in_(("FINALISED", "PAID")),
+            )
+            .group_by(PayRunLine.line_type, PayRunLine.component_code)
+        )
+        gross_minor = 0
+        tds_minor = 0
+        for line_type, code, total in (await session.execute(stmt)).all():
+            if line_type == "EARNING":
+                gross_minor += int(total)
+            if code == "TDS_EMPLOYEE":
+                tds_minor += int(total)
+        return {"gross_minor": gross_minor, "tds_minor": tds_minor}
+
 
 # ---------------------------------------------------------------------------
 # Phase 5.3 — statutory rates

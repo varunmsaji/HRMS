@@ -37,6 +37,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from hrms.modules.payroll.income_tax import compute_tds
 from hrms.modules.payroll.statutory import compute_statutory
 
 ERROR = "ERROR"
@@ -126,6 +127,11 @@ class EmployeeInput:
     # Phase 5.3 — `{"month_end", "profile", "employee", "rates"}` (see `statutory.py`); `None`
     # only for inputs locked before statutory deductions existed, which are refused.
     statutory: dict[str, Any] | None = None
+    # Phase 5.6 — `{"period_month", "profile", "ytd_taxable_earnings_minor",
+    # "ytd_tds_deducted_minor", "rate"}` (see `income_tax.py`). `None` for inputs locked before
+    # TDS existed, and always `None` on an arrears item's nested inputs — TDS is computed only
+    # for the outer, current month (see `income_tax.py`'s scope notes).
+    income_tax: dict[str, Any] | None = None
     # Phase 5.5 — earlier finalised months to recompute and pay the difference for.
     arrears: tuple["ArrearsInput", ...] = ()
 
@@ -403,6 +409,36 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
     issues.extend(arrear_issues)
     gross = sum(line.amount_minor for line in lines if line.line_type == "EARNING")
 
+    # Phase 5.6 — income tax (TDS), new regime only (`income_tax.py` documents the full v1
+    # scope). Runs on the month's total gross including arrears — correct under cash-basis TDS,
+    # since arrears money is taxed in the month it is actually paid, not the month it was earned.
+    # `income_tax` is `None` for inputs locked before TDS existed and for every arrears item's
+    # nested inputs (TDS is never recomputed for a historical month) — silently no TDS line,
+    # the same tolerance `compute_statutory` itself has for a missing profile.
+    if inputs.income_tax is not None:
+        it = inputs.income_tax
+        tds_result = compute_tds(
+            period_month=it["period_month"],
+            this_month_taxable_earnings_minor=gross,
+            ytd_taxable_earnings_minor=it["ytd_taxable_earnings_minor"],
+            ytd_tds_deducted_minor=it["ytd_tds_deducted_minor"],
+            profile=it.get("profile"),
+            rate=it.get("rate"),
+        )
+        issues.extend(Issue(i.code, i.severity, i.message) for i in tds_result.issues)
+        lines.extend(
+            ComputedLine(
+                component_code=line.component_code,
+                component_name=line.component_name,
+                line_type=line.line_type,
+                full_monthly_minor=None,
+                amount_minor=line.amount_minor,
+                display_order=line.display_order,
+                trace=line.trace,
+            )
+            for line in tds_result.lines
+        )
+
     deductions = sum(line.amount_minor for line in lines if line.line_type == "DEDUCTION")
     employer = sum(line.amount_minor for line in lines if line.line_type == "EMPLOYER_CONTRIBUTION")
     # D8 (2026-09-24): net pay is not rounded — it is paid to the paisa. `rounding_minor` and the
@@ -561,6 +597,7 @@ def employee_input_from_snapshot(snapshot: dict[str, Any], days_in_month: int) -
             Issue(i["code"], i["severity"], i["message"]) for i in snapshot.get("issues", [])
         ),
         statutory=_statutory_from_snapshot(snapshot.get("statutory")),
+        income_tax=_income_tax_from_snapshot(snapshot.get("income_tax")),
         arrears=tuple(
             ArrearsInput(
                 month=item["month"],
@@ -589,3 +626,9 @@ def _statutory_from_snapshot(block: dict[str, Any] | None) -> dict[str, Any] | N
     if employee.get("date_of_birth"):
         employee["date_of_birth"] = date.fromisoformat(employee["date_of_birth"])
     return {**block, "month_end": date.fromisoformat(block["month_end"]), "employee": employee}
+
+
+def _income_tax_from_snapshot(block: dict[str, Any] | None) -> dict[str, Any] | None:
+    if block is None:
+        return None
+    return {**block, "period_month": date.fromisoformat(block["period_month"])}

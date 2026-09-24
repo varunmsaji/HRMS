@@ -25,6 +25,7 @@ import {
   type PtSlab,
   type StatutoryRate,
   type StatutoryScheme,
+  type TdsSlab,
 } from "@/lib/payroll/types";
 
 const PF_FIELDS: [string, string, "percent" | "money" | "number"][] = [
@@ -42,6 +43,13 @@ const ESI_FIELDS: [string, string, "percent" | "money" | "number"][] = [
   ["employer_percent", "Employer contribution (%)", "percent"],
   ["wage_ceiling_minor", "Wage ceiling (₹)", "money"],
   ["employee_exempt_daily_wage_minor", "No employee share up to a daily wage of (₹)", "money"],
+];
+
+const TDS_FIELDS: [string, string, "percent" | "money" | "number"][] = [
+  ["standard_deduction_minor", "Standard deduction (₹/year)", "money"],
+  ["rebate_taxable_income_limit_minor", "Full rebate at or below taxable income (₹/year)", "money"],
+  ["cess_percent", "Health & education cess (%)", "percent"],
+  ["surcharge_warning_income_minor", "Warn (don't compute) surcharge above (₹/year)", "money"],
 ];
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -64,6 +72,18 @@ function emptySlab(): SlabRow {
 }
 
 function slabRows(scheme: StatutoryScheme, parameters: Record<string, unknown>): SlabRow[] {
+  if (scheme === "TDS") {
+    const slabs = (parameters.slabs as TdsSlab[] | undefined) ?? [];
+    return slabs.map((slab) => ({
+      from: toRupees(slab.min_minor),
+      to: toRupees(slab.max_minor),
+      amount: slab.percent,
+      employer: "0",
+      gender: "",
+      overrideMonth: "",
+      overrideAmount: "",
+    }));
+  }
   const slabs = (parameters.slabs as (PtSlab & LwfSlab)[] | undefined) ?? [];
   return slabs.map((slab) => {
     const [month, amount] = Object.entries(slab.month_amounts ?? {})[0] ?? ["", undefined];
@@ -114,7 +134,7 @@ export function StatutoryRateDialog({
     setEffectiveFrom("");
     setNotes(source?.notes ?? "");
     const values: Record<string, string> = {};
-    for (const [key, , kind] of [...PF_FIELDS, ...ESI_FIELDS]) {
+    for (const [key, , kind] of [...PF_FIELDS, ...ESI_FIELDS, ...TDS_FIELDS]) {
       const value = p[key];
       if (value === undefined || value === null) continue;
       values[key] = kind === "money" ? toRupees(Number(value)) : String(value);
@@ -124,25 +144,50 @@ export function StatutoryRateDialog({
     setMonths(((p.months as number[] | undefined) ?? []).join(", "));
   }, [open, rate]);
 
+  function buildScalarFields(
+    scalars: [string, string, "percent" | "money" | "number"][],
+  ): Record<string, unknown> | string {
+    const result: Record<string, unknown> = {};
+    for (const [key, label, kind] of scalars) {
+      const raw = (fields[key] ?? "").trim();
+      if (!raw) return `${label} is required`;
+      if (kind === "money") {
+        const minor = rupeesToMinor(raw);
+        if (minor === null) return `${label} must be an amount`;
+        result[key] = minor;
+      } else if (kind === "number") {
+        if (!/^\d+$/.test(raw)) return `${label} must be a whole number`;
+        result[key] = Number(raw);
+      } else {
+        if (!/^\d+(\.\d{1,4})?$/.test(raw)) return `${label} must be a percentage`;
+        result[key] = raw;
+      }
+    }
+    return result;
+  }
+
   function buildParameters(): Record<string, unknown> | string {
     if (scheme === "PF" || scheme === "ESI") {
-      const result: Record<string, unknown> = {};
-      for (const [key, label, kind] of scheme === "PF" ? PF_FIELDS : ESI_FIELDS) {
-        const raw = (fields[key] ?? "").trim();
-        if (!raw) return `${label} is required`;
-        if (kind === "money") {
-          const minor = rupeesToMinor(raw);
-          if (minor === null) return `${label} must be an amount`;
-          result[key] = minor;
-        } else if (kind === "number") {
-          if (!/^\d+$/.test(raw)) return `${label} must be a whole number`;
-          result[key] = Number(raw);
-        } else {
-          if (!/^\d+(\.\d{1,4})?$/.test(raw)) return `${label} must be a percentage`;
-          result[key] = raw;
+      return buildScalarFields(scheme === "PF" ? PF_FIELDS : ESI_FIELDS);
+    }
+    if (scheme === "TDS") {
+      const result = buildScalarFields(TDS_FIELDS);
+      if (typeof result === "string") return result;
+      const built: TdsSlab[] = [];
+      for (let index = 0; index < slabs.length; index += 1) {
+        const row = slabs[index];
+        const min = rupeesToMinor(row.from);
+        const max = row.to.trim() ? rupeesToMinor(row.to) : null;
+        if (min === null || (row.to.trim() && max === null)) {
+          return `Slab ${index + 1}: from/to are amounts in rupees`;
         }
+        if (!/^\d+(\.\d{1,4})?$/.test(row.amount.trim())) {
+          return `Slab ${index + 1}: percent must be a number`;
+        }
+        built.push({ min_minor: min, max_minor: max, percent: row.amount.trim() });
       }
-      return result;
+      if (built.length === 0) return "Add at least one slab";
+      return { ...result, regime: "NEW", slabs: built };
     }
     const built = [];
     for (let index = 0; index < slabs.length; index += 1) {
@@ -215,7 +260,9 @@ export function StatutoryRateDialog({
   }
 
   const perState = scheme === "PT" || scheme === "LWF";
-  const scalarFields = scheme === "PF" ? PF_FIELDS : scheme === "ESI" ? ESI_FIELDS : [];
+  const showSlabs = perState || scheme === "TDS";
+  const scalarFields =
+    scheme === "PF" ? PF_FIELDS : scheme === "ESI" ? ESI_FIELDS : scheme === "TDS" ? TDS_FIELDS : [];
 
   return (
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
@@ -277,10 +324,10 @@ export function StatutoryRateDialog({
             </FormField>
           ) : null}
 
-          {perState ? (
+          {showSlabs ? (
             <div className="space-y-2">
               <div className="text-sm font-medium text-foreground">
-                Slabs on the month&apos;s gross{" "}
+                {scheme === "TDS" ? "Slabs on annual taxable income" : "Slabs on the month's gross"}{" "}
                 <span className="font-normal text-foreground-muted">
                   (leave &quot;to&quot; empty for no upper limit
                   {scheme === "PT" ? "; no slabs means the state levies no PT" : ""})
@@ -291,20 +338,20 @@ export function StatutoryRateDialog({
                   setSlabs(slabs.map((s, i) => (i === index ? { ...s, ...patch } : s)));
                 return (
                   <div key={index} className="flex flex-wrap items-end gap-2 rounded-md border border-border p-2">
-                    <FormField id={`slab-${index}-from`} label="From ₹" className="w-24">
+                    <FormField id={`slab-${index}-from`} label={scheme === "TDS" ? "From ₹/yr" : "From ₹"} className="w-24">
                       <Input value={row.from} onChange={(e) => update({ from: e.target.value })} />
                     </FormField>
-                    <FormField id={`slab-${index}-to`} label="To ₹" className="w-24">
+                    <FormField id={`slab-${index}-to`} label={scheme === "TDS" ? "To ₹/yr" : "To ₹"} className="w-24">
                       <Input value={row.to} onChange={(e) => update({ to: e.target.value })} />
                     </FormField>
                     <FormField
                       id={`slab-${index}-amount`}
-                      label={scheme === "PT" ? "Tax ₹" : "Employee ₹"}
+                      label={scheme === "TDS" ? "Percent" : scheme === "PT" ? "Tax ₹" : "Employee ₹"}
                       className="w-24"
                     >
                       <Input value={row.amount} onChange={(e) => update({ amount: e.target.value })} />
                     </FormField>
-                    {scheme === "LWF" ? (
+                    {scheme === "TDS" ? null : scheme === "LWF" ? (
                       <FormField id={`slab-${index}-employer`} label="Employer ₹" className="w-24">
                         <Input value={row.employer} onChange={(e) => update({ employer: e.target.value })} />
                       </FormField>
