@@ -116,7 +116,8 @@ def upgrade() -> None:
               'NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT',
               'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'
             )),
-            CONSTRAINT "attendance_day_unique" UNIQUE ("company_id", "employee_id", "attendance_date")
+            CONSTRAINT "attendance_day_unique"
+              UNIQUE ("company_id", "employee_id", "attendance_date")
         );
 
         CREATE INDEX IF NOT EXISTS attendance_day_company_id_idx ON attendance_day (company_id);

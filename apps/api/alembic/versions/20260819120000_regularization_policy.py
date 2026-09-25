@@ -82,7 +82,8 @@ def upgrade() -> None:
               REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
             CONSTRAINT "regularization_policy_version_policy_id_fkey" FOREIGN KEY ("policy_id")
               REFERENCES "regularization_policy"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-            CONSTRAINT "regularization_policy_version_published_by_fkey" FOREIGN KEY ("published_by")
+            CONSTRAINT "regularization_policy_version_published_by_fkey"
+              FOREIGN KEY ("published_by")
               REFERENCES "user"("id") ON DELETE SET NULL,
             CONSTRAINT "regularization_policy_version_status_check"
               CHECK (status IN ('DRAFT', 'PUBLISHED')),

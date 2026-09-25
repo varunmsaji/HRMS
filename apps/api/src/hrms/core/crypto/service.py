@@ -64,9 +64,9 @@ class PiiCryptoService:
         if ciphertext is None:
             return None
         dek, aad = await self._resolve_for_decrypt(
-            session, ciphertext=ciphertext, aad=build_column_aad(
-                table=table, column=column, record_id=record_id
-            ),
+            session,
+            ciphertext=ciphertext,
+            aad=build_column_aad(table=table, column=column, record_id=record_id),
         )
         return decrypt_value(ciphertext, dek=dek, aad=aad)
 

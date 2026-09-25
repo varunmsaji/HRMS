@@ -20,11 +20,17 @@ class AccountInviteRead(BaseModel):
 
 class PublicAccountInviteRead(BaseModel):
     """Shown by the public `GET .../{token}` route before the accept form — enough for the
-    invitee to recognize what they're accepting, nothing more (no role/permission detail)."""
+    invitee to recognize what they're accepting, nothing more (no role/permission detail).
+
+    `existing_account` (SEC-08) tells the frontend whether `POST .../accept` will create a new
+    account or authenticate an existing one — the invitee's own email is already known to them
+    (it's the address the invite was sent to), so surfacing this is not an enumeration risk; it
+    lets the accept form ask for a login password instead of a new one."""
 
     email: str
     company_name: str
     expires_at: datetime
+    existing_account: bool
 
 
 class AcceptInviteRequest(BaseModel):

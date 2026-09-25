@@ -1,5 +1,5 @@
 """DATA-01 — integration tests for the existing-data backfill
-(`docs/audits/DATA_01_PII_ENCRYPTION_TEST_MATRIX.md` §4, `hrms.core.crypto.backfill`), against the
+(`docs/audits/DATA_01_PII_ENCRYPTION_TEST_MATRIX.md` §4, `hrms.pii_backfill`), against the
 real test database — matching this repository's existing convention of testing migrations/
 backfills against real Postgres, not a mock. Every test seeds a plaintext value **directly via
 raw SQL**, bypassing the API/ORM entirely, to simulate a row written before this batch's
@@ -13,16 +13,16 @@ import redis.asyncio as redis
 from httpx import AsyncClient
 from sqlalchemy import text
 
+from hrms import pii_backfill as backfill_module
 from hrms.core.config.settings import get_settings
-from hrms.core.crypto import backfill as backfill_module
-from hrms.core.crypto.backfill import (
+from hrms.core.crypto.field import is_ciphertext_shaped
+from hrms.core.db.session import get_session_factory, session_scope
+from hrms.pii_backfill import (
     backfill_employee_bank,
     backfill_employee_column,
     backfill_onboarding_bank_info,
     discover_plaintext_counts,
 )
-from hrms.core.crypto.field import is_ciphertext_shaped
-from hrms.core.db.session import get_session_factory, session_scope
 
 from .modules.employee.test_employee_banking import _create_employee, _register_tenant, _teardown
 from .modules.onboarding.test_onboarding_case import _case_payload
@@ -83,11 +83,15 @@ async def _raw_account_number(bank_id: UUID) -> str | None:
     factory = get_session_factory()
     async with factory() as session:
         row = (
-            await session.execute(
-                text("SELECT account_number_enc FROM employee_bank WHERE id = :id"),
-                {"id": str(bank_id)},
+            (
+                await session.execute(
+                    text("SELECT account_number_enc FROM employee_bank WHERE id = :id"),
+                    {"id": str(bank_id)},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         assert row is not None
         return row["account_number_enc"]
 
@@ -237,11 +241,17 @@ async def test_backfill_covers_employee_pan_and_aadhaar_columns(client: AsyncCli
 
         async with factory() as session:
             row = (
-                await session.execute(
-                    text("SELECT pan_number_enc, aadhaar_number_enc FROM employee WHERE id = :id"),
-                    {"id": employee["id"]},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT pan_number_enc, aadhaar_number_enc FROM employee WHERE id = :id"
+                        ),
+                        {"id": employee["id"]},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         assert row is not None
         assert is_ciphertext_shaped(row["pan_number_enc"])
         assert is_ciphertext_shaped(row["aadhaar_number_enc"])
@@ -280,14 +290,18 @@ async def test_backfill_covers_onboarding_case_bank_info(client: AsyncClient) ->
 
         async with factory() as session:
             row = (
-                await session.execute(
-                    text(
-                        "SELECT bank_info ->> 'account_number_enc' AS enc "
-                        "FROM onboarding_case WHERE id = :id"
-                    ),
-                    {"id": case_id},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT bank_info ->> 'account_number_enc' AS enc "
+                            "FROM onboarding_case WHERE id = :id"
+                        ),
+                        {"id": case_id},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         assert row is not None
         assert is_ciphertext_shaped(row["enc"])
     finally:
@@ -315,14 +329,18 @@ async def test_backfill_verification_catches_a_bad_round_trip(
         crypto_service_module.PiiCryptoService, "decrypt_column", _wrong_decrypt, raising=True
     )
 
-    from hrms.core.crypto.backfill import _encrypt_and_verify
     from hrms.core.crypto.service import PiiCryptoService
     from hrms.core.db.session import session_scope
+    from hrms.pii_backfill import _encrypt_and_verify
 
     crypto = PiiCryptoService(get_settings())
     async with session_scope(get_settings()) as session:
         with pytest.raises(RuntimeError, match="verification failed"):
             await _encrypt_and_verify(
-                crypto, session, plaintext="1234567890", table="employee_bank",
-                column="account_number_enc", record_id=uuid4(),
+                crypto,
+                session,
+                plaintext="1234567890",
+                table="employee_bank",
+                column="account_number_enc",
+                record_id=uuid4(),
             )

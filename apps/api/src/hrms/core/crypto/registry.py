@@ -41,7 +41,7 @@ class EncryptionKeyRegistry:
         session: AsyncSession,
         *,
         key_version: int,
-        kms_key_arn: str,
+        wrapping_key_id: str,
         wrapped_dek_base64: str,
         created_by: str,
     ) -> EncryptionKey:
@@ -52,7 +52,7 @@ class EncryptionKeyRegistry:
         row = EncryptionKey(
             id=uuid4(),
             key_version=key_version,
-            kms_key_arn=kms_key_arn,
+            wrapping_key_id=wrapping_key_id,
             wrapped_dek=wrapped_dek_base64,
             status=STATUS_ACTIVE,
             activated_at=now,
@@ -66,7 +66,7 @@ class EncryptionKeyRegistry:
         self,
         session: AsyncSession,
         *,
-        kms_key_arn: str,
+        wrapping_key_id: str,
         wrapped_dek_base64: str,
         created_by: str,
     ) -> EncryptionKey:
@@ -82,7 +82,7 @@ class EncryptionKeyRegistry:
         new_row = EncryptionKey(
             id=uuid4(),
             key_version=next_version,
-            kms_key_arn=kms_key_arn,
+            wrapping_key_id=wrapping_key_id,
             wrapped_dek=wrapped_dek_base64,
             status=STATUS_ACTIVE,
             activated_at=now,

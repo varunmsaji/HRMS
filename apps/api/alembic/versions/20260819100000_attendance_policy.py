@@ -154,7 +154,8 @@ def upgrade() -> None:
             CONSTRAINT "attendance_policy_hour_band_pkey" PRIMARY KEY ("id"),
             CONSTRAINT "attendance_policy_hour_band_company_id_fkey" FOREIGN KEY ("company_id")
               REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-            CONSTRAINT "attendance_policy_hour_band_version_id_fkey" FOREIGN KEY ("policy_version_id")
+            CONSTRAINT "attendance_policy_hour_band_version_id_fkey"
+              FOREIGN KEY ("policy_version_id")
               REFERENCES "attendance_policy_version"("id") ON DELETE CASCADE ON UPDATE CASCADE,
             CONSTRAINT "attendance_policy_hour_band_status_check"
               CHECK (result_status IN ('PRESENT', 'HALF_DAY', 'ABSENT')),
@@ -188,7 +189,8 @@ def upgrade() -> None:
             CONSTRAINT "attendance_policy_late_band_pkey" PRIMARY KEY ("id"),
             CONSTRAINT "attendance_policy_late_band_company_id_fkey" FOREIGN KEY ("company_id")
               REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-            CONSTRAINT "attendance_policy_late_band_version_id_fkey" FOREIGN KEY ("policy_version_id")
+            CONSTRAINT "attendance_policy_late_band_version_id_fkey"
+              FOREIGN KEY ("policy_version_id")
               REFERENCES "attendance_policy_version"("id") ON DELETE CASCADE ON UPDATE CASCADE,
             CONSTRAINT "attendance_policy_late_band_classification_check"
               CHECK (classification IN ('NONE', 'LATE', 'HALF_DAY', 'ABSENT')),

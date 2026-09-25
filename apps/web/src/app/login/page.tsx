@@ -9,6 +9,7 @@ import { PasswordInput } from "@/components/common/password-input";
 import { AuthLayout } from "@/components/layout/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { landingPathFor } from "@/lib/auth/landing";
@@ -23,10 +24,16 @@ export default function LoginPage() {
   const [errors, setErrors] = useState<LoginFormErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // SEC-09 (RELEASE_HARDENING_PHASE_3A) — shown instead of the generic form error when the
+  // credentials are correct but the address hasn't been confirmed yet, with a way to retry.
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent">("idle");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
+    setUnverifiedEmail(null);
+    setResendState("idle");
 
     const nextErrors: LoginFormErrors = validateLoginForm({ email, password });
 
@@ -41,7 +48,9 @@ export default function LoginPage() {
       router.push(landingPathFor(user));
     } catch (error) {
       if (error instanceof ApiError) {
-        if (error.status === 401) {
+        if (error.code === "EMAIL_NOT_VERIFIED") {
+          setUnverifiedEmail(email.trim());
+        } else if (error.status === 401) {
           setFormError("Invalid email or password.");
         } else if (error.status === 423) {
           setFormError("This account is temporarily locked. Try again later.");
@@ -55,6 +64,21 @@ export default function LoginPage() {
       }
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleResendVerification() {
+    if (!unverifiedEmail) return;
+    setResendState("sending");
+    try {
+      await apiClient.post(
+        "/auth/email/resend-verification",
+        { email: unverifiedEmail },
+        { authenticated: false },
+      );
+    } finally {
+      // Anti-enumeration (matches the backend): always show the same confirmation.
+      setResendState("sent");
     }
   }
 
@@ -75,6 +99,26 @@ export default function LoginPage() {
         {formError ? (
           <div role="alert" className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger">
             {formError}
+          </div>
+        ) : null}
+
+        {unverifiedEmail ? (
+          <div role="alert" className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger">
+            <p>Please verify your email address before signing in.</p>
+            {resendState === "sent" ? (
+              <p className="mt-1">
+                If that address has an account, a new verification email is on its way.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={handleResendVerification}
+                disabled={resendState === "sending"}
+                className="mt-1 font-medium underline hover:no-underline disabled:opacity-60"
+              >
+                {resendState === "sending" ? "Sending…" : "Resend verification email"}
+              </button>
+            )}
           </div>
         ) : null}
 

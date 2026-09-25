@@ -166,9 +166,7 @@ async def test_page_two_and_boundary(client: AsyncClient, seeded_plan_catalogue:
             page += 1
         assert seen_ids == created_ids
 
-        beyond = await client.get(
-            "/v1/leave-applications", headers=headers, params={"page": 99}
-        )
+        beyond = await client.get("/v1/leave-applications", headers=headers, params={"page": 99})
         assert beyond.json()["data"] == []
         assert beyond.json()["pagination"]["total"] == 7
     finally:

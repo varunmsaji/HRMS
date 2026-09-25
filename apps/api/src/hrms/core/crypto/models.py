@@ -33,7 +33,11 @@ class EncryptionKey(Base, TimestampMixin):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     key_version: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    kms_key_arn: Mapped[str] = mapped_column(String, nullable=False)
+    # RELEASE_HARDENING_PHASE_3A — renamed from `kms_key_arn`: this deployment no longer wraps
+    # DEKs via AWS KMS (`master_key.py`). A non-secret fingerprint of the `pii_master_key` that
+    # wrapped this row's DEK, purely for record-keeping/future rotation-detection — never used to
+    # look anything up externally.
+    wrapping_key_id: Mapped[str] = mapped_column(String, nullable=False)
     wrapped_dek: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(10), default=STATUS_ACTIVE)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

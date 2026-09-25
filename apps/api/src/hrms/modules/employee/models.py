@@ -427,9 +427,7 @@ class EmployeeDependent(Base, TimestampMixin):
     guardian_relationship: Mapped[str | None] = mapped_column(String(50), nullable=True)
     aadhaar_number_enc: Mapped[str | None] = mapped_column(String, nullable=True)
     is_pf_nominee: Mapped[bool] = mapped_column(Boolean, default=False)
-    pf_nominee_share_percentage: Mapped[float | None] = mapped_column(
-        Numeric(5, 2), nullable=True
-    )
+    pf_nominee_share_percentage: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     is_gratuity_nominee: Mapped[bool] = mapped_column(Boolean, default=False)
     gratuity_nominee_share_percentage: Mapped[float | None] = mapped_column(
         Numeric(5, 2), nullable=True

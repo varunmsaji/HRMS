@@ -192,9 +192,7 @@ async def test_create_dependent_pf_percentage_exceeding_100_rejected(
         await _teardown(company_id=company_id, user_id=user_id)
 
 
-async def test_list_and_delete_dependent(
-    client: AsyncClient, seeded_plan_catalogue: None
-) -> None:
+async def test_list_and_delete_dependent(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
         employee = await _create_employee(client, headers)
@@ -212,9 +210,7 @@ async def test_list_and_delete_dependent(
         )
         assert delete_response.status_code == 204, delete_response.text
 
-        list_after = await client.get(
-            f"/v1/employees/{employee['id']}/dependents", headers=headers
-        )
+        list_after = await client.get(f"/v1/employees/{employee['id']}/dependents", headers=headers)
         assert list_after.json()["data"] == []
     finally:
         await _teardown(company_id=company_id, user_id=user_id)

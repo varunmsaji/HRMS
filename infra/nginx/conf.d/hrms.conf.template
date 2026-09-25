@@ -1,0 +1,118 @@
+# Rendered from this template into /etc/nginx/conf.d/hrms.conf on container start
+# (docker-compose.prod.yml's `nginx` service `command`, envsubst against ${API_DOMAIN}/
+# ${WEB_DOMAIN}/${STORAGE_DOMAIN}). Do not edit the rendered file directly — it is regenerated on
+# every container start/restart.
+#
+# Routing (RELEASE_HARDENING_PHASE_3B §5):
+#   ${WEB_DOMAIN}     -> web:3000       (Next.js frontend)
+#   ${API_DOMAIN}     -> api:8000       (FastAPI backend)
+#   ${STORAGE_DOMAIN} -> minio:9000     (presigned document URLs only — MinIO's S3 API, never
+#                                        its admin console; see Settings.s3_public_endpoint_url)
+#
+# Deliberately does NOT add its own Strict-Transport-Security, CSP, or other security-header
+# directives here: the API (SecurityHeadersMiddleware) and the frontend (middleware.ts) already
+# emit all of those, conditional on X-Forwarded-Proto being "https" — which this file sets below.
+# Adding the same headers again here would either duplicate them or fight the app's own
+# conditional logic. Nginx's only header-related job is forwarding the right request context in
+# (Host, X-Forwarded-For, X-Forwarded-Proto), not adding response headers of its own.
+
+# HTTP: ACME challenge only, everything else redirected to HTTPS. Handles all three domains
+# so `certbot ... -d ${WEB_DOMAIN} -d ${API_DOMAIN} -d ${STORAGE_DOMAIN}` can complete its
+# HTTP-01 challenge (and renew later) without a separate server block per domain.
+server {
+    listen 80;
+    server_name ${WEB_DOMAIN} ${API_DOMAIN} ${STORAGE_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${WEB_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${WEB_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${WEB_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://web:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${API_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${WEB_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${WEB_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://api:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Above the default 60s — payroll pay-run computation and bulk employee import can run
+        # longer than a typical request; this is the outer HTTP-layer ceiling, not a claim that
+        # every request should take this long.
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    # Readiness is for internal/orchestrator use, not a public dependency-status page — still
+    # reachable (no auth exists at this layer to gate it behind), but not linked or advertised.
+    location = /health/ready {
+        proxy_pass http://api:8000/health/ready;
+        proxy_set_header Host $host;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${STORAGE_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${WEB_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${WEB_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers off;
+
+    # MinIO's admin console (port 9001) is never proxied here — only the S3 API (9000), and only
+    # for presigned GET/PUT URLs the API itself already signed. This server block does not grant
+    # any access MinIO's own bucket policy (`mc anonymous set none`, set by the `minio-init`
+    # service) doesn't already require a valid signature for.
+    location / {
+        proxy_pass http://minio:9000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Large document downloads/uploads need this higher than the API's own — S3 signature
+        # verification is somewhat time-sensitive but request bodies can legitimately be near the
+        # 10 MiB document ceiling on a slow client connection.
+        client_max_body_size 15m;
+    }
+}

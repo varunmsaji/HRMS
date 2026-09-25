@@ -14,12 +14,16 @@ from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.auth import (
     AccountLockedError,
+    EmailNotVerifiedError,
     InvalidCredentialsError,
     InvalidTokenError,
 )
 from hrms.core.errors.base import ValidationError
 from hrms.core.rbac.service import RbacService
-from hrms.modules.identity.email_templates import build_password_reset_email
+from hrms.modules.identity.email_templates import (
+    build_email_verification_email,
+    build_password_reset_email,
+)
 from hrms.modules.identity.schemas import (
     CompanyDetail,
     CompanySummary,
@@ -34,6 +38,10 @@ from hrms.modules.onboarding.email_sender import get_email_sender
 #: shorter-lived credential (a password reset, vs. a first-time account setup) if anything argues
 #: for parity rather than a longer one.
 PASSWORD_RESET_TTL_HOURS = 2
+
+#: SEC-09 — longer than the password-reset window: verifying an address is lower-stakes than
+#: recovering account access, and a registrant may reasonably check their inbox a day later.
+EMAIL_VERIFICATION_TTL_HOURS = 24
 
 
 class IdentityService:
@@ -64,6 +72,15 @@ class IdentityService:
             raise InvalidCredentialsError("Invalid email or password")
 
         await self._repo.reset_failed_login(self._session, user.id)
+
+        # SEC-09 (RELEASE_HARDENING_PHASE_3A) — checked only after the password itself is
+        # confirmed correct, so this never doubles as an account-existence oracle (an attacker
+        # who doesn't know the password gets the identical INVALID_CREDENTIALS response either
+        # way). Deliberately does not block the *first* session — registration/invite-acceptance
+        # both issue tokens via `issue_tokens_for` directly, never through this method — only a
+        # subsequent login attempt.
+        if user.email_verified_at is None:
+            raise EmailNotVerifiedError("Please verify your email address before signing in")
 
         memberships = await self._repo.list_user_companies_for_login(self._session, user.id)
         if not memberships:
@@ -314,7 +331,16 @@ class IdentityService:
     async def reset_password(self, raw_token: str, new_password: str) -> None:
         """`POST /auth/password/reset` — single-use, TTL-bound, same failure-mode-hiding posture
         as `AccountInviteService.accept`: an invalid/expired/already-used token and a
-        never-existed one raise the identical error."""
+        never-existed one raise the identical error.
+
+        SEC-07 — a password reset also revokes every existing `Session`/`RefreshToken` for this
+        user (every company, every device), not just the browser that performed the reset. If an
+        attacker's session prompted the reset (stolen credential, XSS-exfiltrated refresh token),
+        the new password alone would otherwise do nothing to end it — the access token stays
+        valid until its own short expiry, and the refresh token would keep minting new ones
+        indefinitely. `revoke_all_sessions_for_user` reuses the exact mechanism `get_current_user`
+        already re-checks on every request (`Session.revoked_at`), so this takes effect
+        immediately, not just on the next refresh attempt."""
         if not is_password_strong_enough(new_password):
             raise ValidationError(
                 "Password does not meet minimum strength requirements",
@@ -337,5 +363,67 @@ class IdentityService:
         await self._repo.update_user_password(
             self._session, user_id=token.user_id, password_hash=hash_password(new_password)
         )
+        await self._repo.revoke_all_sessions_for_user(
+            self._session, token.user_id, reason="PASSWORD_RESET"
+        )
         await self._repo.mark_password_reset_token_used(self._session, token, now)
         # No `AuditService.record` call — same reasoning as `forgot_password` above.
+
+    async def send_verification_email(
+        self, *, user_id: UUID, email: str, first_name: str | None
+    ) -> None:
+        """SEC-09 — issues a fresh, single-use, TTL-bound token and emails it via the same
+        `EmailSender` abstraction `forgot_password` already uses. Called from
+        `organisation.service.register_company` right after the new admin `User` row is created;
+        best-effort by the same convention every other send in this codebase follows — a delivery
+        failure must not fail the registration request itself (the account still exists, and
+        `resend_verification_email` below lets the user retry)."""
+        now = datetime.now(UTC)
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        await self._repo.create_email_verification_token(
+            self._session,
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=now + timedelta(hours=EMAIL_VERIFICATION_TTL_HOURS),
+        )
+
+        verify_url = f"{self._settings.web_app_base_url}/verify-email/{raw_token}"
+        subject, html_body, text_body = build_email_verification_email(
+            first_name=first_name, verify_url=verify_url
+        )
+        try:
+            await get_email_sender(self._settings).send(
+                to=email, subject=subject, html_body=html_body, text_body=text_body
+            )
+        except Exception:  # noqa: BLE001 — delivery failure must not fail the caller
+            pass
+
+    async def verify_email(self, raw_token: str) -> None:
+        """`POST /auth/email/verify` — single-use, TTL-bound, same failure-mode-hiding posture as
+        `reset_password`: an invalid/expired/already-used token and a never-existed one raise the
+        identical error, so this endpoint cannot be used to probe for valid tokens."""
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        token = await self._repo.get_email_verification_token_by_hash(self._session, token_hash)
+        now = datetime.now(UTC)
+        if token is None or token.used_at is not None or token.expires_at <= now:
+            raise InvalidTokenError("This verification link is invalid or has expired")
+
+        await self._repo.mark_user_email_verified(self._session, token.user_id, now)
+        await self._repo.mark_email_verification_token_used(self._session, token, now)
+
+    async def resend_verification_email(self, email: str) -> None:
+        """`POST /auth/email/resend-verification` — always returns successfully regardless of
+        whether the email matches a real, still-unverified account, matching `forgot_password`'s
+        own anti-enumeration posture."""
+        user = await self._repo.get_user_by_email(self._session, email.lower())
+        if (
+            user is None
+            or user.deleted_at is not None
+            or user.status != "ACTIVE"
+            or user.email_verified_at is not None
+        ):
+            return
+        await self.send_verification_email(
+            user_id=user.id, email=user.email or email, first_name=user.first_name
+        )

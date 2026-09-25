@@ -57,9 +57,7 @@ async def test_distributed_ip_attempts_against_same_email_still_get_rate_limited
         transport = ASGITransport(app=app, client=(f"10.20.30.{i + 1}", 40000))
         async with AsyncClient(transport=transport, base_url="http://test") as scoped_client:
             responses.append(
-                await scoped_client.post(
-                    "/v1/auth/login", json={"email": target, "password": "x"}
-                )
+                await scoped_client.post("/v1/auth/login", json={"email": target, "password": "x"})
             )
     assert all(r.status_code == 401 for r in responses[:10])
     assert responses[10].status_code == 429
@@ -77,9 +75,7 @@ async def test_different_ips_against_different_emails_are_not_cross_blocked(
         )
         assert r.status_code == 401
 
-    ok = await client.post(
-        "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}
-    )
+    ok = await client.post("/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD})
     assert ok.status_code == 200
 
 
@@ -144,13 +140,13 @@ async def test_legitimate_refresh_rotation_still_works_under_the_limit(
         "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}
     )
     assert login.status_code == 200
-    refresh_token = login.json()["data"]["refresh_token"]
+    # SEC-06 (RELEASE_HARDENING_PHASE_3A) — the refresh token is only in the HttpOnly cookie now.
+    refresh_token = login.cookies.get("hrms_refresh")
+    assert refresh_token
 
-    response = await client.post(
-        "/v1/auth/token/refresh", json={"refresh_token": refresh_token}
-    )
+    response = await client.post("/v1/auth/token/refresh", json={"refresh_token": refresh_token})
     assert response.status_code == 200
-    assert response.json()["data"]["refresh_token"] != refresh_token
+    assert response.cookies.get("hrms_refresh") != refresh_token
 
 
 async def test_refresh_replay_detection_still_works_under_the_limit(
@@ -159,7 +155,8 @@ async def test_refresh_replay_detection_still_works_under_the_limit(
     login = await client.post(
         "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}
     )
-    old_refresh = login.json()["data"]["refresh_token"]
+    old_refresh = login.cookies.get("hrms_refresh")
+    assert old_refresh
 
     first = await client.post("/v1/auth/token/refresh", json={"refresh_token": old_refresh})
     assert first.status_code == 200

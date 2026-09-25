@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import (
     Company,
+    EmailVerificationToken,
     PasswordResetToken,
     RefreshToken,
     Session,
@@ -162,6 +163,29 @@ class IdentityRepository:
             .values(revoked_at=datetime.now(UTC))
         )
 
+    async def revoke_all_sessions_for_user(
+        self,
+        session: AsyncSession,
+        user_id: UUID,
+        reason: str,
+    ) -> None:
+        """SEC-07 — every live `Session`/`RefreshToken` belonging to `user_id`, across every
+        company and device, not just the family the caller happens to hold. `get_current_user`
+        (`core/auth/dependencies.py`) re-checks `Session.revoked_at` on every request, so this
+        takes effect immediately for already-issued access tokens too, not only on their next
+        refresh — no separate access-token blocklist is needed."""
+        now = datetime.now(UTC)
+        await session.execute(
+            update(Session)
+            .where(Session.user_id == user_id, Session.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        await session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=now, revoked_reason=reason)
+        )
+
     async def create_password_reset_token(
         self,
         session: AsyncSession,
@@ -197,6 +221,38 @@ class IdentityRepository:
             .where(User.id == user_id)
             .values(password_hash=password_hash, failed_login_count=0, locked_until=None)
         )
+
+    async def create_email_verification_token(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: UUID,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> EmailVerificationToken:
+        row = EmailVerificationToken(
+            id=uuid4(), user_id=user_id, token_hash=token_hash, expires_at=expires_at
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_email_verification_token_by_hash(
+        self, session: AsyncSession, token_hash: str
+    ) -> EmailVerificationToken | None:
+        stmt = select(EmailVerificationToken).where(EmailVerificationToken.token_hash == token_hash)
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def mark_email_verification_token_used(
+        self, session: AsyncSession, token: EmailVerificationToken, now: datetime
+    ) -> None:
+        token.used_at = now
+        await session.flush()
+
+    async def mark_user_email_verified(
+        self, session: AsyncSession, user_id: UUID, now: datetime
+    ) -> None:
+        await session.execute(update(User).where(User.id == user_id).values(email_verified_at=now))
 
     async def increment_failed_login(self, session: AsyncSession, user_id: UUID) -> User:
         user = await self.get_user_by_id(session, user_id)

@@ -100,7 +100,9 @@ def upgrade() -> None:
     )
 
     # HR_ADMIN — EMPLOYEE.VIEW plus the full EMPLOYEE.* catalogue, COMPANY scope (Decision H).
-    employee_codes_sql = ", ".join(f"'{code}'" for code in ["EMPLOYEE.VIEW", *_EMPLOYEE_PERMISSION_CODES])
+    employee_codes_sql = ", ".join(
+        f"'{code}'" for code in ["EMPLOYEE.VIEW", *_EMPLOYEE_PERMISSION_CODES]
+    )
     op.execute(
         f"""
         INSERT INTO role_permission (role_id, permission_id, data_scope)
@@ -145,14 +147,17 @@ def downgrade() -> None:
     op.execute(
         """
         DELETE FROM role_permission
-        WHERE role_id IN (SELECT id FROM role WHERE code IN ('HR_ADMIN', 'REPORTING_MANAGER', 'EMPLOYEE'));
+        WHERE role_id IN (
+          SELECT id FROM role WHERE code IN ('HR_ADMIN', 'REPORTING_MANAGER', 'EMPLOYEE')
+        );
 
         DELETE FROM role WHERE code IN ('HR_ADMIN', 'REPORTING_MANAGER', 'EMPLOYEE');
 
         DELETE FROM role_permission
         WHERE role_id IN (SELECT id FROM role WHERE code = 'COMPANY_ADMIN')
           AND permission_id IN (
-              SELECT id FROM permission WHERE code IN ('SETTINGS.USER.MANAGE', 'SETTINGS.ROLE.MANAGE')
+              SELECT id FROM permission
+              WHERE code IN ('SETTINGS.USER.MANAGE', 'SETTINGS.ROLE.MANAGE')
           );
         """
     )

@@ -1,0 +1,267 @@
+# Production stack for the self-hosted Hostinger VPS — Docker + Nginx + Let's Encrypt, no AWS
+# (RELEASE_HARDENING_PHASE_3B). See docs/deployment/PRODUCTION_DEPLOYMENT.md for setup.
+#
+# Two docker networks, not one, so a compromised/misconfigured Nginx has no route to Postgres or
+# Redis at all: `data` (postgres, redis, minio, api, worker, beat) and `edge` (nginx, api, web,
+# minio). MinIO sits on both — Nginx must reach it directly to proxy `S3_PUBLIC_ENDPOINT_URL`
+# (presigned document URLs handed to the browser), but Postgres/Redis have no reason to ever be
+# reachable from the edge segment. Nothing in this file publishes a `ports:` mapping for
+# postgres/redis/minio — that, not the network split alone, is what actually keeps them off the
+# public internet; the network split is defense-in-depth on top of it.
+#
+# Two env files, deliberately not merged: this file's own `.env` (copy from `.env.prod.example`,
+# repo root) drives Postgres/MinIO container credentials and Nginx/Compose-level values; each
+# apps/api process additionally loads `apps/api/env/.env.production` (copy from
+# `apps/api/env/.env.production.example`) for the full application `Settings`. The Postgres/MinIO
+# credentials must match between the two — see the runbook.
+
+name: hrms-prod
+
+x-logging: &default-logging
+  # STEP 10/11 — bounds each container's own log volume so Docker's default json-file driver
+  # (unbounded by default) cannot fill the VPS disk on its own; see docs/deployment/
+  # PRODUCTION_DEPLOYMENT.md's disk-monitoring section for the rest of the disk budget.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+networks:
+  data:
+  edge:
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  certbot_certs:
+  certbot_webroot:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      # Provisions the application's own runtime role (infra/docker/postgres/init/002_app_role.sh)
+      # — deliberately no default here (RELEASE_HARDENING_PHASE_6A / Finding DB-01): a missing
+      # value must fail the stack closed, not silently fall back to a repo-visible password. Must
+      # match the password segment of apps/api/env/.env.production's DATABASE_URL — see the
+      # runbook.
+      HRMS_APP_PASSWORD: ${HRMS_APP_PASSWORD:?HRMS_APP_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Rate-limit counters and Celery broker/result state survive a container restart with this;
+    # none of it is data that would be catastrophic to lose, but losing an in-flight Celery task
+    # on every routine redeploy is an avoidable annoyance.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - minio_data:/data
+    networks: [data, edge]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/9000' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [data]
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
+      mc mb --ignore-existing local/$${MINIO_BUCKET_DOCUMENTS} &&
+      mc anonymous set none local/$${MINIO_BUCKET_DOCUMENTS}
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_BUCKET_DOCUMENTS: ${MINIO_BUCKET_DOCUMENTS:?MINIO_BUCKET_DOCUMENTS is required}
+    restart: "no"
+    logging: *default-logging
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    image: hrms-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - apps/api/env/.env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks: [data, edge]
+    logging: *default-logging
+    # HEALTHCHECK is inherited from the image (apps/api/Dockerfile) — liveness only, deliberately
+    # (STEP 7): a Postgres/Redis blip must not make Docker restart an otherwise-healthy API
+    # process. Nginx/an external monitor should poll `/health/ready` instead for routing
+    # decisions, not this container healthcheck.
+
+  # One-off migration runner — `docker compose -f docker-compose.prod.yml run --rm migrate`.
+  # Deliberately NOT part of the default `up` (profiles: tools keeps it out of `docker compose
+  # up`'s service set): migrations must run once, explicitly, before the new `api`/`worker`/`beat`
+  # containers take traffic, per the deployment runbook — never automatically on every container
+  # start, which would race if `api` and `worker` started concurrently.
+  migrate:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    image: hrms-api:${IMAGE_TAG:-latest}
+    env_file:
+      - apps/api/env/.env.production
+    command: ["sh", "-c", "exec alembic upgrade head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data]
+    profiles: ["tools"]
+    logging: *default-logging
+
+  worker:
+    image: hrms-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - apps/api/env/.env.production
+    command: ["sh", "-c", "exec celery -A entrypoints.worker worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks: [data]
+    # Overrides the image's inherited HEALTHCHECK (an HTTP GET on :8000 — this container runs
+    # Celery, not the API's HTTP server, so that check would fail permanently). `inspect ping`
+    # only proves *some* worker answers on the broker — correct for today's single-replica
+    # deployment; scaling to multiple `worker` replicas would need `-d celery@$$HOSTNAME` to
+    # target this specific instance instead.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A entrypoints.worker inspect ping --timeout 10 | grep -q OK"]
+      interval: 30s
+      timeout: 15s
+      start_period: 20s
+      retries: 3
+    logging: *default-logging
+
+  # `celery beat` must run as exactly one instance (two schedulers would double-fire every
+  # scheduled task — leave accrual, comp-off sweeps, attendance calculation, all of which are
+  # idempotent per-run but not meant to run twice concurrently). Never scale this service.
+  beat:
+    image: hrms-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - apps/api/env/.env.production
+    # `--schedule` must point somewhere the non-root `hrms` user (apps/api/Dockerfile) can write —
+    # `/app` itself is root-owned (created by `WORKDIR` before the chowned `COPY`), so celery
+    # beat's default `celerybeat-schedule` (written to argv[0]'s cwd) fails with `PermissionError`
+    # and crash-loops. Found by actually running this container, not by inspection — see
+    # RELEASE_HARDENING_PHASE_3B_PRODUCTION_INFRASTRUCTURE.md. `/tmp` is safe to lose on restart:
+    # this file only caches *when* each schedule entry last ran to avoid a double-fire on beat's
+    # own restart within the same tick; losing it worst-case reruns one already-idempotent task.
+    command: ["sh", "-c", "exec celery -A entrypoints.worker beat --loglevel=info --schedule=/tmp/celerybeat-schedule"]
+    # No built-in Celery healthcheck exists for `beat` (unlike `worker`'s `inspect ping`), and the
+    # image's own inherited HTTP-based HEALTHCHECK (see `worker`'s override above) is equally
+    # inapplicable here. Disabled rather than left silently wrong; `restart: unless-stopped`
+    # already recovers a crashed process regardless of healthcheck status.
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [data]
+    logging: *default-logging
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+    image: hrms-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    networks: [edge]
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/conf.d:/etc/nginx/templates:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot:ro
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN is required}
+      WEB_DOMAIN: ${WEB_DOMAIN:?WEB_DOMAIN is required}
+      STORAGE_DOMAIN: ${STORAGE_DOMAIN:?STORAGE_DOMAIN is required}
+    # Renders infra/nginx/conf.d/*.template (envsubst-style ${API_DOMAIN} etc.) into
+    # /etc/nginx/conf.d/*.conf on container start — the official nginx image's own documented
+    # mechanism (`/docker-entrypoint.d/20-envsubst-on-templates.sh`), so the domain names live in
+    # one place (this file's own `.env`) instead of being hand-edited into the Nginx config twice.
+    command: ["/bin/sh", "-c", "envsubst '$$API_DOMAIN $$WEB_DOMAIN $$STORAGE_DOMAIN' < /etc/nginx/templates/hrms.conf.template > /etc/nginx/conf.d/hrms.conf && nginx -g 'daemon off;'"]
+    depends_on:
+      - api
+      - web
+    networks: [edge]
+    logging: *default-logging
+
+  # Webroot-method Let's Encrypt renewal. Initial certificate issuance is a one-off manual step
+  # (docs/deployment/PRODUCTION_DEPLOYMENT.md §11 — `docker compose run --rm certbot certonly ...`)
+  # since it needs the domain already resolving to this VPS and Nginx already serving the HTTP-01
+  # challenge path; this long-running service only handles renewal from then on.
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+    networks: [edge]
+    logging: *default-logging

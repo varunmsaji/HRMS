@@ -163,9 +163,7 @@ async def test_send_invite_unknown_case_returns_404(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        response = await client.post(
-            f"/v1/onboarding-cases/{uuid4()}/send-invite", headers=headers
-        )
+        response = await client.post(f"/v1/onboarding-cases/{uuid4()}/send-invite", headers=headers)
         assert response.status_code == 404
     finally:
         await _teardown_with_tokens(company_id=company_id, user_id=user_id)

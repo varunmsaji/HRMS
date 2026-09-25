@@ -1068,13 +1068,16 @@ class EmployeeDependentRepository:
     async def sum_pf_nominee_percentage(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
     ) -> float:
-        stmt = select(func.coalesce(func.sum(EmployeeDependent.pf_nominee_share_percentage), 0)).where(
+        stmt = select(
+            func.coalesce(func.sum(EmployeeDependent.pf_nominee_share_percentage), 0)
+        ).where(
             EmployeeDependent.company_id == company_id,
             EmployeeDependent.employee_id == employee_id,
             EmployeeDependent.is_pf_nominee.is_(True),
             EmployeeDependent.deleted_at.is_(None),
         )
-        return float((await session.execute(stmt)).scalar_one())
+        total = (await session.execute(stmt)).scalar_one()
+        return float(total) if total is not None else 0.0
 
     async def sum_gratuity_nominee_percentage(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
@@ -1087,4 +1090,5 @@ class EmployeeDependentRepository:
             EmployeeDependent.is_gratuity_nominee.is_(True),
             EmployeeDependent.deleted_at.is_(None),
         )
-        return float((await session.execute(stmt)).scalar_one())
+        total = (await session.execute(stmt)).scalar_one()
+        return float(total) if total is not None else 0.0

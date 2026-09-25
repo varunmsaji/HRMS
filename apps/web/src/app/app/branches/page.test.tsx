@@ -102,9 +102,7 @@ describe("BranchesPage", () => {
     mockLoad([], []);
     render(<BranchesPage />);
 
-    expect(
-      await screen.findByText(/add a legal entity before creating branches/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/let's set up your company/i)).toBeInTheDocument();
   });
 
   it("renders the list of branches", async () => {
@@ -117,9 +115,16 @@ describe("BranchesPage", () => {
   });
 
   it("shows an error state when loading fails with forbidden", async () => {
-    mockedGet.mockRejectedValueOnce(
-      new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "Forbidden" }),
-    );
+    mockedGet.mockImplementation((path: string) => {
+      if (path === "/branches") {
+        return Promise.reject(
+          new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "Forbidden" }),
+        );
+      }
+      if (path === "/legal-entities") return Promise.resolve([]);
+      if (path === "/companies/current") return Promise.resolve(null);
+      return Promise.reject(new Error(`Unexpected path ${path}`));
+    });
     render(<BranchesPage />);
 
     expect(await screen.findByText(/do not have permission to view branches/i)).toBeInTheDocument();
@@ -140,7 +145,7 @@ describe("BranchesPage", () => {
     render(<BranchesPage />);
 
     await user.click(await screen.findByRole("button", { name: /add branch/i }));
-    await user.selectOptions(screen.getByLabelText(/legal entity/i), "le-1");
+    // Only one legal entity exists, so the selector is hidden and pre-filled automatically.
     await user.type(screen.getByLabelText(/branch name/i), "HQ Branch");
     await user.click(screen.getByRole("button", { name: /^add branch$/i }));
 
@@ -153,7 +158,9 @@ describe("BranchesPage", () => {
   });
 
   it("shows a validation error when required fields are missing", async () => {
-    mockLoad([]);
+    // Two legal entities so the selector isn't auto-hidden/pre-filled (see
+    // `hideLegalEntitySelector` in BranchForm), letting the "select a legal entity" error fire.
+    mockLoad([], [sampleEntity, { ...sampleEntity, id: "le-2", name: "Second Entity" }]);
     const user = userEvent.setup();
     render(<BranchesPage />);
 

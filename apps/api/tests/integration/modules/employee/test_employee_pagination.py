@@ -55,8 +55,7 @@ async def _create_employees(
     client: AsyncClient, headers: dict[str, str], count: int, *, prefix: str = "Emp"
 ) -> list[dict[str, Any]]:
     return [
-        await _create_employee(client, headers, first_name=f"{prefix}{i:03d}")
-        for i in range(count)
+        await _create_employee(client, headers, first_name=f"{prefix}{i:03d}") for i in range(count)
     ]
 
 
@@ -265,18 +264,14 @@ async def test_branch_scope_pagination_narrows_before_paging(
 
         visible_ids = {manager["id"]} | {e["id"] for e in colleagues}
 
-        first_page = await client.get(
-            "/v1/employees?page=1&per_page=5", headers=actor_headers
-        )
+        first_page = await client.get("/v1/employees?page=1&per_page=5", headers=actor_headers)
         assert first_page.status_code == 200
         first_body = first_page.json()
         assert first_body["pagination"]["total"] == 8
         assert first_body["pagination"]["total_pages"] == 2
         assert len(first_body["data"]) == 5
 
-        second_page = await client.get(
-            "/v1/employees?page=2&per_page=5", headers=actor_headers
-        )
+        second_page = await client.get("/v1/employees?page=2&per_page=5", headers=actor_headers)
         second_body = second_page.json()
         assert len(second_body["data"]) == 3
 

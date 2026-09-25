@@ -2351,10 +2351,7 @@ class LeaveApplicationService:
             if caller_employee_id is None or caller_employee_id != row.resolved_approver_manager_id:
                 raise LeaveApplicationApproverMismatchError()
         elif row.approval_stage == "HOD":
-            if (
-                caller_employee_id is None
-                or caller_employee_id != row.resolved_department_head_id
-            ):
+            if caller_employee_id is None or caller_employee_id != row.resolved_department_head_id:
                 raise LeaveApplicationApproverMismatchError()
         else:  # HR
             if DataScopeLevel.COMPANY not in scope.levels:

@@ -6,13 +6,19 @@ accounts is exactly the threat model that limiter already covers."""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
+from hrms.core.auth.refresh_cookie import set_refresh_cookie
+from hrms.core.config.settings import get_settings
 from hrms.core.tenancy.context import current_request_id
 from hrms.modules.account_invite.dependencies import get_account_invite_service
 from hrms.modules.account_invite.schemas import AcceptInviteRequest, PublicAccountInviteRead
 from hrms.modules.account_invite.service import AccountInviteService
-from hrms.modules.identity.schemas import TokenResponseData, build_meta
+from hrms.modules.identity.schemas import (
+    PublicTokenResponseData,
+    build_meta,
+    to_public_token_response,
+)
 from hrms.shared.pagination import DataEnvelope
 from hrms.shared.rate_limit import rate_limit
 
@@ -35,9 +41,10 @@ async def accept_account_invite(
     token: str,
     body: AcceptInviteRequest,
     request: Request,
+    response: Response,
     _rate_limit: Annotated[None, Depends(_accept_rate_limit)],
     service: Annotated[AccountInviteService, Depends(get_account_invite_service)],
-) -> DataEnvelope[TokenResponseData]:
+) -> DataEnvelope[PublicTokenResponseData]:
     data = await service.accept(
         token,
         body.password,
@@ -46,4 +53,9 @@ async def accept_account_invite(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    set_refresh_cookie(
+        response, request, raw_refresh_token=data.refresh_token, settings=get_settings()
+    )
+    return DataEnvelope(
+        data=to_public_token_response(data), meta=build_meta(current_request_id() or "unknown")
+    )

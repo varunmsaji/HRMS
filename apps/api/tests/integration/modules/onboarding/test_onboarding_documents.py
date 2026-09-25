@@ -134,9 +134,7 @@ async def test_upload_invalid_document_type_rejected(
 async def test_upload_too_large_rejected(
     client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "hrms.modules.onboarding.service.ONBOARDING_DOCUMENT_MAX_SIZE_BYTES", 10
-    )
+    monkeypatch.setattr("hrms.modules.onboarding.service.ONBOARDING_DOCUMENT_MAX_SIZE_BYTES", 10)
     headers, company_id, user_id = await _register_tenant(client)
     try:
         case = await _create_case(client, headers)
@@ -232,9 +230,7 @@ async def test_admin_list_documents_has_download_url(
             files={"file": ("photo.jpg", _JPEG_BYTES, "image/jpeg")},
         )
 
-        response = await client.get(
-            f"/v1/onboarding-cases/{case['id']}/documents", headers=headers
-        )
+        response = await client.get(f"/v1/onboarding-cases/{case['id']}/documents", headers=headers)
         assert response.status_code == 200
         data = response.json()["data"]
         assert len(data) == 1

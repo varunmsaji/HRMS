@@ -638,7 +638,9 @@ class OnboardingCaseDetailRead(OnboardingCaseRead):
     token_expires_at: str | None = None
 
 
-def _token_status(token: "OnboardingToken | None", *, now: datetime) -> str | None:
+def _token_status(
+    token: "OnboardingToken | None", *, now: datetime
+) -> Literal["ACTIVE", "EXPIRED", "REVOKED"] | None:
     if token is None:
         return None
     if token.revoked_at is not None:

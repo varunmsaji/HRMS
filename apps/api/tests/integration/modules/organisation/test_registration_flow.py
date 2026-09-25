@@ -145,7 +145,10 @@ async def test_registration_success_full_row_graph(
         data = body["data"]
 
         assert data["access_token"]
-        assert data["refresh_token"]
+        # SEC-06 (RELEASE_HARDENING_PHASE_3A) — the refresh token no longer appears in the JSON
+        # response at all; it travels only as the HttpOnly `hrms_refresh` cookie.
+        assert "refresh_token" not in data
+        assert response.cookies.get("hrms_refresh")
         assert data["token_type"] == "Bearer"
         company_id = UUID(data["company_id"])
         assert data["companies"] == [
@@ -194,9 +197,7 @@ async def test_registration_success_full_row_graph(
 
             role = (
                 await session.execute(
-                    select(Role).where(
-                        Role.company_id == company_id, Role.code == "COMPANY_ADMIN"
-                    )
+                    select(Role).where(Role.company_id == company_id, Role.code == "COMPANY_ADMIN")
                 )
             ).scalar_one()
             assert role.code == "COMPANY_ADMIN"

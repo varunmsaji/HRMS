@@ -755,9 +755,7 @@ async def reject_leave_application(
 async def list_statutory_leave_minimums(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(LEAVE_STATUTORY_MINIMUM_MANAGE))],
-    service: Annotated[
-        StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)
-    ],
+    service: Annotated[StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)],
 ) -> ListEnvelope[StatutoryLeaveMinimumRead]:
     data = await service.list(tenant.company_id)
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
@@ -769,9 +767,7 @@ async def create_statutory_leave_minimum(
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(LEAVE_STATUTORY_MINIMUM_MANAGE))],
-    service: Annotated[
-        StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)
-    ],
+    service: Annotated[StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)],
 ) -> DataEnvelope[StatutoryLeaveMinimumRead]:
     data = await service.create(
         tenant.company_id,
@@ -789,9 +785,7 @@ async def delete_statutory_leave_minimum(
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(LEAVE_STATUTORY_MINIMUM_MANAGE))],
-    service: Annotated[
-        StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)
-    ],
+    service: Annotated[StatutoryLeaveMinimumService, Depends(get_statutory_leave_minimum_service)],
 ) -> None:
     await service.delete(
         tenant.company_id,

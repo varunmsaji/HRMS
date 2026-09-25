@@ -2,8 +2,10 @@
 `modules/onboarding/document_storage.py`, moved here once a second consumer
 (`modules/employee_import`, bulk employee CSV import) needed the same S3 client wiring —
 `hrms.core` may be depended on by every module (`apps/api/.importlinter`), a domain module may
-not depend on another domain module's internals. Uses `aioboto3` (already a pinned dependency,
-already used by `email_sender.SesEmailSender`), against
+not depend on another domain module's internals. Uses `aioboto3` (a pinned dependency; this is
+its only remaining consumer since RELEASE_HARDENING_PHASE_5A moved email delivery off AWS SES
+onto SMTP — `aioboto3` stays pinned solely for this self-hosted MinIO S3 client, not for email),
+against
 `Settings.s3_bucket_documents`/`aws_region`/`aws_access_key_id`/`aws_secret_access_key`/
 `s3_endpoint_url`.
 

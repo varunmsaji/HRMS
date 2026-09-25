@@ -565,9 +565,7 @@ async def test_branch_scope_sees_branch_colleagues_only(
         colleague_employee = (
             await client.post("/v1/employees", headers=headers, json={"first_name": "Colleague"})
         ).json()["data"]
-        colleague_day = await _calculate_day(
-            client, headers, employee_id=colleague_employee["id"]
-        )
+        colleague_day = await _calculate_day(client, headers, employee_id=colleague_employee["id"])
         await _assign_branch(
             company_id=company_id, employee_id=UUID(colleague_employee["id"]), branch_id=branch_a
         )

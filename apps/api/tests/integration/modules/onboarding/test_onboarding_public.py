@@ -200,9 +200,7 @@ async def test_patch_unknown_section_rejected(
         case = await _create_case(client, headers)
         token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]))
 
-        response = await client.patch(
-            f"/v1/public/onboarding/{token}/sections/documents", json={}
-        )
+        response = await client.patch(f"/v1/public/onboarding/{token}/sections/documents", json={})
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "INVALID_SECTION"
     finally:
@@ -254,11 +252,7 @@ async def test_patch_nominee_info_minor_without_guardian_rejected(
 
         response = await client.patch(
             f"/v1/public/onboarding/{token}/sections/nominee_info",
-            json={
-                "items": [
-                    {"full_name": "Arjun Rao", "relationship": "SON", "is_minor": True}
-                ]
-            },
+            json={"items": [{"full_name": "Arjun Rao", "relationship": "SON", "is_minor": True}]},
         )
         assert response.status_code == 422
     finally:
@@ -320,15 +314,11 @@ async def test_get_public_case_unknown_token_returns_404(
     assert response.status_code == 404
 
 
-async def test_expired_token_returns_404(
-    client: AsyncClient, seeded_plan_catalogue: None
-) -> None:
+async def test_expired_token_returns_404(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
         case = await _create_case(client, headers)
-        token = await _issue_token(
-            company_id=company_id, case_id=UUID(case["id"]), ttl_days=-1
-        )
+        token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]), ttl_days=-1)
 
         response = await client.get(f"/v1/public/onboarding/{token}")
         assert response.status_code == 404

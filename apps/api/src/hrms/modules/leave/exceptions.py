@@ -434,9 +434,7 @@ class LeaveEncashmentPolicyNotResolvedError(ValidationError):
 class LeaveEncashmentNotAllowedError(ValidationError):
     code = "LEAVE_ENCASHMENT_NOT_ALLOWED"
 
-    def __init__(
-        self, message: str = "Encashment is not allowed for this leave type"
-    ) -> None:
+    def __init__(self, message: str = "Encashment is not allowed for this leave type") -> None:
         super().__init__(
             message, details=[{"field": "leave_type_id", "code": self.code, "message": message}]
         )

@@ -90,9 +90,7 @@ async def test_allowed_during_probation_false_blocks_probation_employee(
             client, headers, employee_id=employee_id, leave_type_id=leave_type_id
         )
         assert submitted.status_code == 422, submitted.text
-        assert (
-            submitted.json()["error"]["code"] == "LEAVE_APPLICATION_NOT_ALLOWED_DURING_PROBATION"
-        )
+        assert submitted.json()["error"]["code"] == "LEAVE_APPLICATION_NOT_ALLOWED_DURING_PROBATION"
     finally:
         await _teardown(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -207,9 +205,7 @@ async def test_confirm_unblocks_probation_restricted_leave_type(
             client, headers, employee_id=employee_id, leave_type_id=leave_type_id
         )
         assert blocked.status_code == 422, blocked.text
-        assert (
-            blocked.json()["error"]["code"] == "LEAVE_APPLICATION_NOT_ALLOWED_DURING_PROBATION"
-        )
+        assert blocked.json()["error"]["code"] == "LEAVE_APPLICATION_NOT_ALLOWED_DURING_PROBATION"
 
         confirmed = await client.post(
             f"/v1/employees/{employee_id}/confirm",

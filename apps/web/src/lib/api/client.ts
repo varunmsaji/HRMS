@@ -83,6 +83,12 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     response = await fetch(`${API_BASE_URL}/v1${path}`, {
       method: options.method ?? "GET",
       headers,
+      // SEC-06 — the API and web app are different origins even in development
+      // (localhost:3000 vs localhost:8000); without `credentials: "include"` the browser
+      // neither sends nor stores the HttpOnly `hrms_refresh` cookie cross-origin at all. Safe to
+      // set unconditionally: the cookie is scoped server-side to `/v1/auth` (`Path` attribute),
+      // so it is only ever attached to the handful of routes that actually consume it.
+      credentials: "include",
       body:
         options.body === undefined
           ? undefined
@@ -132,13 +138,16 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
 let refreshInFlight: Promise<boolean> | null = null;
 
 async function refreshSession(): Promise<boolean> {
-  const session = loadSession();
-  if (!session?.refreshToken) return false;
+  // SEC-06 — no token to read or send here anymore: the refresh token lives only in the
+  // HttpOnly `hrms_refresh` cookie, which the browser attaches automatically because of
+  // `credentials: "include"`. `loadSession()` is still checked first so a page with no prior
+  // session at all doesn't fire a doomed refresh call on every 401.
+  if (!loadSession()) return false;
   try {
     const res = await fetch(`${API_BASE_URL}/v1/auth/token/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Request-Id": requestId() },
-      body: JSON.stringify({ refresh_token: session.refreshToken }),
+      headers: { "X-Request-Id": requestId() },
+      credentials: "include",
     });
     if (!res.ok) return false;
     const envelope = (await res.json()) as DataEnvelope<TokenResponseData>;

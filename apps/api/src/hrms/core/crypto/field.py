@@ -75,9 +75,7 @@ def parse_ciphertext(value: str) -> tuple[int, bytes, bytes]:
             "Ciphertext nonce/body segment is not valid base64."
         ) from exc
     if len(nonce) != NONCE_LENGTH_BYTES:
-        raise MalformedCiphertextError(
-            f"Ciphertext nonce is not {NONCE_LENGTH_BYTES} bytes."
-        )
+        raise MalformedCiphertextError(f"Ciphertext nonce is not {NONCE_LENGTH_BYTES} bytes.")
     return key_version, nonce, ciphertext_and_tag
 
 

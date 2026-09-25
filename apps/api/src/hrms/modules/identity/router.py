@@ -1,10 +1,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from hrms.core.auth.dependencies import get_current_user
+from hrms.core.auth.refresh_cookie import clear_refresh_cookie, set_refresh_cookie
 from hrms.core.auth.types import AuthenticatedUser
+from hrms.core.config.settings import get_settings
 from hrms.core.rbac.dependencies import require_permission
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
@@ -15,10 +17,13 @@ from hrms.modules.identity.schemas import (
     ForgotPasswordRequest,
     LoginRequest,
     MeResponseData,
+    PublicTokenResponseData,
     RefreshRequest,
+    ResendVerificationRequest,
     ResetPasswordRequest,
-    TokenResponseData,
+    VerifyEmailRequest,
     build_meta,
+    to_public_token_response,
 )
 from hrms.modules.identity.service import IdentityService
 from hrms.shared.pagination import DataEnvelope
@@ -45,36 +50,60 @@ _login_rate_limit = rate_limit_by_ip_and_email("login", limit=10, window_seconds
 # lock out that IP's login attempts.
 _refresh_rate_limit = rate_limit("token_refresh", limit=10, window_seconds=60)
 
+# SEC-09 (RELEASE_HARDENING_PHASE_3A) — its own bucket rather than joining the already-flagged-
+# as-overly-shared "auth" bucket above (SEC-11's own tracked coarseness): a burst of verification
+# attempts/resends shouldn't be able to exhaust the counter registration or password-reset rely
+# on, or vice versa.
+_email_verification_rate_limit = rate_limit("email_verification", limit=10, window_seconds=60)
+
 
 @router.post("/login", status_code=status.HTTP_200_OK)
 async def login(
     body: LoginRequest,
     request: Request,
+    response: Response,
     _rate_limit: Annotated[None, Depends(_login_rate_limit)],
     service: Annotated[IdentityService, Depends(get_identity_service)],
-) -> DataEnvelope[TokenResponseData]:
+) -> DataEnvelope[PublicTokenResponseData]:
     data = await service.login(
         body,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    set_refresh_cookie(
+        response, request, raw_refresh_token=data.refresh_token, settings=get_settings()
+    )
+    return DataEnvelope(
+        data=to_public_token_response(data), meta=build_meta(current_request_id() or "unknown")
+    )
 
 
 @router.post("/token/refresh", status_code=status.HTTP_200_OK)
 async def refresh_token(
-    body: RefreshRequest,
     request: Request,
+    response: Response,
     _rate_limit: Annotated[None, Depends(_refresh_rate_limit)],
     service: Annotated[IdentityService, Depends(get_identity_service)],
-) -> DataEnvelope[TokenResponseData]:
-    raw = body.refresh_token or request.cookies.get("hrms_refresh")
+    # SEC-06 (RELEASE_HARDENING_PHASE_3A) — the browser client sends no body at all now (the
+    # refresh token travels only as the `hrms_refresh` cookie); `body` defaults to `None` so
+    # FastAPI does not demand a JSON payload be present. `body.refresh_token` stays supported for
+    # non-browser callers/tests that need to supply a specific token explicitly (e.g.
+    # reuse-detection tests replaying an intentionally stale token the cookie jar has since
+    # rotated past).
+    body: RefreshRequest | None = None,
+) -> DataEnvelope[PublicTokenResponseData]:
+    raw = (body.refresh_token if body else None) or request.cookies.get("hrms_refresh")
     if not raw:
         from hrms.core.errors.auth import InvalidTokenError
 
         raise InvalidTokenError("Refresh token is required")
     data = await service.refresh(raw)
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    set_refresh_cookie(
+        response, request, raw_refresh_token=data.refresh_token, settings=get_settings()
+    )
+    return DataEnvelope(
+        data=to_public_token_response(data), meta=build_meta(current_request_id() or "unknown")
+    )
 
 
 @router.post("/password/forgot", status_code=status.HTTP_202_ACCEPTED)
@@ -84,9 +113,7 @@ async def forgot_password(
     service: Annotated[IdentityService, Depends(get_identity_service)],
 ) -> DataEnvelope[dict[str, bool]]:
     await service.forgot_password(body.email)
-    return DataEnvelope(
-        data={"accepted": True}, meta=build_meta(current_request_id() or "unknown")
-    )
+    return DataEnvelope(data={"accepted": True}, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/password/reset", status_code=status.HTTP_200_OK)
@@ -99,12 +126,34 @@ async def reset_password(
     return DataEnvelope(data={"reset": True}, meta=build_meta(current_request_id() or "unknown"))
 
 
+@router.post("/email/verify", status_code=status.HTTP_200_OK)
+async def verify_email(
+    body: VerifyEmailRequest,
+    _rate_limit: Annotated[None, Depends(_email_verification_rate_limit)],
+    service: Annotated[IdentityService, Depends(get_identity_service)],
+) -> DataEnvelope[dict[str, bool]]:
+    await service.verify_email(body.token)
+    return DataEnvelope(data={"verified": True}, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/email/resend-verification", status_code=status.HTTP_202_ACCEPTED)
+async def resend_verification_email(
+    body: ResendVerificationRequest,
+    _rate_limit: Annotated[None, Depends(_email_verification_rate_limit)],
+    service: Annotated[IdentityService, Depends(get_identity_service)],
+) -> DataEnvelope[dict[str, bool]]:
+    await service.resend_verification_email(body.email)
+    return DataEnvelope(data={"accepted": True}, meta=build_meta(current_request_id() or "unknown"))
+
+
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    response: Response,
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[IdentityService, Depends(get_identity_service)],
 ) -> None:
     await service.logout(user.session_id, user.user_id, user.company_id)
+    clear_refresh_cookie(response)
 
 
 @router.get("/me", status_code=status.HTTP_200_OK)

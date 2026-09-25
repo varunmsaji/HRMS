@@ -1,8 +1,8 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
-from jose import JWTError, jwt
+import jwt
 
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.errors.auth import InvalidTokenError
@@ -32,15 +32,15 @@ def create_access_token(
         "iat": _utcnow(),
         "type": "access",
     }
-    return str(jwt.encode(payload, cfg.jwt_access_secret, algorithm="HS256"))
+    return jwt.encode(payload, cfg.jwt_access_secret, algorithm="HS256")
 
 
 def decode_access_token(token: str, settings: Settings | None = None) -> dict[str, Any]:
     cfg = settings or get_settings()
     try:
         payload = jwt.decode(token, cfg.jwt_access_secret, algorithms=["HS256"])
-    except JWTError as exc:
+    except jwt.PyJWTError as exc:
         raise InvalidTokenError("Access token is invalid or expired") from exc
     if payload.get("type") != "access":
         raise InvalidTokenError("Invalid token type")
-    return cast(dict[str, Any], payload)
+    return payload

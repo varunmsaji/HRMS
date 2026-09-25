@@ -29,7 +29,6 @@ const SAMPLE_ME = {
 };
 const SAMPLE_TOKEN_RESPONSE = {
   access_token: "a1",
-  refresh_token: "r1",
   token_type: "Bearer",
   expires_in_minutes: 15,
   company_id: "company-1",

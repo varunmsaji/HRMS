@@ -1,9 +1,11 @@
 """DATA-01 — the DEK cache (`docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md` §2.1).
-Lazily resolves and TTL-caches plaintext DEKs, in process memory only — this is what keeps KMS
-calls bounded to "at most once per key version per process per TTL window," not once per field
-operation (plan §14). A single `DekCache` instance must be shared across requests within a
-process (`get_dek_cache()` below is a process-wide singleton, mirroring `get_settings()`'s own
-`lru_cache` convention) — a per-request instance would defeat that property entirely."""
+Lazily resolves and TTL-caches plaintext DEKs, in process memory only — this is what keeps the
+registry lookup + master-key unwrap bounded to "at most once per key version per process per TTL
+window," not once per field operation (plan §14; the wrap/unwrap mechanism itself moved from AWS
+KMS to a local application key in RELEASE_HARDENING_PHASE_3A — see `master_key.py`). A single
+`DekCache` instance must be shared across requests within a process (`get_dek_cache()` below is a
+process-wide singleton, mirroring `get_settings()`'s own `lru_cache` convention) — a per-request
+instance would defeat that property entirely."""
 
 import asyncio
 import hashlib
@@ -20,7 +22,7 @@ from hrms.core.crypto.errors import (
     NoActiveEncryptionKeyError,
     UnknownKeyVersionError,
 )
-from hrms.core.crypto.kms import KmsKeyService
+from hrms.core.crypto.master_key import MasterKeyService
 from hrms.core.crypto.registry import EncryptionKeyRegistry
 
 #: Plan §5.4 — the fixed key version every development-mode ciphertext carries. Never a real KMS
@@ -47,11 +49,11 @@ class DekCache:
         self,
         settings: Settings,
         *,
-        kms: KmsKeyService | None = None,
+        master: MasterKeyService | None = None,
         registry: EncryptionKeyRegistry | None = None,
     ) -> None:
         self._settings = settings
-        self._kms = kms or KmsKeyService(settings)
+        self._master = master or MasterKeyService(settings)
         self._registry = registry or EncryptionKeyRegistry()
         self._dek_cache: dict[int, _CachedDek] = {}
         self._current_version_cache: tuple[int, datetime] | None = None
@@ -95,13 +97,11 @@ class DekCache:
                 dek = cached.dek
             else:
                 try:
-                    dek = await self._kms.decrypt_wrapped_dek(
-                        key_arn=row.kms_key_arn, wrapped_dek_base64=row.wrapped_dek
-                    )
+                    dek = await self._master.decrypt_wrapped_dek(wrapped_dek_base64=row.wrapped_dek)
                 except Exception as exc:  # noqa: BLE001 — deliberately broad: fail closed
                     raise EncryptionUnavailableError(
-                        "Unable to unwrap the current DEK via KMS — refusing to write "
-                        "unencrypted."
+                        "Unable to unwrap the current DEK under the master key — refusing to "
+                        "write unencrypted."
                     ) from exc
                 self._dek_cache[row.key_version] = _CachedDek(
                     dek=dek, resolved_at=datetime.now(UTC)
@@ -135,12 +135,10 @@ class DekCache:
                 ) from exc
 
             try:
-                dek = await self._kms.decrypt_wrapped_dek(
-                    key_arn=row.kms_key_arn, wrapped_dek_base64=row.wrapped_dek
-                )
+                dek = await self._master.decrypt_wrapped_dek(wrapped_dek_base64=row.wrapped_dek)
             except Exception as exc:  # noqa: BLE001 — deliberately broad: fail closed
                 raise DecryptionUnavailableError(
-                    f"Unable to unwrap key_version={key_version} via KMS."
+                    f"Unable to unwrap key_version={key_version} under the master key."
                 ) from exc
             self._dek_cache[key_version] = _CachedDek(dek=dek, resolved_at=datetime.now(UTC))
             return dek

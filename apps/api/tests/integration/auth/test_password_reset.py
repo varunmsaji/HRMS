@@ -149,9 +149,92 @@ async def test_reset_password_success_changes_password_and_single_use(
 
 
 @pytest.mark.asyncio
-async def test_reset_password_unknown_token_rejected(
-    client: AsyncClient, seeded_db: None
+async def test_reset_password_invalidates_existing_access_and_refresh_token(
+    client: AsyncClient, seeded_db: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """SEC-07 — a password reset must end sessions that were already issued before the reset, not
+    only change the credential. Without this, an attacker who already holds a valid access token
+    keeps working until its own short expiry, and a stolen refresh token would keep minting new
+    access tokens indefinitely — the new password alone would do nothing to stop either."""
+    captured = await _latest_raw_reset_token(monkeypatch)
+    try:
+        login_response = await client.post(
+            "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}
+        )
+        assert login_response.status_code == 200
+        old_tokens = login_response.json()["data"]
+        # SEC-06 (RELEASE_HARDENING_PHASE_3A) — the refresh token is only in the HttpOnly cookie.
+        old_refresh_token = login_response.cookies.get("hrms_refresh")
+        assert old_refresh_token
+
+        me_before = await client.get(
+            "/v1/auth/me", headers={"Authorization": f"Bearer {old_tokens['access_token']}"}
+        )
+        assert me_before.status_code == 200
+
+        await client.post("/v1/auth/password/forgot", json={"email": ADMIN_EMAIL})
+        raw_token = _extract_token(captured[0])
+        reset_response = await client.post(
+            "/v1/auth/password/reset", json={"token": raw_token, "password": NEW_PASSWORD}
+        )
+        assert reset_response.status_code == 200
+
+        me_after = await client.get(
+            "/v1/auth/me", headers={"Authorization": f"Bearer {old_tokens['access_token']}"}
+        )
+        assert me_after.status_code == 401
+        assert me_after.json()["error"]["code"] == "INVALID_TOKEN"
+
+        refresh_after = await client.post(
+            "/v1/auth/token/refresh", json={"refresh_token": old_refresh_token}
+        )
+        assert refresh_after.status_code == 401
+        assert refresh_after.json()["error"]["code"] == "INVALID_TOKEN"
+    finally:
+        await _restore_admin_password()
+        await _cleanup_reset_tokens()
+
+
+@pytest.mark.asyncio
+async def test_reset_password_invalidates_every_session_not_only_one(
+    client: AsyncClient, seeded_db: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-07 — every session for the user must be revoked, not only the browser/device that
+    happened to perform the reset (two independent logins here stand in for two devices)."""
+    captured = await _latest_raw_reset_token(monkeypatch)
+    try:
+        session_a = (
+            await client.post(
+                "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}
+            )
+        ).json()["data"]
+        session_b = (
+            await client.post(
+                "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": DEMO_PASSWORD}
+            )
+        ).json()["data"]
+        assert session_a["access_token"] != session_b["access_token"]
+
+        await client.post("/v1/auth/password/forgot", json={"email": ADMIN_EMAIL})
+        raw_token = _extract_token(captured[0])
+        reset_response = await client.post(
+            "/v1/auth/password/reset", json={"token": raw_token, "password": NEW_PASSWORD}
+        )
+        assert reset_response.status_code == 200
+
+        for stale_session in (session_a, session_b):
+            me = await client.get(
+                "/v1/auth/me",
+                headers={"Authorization": f"Bearer {stale_session['access_token']}"},
+            )
+            assert me.status_code == 401
+    finally:
+        await _restore_admin_password()
+        await _cleanup_reset_tokens()
+
+
+@pytest.mark.asyncio
+async def test_reset_password_unknown_token_rejected(client: AsyncClient, seeded_db: None) -> None:
     response = await client.post(
         "/v1/auth/password/reset", json={"token": "not-a-real-token", "password": NEW_PASSWORD}
     )
@@ -189,9 +272,7 @@ async def test_reset_password_expired_token_rejected(
         factory = get_session_factory()
         async with factory() as session:
             await session.execute(
-                text(
-                    "UPDATE password_reset_token SET expires_at = :past WHERE user_id = :uid"
-                ),
+                text("UPDATE password_reset_token SET expires_at = :past WHERE user_id = :uid"),
                 {"past": datetime.now(UTC) - timedelta(hours=1), "uid": str(ADMIN_USER_ID)},
             )
             await session.commit()

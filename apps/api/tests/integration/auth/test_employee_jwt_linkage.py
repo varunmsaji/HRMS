@@ -230,10 +230,10 @@ async def test_employee_login_receives_employee_id(
         assert me.status_code == 200, me.text
         assert me.json()["data"]["user"]["employee_id"] == employee["id"]
 
-        # Token refresh must keep resolving the same employee_id, not drop it.
-        refresh = await client.post(
-            "/v1/auth/token/refresh", json={"refresh_token": login.json()["data"]["refresh_token"]}
-        )
+        # Token refresh must keep resolving the same employee_id, not drop it. SEC-06 — the
+        # refresh token now travels only as the HttpOnly `hrms_refresh` cookie login() just set;
+        # httpx's client-wide cookie jar carries it automatically, no body needed.
+        refresh = await client.post("/v1/auth/token/refresh")
         assert refresh.status_code == 200, refresh.text
         refreshed_payload = decode_access_token(refresh.json()["data"]["access_token"])
         assert refreshed_payload["employee_id"] == employee["id"]

@@ -14,7 +14,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 const SAMPLE_SESSION: StoredSession = {
   accessToken: "access-1",
-  refreshToken: "refresh-1",
   companyId: "company-1",
   companies: [],
   expiresAt: Date.now() + 60_000,
@@ -74,7 +73,6 @@ describe("apiClient", () => {
         jsonResponse({
           data: {
             access_token: "access-2",
-            refresh_token: "refresh-2",
             token_type: "Bearer",
             expires_in_minutes: 15,
             company_id: "company-1",
@@ -113,6 +111,19 @@ describe("apiClient", () => {
     expect(expiredHandler).toHaveBeenCalledTimes(1);
 
     window.removeEventListener(SESSION_EXPIRED_EVENT, expiredHandler);
+  });
+
+  it("SEC-06: sends credentials: include so the HttpOnly refresh cookie travels cross-origin", async () => {
+    saveSession(SAMPLE_SESSION);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ data: { hello: "world" }, meta: { request_id: "r1" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await apiClient.get<{ hello: string }>("/some/path");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.credentials).toBe("include");
   });
 
   it("wraps a fetch rejection (offline/DNS failure) as a NetworkError", async () => {

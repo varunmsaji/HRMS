@@ -4,9 +4,10 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
 from hrms.core.auth.dependencies import get_current_user
+from hrms.core.auth.refresh_cookie import set_refresh_cookie
 from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.config.settings import get_settings
 from hrms.core.errors.base import PermissionDeniedError
@@ -14,7 +15,11 @@ from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
-from hrms.modules.identity.schemas import TokenResponseData, build_meta
+from hrms.modules.identity.schemas import (
+    PublicTokenResponseData,
+    build_meta,
+    to_public_token_response,
+)
 from hrms.modules.organisation.dependencies import get_organisation_service
 from hrms.modules.organisation.permissions import (
     DASHBOARD_COMPANY_VIEW,
@@ -115,15 +120,21 @@ async def get_registration_config() -> DataEnvelope[RegistrationConfigRead]:
 async def register_company(
     body: CompanyRegistrationRequest,
     request: Request,
+    response: Response,
     service: Annotated[OrganisationService, Depends(get_organisation_service)],
     _rate_limit: Annotated[None, Depends(_registration_rate_limit)],
-) -> DataEnvelope[TokenResponseData]:
+) -> DataEnvelope[PublicTokenResponseData]:
     data = await service.register_company(
         body,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    set_refresh_cookie(
+        response, request, raw_refresh_token=data.refresh_token, settings=get_settings()
+    )
+    return DataEnvelope(
+        data=to_public_token_response(data), meta=build_meta(current_request_id() or "unknown")
+    )
 
 
 @router.get("/companies/current", status_code=status.HTTP_200_OK)
@@ -943,9 +954,7 @@ async def list_holidays(
     page: Annotated[PageParams, Depends(pagination_params)],
     year: Annotated[int | None, Query()] = None,
 ) -> ListEnvelope[HolidayRead]:
-    data, total = await service.list_holidays(
-        tenant.company_id, calendar_id, year=year, page=page
-    )
+    data, total = await service.list_holidays(tenant.company_id, calendar_id, year=year, page=page)
     return ListEnvelope(
         data=data,
         pagination=build_pagination_meta(page, total=total),

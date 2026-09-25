@@ -12,10 +12,11 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
-from hrms.core.auth.passwords import hash_password, is_password_strong_enough
+from hrms.core.auth.passwords import hash_password, is_password_strong_enough, verify_password
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.db.session import set_rls_company_id
+from hrms.core.errors.auth import AccountLockedError, InvalidCredentialsError
 from hrms.core.errors.base import NotFoundError, ValidationError
 from hrms.modules.account_invite.email_templates import build_account_invite_email
 from hrms.modules.account_invite.exceptions import (
@@ -220,8 +221,12 @@ class AccountInviteService:
         company = await self._identity_repo.get_company_by_id(self._session, invite.company_id)
         if company is None:
             raise AccountInviteInvalidError()
+        existing_user = await self._identity_repo.get_user_by_email(self._session, invite.email)
         return PublicAccountInviteRead(
-            email=invite.email, company_name=company.name, expires_at=invite.expires_at
+            email=invite.email,
+            company_name=company.name,
+            expires_at=invite.expires_at,
+            existing_account=existing_user is not None,
         )
 
     async def accept(
@@ -238,20 +243,18 @@ class AccountInviteService:
         `user.email` carries a real global unique index, so there is at most one candidate row to
         reuse), links `Employee.user_id` when the invite was for an existing employee, grants the
         invite's role, marks the invite accepted, and logs the new session in immediately (same
-        `issue_tokens_for` seam `register_company`/`login` already use)."""
-        if not is_password_strong_enough(password):
-            raise ValidationError(
-                "Password does not meet minimum strength requirements",
-                details=[
-                    {
-                        "field": "password",
-                        "code": "WEAK_PASSWORD",
-                        "message": "Password must be at least 8 characters and include "
-                        "both a letter and a digit",
-                    }
-                ],
-            )
+        `issue_tokens_for` seam `register_company`/`login` already use).
 
+        SEC-08 — an invite must never authenticate an existing account by itself: possession of
+        the invite link proves only that the inviter's email delivery reached that address, not
+        that the caller controls the existing account. When `invite.email` already has a `User`
+        row, `password` is verified against that account's real hash (the identical
+        `verify_password`/lockout mechanism `IdentityService.login` uses, reused rather than
+        reinvented) before any membership or session is granted; a mismatch raises the same
+        `InvalidCredentialsError`/`AccountLockedError` login itself would, and leaves the invite
+        unconsumed (`mark_accepted` never runs) so a legitimate holder can retry. The password-
+        strength check only applies to the brand-new-account path — for an existing account,
+        `password` is a login credential being verified, not a new one being chosen."""
         invite = await self._get_live_invite(raw_token)
         await set_rls_company_id(self._session, str(invite.company_id))
 
@@ -271,6 +274,15 @@ class AccountInviteService:
 
         existing_user = await self._identity_repo.get_user_by_email(self._session, invite.email)
         if existing_user is not None:
+            if existing_user.locked_until and existing_user.locked_until > now:
+                raise AccountLockedError("Account is temporarily locked")
+            if not existing_user.password_hash or not verify_password(
+                existing_user.password_hash, password
+            ):
+                await self._identity_repo.increment_failed_login(self._session, existing_user.id)
+                raise InvalidCredentialsError("Invalid email or password")
+            await self._identity_repo.reset_failed_login(self._session, existing_user.id)
+
             existing_membership = await self._identity_repo.get_user_company(
                 self._session, user_id=existing_user.id, company_id=invite.company_id
             )
@@ -285,6 +297,18 @@ class AccountInviteService:
                 now=now,
             )
         else:
+            if not is_password_strong_enough(password):
+                raise ValidationError(
+                    "Password does not meet minimum strength requirements",
+                    details=[
+                        {
+                            "field": "password",
+                            "code": "WEAK_PASSWORD",
+                            "message": "Password must be at least 8 characters and include "
+                            "both a letter and a digit",
+                        }
+                    ],
+                )
             user_id = uuid4()
             await org_repo.insert_user(
                 self._session,
@@ -294,6 +318,10 @@ class AccountInviteService:
                 first_name=first_name or "",
                 last_name=last_name or "",
                 now=now,
+                # SEC-09 — accepting a token delivered to `invite.email` is itself proof of
+                # receipt, unlike self-service registration (this method's other, unverified
+                # branch is `insert_user`'s own default — see that method's docstring).
+                email_verified_at=now,
             )
             user_company = await org_repo.insert_user_company(
                 self._session,

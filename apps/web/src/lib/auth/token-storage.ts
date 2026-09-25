@@ -1,19 +1,17 @@
 import type { CompanySummary, TokenResponseData } from "@/lib/auth/types";
 
 /**
- * DESIGN ASSUMPTION: the actual `POST /v1/auth/login` / `/companies/register` implementation
- * (as opposed to `docs/modules/company/04_API_Design.md`, which describes an HttpOnly refresh
- * cookie) returns `refresh_token` in the JSON body — there is no `Set-Cookie` anywhere in
- * `identity/service.py`. Without a cookie, the browser has nothing to hold the session that
- * JavaScript can't also read, so both tokens live in `localStorage` here. This keeps company_id
- * server-issued (never client-editable UI state) while acknowledging the tradeoff: an XSS bug
- * could read these tokens. Isolated to this one module so swapping to a cookie-based session
- * later (once the backend sets one) only requires changing this file and the refresh call in
- * `lib/api/client.ts`.
+ * SEC-06 (RELEASE_HARDENING_PHASE_3A_SECURITY_REMEDIATION.md) — the refresh token no longer
+ * passes through this module, or through `localStorage`, at all: every token-issuing endpoint
+ * (`/auth/login`, `/auth/token/refresh`, `/companies/register`, the invite-accept endpoint) now
+ * sets it as an HttpOnly `hrms_refresh` cookie (`core/auth/refresh_cookie.py`) that this page's
+ * own JavaScript — and therefore an XSS payload — cannot read at all. Only the short-lived
+ * (15-minute) access token and non-sensitive session metadata are kept here; the browser handles
+ * sending/receiving the refresh cookie automatically on requests made with
+ * `credentials: "include"` (`lib/api/client.ts`).
  */
 export interface StoredSession {
   accessToken: string;
-  refreshToken: string;
   companyId: string;
   companies: CompanySummary[];
   /** epoch ms */
@@ -30,7 +28,6 @@ function isBrowser(): boolean {
 export function sessionFromTokenResponse(data: TokenResponseData): StoredSession {
   return {
     accessToken: data.access_token,
-    refreshToken: data.refresh_token,
     companyId: data.company_id,
     companies: data.companies,
     expiresAt: Date.now() + data.expires_in_minutes * 60_000,

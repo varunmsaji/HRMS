@@ -16,11 +16,12 @@ _STRONG_ACCESS_SECRET = "Zx7!qP9$mK2#vL5^rT8&nB1@wD4%yF6*hJ0"
 _STRONG_REFRESH_SECRET = "Qm3&zR8!kX1#pL6^bN9$vT2@yH5%wD0*jF4"
 
 
-#: DATA-01 (`docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md` §10.3) — a syntactically
-#: real-shaped (test-only) KMS key ARN, so every pre-existing CORS/JWT test below (which does not
-#: care about the KMS guard at all) keeps passing once `kms_cmk_arn` becomes a required field
-#: outside development.
-_TEST_KMS_CMK_ARN = "arn:aws:kms:ap-south-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+#: RELEASE_HARDENING_PHASE_3A — a strong (test-only) application master key, so every
+#: pre-existing CORS/JWT test below (which does not care about the PII-encryption guard at all)
+#: keeps passing once `pii_master_key` is validated with the same entropy floor as the JWT
+#: secrets. Replaces this file's previous KMS-ARN fixture (`kms_cmk_arn` was removed —
+#: docs/audits/RELEASE_HARDENING_PHASE_3A_SECURITY_REMEDIATION.md §9).
+_TEST_PII_MASTER_KEY = "Nb4$hK7!wQ2#xM9^rF3&tY6@pL1%vD8*sG5"
 
 
 def _non_dev_settings(**overrides: object) -> Settings:
@@ -29,11 +30,22 @@ def _non_dev_settings(**overrides: object) -> Settings:
         "jwt_access_secret": _STRONG_ACCESS_SECRET,
         "jwt_refresh_secret": _STRONG_REFRESH_SECRET,
         "cors_allowed_origins": ("https://app.example.com",),
-        "kms_cmk_arn": _TEST_KMS_CMK_ARN,
+        "pii_master_key": _TEST_PII_MASTER_KEY,
         "s3_endpoint_url": "http://minio:9000",
         "s3_bucket_documents": "hrms-test-documents",
         "aws_access_key_id": "test-access-key",
         "aws_secret_access_key": "test-secret-key",
+        # RELEASE_HARDENING_PHASE_5A — a valid SMTP shape so every pre-existing test below (none
+        # of which cares about email config) keeps passing once email_provider="smtp" is required
+        # outside development. See test_email_settings.py for the email-config-specific tests.
+        "email_provider": "smtp",
+        "smtp_host": "smtp.example.com",
+        "smtp_port": 587,
+        "smtp_username": "hrms-app",
+        "smtp_password": "test-smtp-password",
+        "smtp_from_email": "onboarding@hrms.example.com",
+        "smtp_use_tls": True,
+        "smtp_use_ssl": False,
     }
     base.update(overrides)
     return Settings(**base)

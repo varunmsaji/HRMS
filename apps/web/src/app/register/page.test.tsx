@@ -56,7 +56,6 @@ describe("RegisterPage", () => {
   it("submits the CompanyRegistrationRequest payload and redirects on success", async () => {
     mockedPost.mockResolvedValueOnce({
       access_token: "a1",
-      refresh_token: "r1",
       token_type: "Bearer",
       expires_in_minutes: 15,
       company_id: "company-1",

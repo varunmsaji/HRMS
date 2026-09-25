@@ -36,9 +36,7 @@ async def _assign(
     `_give_employee_a_manager`, both may be independently `None` here so each stage's
     resolution can be tested in isolation."""
     branch = await _create_branch(client, headers, legal_entity_id=legal_entity_id)
-    designation = await _create_designation(
-        client, headers, department_id=department_id
-    )
+    designation = await _create_designation(client, headers, department_id=department_id)
     body: dict[str, Any] = {
         "effective_from": effective_from,
         "change_type": "INITIAL",
@@ -131,9 +129,7 @@ async def test_manager_then_hod_then_hr_skips_manager_when_unresolved(
         employee_id, leave_type_id = ctx["employee"]["id"], ctx["leave_type"]["id"]
 
         head = await _create_employee(client, headers, first_name="Heena")
-        department = await _create_department(
-            client, headers, head_employee_id=head["id"]
-        )
+        department = await _create_department(client, headers, head_employee_id=head["id"])
         await _assign(
             client,
             headers,
@@ -178,9 +174,7 @@ async def test_manager_then_hod_then_hr_all_three_stages_resolve(
 
         manager = await _create_employee(client, headers, first_name="Manoj")
         head = await _create_employee(client, headers, first_name="Heena")
-        department = await _create_department(
-            client, headers, head_employee_id=head["id"]
-        )
+        department = await _create_department(client, headers, head_employee_id=head["id"])
         await _assign(
             client,
             headers,
@@ -216,9 +210,7 @@ async def test_manager_then_hod_then_hr_self_head_loop_falls_back_to_hr(
         ctx = await _setup_full(client, headers, approval_chain="MANAGER_THEN_HOD_THEN_HR")
         employee_id, leave_type_id = ctx["employee"]["id"], ctx["leave_type"]["id"]
 
-        department = await _create_department(
-            client, headers, head_employee_id=employee_id
-        )
+        department = await _create_department(client, headers, head_employee_id=employee_id)
         await _assign(
             client,
             headers,

@@ -882,17 +882,13 @@ class LeaveApplicationActionRepository:
 
 
 class LeaveCombinationRuleRepository:
-    async def insert(
-        self, session: AsyncSession, *, data: dict[str, Any]
-    ) -> LeaveCombinationRule:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> LeaveCombinationRule:
         row = LeaveCombinationRule(**data)
         session.add(row)
         await session.flush()
         return row
 
-    async def list(
-        self, session: AsyncSession, *, company_id: UUID
-    ) -> list[LeaveCombinationRule]:
+    async def list(self, session: AsyncSession, *, company_id: UUID) -> list[LeaveCombinationRule]:
         stmt = (
             select(LeaveCombinationRule)
             .where(LeaveCombinationRule.company_id == company_id)
@@ -947,15 +943,11 @@ class LeaveCombinationRuleRepository:
 
 
 class LeaveYearSettingRepository:
-    async def get(
-        self, session: AsyncSession, *, company_id: UUID
-    ) -> LeaveYearSetting | None:
+    async def get(self, session: AsyncSession, *, company_id: UUID) -> LeaveYearSetting | None:
         stmt = select(LeaveYearSetting).where(LeaveYearSetting.company_id == company_id)
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def insert(
-        self, session: AsyncSession, *, data: dict[str, Any]
-    ) -> LeaveYearSetting:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> LeaveYearSetting:
         row = LeaveYearSetting(**data)
         session.add(row)
         await session.flush()
@@ -988,17 +980,13 @@ class LeaveYearSettingRepository:
 
 
 class StatutoryLeaveMinimumRepository:
-    async def insert(
-        self, session: AsyncSession, *, data: dict[str, Any]
-    ) -> StatutoryLeaveMinimum:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> StatutoryLeaveMinimum:
         row = StatutoryLeaveMinimum(**data)
         session.add(row)
         await session.flush()
         return row
 
-    async def list(
-        self, session: AsyncSession, *, company_id: UUID
-    ) -> list[StatutoryLeaveMinimum]:
+    async def list(self, session: AsyncSession, *, company_id: UUID) -> list[StatutoryLeaveMinimum]:
         stmt = (
             select(StatutoryLeaveMinimum)
             .where(StatutoryLeaveMinimum.company_id == company_id)
@@ -1015,9 +1003,7 @@ class StatutoryLeaveMinimumRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def delete(
-        self, session: AsyncSession, *, company_id: UUID, minimum_id: UUID
-    ) -> bool:
+    async def delete(self, session: AsyncSession, *, company_id: UUID, minimum_id: UUID) -> bool:
         result = await session.execute(
             delete(StatutoryLeaveMinimum).where(
                 StatutoryLeaveMinimum.id == minimum_id,

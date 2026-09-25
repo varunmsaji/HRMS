@@ -19,6 +19,7 @@ interface PublicAccountInvite {
   email: string;
   company_name: string;
   expires_at: string;
+  existing_account: boolean;
 }
 
 export default function AcceptInvitePage() {
@@ -63,16 +64,27 @@ export default function AcceptInvitePage() {
     void load();
   }, [load]);
 
+  const isExistingAccount = invite?.existing_account ?? false;
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
 
     const nextErrors: Record<string, string | undefined> = {};
-    if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-      nextErrors.password = "At least 8 characters, with a letter and a digit.";
-    }
-    if (password !== confirmPassword) {
-      nextErrors.confirmPassword = "Passwords do not match.";
+    if (isExistingAccount) {
+      // SEC-08 — for an existing account, `password` authenticates it (verified against the
+      // real password hash), it doesn't set a new one, so the new-password strength/confirm
+      // rules don't apply — only "did you type something" does.
+      if (password.length === 0) {
+        nextErrors.password = "Enter your password.";
+      }
+    } else {
+      if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+        nextErrors.password = "At least 8 characters, with a letter and a digit.";
+      }
+      if (password !== confirmPassword) {
+        nextErrors.confirmPassword = "Passwords do not match.";
+      }
     }
     if (Object.values(nextErrors).some(Boolean)) {
       setFieldErrors(nextErrors);
@@ -94,7 +106,11 @@ export default function AcceptInvitePage() {
       router.push(landingPathFor(user));
     } catch (error) {
       if (error instanceof ApiError) {
-        if (error.status === 409) {
+        if (error.status === 401) {
+          setFieldErrors({ password: "Incorrect password." });
+        } else if (error.status === 423) {
+          setFormError("This account is temporarily locked. Try again later.");
+        } else if (error.status === 409) {
           setFormError(error.message);
         } else if (error.status === 422) {
           setFieldErrors({ password: getFieldError(error.details, "password") });
@@ -128,7 +144,11 @@ export default function AcceptInvitePage() {
   return (
     <AuthLayout
       title={`Join ${invite.company_name}`}
-      description={`Set a password for ${invite.email} to finish creating your account.`}
+      description={
+        isExistingAccount
+          ? `${invite.email} already has an account. Enter its password to accept this invitation and join ${invite.company_name}.`
+          : `Set a password for ${invite.email} to finish creating your account.`
+      }
     >
       <form onSubmit={handleSubmit} noValidate className="space-y-4">
         {formError ? (
@@ -140,21 +160,27 @@ export default function AcceptInvitePage() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-2 gap-4">
-          <FormField id="firstName" label="First name">
-            <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} maxLength={100} />
-          </FormField>
-          <FormField id="lastName" label="Last name">
-            <Input value={lastName} onChange={(e) => setLastName(e.target.value)} maxLength={100} />
-          </FormField>
-        </div>
+        {isExistingAccount ? null : (
+          <div className="grid grid-cols-2 gap-4">
+            <FormField id="firstName" label="First name">
+              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} maxLength={100} />
+            </FormField>
+            <FormField id="lastName" label="Last name">
+              <Input value={lastName} onChange={(e) => setLastName(e.target.value)} maxLength={100} />
+            </FormField>
+          </div>
+        )}
 
         <FormField
           id="password"
           label="Password"
           required
           error={fieldErrors.password}
-          description="At least 8 characters, with a letter and a digit."
+          description={
+            isExistingAccount
+              ? "Your existing account password."
+              : "At least 8 characters, with a letter and a digit."
+          }
         >
           <PasswordInput
             value={password}
@@ -162,23 +188,31 @@ export default function AcceptInvitePage() {
               setPassword(e.target.value);
               setFieldErrors((current) => ({ ...current, password: undefined }));
             }}
-            autoComplete="new-password"
+            autoComplete={isExistingAccount ? "current-password" : "new-password"}
           />
         </FormField>
 
-        <FormField id="confirmPassword" label="Confirm password" required error={fieldErrors.confirmPassword}>
-          <PasswordInput
-            value={confirmPassword}
-            onChange={(e) => {
-              setConfirmPassword(e.target.value);
-              setFieldErrors((current) => ({ ...current, confirmPassword: undefined }));
-            }}
-            autoComplete="new-password"
-          />
-        </FormField>
+        {isExistingAccount ? null : (
+          <FormField id="confirmPassword" label="Confirm password" required error={fieldErrors.confirmPassword}>
+            <PasswordInput
+              value={confirmPassword}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value);
+                setFieldErrors((current) => ({ ...current, confirmPassword: undefined }));
+              }}
+              autoComplete="new-password"
+            />
+          </FormField>
+        )}
 
         <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? "Creating account…" : "Create account"}
+          {submitting
+            ? isExistingAccount
+              ? "Accepting…"
+              : "Creating account…"
+            : isExistingAccount
+              ? "Accept invitation"
+              : "Create account"}
         </Button>
       </form>
     </AuthLayout>

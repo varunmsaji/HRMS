@@ -503,7 +503,9 @@ class OnboardingCaseService:
                     item = dict(item)
                     plaintext = item.get(NOMINEE_INFO_SENSITIVE_ITEM_KEY)
                     if isinstance(plaintext, str):
-                        item[NOMINEE_INFO_SENSITIVE_ITEM_KEY] = await self._crypto.encrypt_jsonb_key(
+                        item[
+                            NOMINEE_INFO_SENSITIVE_ITEM_KEY
+                        ] = await self._crypto.encrypt_jsonb_key(
                             self._session,
                             plaintext=plaintext,
                             table="onboarding_case",

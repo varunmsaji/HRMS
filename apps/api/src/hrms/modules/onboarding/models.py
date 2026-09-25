@@ -66,9 +66,7 @@ class OnboardingCase(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("legal_entity.id"), nullable=True
     )
     proposed_joining_date: Mapped[date] = mapped_column(Date)
-    created_by_user_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("user.id")
-    )
+    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user.id"))
     personal_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     address_info: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
     emergency_contact: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)

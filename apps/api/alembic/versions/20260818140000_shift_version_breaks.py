@@ -96,7 +96,8 @@ def upgrade() -> None:
               REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
             CONSTRAINT "shift_version_shift_id_fkey" FOREIGN KEY ("shift_id")
               REFERENCES "shift"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-            CONSTRAINT "shift_version_weekly_off_pattern_id_fkey" FOREIGN KEY ("weekly_off_pattern_id")
+            CONSTRAINT "shift_version_weekly_off_pattern_id_fkey"
+              FOREIGN KEY ("weekly_off_pattern_id")
               REFERENCES "weekly_off_pattern"("id") ON DELETE SET NULL ON UPDATE CASCADE,
             CONSTRAINT "shift_version_published_by_fkey" FOREIGN KEY ("published_by")
               REFERENCES "user"("id") ON DELETE SET NULL,

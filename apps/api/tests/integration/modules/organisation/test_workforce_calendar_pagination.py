@@ -115,9 +115,7 @@ async def test_policy_assignments_invalid_pagination_params_rejected(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        response = await client.get(
-            "/v1/policy-assignments", headers=headers, params={"page": 0}
-        )
+        response = await client.get("/v1/policy-assignments", headers=headers, params={"page": 0})
         assert response.status_code == 422
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)

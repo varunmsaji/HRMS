@@ -21,9 +21,13 @@ async def admin_tokens(client: AsyncClient, seeded_db: None) -> dict[str, str]:
     )
     assert response.status_code == 200
     body = response.json()
+    # SEC-06 (RELEASE_HARDENING_PHASE_3A) — the refresh token is no longer in the JSON body; it
+    # travels only as the HttpOnly `hrms_refresh` cookie on this specific response.
+    refresh_token = response.cookies.get("hrms_refresh")
+    assert refresh_token
     return {
         "access_token": body["data"]["access_token"],
-        "refresh_token": body["data"]["refresh_token"],
+        "refresh_token": refresh_token,
         "company_id": body["data"]["company_id"],
     }
 
@@ -36,9 +40,11 @@ async def viewer_tokens(client: AsyncClient, seeded_db: None) -> dict[str, str]:
     )
     assert response.status_code == 200
     body = response.json()
+    refresh_token = response.cookies.get("hrms_refresh")
+    assert refresh_token
     return {
         "access_token": body["data"]["access_token"],
-        "refresh_token": body["data"]["refresh_token"],
+        "refresh_token": refresh_token,
     }
 
 
@@ -50,7 +56,9 @@ async def test_login_success(client: AsyncClient, seeded_db: None) -> None:
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["access_token"]
-    assert data["refresh_token"]
+    # SEC-06 — no longer in the JSON body; only the HttpOnly cookie carries it.
+    assert "refresh_token" not in data
+    assert response.cookies.get("hrms_refresh")
     assert data["company_id"] == str(COMPANY_A_ID)
     assert len(data["companies"]) >= 2
 
@@ -101,7 +109,9 @@ async def test_refresh_token_rotation(
     old_refresh = admin_tokens["refresh_token"]
     first = await client.post("/v1/auth/token/refresh", json={"refresh_token": old_refresh})
     assert first.status_code == 200
-    new_refresh = first.json()["data"]["refresh_token"]
+    # SEC-06 — the rotated token is now only in the Set-Cookie header on this response.
+    new_refresh = first.cookies.get("hrms_refresh")
+    assert new_refresh
     assert new_refresh != old_refresh
 
     reuse = await client.post("/v1/auth/token/refresh", json={"refresh_token": old_refresh})

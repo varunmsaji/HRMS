@@ -219,9 +219,9 @@ async def test_activate_success_creates_full_employee_graph(
         employee_id = data["employee_id"]
         assert employee_id
 
-        employee = (
-            await client.get(f"/v1/employees/{employee_id}", headers=headers)
-        ).json()["data"]
+        employee = (await client.get(f"/v1/employees/{employee_id}", headers=headers)).json()[
+            "data"
+        ]
         assert employee["first_name"] == "Asha"
         assert employee["personal_email"] == case["personal_email"]
         # E-02 part 2 — `address_info`/`emergency_contact` (filled by `_fill_all_sections` above:
@@ -362,27 +362,29 @@ async def test_activate_decrypts_bank_info_and_reencrypts_for_employee_bank(
         factory = get_session_factory()
         async with factory() as session:
             case_row = (
-                await session.execute(
-                    text(
-                        "SELECT bank_info ->> 'account_number_enc' AS enc "
-                        "FROM onboarding_case WHERE id = :cid"
-                    ),
-                    {"cid": case["id"]},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT bank_info ->> 'account_number_enc' AS enc "
+                            "FROM onboarding_case WHERE id = :cid"
+                        ),
+                        {"cid": case["id"]},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         assert case_row is not None
         assert case_row["enc"] != account_number
         assert case_row["enc"].startswith("v1:")
 
-        activate = await client.post(
-            f"/v1/onboarding-cases/{case['id']}/activate", headers=headers
-        )
+        activate = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
         assert activate.status_code == 200, activate.text
         employee_id = activate.json()["data"]["employee_id"]
 
-        banks = (
-            await client.get(f"/v1/employees/{employee_id}/bank", headers=headers)
-        ).json()["data"]
+        banks = (await client.get(f"/v1/employees/{employee_id}/bank", headers=headers)).json()[
+            "data"
+        ]
         assert len(banks) == 1
         assert banks[0]["account_number_enc"] == account_number
 
@@ -390,13 +392,17 @@ async def test_activate_decrypts_bank_info_and_reencrypts_for_employee_bank(
         # ciphertext than the onboarding staging copy (different AAD — different record id).
         async with factory() as session:
             bank_row = (
-                await session.execute(
-                    text(
-                        "SELECT account_number_enc FROM employee_bank WHERE employee_id = :eid"
-                    ),
-                    {"eid": employee_id},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT account_number_enc FROM employee_bank WHERE employee_id = :eid"
+                        ),
+                        {"eid": employee_id},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         assert bank_row is not None
         assert bank_row["account_number_enc"] != account_number
         assert bank_row["account_number_enc"].startswith("v1:")
@@ -487,30 +493,32 @@ async def test_activate_persists_pan_aadhaar_uan_and_fathers_name(
         factory = get_session_factory()
         async with factory() as session:
             case_row = (
-                await session.execute(
-                    text(
-                        "SELECT personal_info ->> 'pan_number_enc' AS pan, "
-                        "personal_info ->> 'aadhaar_number_enc' AS aadhaar "
-                        "FROM onboarding_case WHERE id = :cid"
-                    ),
-                    {"cid": case["id"]},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT personal_info ->> 'pan_number_enc' AS pan, "
+                            "personal_info ->> 'aadhaar_number_enc' AS aadhaar "
+                            "FROM onboarding_case WHERE id = :cid"
+                        ),
+                        {"cid": case["id"]},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         assert case_row is not None
         assert case_row["pan"] != pan
         assert case_row["pan"].startswith("v1:")
         assert case_row["aadhaar"] != aadhaar
         assert case_row["aadhaar"].startswith("v1:")
 
-        activate = await client.post(
-            f"/v1/onboarding-cases/{case['id']}/activate", headers=headers
-        )
+        activate = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
         assert activate.status_code == 200, activate.text
         employee_id = activate.json()["data"]["employee_id"]
 
-        employee = (
-            await client.get(f"/v1/employees/{employee_id}", headers=headers)
-        ).json()["data"]
+        employee = (await client.get(f"/v1/employees/{employee_id}", headers=headers)).json()[
+            "data"
+        ]
         assert employee["father_or_husband_name"] == "Ram Rao"
 
         identity = (
@@ -525,13 +533,18 @@ async def test_activate_persists_pan_aadhaar_uan_and_fathers_name(
         # than the onboarding staging copy (different AAD — different record id).
         async with factory() as session:
             employee_row = (
-                await session.execute(
-                    text(
-                        "SELECT pan_number_enc, aadhaar_number_enc FROM employee WHERE id = :eid"
-                    ),
-                    {"eid": employee_id},
+                (
+                    await session.execute(
+                        text(
+                            "SELECT pan_number_enc, aadhaar_number_enc "
+                            "FROM employee WHERE id = :eid"
+                        ),
+                        {"eid": employee_id},
+                    )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
         assert employee_row is not None
         assert employee_row["pan_number_enc"].startswith("v1:")
         assert employee_row["pan_number_enc"] != case_row["pan"]
@@ -614,15 +627,13 @@ async def test_activate_persists_distinct_permanent_address(
             )
             assert review.status_code == 200, review.text
 
-        activate = await client.post(
-            f"/v1/onboarding-cases/{case['id']}/activate", headers=headers
-        )
+        activate = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
         assert activate.status_code == 200, activate.text
         employee_id = activate.json()["data"]["employee_id"]
 
-        employee = (
-            await client.get(f"/v1/employees/{employee_id}", headers=headers)
-        ).json()["data"]
+        employee = (await client.get(f"/v1/employees/{employee_id}", headers=headers)).json()[
+            "data"
+        ]
         assert employee["present_city"] == "Bengaluru"
         assert employee["permanent_same_as_present"] is False
         assert employee["permanent_city"] == "Mysuru"
@@ -721,9 +732,7 @@ async def test_activate_creates_one_experience_row_per_previous_employer(
             )
             assert review.status_code == 200, review.text
 
-        activate = await client.post(
-            f"/v1/onboarding-cases/{case['id']}/activate", headers=headers
-        )
+        activate = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
         assert activate.status_code == 200, activate.text
         employee_id = activate.json()["data"]["employee_id"]
 
@@ -823,9 +832,7 @@ async def test_activate_creates_one_education_row_per_qualification(
             )
             assert review.status_code == 200, review.text
 
-        activate = await client.post(
-            f"/v1/onboarding-cases/{case['id']}/activate", headers=headers
-        )
+        activate = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
         assert activate.status_code == 200, activate.text
         employee_id = activate.json()["data"]["employee_id"]
 
@@ -937,9 +944,7 @@ async def test_activate_creates_one_dependent_row_per_nominee(
             )
             assert review.status_code == 200, review.text
 
-        activate = await client.post(
-            f"/v1/onboarding-cases/{case['id']}/activate", headers=headers
-        )
+        activate = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
         assert activate.status_code == 200, activate.text
         employee_id = activate.json()["data"]["employee_id"]
 
@@ -1038,9 +1043,7 @@ async def test_activate_without_permission_rejected(
         await _cleanup_scoped_users()
 
 
-async def test_activate_twice_rejected(
-    client: AsyncClient, seeded_plan_catalogue: None
-) -> None:
+async def test_activate_twice_rejected(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
         case = await _verified_case(client, headers, company_id, with_org=True)

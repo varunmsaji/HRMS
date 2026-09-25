@@ -59,7 +59,6 @@ class RbacRepository:
         result = await session.execute(stmt)
         return set(result.scalars().all())
 
-
     async def list_user_ids_with_permission(
         self, session: AsyncSession, *, company_id: UUID, code: str
     ) -> list[UUID]:

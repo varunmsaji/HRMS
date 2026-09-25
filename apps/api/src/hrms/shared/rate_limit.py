@@ -30,12 +30,36 @@ class RateLimitExceededError(AppError):
     status_code = 429
 
 
+class RateLimiterUnavailableError(AppError):
+    """SEC-11 (RELEASE_HARDENING_PHASE_3A) — raised when Redis itself is unreachable/times out,
+    distinct from `RateLimitExceededError` (a normal, expected over-limit result). Before this,
+    a `RedisError` from `client.incr`/`client.expire` propagated unhandled out of the `Depends()`
+    dependency and was only ever caught by the generic `Exception` handler
+    (`core/errors/handlers.py`), which returns a bare `INTERNAL_ERROR` 500 — indistinguishable
+    from a real application bug and giving the caller no signal to retry. This mirrors
+    `OnboardingUploadRateLimitMiddleware`'s own, already-correct `RATE_LIMITER_UNAVAILABLE` 503
+    policy (below) for the middleware-based limiter — same failure semantics, now applied to
+    every `Depends()`-based bucket (`auth`, `login`, `token_refresh`) too. Fails closed: the
+    request is rejected, not silently admitted, when the limiter itself cannot be consulted."""
+
+    code = "RATE_LIMITER_UNAVAILABLE"
+    status_code = 503
+
+
+#: SEC-11 — a hung/unreachable Redis must fail fast (and therefore closed, via the 503 above)
+#: rather than block the request indefinitely; redis-py applies no timeout by default.
+_REDIS_SOCKET_TIMEOUT_SECONDS = 2.0
+
+
 def _get_client() -> redis.Redis:
     global _client
     if _client is None:
         # redis-py's `from_url` classmethod has no return type annotation upstream.
         _client = redis.from_url(  # type: ignore[no-untyped-call]
-            get_settings().redis_url, decode_responses=True
+            get_settings().redis_url,
+            decode_responses=True,
+            socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+            socket_connect_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
         )
     return _client
 
@@ -56,9 +80,14 @@ def rate_limit(
         client_ip = request.client.host if request.client else "unknown"
         key = f"ratelimit:{bucket}:{client_ip}"
         client = _get_client()
-        count = await client.incr(key)
-        if count == 1:
-            await client.expire(key, window_seconds)
+        try:
+            count = await client.incr(key)
+            if count == 1:
+                await client.expire(key, window_seconds)
+        except RedisError as exc:
+            raise RateLimiterUnavailableError(
+                "Rate limiter is temporarily unavailable — please try again shortly"
+            ) from exc
         if count > limit:
             raise RateLimitExceededError("Too many requests — please try again later")
 
@@ -99,13 +128,18 @@ def rate_limit_by_ip_and_email(
         ip_key = f"ratelimit:{bucket}:ip:{client_ip}"
         identity_key = f"ratelimit:{bucket}:email:{identity}"
 
-        ip_count = await client.incr(ip_key)
-        if ip_count == 1:
-            await client.expire(ip_key, window_seconds)
+        try:
+            ip_count = await client.incr(ip_key)
+            if ip_count == 1:
+                await client.expire(ip_key, window_seconds)
 
-        identity_count = await client.incr(identity_key)
-        if identity_count == 1:
-            await client.expire(identity_key, window_seconds)
+            identity_count = await client.incr(identity_key)
+            if identity_count == 1:
+                await client.expire(identity_key, window_seconds)
+        except RedisError as exc:
+            raise RateLimiterUnavailableError(
+                "Rate limiter is temporarily unavailable — please try again shortly"
+            ) from exc
 
         if ip_count > limit or identity_count > limit:
             raise RateLimitExceededError("Too many requests — please try again later")

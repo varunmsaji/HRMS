@@ -8,7 +8,6 @@ export interface CompanySummary {
 
 export interface TokenResponseData {
   access_token: string;
-  refresh_token: string;
   token_type: string;
   expires_in_minutes: number;
   company_id: string;

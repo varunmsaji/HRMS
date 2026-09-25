@@ -5,11 +5,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from hrms.core.config.settings import get_settings
+from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.registry import EncryptionKeyRegistry
 from hrms.core.db.session import dispose_engine, get_engine, session_scope
 from hrms.core.errors.handlers import register_exception_handlers
 from hrms.core.observability.logging import configure_logging
+from hrms.core.security_headers import SecurityHeadersMiddleware
 from hrms.core.tenancy.middleware import TenancyMiddleware
 from hrms.core.uploads import MaxUploadSizeMiddleware
 from hrms.modules.health.router import router as health_router
@@ -23,8 +24,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # DATA-01 (docs/audits/DATA_01_PII_ENCRYPTION_IMPLEMENTATION_PLAN.md §10.3) — the
     # database-backed half of the boot guard: `Settings._guard_non_development_config` already
-    # requires a real `kms_cmk_arn` outside development (a synchronous check, no DB access); this
-    # is the complementary check that at least one `ACTIVE` `encryption_keys` row actually
+    # requires a real `pii_master_key` outside development (a synchronous check, no DB access);
+    # this is the complementary check that at least one `ACTIVE` `encryption_keys` row actually
     # exists, which requires a query and so cannot live in `Settings`. Mirrors SEC-01's "fail at
     # boot, not on first request" posture. Never runs in development (this repository's test
     # suite never triggers `lifespan()` at all — httpx's `ASGITransport` does not invoke it by
@@ -44,16 +45,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await dispose_engine()
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
     configure_logging()
 
+    # OPS-06 (PLATFORM_READINESS_SECURITY_AUDIT_2026-09-17 §5) — Swagger UI, ReDoc and the raw
+    # OpenAPI schema publish the full route surface (every path, every request/response shape)
+    # to any unauthenticated caller. `is_development` is the same "everything but real
+    # development is treated as production" boundary `Settings._guard_non_development_config`
+    # already draws for every other production-safety guard — staging gets the same treatment
+    # as production here, not a third posture. Passing `None` for all three is FastAPI's own
+    # documented way to disable them: none of the three routes get registered, so a request to
+    # any of them is an ordinary 404, not a custom auth check to maintain.
+    docs_enabled = settings.is_development
     app = FastAPI(
         title="HRMS API",
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/v1/openapi.json",
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/v1/openapi.json" if docs_enabled else None,
         lifespan=lifespan,
     )
 
@@ -104,6 +114,12 @@ def create_app() -> FastAPI:
         window_seconds=60,
     )
     app.add_middleware(TenancyMiddleware)
+    # SEC-05 — added after Tenancy (so it wraps everything inner: rate limits, uploads, CORS,
+    # routes/exception handlers, all get these headers on their response) but before
+    # ProxyHeadersMiddleware below (so it stays one layer *inside* that — its own HSTS check
+    # needs `request.url.scheme` already resolved from `X-Forwarded-Proto`, which only happens
+    # once ProxyHeadersMiddleware, the actual outermost layer, has run first).
+    app.add_middleware(SecurityHeadersMiddleware)
     # OPS-02 — added last so it is the outermost middleware (Starlette builds the stack in
     # reverse add order): it must resolve `scope["client"]` before CORS/Tenancy/rate-limit/
     # route code ever reads `request.client.host`. Trusts `X-Forwarded-For` only from the

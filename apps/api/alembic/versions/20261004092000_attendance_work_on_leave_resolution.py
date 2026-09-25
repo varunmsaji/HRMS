@@ -33,14 +33,16 @@ def upgrade() -> None:
         DO $$
         BEGIN
           IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'attendance_day_work_on_leave_resolved_by_fkey'
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'attendance_day_work_on_leave_resolved_by_fkey'
           ) THEN
             ALTER TABLE attendance_day
               ADD CONSTRAINT attendance_day_work_on_leave_resolved_by_fkey
               FOREIGN KEY (work_on_leave_resolved_by) REFERENCES "user"(id) ON DELETE SET NULL;
           END IF;
           IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'attendance_day_work_on_leave_resolution_check'
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'attendance_day_work_on_leave_resolution_check'
           ) THEN
             ALTER TABLE attendance_day
               ADD CONSTRAINT attendance_day_work_on_leave_resolution_check

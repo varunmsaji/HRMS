@@ -713,7 +713,9 @@ class EmployeeIdentityRead(BaseModel):
     version: int
 
 
-def employee_identity_to_read(employee: "Employee", *, pan_number: str | None, aadhaar_number: str | None) -> EmployeeIdentityRead:
+def employee_identity_to_read(
+    employee: "Employee", *, pan_number: str | None, aadhaar_number: str | None
+) -> EmployeeIdentityRead:
     """`pan_number`/`aadhaar_number` are required keywords, not read off `employee.
     pan_number_enc`/`.aadhaar_number_enc` directly — those ORM attributes hold ciphertext only
     (mirrors `bank_to_read`'s exact contract). The caller (`EmployeeService.get_identity`), after
@@ -736,7 +738,11 @@ def employee_identity_to_audit_dict(identity: EmployeeIdentityRead) -> dict[str,
     aliased back afterward — this dict's own field names (`pan_number`, not `pan_number_enc`)
     stay in the audit record, only their values change."""
     payload = identity.model_dump(mode="json")
-    aliased = {**payload, "pan_number_enc": payload["pan_number"], "aadhaar_number_enc": payload["aadhaar_number"]}
+    aliased = {
+        **payload,
+        "pan_number_enc": payload["pan_number"],
+        "aadhaar_number_enc": payload["aadhaar_number"],
+    }
     masked = mask_sensitive(aliased, sensitive_fields=SENSITIVE_FIELD_MASKS)
     payload["pan_number"] = masked["pan_number_enc"]
     payload["aadhaar_number"] = masked["aadhaar_number_enc"]

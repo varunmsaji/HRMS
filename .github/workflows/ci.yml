@@ -79,17 +79,31 @@ jobs:
 
       # A `services:` container does NOT execute docker-entrypoint-initdb.d, so the init scripts
       # that docker-compose mounts must be applied explicitly here. Order matters: this runs
-      # BEFORE alembic so that 002_app_role.sql's ALTER DEFAULT PRIVILEGES is in effect for every
+      # BEFORE alembic so that 002_app_role.sh's ALTER DEFAULT PRIVILEGES is in effect for every
       # table the migrations subsequently create as `hrms`. Reversing the order would leave
       # hrms_app without DML grants on any migrated table, and the RLS tests would then fail for
       # a permissions reason rather than proving anything about row-level security.
+      #
+      # 002_app_role.sh (RELEASE_HARDENING_PHASE_6A / Finding DB-01) requires HRMS_APP_PASSWORD
+      # and calls `psql` itself without -h/-p, so PGHOST/PGPORT/PGPASSWORD are set here instead of
+      # passed as flags — the same fixed, repo-visible dev-only value docker-compose.yml uses,
+      # matching tests/security/test_rls_runtime_role.py's hardcoded runtime-role URL.
       - name: Apply database init scripts (extensions + hrms_app runtime role)
         env:
+          PGHOST: localhost
+          PGPORT: "5433"
           PGPASSWORD: hrms_dev_password
+          POSTGRES_USER: hrms
+          POSTGRES_DB: hrms_dev
+          HRMS_APP_PASSWORD: hrms_app_dev_password
         run: |
           for f in ../../infra/docker/postgres/init/*.sql; do
             echo "applying $f"
-            psql -h localhost -p 5433 -U hrms -d hrms_dev -v ON_ERROR_STOP=1 -f "$f"
+            psql -U hrms -d hrms_dev -v ON_ERROR_STOP=1 -f "$f"
+          done
+          for f in ../../infra/docker/postgres/init/*.sh; do
+            echo "applying $f"
+            sh "$f"
           done
 
       - name: Alembic upgrade head

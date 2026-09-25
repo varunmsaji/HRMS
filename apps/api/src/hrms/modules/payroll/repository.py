@@ -659,8 +659,9 @@ class PayRunRepository:
         materialised as ordinary lines in the run that pays them — correct under cash-basis TDS,
         since money is taxed in the month it is actually received."""
         stmt = (
-            select(PayRunLine.line_type, PayRunLine.component_code,
-                   func.sum(PayRunLine.amount_minor))  # fmt: skip
+            select(
+                PayRunLine.line_type, PayRunLine.component_code, func.sum(PayRunLine.amount_minor)
+            )  # fmt: skip
             .join(PayRun, PayRun.id == PayRunLine.pay_run_id)
             .where(
                 PayRunLine.company_id == company_id,

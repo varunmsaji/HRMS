@@ -65,19 +65,23 @@ def upgrade() -> None:
             "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
 
             CONSTRAINT "attendance_regularization_request_pkey" PRIMARY KEY ("id"),
-            CONSTRAINT "attendance_regularization_request_company_id_fkey" FOREIGN KEY ("company_id")
+            CONSTRAINT "attendance_regularization_request_company_id_fkey"
+              FOREIGN KEY ("company_id")
               REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
-            CONSTRAINT "attendance_regularization_request_employee_id_fkey" FOREIGN KEY ("employee_id")
+            CONSTRAINT "attendance_regularization_request_employee_id_fkey"
+              FOREIGN KEY ("employee_id")
               REFERENCES "employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
             CONSTRAINT "attendance_regularization_request_attendance_day_id_fkey"
-              FOREIGN KEY ("attendance_day_id") REFERENCES "attendance_day"("id") ON DELETE SET NULL,
+              FOREIGN KEY ("attendance_day_id")
+              REFERENCES "attendance_day"("id") ON DELETE SET NULL,
             CONSTRAINT "attendance_regularization_request_requested_shift_id_fkey"
               FOREIGN KEY ("requested_shift_id") REFERENCES "shift"("id") ON DELETE SET NULL,
             CONSTRAINT "attendance_regularization_request_policy_version_id_fkey"
               FOREIGN KEY ("regularization_policy_version_id")
               REFERENCES "regularization_policy_version"("id") ON DELETE RESTRICT,
             CONSTRAINT "attendance_regularization_request_approver_manager_id_fkey"
-              FOREIGN KEY ("resolved_approver_manager_id") REFERENCES "employee"("id") ON DELETE SET NULL,
+              FOREIGN KEY ("resolved_approver_manager_id")
+              REFERENCES "employee"("id") ON DELETE SET NULL,
             CONSTRAINT "attendance_regularization_request_submitted_by_user_id_fkey"
               FOREIGN KEY ("submitted_by_user_id") REFERENCES "user"("id") ON DELETE SET NULL,
             CONSTRAINT "attendance_regularization_request_reviewed_by_user_id_fkey"
@@ -130,7 +134,8 @@ def upgrade() -> None:
 
             CONSTRAINT "attendance_regularization_requested_punch_pkey" PRIMARY KEY ("id"),
             CONSTRAINT "attendance_regularization_requested_punch_company_id_fkey"
-              FOREIGN KEY ("company_id") REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+              FOREIGN KEY ("company_id")
+              REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
             CONSTRAINT "attendance_regularization_requested_punch_request_id_fkey"
               FOREIGN KEY ("request_id") REFERENCES "attendance_regularization_request"("id")
               ON DELETE CASCADE,
@@ -161,7 +166,8 @@ def upgrade() -> None:
 
             CONSTRAINT "attendance_regularization_action_pkey" PRIMARY KEY ("id"),
             CONSTRAINT "attendance_regularization_action_company_id_fkey"
-              FOREIGN KEY ("company_id") REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+              FOREIGN KEY ("company_id")
+              REFERENCES "company"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
             CONSTRAINT "attendance_regularization_action_request_id_fkey"
               FOREIGN KEY ("request_id") REFERENCES "attendance_regularization_request"("id")
               ON DELETE CASCADE,

@@ -181,9 +181,7 @@ async def test_create_onboarding_case_success(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        response = await client.post(
-            "/v1/onboarding-cases", headers=headers, json=_case_payload()
-        )
+        response = await client.post("/v1/onboarding-cases", headers=headers, json=_case_payload())
         assert response.status_code == 201, response.text
         data = response.json()["data"]
         assert data["status"] == "DRAFT"
@@ -273,9 +271,7 @@ async def test_list_and_get_onboarding_case(
         )
         assert created["id"] not in [row["id"] for row in empty_filter.json()["data"]]
 
-        get_response = await client.get(
-            f"/v1/onboarding-cases/{created['id']}", headers=headers
-        )
+        get_response = await client.get(f"/v1/onboarding-cases/{created['id']}", headers=headers)
         assert get_response.status_code == 200
         assert get_response.json()["data"]["id"] == created["id"]
     finally:

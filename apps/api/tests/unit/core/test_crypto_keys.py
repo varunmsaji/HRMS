@@ -1,9 +1,11 @@
 """DATA-01 — unit tests for `DekCache`
 (`docs/audits/DATA_01_PII_ENCRYPTION_TEST_MATRIX.md` §1 "Key management"). Non-development-mode
-tests use a fake `KmsKeyService`/real `EncryptionKeyRegistry` against the real test database
+tests use a fake `MasterKeyService`/real `EncryptionKeyRegistry` against the real test database
 (`encryption_keys` is a real table — matches this repository's "no mocked database" integration
 convention even for these otherwise-unit-shaped tests) so `DekCache`'s own registry-query logic is
-exercised for real, not mocked away.
+exercised for real, not mocked away. `MasterKeyService` replaced the previous AWS
+KMS-backed `KmsKeyService` in RELEASE_HARDENING_PHASE_3A — the fake below plays the same role the
+old `_FakeKms` did.
 
 `encryption_keys` has no `company_id`/RLS scoping (it is environment-wide, not tenant data,
 `hrms.core.crypto.models.EncryptionKey`'s own docstring) and a `key_version` `UNIQUE` constraint
@@ -30,7 +32,7 @@ from hrms.core.db.session import get_session_factory, session_scope
 
 pytestmark = pytest.mark.asyncio
 
-_TEST_ARN = "arn:aws:kms:ap-south-1:123456789012:key/test-key"
+_TEST_WRAPPING_KEY_ID = "test-wrapping-key-fingerprint"
 
 
 @pytest.fixture(autouse=True)
@@ -46,21 +48,21 @@ async def _clean_encryption_keys() -> None:
     await _clear()
 
 
-class _FakeKms:
-    """Records every call so tests can assert on call counts (plan §14's "at most one KMS call
-    per key version per TTL window" property) — never touches real AWS."""
+class _FakeMasterKey:
+    """Records every call so tests can assert on call counts (plan §14's "at most one unwrap call
+    per key version per TTL window" property) — never derives a real key."""
 
     def __init__(self) -> None:
         self.decrypt_calls = 0
         self.fail_decrypt = False
 
-    async def generate_data_key(self, *, key_arn: str) -> tuple[bytes, str]:  # pragma: no cover
+    async def generate_data_key(self) -> tuple[bytes, str]:  # pragma: no cover
         raise NotImplementedError("not exercised — registry rows are seeded directly in tests")
 
-    async def decrypt_wrapped_dek(self, *, key_arn: str, wrapped_dek_base64: str) -> bytes:
+    async def decrypt_wrapped_dek(self, *, wrapped_dek_base64: str) -> bytes:
         self.decrypt_calls += 1
         if self.fail_decrypt:
-            raise RuntimeError("simulated KMS outage")
+            raise RuntimeError("simulated master-key unavailability")
         # Deterministic 32-byte "unwrapped" DEK derived from the wrapped value, so encrypting
         # under one call and decrypting under a later one (same wrapped value) stays consistent.
         return (wrapped_dek_base64.encode() * 8)[:32]
@@ -76,7 +78,7 @@ def _prod_settings(**overrides: object) -> Settings:
         "jwt_access_secret": "Zx7!qP9$mK2#vL5^rT8&nB1@wD4%yF6*hJ0",
         "jwt_refresh_secret": "Qm3&zR8!kX1#pL6^bN9$vT2@yH5%wD0*jF4",
         "cors_allowed_origins": ("https://app.example.com",),
-        "kms_cmk_arn": _TEST_ARN,
+        "pii_master_key": "Nb4$hK7!wQ2#xM9^rF3&tY6@pL1%vD8*sG5",
         "encryption_dek_cache_ttl_seconds": 3600,
         # INFRA-01 — required outside development since `_guard_non_development_config` now also
         # validates the self-hosted MinIO endpoint/bucket/credentials; explicit here (rather than
@@ -85,6 +87,12 @@ def _prod_settings(**overrides: object) -> Settings:
         "s3_bucket_documents": "hrms-test-documents",
         "aws_access_key_id": "test-access-key",
         "aws_secret_access_key": "test-secret-key",
+        # RELEASE_HARDENING_PHASE_5A — required outside development since
+        # `_guard_non_development_config` now also validates email_provider="smtp".
+        "email_provider": "smtp",
+        "smtp_host": "smtp.example.com",
+        "smtp_from_email": "onboarding@example.com",
+        "smtp_use_tls": True,
     }
     base.update(overrides)
     return Settings(**base)
@@ -95,7 +103,7 @@ async def _seed_active_key(session: object) -> int:
     row = await registry.provision_initial(
         session,  # type: ignore[arg-type]
         key_version=1,
-        kms_key_arn=_TEST_ARN,
+        wrapping_key_id=_TEST_WRAPPING_KEY_ID,
         wrapped_dek_base64=base64.b64encode(b"seed-wrapped").decode("ascii"),
         created_by="test",
     )
@@ -103,14 +111,14 @@ async def _seed_active_key(session: object) -> int:
     return row.key_version
 
 
-async def test_development_mode_never_touches_kms_or_registry() -> None:
-    kms = _FakeKms()
-    cache = DekCache(_dev_settings(), kms=kms)  # type: ignore[arg-type]
+async def test_development_mode_never_touches_the_master_key_or_registry() -> None:
+    master = _FakeMasterKey()
+    cache = DekCache(_dev_settings(), master=master)  # type: ignore[arg-type]
     async with session_scope(_dev_settings()) as session:
         version, dek = await cache.get_current(session)
     assert version == DEV_KEY_VERSION
     assert dek == derive_dev_dek(_dev_settings().dev_encryption_key)
-    assert kms.decrypt_calls == 0
+    assert master.decrypt_calls == 0
 
 
 async def test_development_mode_decrypts_for_the_dev_version_only() -> None:
@@ -123,24 +131,24 @@ async def test_development_mode_decrypts_for_the_dev_version_only() -> None:
 
 
 async def test_no_active_encryption_key_row_fails_closed() -> None:
-    kms = _FakeKms()
-    cache = DekCache(_prod_settings(), kms=kms)  # type: ignore[arg-type]
+    master = _FakeMasterKey()
+    cache = DekCache(_prod_settings(), master=master)  # type: ignore[arg-type]
     async with session_scope(_prod_settings()) as session:
         with pytest.raises(NoActiveEncryptionKeyError):
             await cache.get_current(session)
 
 
 async def test_unknown_key_version_in_ciphertext_fails_closed() -> None:
-    kms = _FakeKms()
-    cache = DekCache(_prod_settings(), kms=kms)  # type: ignore[arg-type]
+    master = _FakeMasterKey()
+    cache = DekCache(_prod_settings(), master=master)  # type: ignore[arg-type]
     async with session_scope(_prod_settings()) as session:
         with pytest.raises(UnknownKeyVersionError):
             await cache.get_for_version(session, key_version=999)
 
 
 async def test_current_key_resolves_and_caches_across_calls() -> None:
-    kms = _FakeKms()
-    cache = DekCache(_prod_settings(), kms=kms)  # type: ignore[arg-type]
+    master = _FakeMasterKey()
+    cache = DekCache(_prod_settings(), master=master)  # type: ignore[arg-type]
     async with session_scope(_prod_settings()) as session:
         await _seed_active_key(session)
 
@@ -151,15 +159,15 @@ async def test_current_key_resolves_and_caches_across_calls() -> None:
 
     assert version1 == version2 == version3 == 1
     assert dek1 == dek2 == dek3
-    # Plan §14 — at most one KMS Decrypt call for three resolutions under the same cached
+    # Plan §14 — at most one unwrap call for three resolutions under the same cached
     # version, not one per call.
-    assert kms.decrypt_calls == 1
+    assert master.decrypt_calls == 1
 
 
-async def test_kms_unavailable_on_write_fails_closed() -> None:
-    kms = _FakeKms()
-    kms.fail_decrypt = True
-    cache = DekCache(_prod_settings(), kms=kms)  # type: ignore[arg-type]
+async def test_master_key_unavailable_on_write_fails_closed() -> None:
+    master = _FakeMasterKey()
+    master.fail_decrypt = True
+    cache = DekCache(_prod_settings(), master=master)  # type: ignore[arg-type]
     async with session_scope(_prod_settings()) as session:
         await _seed_active_key(session)
 
@@ -168,10 +176,10 @@ async def test_kms_unavailable_on_write_fails_closed() -> None:
             await cache.get_current(session)
 
 
-async def test_kms_unavailable_on_read_degrades_that_field_only() -> None:
-    kms = _FakeKms()
-    kms.fail_decrypt = True
-    cache = DekCache(_prod_settings(), kms=kms)  # type: ignore[arg-type]
+async def test_master_key_unavailable_on_read_degrades_that_field_only() -> None:
+    master = _FakeMasterKey()
+    master.fail_decrypt = True
+    cache = DekCache(_prod_settings(), master=master)  # type: ignore[arg-type]
     async with session_scope(_prod_settings()) as session:
         await _seed_active_key(session)
 
@@ -181,8 +189,8 @@ async def test_kms_unavailable_on_read_degrades_that_field_only() -> None:
 
 
 async def test_key_rotation_old_version_still_decrypts() -> None:
-    kms = _FakeKms()
-    cache = DekCache(_prod_settings(), kms=kms)  # type: ignore[arg-type]
+    master = _FakeMasterKey()
+    cache = DekCache(_prod_settings(), master=master)  # type: ignore[arg-type]
     registry = EncryptionKeyRegistry()
 
     async with session_scope(_prod_settings()) as session:
@@ -192,7 +200,7 @@ async def test_key_rotation_old_version_still_decrypts() -> None:
     async with session_scope(_prod_settings()) as session:
         new_row = await registry.rotate(
             session,
-            kms_key_arn=_TEST_ARN,
+            wrapping_key_id=_TEST_WRAPPING_KEY_ID,
             wrapped_dek_base64=base64.b64encode(b"rotated-wrapped").decode("ascii"),
             created_by="test",
         )
@@ -218,7 +226,7 @@ async def test_rotation_leaves_exactly_one_active_row() -> None:
     async with session_scope(_prod_settings()) as session:
         await registry.rotate(
             session,
-            kms_key_arn=_TEST_ARN,
+            wrapping_key_id=_TEST_WRAPPING_KEY_ID,
             wrapped_dek_base64=base64.b64encode(b"rotated-again").decode("ascii"),
             created_by="test",
         )

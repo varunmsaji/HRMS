@@ -1,6 +1,8 @@
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
+from hrms.core.auth.common_passwords import is_common_password
+
 _hasher = PasswordHasher()
 
 PASSWORD_MIN_LENGTH = 8
@@ -18,7 +20,10 @@ def verify_password(password_hash: str, password: str) -> bool:
 
 
 def is_password_strong_enough(password: str) -> bool:
-    """Minimum length + letter/digit complexity — no codified policy exists yet elsewhere.
+    """Minimum length + letter/digit complexity, plus a common-password blocklist check
+    (SEC-10, RELEASE_HARDENING_PHASE_3A — the original gap this audit finding named). Forced
+    rotation and mandatory special-character rules are deliberately still absent: NIST 800-63B
+    recommends against both, so their absence is an intentional non-fix, not a remaining gap.
 
     This is the first code path that creates a password (`docs/sprints/
     SPRINT_3_COMPANY_FOUNDATION.md`'s registration task note); intentionally simple until a
@@ -28,4 +33,6 @@ def is_password_strong_enough(password: str) -> bool:
         return False
     has_letter = any(c.isalpha() for c in password)
     has_digit = any(c.isdigit() for c in password)
-    return has_letter and has_digit
+    if not (has_letter and has_digit):
+        return False
+    return not is_common_password(password)

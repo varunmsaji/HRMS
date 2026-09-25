@@ -15,14 +15,27 @@ dependencies = [
     "pydantic>=2.10.0",
     "pydantic-settings>=2.6.0",
     "email-validator>=2.2.0",
-    "python-jose[cryptography]>=3.3.0",
+    "pyjwt>=2.9.0",
     "argon2-cffi>=23.1.0",
+    # RELEASE_HARDENING_PHASE_3B — `core/crypto/field.py`/`core/crypto/master_key.py` import
+    # `cryptography.hazmat` directly for AES-256-GCM PII field encryption. Previously present only
+    # transitively via `python-jose[cryptography]`; DEP-01 (RELEASE_HARDENING_PHASE_3A) removed
+    # that dependency without adding this one explicitly, which a plain `uv sync`/local `.venv`
+    # never surfaced (packages already installed stay installed) but a frozen, from-scratch
+    # `uv sync --frozen` (a real production Docker build) would not have installed — found via
+    # `docker build` actually attempting a cold build; see RELEASE_HARDENING_PHASE_3B_PRODUCTION_
+    # INFRASTRUCTURE.md.
+    "cryptography>=43.0.0",
     "redis>=5.2.0",
     "celery[redis]>=5.4.0",
     "structlog>=24.4.0",
     "aioboto3>=13.3.0",
     "httpx>=0.28.0",
     "python-multipart>=0.0.20",
+    # RELEASE_HARDENING_PHASE_5A — non-AWS transactional email transport
+    # (`docs/audits/RELEASE_HARDENING_PHASE_5A_EMAIL.md`). Async SMTP client, no AWS/vendor ties;
+    # replaces `SesEmailSender`'s `aioboto3`-based AWS SES usage as the real email delivery path.
+    "aiosmtplib>=3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -58,7 +71,7 @@ packages = ["hrms"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["celery.*", "jose.*", "aioboto3.*"]
+module = ["celery.*", "aioboto3.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -66,7 +79,13 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = [".", "src"]
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    # The 31-char repository-visible dev JWT secrets (`_DEV_JWT_*_SECRET_DEFAULT`,
+    # `core/config/settings.py`) are intentionally short — production secrets are guarded
+    # separately by `_guard_non_development_config`'s own 32+-char entropy floor.
+    "ignore::jwt.api_jws.InsecureKeyLengthWarning",
+]
 
 [dependency-groups]
 dev = [

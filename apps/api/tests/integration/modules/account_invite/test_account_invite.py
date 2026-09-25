@@ -74,9 +74,7 @@ async def _force_invite_expired(*, company_id: UUID, email: str) -> None:
 async def _extra_user_id(*, email: str) -> UUID | None:
     factory = get_session_factory()
     async with factory() as session:
-        user = (
-            await session.execute(select(User).where(User.email == email))
-        ).scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
         return user.id if user is not None else None
 
 
@@ -101,7 +99,7 @@ async def _cleanup_extra_user_row(*, user_id: UUID) -> None:
     deleted (`user_company_user_id_fkey`)."""
     factory = get_session_factory()
     async with factory() as session:
-        await session.execute(text("DELETE FROM \"user\" WHERE id = :uid"), {"uid": str(user_id)})
+        await session.execute(text('DELETE FROM "user" WHERE id = :uid'), {"uid": str(user_id)})
         await session.commit()
 
 
@@ -194,8 +192,195 @@ async def test_invite_employee_accept_and_login_success(
                 "EMPLOYEE.VIEW_COMPENSATION",
                 "EMPLOYEE.VIEW_STATUTORY",
                 "EMPLOYEE.VIEW_BANKING",
+                "EMPLOYEE.VIEW_SENSITIVE",
+                "EMPLOYEE.VIEW_EXPERIENCE",
+                "EMPLOYEE.VIEW_NOMINEE",
+                "PAYROLL.PAYSLIP_VIEW_OWN",
             }
             assert refreshed["id"] == employee["id"]
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id, extra_emails=[invitee_email])
+
+
+async def test_invite_existing_account_resolve_flags_existing_account(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """SEC-08 — the public resolve response must tell the frontend this invite belongs to an
+    existing account, so the accept form asks for a login password rather than a new one."""
+    headers, company_id, user_id = await _register_tenant(client)
+    invitee_email = f"invitee-{uuid4().hex[:8]}@example.com"
+    try:
+        employee = await _create_employee(client, headers, personal_email=invitee_email)
+        first_invite = await client.post(f"/v1/employees/{employee['id']}/invite", headers=headers)
+        first_token = _token_from_invite_url(first_invite.json()["data"]["invite_url"])
+        accept = await client.post(
+            f"/v1/public/account-invites/{first_token}/accept",
+            json={"password": VALID_PASSWORD},
+        )
+        assert accept.status_code == 201
+
+        second_invite = await client.post(
+            "/v1/users/invite",
+            headers=headers,
+            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+        )
+        second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
+
+        resolve = await client.get(f"/v1/public/account-invites/{second_token}")
+        assert resolve.status_code == 200
+        assert resolve.json()["data"]["existing_account"] is True
+
+        new_employee = await _create_employee(
+            client, headers, first_name="Brand", personal_email=f"new-{uuid4().hex[:8]}@example.com"
+        )
+        new_invite = await client.post(
+            f"/v1/employees/{new_employee['id']}/invite", headers=headers
+        )
+        new_token = _token_from_invite_url(new_invite.json()["data"]["invite_url"])
+        new_resolve = await client.get(f"/v1/public/account-invites/{new_token}")
+        assert new_resolve.status_code == 200
+        assert new_resolve.json()["data"]["existing_account"] is False
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id, extra_emails=[invitee_email])
+
+
+async def test_invite_existing_account_invite_alone_cannot_authenticate(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """SEC-08 core regression: possession of a valid, unexpired, unaccepted invite token must
+    never by itself grant a session for an existing account — a password that does not match
+    that account's real password must be rejected, and no session/membership may be created."""
+    headers, company_id, user_id = await _register_tenant(client)
+    invitee_email = f"invitee-{uuid4().hex[:8]}@example.com"
+    try:
+        employee = await _create_employee(client, headers, personal_email=invitee_email)
+        first_invite = await client.post(f"/v1/employees/{employee['id']}/invite", headers=headers)
+        first_token = _token_from_invite_url(first_invite.json()["data"]["invite_url"])
+        accept = await client.post(
+            f"/v1/public/account-invites/{first_token}/accept",
+            json={"password": VALID_PASSWORD},
+        )
+        assert accept.status_code == 201
+
+        second_invite = await client.post(
+            "/v1/users/invite",
+            headers=headers,
+            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+        )
+        second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
+
+        wrong_password_accept = await client.post(
+            f"/v1/public/account-invites/{second_token}/accept",
+            json={"password": "TotallyWrong9"},
+        )
+        assert wrong_password_accept.status_code == 401
+        assert wrong_password_accept.json()["error"]["code"] == "INVALID_CREDENTIALS"
+        assert "access_token" not in wrong_password_accept.json()
+
+        # The invite must remain unconsumed — a wrong-password attempt is not a "used" invite.
+        retry_resolve = await client.get(f"/v1/public/account-invites/{second_token}")
+        assert retry_resolve.status_code == 200
+
+        # And membership must not have been granted by the failed attempt.
+        factory = get_session_factory()
+        async with factory() as session:
+            existing_user = (
+                await session.execute(select(User).where(User.email == invitee_email))
+            ).scalar_one()
+            rbac = RbacService(session)
+            codes = await rbac.get_permission_codes(existing_user.id, company_id)
+            assert "EMPLOYEE.CREATE" not in codes  # HR_ADMIN's own permission — never granted
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id, extra_emails=[invitee_email])
+
+
+async def test_invite_existing_account_correct_password_accepts(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """SEC-08 — with the *correct* existing password, the invite still accepts normally: a new
+    membership/role is granted in a *second* company (an existing account can belong to several
+    companies — see `list_user_companies_for_login`) and a real session is issued."""
+    headers, company_id, user_id = await _register_tenant(client)
+    second_headers, second_company_id, second_admin_user_id = await _register_tenant(client)
+    invitee_email = f"invitee-{uuid4().hex[:8]}@example.com"
+    try:
+        employee = await _create_employee(client, headers, personal_email=invitee_email)
+        first_invite = await client.post(f"/v1/employees/{employee['id']}/invite", headers=headers)
+        first_token = _token_from_invite_url(first_invite.json()["data"]["invite_url"])
+        accept = await client.post(
+            f"/v1/public/account-invites/{first_token}/accept",
+            json={"password": VALID_PASSWORD},
+        )
+        assert accept.status_code == 201
+
+        second_invite = await client.post(
+            "/v1/users/invite",
+            headers=second_headers,
+            json={"email": invitee_email, "role_code": "HR_ADMIN"},
+        )
+        second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
+
+        second_accept = await client.post(
+            f"/v1/public/account-invites/{second_token}/accept",
+            json={"password": VALID_PASSWORD},
+        )
+        assert second_accept.status_code == 201, second_accept.text
+        assert second_accept.json()["data"]["access_token"]
+        assert second_accept.json()["data"]["company_id"] == str(second_company_id)
+
+        factory = get_session_factory()
+        async with factory() as session:
+            existing_user = (
+                await session.execute(select(User).where(User.email == invitee_email))
+            ).scalar_one()
+            rbac = RbacService(session)
+            codes = await rbac.get_permission_codes(existing_user.id, second_company_id)
+            assert "EMPLOYEE.CREATE" in codes  # HR_ADMIN's catalogue, granted in the 2nd company
+    finally:
+        # The invitee's single `User` row now has sessions/refresh-tokens/memberships in *both*
+        # companies (each `ON DELETE RESTRICT`) — sessions must be gone before *either* `Company`
+        # row can be deleted (not just the one from the accept that created them), and the `User`
+        # row itself only after *both* `_teardown` calls have cleared their own membership.
+        extra_user_id = await _extra_user_id(email=invitee_email)
+        if extra_user_id is not None:
+            await _cleanup_extra_user_sessions(user_id=extra_user_id)
+        await _teardown(company_id=company_id, user_id=user_id)
+        await _teardown(company_id=second_company_id, user_id=second_admin_user_id)
+        if extra_user_id is not None:
+            await _cleanup_extra_user_row(user_id=extra_user_id)
+
+
+async def test_invite_existing_account_wrong_password_does_not_leak_other_companies(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A wrong-password attempt against someone else's invite must not return anything about the
+    target account — no company list, no session, nothing beyond the generic auth failure."""
+    headers, company_id, user_id = await _register_tenant(client)
+    invitee_email = f"invitee-{uuid4().hex[:8]}@example.com"
+    try:
+        employee = await _create_employee(client, headers, personal_email=invitee_email)
+        first_invite = await client.post(f"/v1/employees/{employee['id']}/invite", headers=headers)
+        first_token = _token_from_invite_url(first_invite.json()["data"]["invite_url"])
+        await client.post(
+            f"/v1/public/account-invites/{first_token}/accept",
+            json={"password": VALID_PASSWORD},
+        )
+
+        second_invite = await client.post(
+            "/v1/users/invite",
+            headers=headers,
+            json={"email": invitee_email, "role_code": "EMPLOYEE"},
+        )
+        second_token = _token_from_invite_url(second_invite.json()["data"]["invite_url"])
+
+        response = await client.post(
+            f"/v1/public/account-invites/{second_token}/accept",
+            json={"password": "SomeoneElseGuess9"},
+        )
+        body = response.json()
+        assert response.status_code == 401
+        assert "companies" not in body.get("data", {})
+        assert body["error"]["message"] == "Invalid email or password"
     finally:
         await _teardown(company_id=company_id, user_id=user_id, extra_emails=[invitee_email])
 
@@ -495,8 +680,10 @@ async def _register_second_user(
     factory = get_session_factory()
     async with factory() as session:
         permissions = (
-            await session.execute(select(Permission).where(Permission.code.in_(permission_codes)))
-        ).scalars().all()
+            (await session.execute(select(Permission).where(Permission.code.in_(permission_codes))))
+            .scalars()
+            .all()
+        )
         assert len(permissions) == len(permission_codes)
 
         now = datetime.now(UTC)

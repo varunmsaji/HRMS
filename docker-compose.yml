@@ -9,6 +9,10 @@ services:
       POSTGRES_USER: hrms
       POSTGRES_PASSWORD: hrms_dev_password
       POSTGRES_DB: hrms_dev
+      # Fixed, repo-visible dev-only value — infra/docker/postgres/init/002_app_role.sh requires
+      # this to be set (RELEASE_HARDENING_PHASE_6A / Finding DB-01); production supplies its own,
+      # operator-generated value via docker-compose.prod.yml with no default.
+      HRMS_APP_PASSWORD: hrms_app_dev_password
     ports:
       # Host port 5433, not 5432 — this machine already runs a system Postgres 14 on 5432 for
       # other projects; this stack must not touch it.

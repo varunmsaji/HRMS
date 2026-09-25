@@ -5,7 +5,6 @@ onboarding document upload path (`test_onboarding_upload_bounds.py`), scoped her
 actually applies to a CSV-only, authenticated upload (no MIME/magic-byte sniffing — see
 docs/audits/UPLOAD_BATCH_B_FILE_VALIDATION.md §Known Remaining Findings for why)."""
 
-
 import boto3
 import pytest
 from botocore.config import Config

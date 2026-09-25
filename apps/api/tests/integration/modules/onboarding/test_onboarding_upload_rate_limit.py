@@ -98,9 +98,7 @@ class TestTokenBucket:
             rejected = await _upload(client, token)
             assert rejected.status_code == 429
 
-            list_response = await client.get(
-                f"/v1/public/onboarding/{token}/documents"
-            )
+            list_response = await client.get(f"/v1/public/onboarding/{token}/documents")
             assert list_response.status_code == 200
             assert len(list_response.json()["data"]) == 10
             assert _s3_object_count(prefix) == count_before

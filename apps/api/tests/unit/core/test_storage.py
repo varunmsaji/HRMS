@@ -172,7 +172,5 @@ async def test_other_operations_never_fall_back_to_the_public_endpoint() -> None
 
     # A fresh `aioboto3.Session()` per call (this class's existing pattern), so each operation
     # produced its own `_FakeSession` instance — every one must have used the internal endpoint.
-    endpoints = [
-        instance.client_calls[0]["endpoint_url"] for instance in _FakeSession.instances
-    ]
+    endpoints = [instance.client_calls[0]["endpoint_url"] for instance in _FakeSession.instances]
     assert endpoints == ["http://minio:9000", "http://minio:9000", "http://minio:9000"]

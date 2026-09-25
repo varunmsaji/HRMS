@@ -81,7 +81,9 @@ def upgrade() -> None:
             CONSTRAINT "overtime_record_approval_stage_check"
               CHECK (approval_stage IS NULL OR approval_stage IN ('MANAGER', 'HR')),
             CONSTRAINT "overtime_record_day_class_check"
-              CHECK (day_class IS NULL OR day_class IN ('NORMAL', 'WEEKLY_OFF', 'HOLIDAY', 'NIGHT')),
+              CHECK (
+                day_class IS NULL OR day_class IN ('NORMAL', 'WEEKLY_OFF', 'HOLIDAY', 'NIGHT')
+              ),
             CONSTRAINT "overtime_record_multiplier_check"
               CHECK (configured_multiplier IS NULL OR configured_multiplier > 0)
         );

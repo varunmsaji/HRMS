@@ -61,6 +61,12 @@ class OrganisationRepository:
         first_name: str,
         last_name: str,
         now: datetime,
+        # SEC-09 (RELEASE_HARDENING_PHASE_3A) — `None` (unverified) by default: self-service
+        # registration (`register_company`, this method's original and most common caller) is the
+        # one flow that must not default to "verified". `account_invite.service.accept`'s
+        # new-account branch explicitly passes `email_verified_at=now` instead — accepting a
+        # token delivered to that address is itself proof of receipt.
+        email_verified_at: datetime | None = None,
     ) -> User:
         row = User(
             id=user_id,
@@ -74,6 +80,17 @@ class OrganisationRepository:
         )
         session.add(row)
         await session.flush()
+        # SQLAlchemy's Python-side column default (`User.email_verified_at`'s `default=`,
+        # core/db/models/identity.py) fires whenever the value being inserted is `None` —
+        # indistinguishable, at the INSERT-compilation layer, from the attribute never having
+        # been set at all. Passing `email_verified_at=None` directly to the constructor above
+        # would therefore silently be overridden to "verified now", not stored as NULL. An
+        # `UPDATE` is not subject to that INSERT-time default at all, so it reliably lands
+        # exactly the value this method's caller asked for (`None` included).
+        await session.execute(
+            update(User).where(User.id == user_id).values(email_verified_at=email_verified_at)
+        )
+        row.email_verified_at = email_verified_at
         return row
 
     async def insert_company(self, session: AsyncSession, *, data: dict[str, Any]) -> Company:

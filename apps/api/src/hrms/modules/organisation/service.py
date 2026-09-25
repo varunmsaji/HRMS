@@ -789,7 +789,7 @@ class OrganisationService:
             user_agent=user_agent,
         )
 
-        return await self._identity.issue_tokens_for(
+        tokens = await self._identity.issue_tokens_for(
             user_id=user_id,
             company_id=company_id,
             companies=[CompanySummary(id=company_id, name=company.name, is_primary=True)],
@@ -797,6 +797,15 @@ class OrganisationService:
             user_agent=user_agent,
             audit_action="COMPANY_REGISTERED",
         )
+        # SEC-09 (RELEASE_HARDENING_PHASE_3A) — the registrant's session above is unaffected by
+        # this (registration itself doesn't change); a *subsequent* login is blocked until this
+        # link is used (`IdentityService.login`). Issued after the session so a delivery failure
+        # (best-effort — see the method's own docstring) never turns a successful registration
+        # into an error response.
+        await self._identity.send_verification_email(
+            user_id=user_id, email=admin_email, first_name=body.admin_first_name
+        )
+        return tokens
 
     async def get_company_profile(self, company_id: UUID) -> CompanyProfileRead:
         company = await self._repo.get_company(self._session, company_id=company_id)

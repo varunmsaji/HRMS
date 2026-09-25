@@ -14,9 +14,7 @@ class DuplicateActiveOnboardingCaseError(ConflictError):
 
     def __init__(
         self,
-        message: str = (
-            "An active onboarding case already exists for this personal email"
-        ),
+        message: str = ("An active onboarding case already exists for this personal email"),
     ) -> None:
         super().__init__(
             message,

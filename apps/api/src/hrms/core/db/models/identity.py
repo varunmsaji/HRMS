@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import UTC, datetime, time
 from typing import Any
 from uuid import UUID
 
@@ -88,6 +88,17 @@ class User(Base, TimestampMixin):
     first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # SEC-09 (RELEASE_HARDENING_PHASE_3A) — `NULL` means unverified. Defaults to "verified now"
+    # so every existing account-creation path this codebase already has (invite acceptance,
+    # direct test/seed fixtures constructing `User(...)`) keeps working unchanged; the one path
+    # that deliberately opts OUT of that default is self-service company registration
+    # (`organisation/repository.insert_user`'s `email_verified_at=None` override), which is the
+    # only flow the original finding was about (an unverified address minting a live tenant).
+    # `IdentityService.login` blocks a *subsequent* login while this is `NULL` — the session
+    # registration itself issues is unaffected (see `organisation/service.py`).
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=lambda: datetime.now(UTC)
+    )
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
     failed_login_count: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -173,6 +184,23 @@ class PasswordResetToken(Base):
     to join against, neither of which is RLS-protected either."""
 
     __tablename__ = "password_reset_token"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user.id"))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class EmailVerificationToken(Base):
+    """SEC-09 (RELEASE_HARDENING_PHASE_3A) — same hash-only-storage, single-use, TTL-bound shape
+    as `PasswordResetToken`. No RLS, same reasoning: a public `POST /auth/email/verify` caller
+    has no tenant context yet, and `user` is the only table this needs to join against."""
+
+    __tablename__ = "email_verification_token"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user.id"))

@@ -25,6 +25,14 @@ class ResetPasswordRequest(BaseModel):
     password: str = Field(min_length=1)
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
 class CompanySummary(BaseModel):
     id: UUID
     name: str
@@ -32,12 +40,41 @@ class CompanySummary(BaseModel):
 
 
 class TokenResponseData(BaseModel):
+    """Internal service-layer shape — `refresh_token` is the raw token a router must move into
+    an HttpOnly cookie (`hrms.core.auth.refresh_cookie`) before responding. Never return this
+    model directly from an HTTP route (see `PublicTokenResponseData` below); SEC-06
+    (RELEASE_HARDENING_PHASE_3A) — a 30-day refresh token must never appear in a JSON body a
+    page's own JavaScript (and therefore an XSS payload) can read."""
+
     access_token: str
     refresh_token: str
     token_type: str = "Bearer"
     expires_in_minutes: int
     company_id: UUID
     companies: list[CompanySummary] = Field(default_factory=list)
+
+
+class PublicTokenResponseData(BaseModel):
+    """SEC-06 (RELEASE_HARDENING_PHASE_3A) — the actual HTTP response shape for every
+    token-issuing endpoint (login, refresh, registration, invite acceptance): identical to
+    `TokenResponseData` minus `refresh_token`, which travels only as an HttpOnly cookie
+    (`hrms.core.auth.refresh_cookie.set_refresh_cookie`)."""
+
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in_minutes: int
+    company_id: UUID
+    companies: list[CompanySummary] = Field(default_factory=list)
+
+
+def to_public_token_response(data: TokenResponseData) -> PublicTokenResponseData:
+    return PublicTokenResponseData(
+        access_token=data.access_token,
+        token_type=data.token_type,
+        expires_in_minutes=data.expires_in_minutes,
+        company_id=data.company_id,
+        companies=data.companies,
+    )
 
 
 class UserProfile(BaseModel):

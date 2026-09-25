@@ -402,6 +402,15 @@ async def test_login_and_refresh_succeed_under_runtime_role(
                         select(_Company.created_by).where(_Company.id == company_id)
                     )
                 ).scalar_one()
+                # SEC-09 (RELEASE_HARDENING_PHASE_3A) — registration leaves the new admin
+                # unverified; this test is about the RLS/company-lookup path a *second* login
+                # exercises, not email verification, so mark it verified directly rather than
+                # threading a captured-email token through an unrelated security suite.
+                await session.execute(
+                    text('UPDATE "user" SET email_verified_at = now() WHERE id = :uid'),
+                    {"uid": str(user_id)},
+                )
+                await session.commit()
 
             # The actual regression: an existing user re-authenticating by email+password, which
             # (unlike registration) must discover its company_id from `user_company` rather than
@@ -427,10 +436,9 @@ async def test_login_and_refresh_succeed_under_runtime_role(
             assert bad_login_resp.status_code == 401
 
             # Token refresh hits the same `user_company` lookup from a different entry point.
-            refresh_resp = await client.post(
-                "/v1/auth/token/refresh",
-                json={"refresh_token": login_data["refresh_token"]},
-            )
+            # SEC-06 — the refresh token travels only as the HttpOnly `hrms_refresh` cookie
+            # `login_resp` just set; httpx's client-wide cookie jar carries it automatically.
+            refresh_resp = await client.post("/v1/auth/token/refresh")
             assert refresh_resp.status_code == 200, refresh_resp.text
             assert refresh_resp.json()["data"]["company_id"] == str(company_id)
     finally:

@@ -14,18 +14,24 @@ from hrms.core.config.settings import Settings
 
 _STRONG_ACCESS_SECRET = "Zx7!qP9$mK2#vL5^rT8&nB1@wD4%yF6*hJ0"
 _STRONG_REFRESH_SECRET = "Qm3&zR8!kX1#pL6^bN9$vT2@yH5%wD0*jF4"
-#: DATA-01 — a syntactically real-shaped (test-only) KMS key ARN, required outside development
-#: since `Settings._guard_non_development_config` now also validates `kms_cmk_arn`.
-_TEST_KMS_CMK_ARN = "arn:aws:kms:ap-south-1:123456789012:key/00000000-0000-0000-0000-000000000000"
+#: RELEASE_HARDENING_PHASE_3A — a strong (test-only) application master key, required outside
+#: development since `Settings._guard_non_development_config` also validates `pii_master_key`.
+_TEST_PII_MASTER_KEY = "Nb4$hK7!wQ2#xM9^rF3&tY6@pL1%vD8*sG5"
 
 #: INFRA-01 — required outside development since `_guard_non_development_config` now also
 #: validates the self-hosted MinIO endpoint/bucket/credentials. Explicit here (rather than relying
 #: on a local `.env`) so this test passes in CI, where no `.env` file exists.
-_TEST_S3_KWARGS: dict[str, str] = {
+_TEST_S3_KWARGS: dict[str, object] = {
     "s3_endpoint_url": "http://minio:9000",
     "s3_bucket_documents": "hrms-test-documents",
     "aws_access_key_id": "test-access-key",
     "aws_secret_access_key": "test-secret-key",
+    # RELEASE_HARDENING_PHASE_5A — required outside development since `_guard_non_development_
+    # config` now also validates email_provider="smtp" (never the logging-only default).
+    "email_provider": "smtp",
+    "smtp_host": "smtp.example.com",
+    "smtp_from_email": "onboarding@example.com",
+    "smtp_use_tls": True,
 }
 
 
@@ -69,7 +75,7 @@ async def test_staging_preflight_allows_the_configured_origin() -> None:
         jwt_access_secret=_STRONG_ACCESS_SECRET,
         jwt_refresh_secret=_STRONG_REFRESH_SECRET,
         cors_allowed_origins=("https://staging.example.com",),
-        kms_cmk_arn=_TEST_KMS_CMK_ARN,
+        pii_master_key=_TEST_PII_MASTER_KEY,
         **_TEST_S3_KWARGS,
     )
     app = _build_app(settings)
@@ -92,7 +98,7 @@ async def test_production_preflight_allows_the_configured_origin() -> None:
         jwt_access_secret=_STRONG_ACCESS_SECRET,
         jwt_refresh_secret=_STRONG_REFRESH_SECRET,
         cors_allowed_origins=("https://app.example.com",),
-        kms_cmk_arn=_TEST_KMS_CMK_ARN,
+        pii_master_key=_TEST_PII_MASTER_KEY,
         **_TEST_S3_KWARGS,
     )
     app = _build_app(settings)
@@ -119,7 +125,7 @@ async def test_production_rejects_an_untrusted_origin() -> None:
         jwt_access_secret=_STRONG_ACCESS_SECRET,
         jwt_refresh_secret=_STRONG_REFRESH_SECRET,
         cors_allowed_origins=("https://app.example.com",),
-        kms_cmk_arn=_TEST_KMS_CMK_ARN,
+        pii_master_key=_TEST_PII_MASTER_KEY,
         **_TEST_S3_KWARGS,
     )
     app = _build_app(settings)

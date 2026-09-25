@@ -10,7 +10,7 @@ Design, matching the plan exactly:
 - **Classification is the ciphertext format's own `v1:` prefix** (plan §6.2) — no separate
   migration-status column or table.
 - **Batched, `FOR UPDATE SKIP LOCKED`, one transaction per batch** (plan §6.3) — safe to run
-  concurrently with live application traffic; a batch failure (KMS transient error, a
+  concurrently with live application traffic; a batch failure (master-key unavailability, a
   serialization conflict) rolls back only that batch, leaving already-committed batches intact.
 - **Idempotent structurally** (plan §6.4) — a fully-migrated table's batch query naturally
   selects zero rows on re-run.
@@ -57,35 +57,47 @@ async def discover_plaintext_counts(session: AsyncSession) -> dict[str, int]:
     """Plan §6.1 — read-only. Call before any write, and again after a pass to confirm zero
     remain (the closeout report's own required evidence, plan §12 gate 1)."""
     employee_row = (
-        await session.execute(
-            text(
-                "SELECT "
-                f"count(*) FILTER (WHERE pan_number_enc IS NOT NULL "
-                f"AND pan_number_enc {_PLAINTEXT_SQL_FILTER}) AS pan_rows, "
-                f"count(*) FILTER (WHERE aadhaar_number_enc IS NOT NULL "
-                f"AND aadhaar_number_enc {_PLAINTEXT_SQL_FILTER}) AS aadhaar_rows "
-                "FROM employee"
+        (
+            await session.execute(
+                text(
+                    "SELECT "
+                    f"count(*) FILTER (WHERE pan_number_enc IS NOT NULL "
+                    f"AND pan_number_enc {_PLAINTEXT_SQL_FILTER}) AS pan_rows, "
+                    f"count(*) FILTER (WHERE aadhaar_number_enc IS NOT NULL "
+                    f"AND aadhaar_number_enc {_PLAINTEXT_SQL_FILTER}) AS aadhaar_rows "
+                    "FROM employee"
+                )
             )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     bank_row = (
-        await session.execute(
-            text(
-                "SELECT count(*) FILTER (WHERE account_number_enc IS NOT NULL "
-                f"AND account_number_enc {_PLAINTEXT_SQL_FILTER}) AS bank_rows "
-                "FROM employee_bank"
+        (
+            await session.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE account_number_enc IS NOT NULL "
+                    f"AND account_number_enc {_PLAINTEXT_SQL_FILTER}) AS bank_rows "
+                    "FROM employee_bank"
+                )
             )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     onboarding_row = (
-        await session.execute(
-            text(
-                "SELECT count(*) FILTER (WHERE bank_info ->> 'account_number_enc' IS NOT NULL "
-                f"AND bank_info ->> 'account_number_enc' {_PLAINTEXT_SQL_FILTER}) "
-                "AS onboarding_bank_rows FROM onboarding_case"
+        (
+            await session.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE bank_info ->> 'account_number_enc' IS NOT NULL "
+                    f"AND bank_info ->> 'account_number_enc' {_PLAINTEXT_SQL_FILTER}) "
+                    "AS onboarding_bank_rows FROM onboarding_case"
+                )
             )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     assert employee_row is not None and bank_row is not None and onboarding_row is not None
     return {
         "employee.pan_number_enc": employee_row["pan_rows"],
@@ -156,7 +168,11 @@ async def backfill_employee_column(
             for row in candidates:
                 plaintext = getattr(row, column)
                 ciphertext = await _encrypt_and_verify(
-                    crypto, session, plaintext=plaintext, table="employee", column=column,
+                    crypto,
+                    session,
+                    plaintext=plaintext,
+                    table="employee",
+                    column=column,
                     record_id=row.id,
                 )
                 setattr(row, column, ciphertext)
@@ -210,8 +226,12 @@ async def backfill_employee_bank(
                 plaintext = row.account_number_enc
                 assert plaintext is not None  # narrowed by the `candidates` filter above
                 ciphertext = await _encrypt_and_verify(
-                    crypto, session, plaintext=plaintext, table="employee_bank",
-                    column="account_number_enc", record_id=row.id,
+                    crypto,
+                    session,
+                    plaintext=plaintext,
+                    table="employee_bank",
+                    column="account_number_enc",
+                    record_id=row.id,
                 )
                 row.account_number_enc = ciphertext
                 result.rows_encrypted += 1
@@ -267,13 +287,21 @@ async def backfill_onboarding_bank_info(
                 bank_info = dict(row.bank_info)
                 plaintext = bank_info["account_number_enc"]
                 ciphertext = await crypto.encrypt_jsonb_key(
-                    session, plaintext=plaintext, table="onboarding_case", column="bank_info",
-                    jsonb_key="account_number_enc", record_id=row.id,
+                    session,
+                    plaintext=plaintext,
+                    table="onboarding_case",
+                    column="bank_info",
+                    jsonb_key="account_number_enc",
+                    record_id=row.id,
                 )
                 assert ciphertext is not None
                 roundtrip = await crypto.decrypt_jsonb_key(
-                    session, ciphertext=ciphertext, table="onboarding_case", column="bank_info",
-                    jsonb_key="account_number_enc", record_id=row.id,
+                    session,
+                    ciphertext=ciphertext,
+                    table="onboarding_case",
+                    column="bank_info",
+                    jsonb_key="account_number_enc",
+                    record_id=row.id,
                 )
                 if roundtrip != plaintext:
                     raise RuntimeError(
