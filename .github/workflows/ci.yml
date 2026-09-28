@@ -232,8 +232,15 @@ jobs:
         if: always()
         run: docker rm -f ci-minio || true
 
+      # continue-on-error: confirmed via a real run (2026-09-28,
+      # https://github.com/varunmsaji/HRMS/actions/runs/36367824434) that this account's
+      # GitHub Actions artifact storage quota is account-wide (this repo has 0 artifacts of its
+      # own — `gh api /repos/.../actions/artifacts` confirms it), so a step that only *reports*
+      # test results must not fail a job whose actual tests passed. A billing/plan-level
+      # constraint, not something a workflow change can fix.
       - name: Upload backend test reports
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: backend-test-reports
@@ -305,8 +312,11 @@ jobs:
       - name: Production build
         run: npx next build
 
+      # continue-on-error: same account-wide artifact storage quota finding as the backend
+      # upload step above — reporting must not fail a job whose actual checks passed.
       - name: Upload frontend test reports
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: frontend-test-reports

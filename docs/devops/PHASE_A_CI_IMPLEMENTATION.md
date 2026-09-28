@@ -288,7 +288,21 @@ GitHub rather than trusting local results alone.
    actual displayed output more correct (previously, which case a viewer saw depended on server
    Node version, not on anything about the data).
 
-Both fixes committed and pushed; workflow re-run pending.
+Both fixes committed and pushed. Second run
+([36367824434](https://github.com/varunmsaji/HRMS/actions/runs/36367824434)): every actual check
+passed — MinIO steps, integration+security tests, Vitest, typecheck, production build, both
+security jobs — but the run still reported failure.
+
+3. **Both `api` and `web` jobs — artifact storage quota, unrelated to any code.** "Upload backend/
+   frontend test reports" failed: "Artifact storage quota has been hit." Confirmed this is
+   account-wide, not this-repo-specific: `gh api /repos/varunmsaji/HRMS/actions/artifacts` reports
+   0 artifacts for this repo, so the quota is being consumed elsewhere on the account. A
+   billing/plan-level constraint, not something a workflow change resolves — but a step that only
+   uploads a JUnit report for human convenience should never fail a job whose actual tests passed.
+   Fixed by adding `continue-on-error: true` to both upload steps (they already ran with
+   `if: always()`; now a quota hit is visible in the log but doesn't fail the job).
+
+Third fix committed and pushed; workflow re-run pending.
 
 ## 17. Phase B Readiness
 
