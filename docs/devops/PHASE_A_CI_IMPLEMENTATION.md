@@ -302,7 +302,20 @@ security jobs — but the run still reported failure.
    Fixed by adding `continue-on-error: true` to both upload steps (they already ran with
    `if: always()`; now a quota hit is visible in the log but doesn't fail the job).
 
-Third fix committed and pushed; workflow re-run pending.
+Third fix committed and pushed. Third run
+([36368896052](https://github.com/varunmsaji/HRMS/actions/runs/36368896052)): `web` and both
+security jobs fully green; `api` failed at "Create MinIO test bucket" (the artifact-upload step
+now correctly shows as passed, confirming fix 3 worked).
+
+4. **`api` job — transient MinIO startup race.** `mc alias set` failed on its first attempt,
+   immediately after "Wait for MinIO" had already reported `/minio/health/live` healthy: "read tcp
+   [::1]:56222->[::1]:9000: read: connection reset by peer." Not reproduced across several direct
+   local repeats of the identical start→health-check→`mc alias set` sequence, so treated as a
+   genuine but transient timing race on that runner, not a config error. Fixed by wrapping the `mc`
+   setup in a short retry loop (10 attempts, 2s apart) rather than assuming a passed liveness check
+   guarantees the S3 API is already fully stable.
+
+Fourth fix committed and pushed; workflow re-run pending.
 
 ## 17. Phase B Readiness
 

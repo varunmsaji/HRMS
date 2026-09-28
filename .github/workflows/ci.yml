@@ -191,13 +191,26 @@ jobs:
 
       # Same registry-availability finding as the MinIO server step above — `quay.io/minio/mc`
       # also now 401s anonymously. `bitnamilegacy/minio-client` bundles the identical `mc` binary.
+      #
+      # Retry loop: a real run (2026-09-28, run 36368896052) hit "connection reset by peer" on the
+      # very first `mc alias set` immediately after "Wait for MinIO" reported /minio/health/live
+      # healthy — not reproduced across several local repeats, so treated as a startup race (the
+      # health endpoint and the S3 API are the same port/process, but evidently can have a brief
+      # window where one answers before the other is fully stable) rather than a config bug. A
+      # short retry is the standard, minimal fix for exactly this kind of transient timing race.
       - name: Create MinIO test bucket (mirrors docker-compose.yml's `minio-init` service)
         run: |
-          docker run --rm --network host --entrypoint /bin/sh bitnamilegacy/minio-client:latest -c "
-            mc alias set local http://localhost:9000 hrms_minio hrms_minio_dev_password &&
-            mc mb --ignore-existing local/hrms-documents &&
-            mc anonymous set none local/hrms-documents
-          "
+          for i in $(seq 1 10); do
+            docker run --rm --network host --entrypoint /bin/sh bitnamilegacy/minio-client:latest -c "
+              mc alias set local http://localhost:9000 hrms_minio hrms_minio_dev_password &&
+              mc mb --ignore-existing local/hrms-documents &&
+              mc anonymous set none local/hrms-documents
+            " && exit 0
+            echo "mc setup failed (attempt $i/10), retrying..." >&2
+            sleep 2
+          done
+          echo "mc setup did not succeed after 10 attempts" >&2
+          exit 1
 
       # DATABASE_URL points at `hrms`, the schema owner — deliberately, and contrary to the
       # execution gate's §18.4 checklist item 3. See the "CI" section of
