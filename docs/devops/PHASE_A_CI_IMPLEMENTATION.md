@@ -315,7 +315,20 @@ now correctly shows as passed, confirming fix 3 worked).
    setup in a short retry loop (10 attempts, 2s apart) rather than assuming a passed liveness check
    guarantees the S3 API is already fully stable.
 
-Fourth fix committed and pushed; workflow re-run pending.
+Fourth fix committed and pushed. Fourth run
+([36369295089](https://github.com/varunmsaji/HRMS/actions/runs/36369295089)):
+**all four jobs green** — `api`, `web`, `security-scan`, `dependency-scan`. This is the first
+successful GitHub Actions run in this repository's history against this codebase (the only two
+prior runs, 2026-08-25 and 2026-09-03, both predate all of the payroll/onboarding/release-hardening
+work and both failed). PR: https://github.com/varunmsaji/HRMS/pull/29 (left open for review, not
+merged — merging `main` is a separate decision, not part of this task).
+
+Net effect of §17a: Phase A's CI implementation itself was correct throughout. Every fix above was
+either (a) an external dependency going away from underneath the repo (MinIO's registries), (b) a
+pre-existing latent bug only visible under CI's pinned Node version, or (c) an account-level
+constraint (artifact storage) or transient runner timing — none were mistakes in the original
+Phase A workflow design, and none touched business/application logic beyond the one-line
+meridiem-casing normalization in §17a.2.
 
 ## 17. Phase B Readiness
 
@@ -323,11 +336,11 @@ Fourth fix committed and pushed; workflow re-run pending.
 gates, secret scanning, dependency scanning, artifacts, reporting) now exists, is internally
 consistent, and has been verified as thoroughly as possible without a push.
 
-**Not yet ready, and blocking in practice:** the workflow has never executed on GitHub Actions
-itself. Before Phase B (Docker image CI, which builds directly on top of this same workflow file)
-starts, this file should actually run there at least once — which needs either (a) the 27-commit
-Phase-0 push to go ahead, or (b) a separate feature branch pushed and a PR opened just to exercise
-CI, without touching `main`. Both require your explicit go-ahead, not mine.
+**Now actually ready:** the workflow has executed on GitHub Actions and passed — see §17a. All four
+jobs (`api`, `web`, `security-scan`, `dependency-scan`) are green on run
+[36369295089](https://github.com/varunmsaji/HRMS/actions/runs/36369295089), the first successful
+run in this repository's history against this codebase. Phase B (Docker image CI) can build on
+this workflow file with a working baseline underneath it.
 
 ---
 
@@ -335,7 +348,8 @@ CI, without touching `main`. Both require your explicit go-ahead, not mine.
 PHASE A STATUS
 
 CI:
-NOT YET RUN ON GITHUB ACTIONS (verified locally instead — see §15)
+RAN ON GITHUB ACTIONS AND PASSED — see §17a for the 4 real failures found and fixed across 4 runs
+(run 36369295089, all jobs green: api, web, security-scan, dependency-scan)
 
 Backend:
 PASS (1,747 tests: 708 unit + 1,039 integration+security, 0 failed, 0 errors; mypy/import-linter/ruff
@@ -356,22 +370,28 @@ Next.js 14.2.28 — 1 critical, 5 high, 2 moderate — remediation is a major-ve
 as a human decision, not fixed in this phase)
 
 GitHub Actions:
-NOT YET RUN — nothing has been pushed; requires your explicit go-ahead per the git rules for this
-task
+RAN AND PASSED — devops/phase-a-ci-verification, PR #29, run 36369295089 (4 fixes needed across 4
+runs to get there — see §17a; none were mistakes in Phase A's own design, see that section's
+closing note)
 
 Known flaky tests:
 Not reproduced this run (the previously-known "structlog capture" flake did not appear; flagged as
 "not reproduced," not "fixed," since nothing was changed to specifically address it)
 
 Remaining issues:
-(1) CI has never actually executed on GitHub Actions — needs a push or a throwaway branch/PR to
-verify for real, pending your decision. (2) ESLint backlog: 7 pre-existing findings, not fixed, by
-design. (3) Next.js has 8 known vulnerabilities (1 critical) — needs a dedicated major-version
-upgrade, out of this phase's scope. (4) `run_full_tests.py` doesn't yet run ESLint (new local/CI
-asymmetry). (5) Docker/compose validation (CI-02) remains completely untouched, as intended for
-this phase.
+(1) ESLint backlog: 7 pre-existing findings, not fixed, by design. (2) Next.js has 8 known
+vulnerabilities (1 critical) — needs a dedicated major-version upgrade, out of this phase's scope.
+(3) `run_full_tests.py` doesn't yet run ESLint (new local/CI asymmetry). (4) Docker/compose
+validation (CI-02) remains completely untouched, as intended for this phase. (5) MinIO's official
+images are unreachable anonymously from both Docker Hub and quay.io (§17a.1) — CI now uses a
+Bitnami "legacy"/frozen stop-gap, but `docker-compose.yml`/`docker-compose.prod.yml` still
+reference the broken `minio/minio:latest` and need a real decision, not fixed here. (6) This
+GitHub account's Actions artifact storage quota is exhausted account-wide (§17a.3) — CI no longer
+fails because of it, but test-report artifacts silently aren't actually being stored anywhere until
+that's addressed (a billing/plan matter, outside this task). (7) PR #29 is open and CI-green but
+not merged — merging to `main` is a separate decision.
 
 Phase B readiness:
-NOT READY — mechanically complete, but gated on actually seeing this workflow run successfully on
-GitHub Actions at least once, which requires a push or PR that only you can authorize.
+READY — the workflow has a working, GitHub-Actions-verified baseline (run 36369295089, all 4 jobs
+green) to build Docker image CI on top of.
 ```
