@@ -37,6 +37,14 @@ export function zoneLabel(tz: string): string {
   return tz;
 }
 
+// `Intl`'s AM/PM casing isn't stable across Node/ICU versions (observed directly: Node 22 lowercases
+// the meridiem marker, Node 20 — what CI and the production Docker image both pin — doesn't), so a
+// viewer would see "am"/"pm" or "AM"/"PM" purely depending on which runtime rendered the string, not
+// on anything about the data itself. Normalized here to a single, deterministic casing.
+function lowercaseMeridiem(s: string): string {
+  return s.replace(/\b(AM|PM)\b/i, (m) => m.toLowerCase());
+}
+
 export function formatClockTime(iso: string | null | undefined, tz: string): string {
   if (!iso) return "—";
   const time = new Date(iso).toLocaleTimeString(undefined, {
@@ -44,7 +52,7 @@ export function formatClockTime(iso: string | null | undefined, tz: string): str
     minute: "2-digit",
     timeZone: tz,
   });
-  return `${time} ${zoneLabel(tz)}`;
+  return `${lowercaseMeridiem(time)} ${zoneLabel(tz)}`;
 }
 
 export function formatDateTime(iso: string | null | undefined, tz: string): string {
@@ -54,7 +62,7 @@ export function formatDateTime(iso: string | null | undefined, tz: string): stri
     timeStyle: "short",
     timeZone: tz,
   });
-  return `${value} ${zoneLabel(tz)}`;
+  return `${lowercaseMeridiem(value)} ${zoneLabel(tz)}`;
 }
 
 /** `TZ-06`/`NEW-02` (execution gate §4, §9, §13) — the one correct replacement for the deleted

@@ -250,6 +250,46 @@ decision for you, not something I did unilaterally (see §16).
 - No CodeQL/SAST — deferred per the original plan's cost/team-size reasoning, not part of this
   phase's ask.
 
+## 17a. First Real GitHub Actions Run — Findings and Fixes (2026-09-28)
+
+Pushed `devops/phase-a-ci-verification` and opened [PR #29](https://github.com/varunmsaji/HRMS/pull/29)
+to actually execute this workflow on GitHub Actions for the first time. First run
+([36367089084](https://github.com/varunmsaji/HRMS/actions/runs/36367089084)): `security-scan` and
+`dependency-scan` passed; `api` and `web` failed. Both failures were real, environment-caused, and
+neither was visible in local verification (§15) — exactly the value of actually running this on
+GitHub rather than trusting local results alone.
+
+1. **`api` job — MinIO image pull denied.** `docker run ... minio/minio:latest` failed: "pull
+   access denied ... repository does not exist." Reproduced independently against the local Docker
+   daemon (not a GitHub-runner-specific problem): Docker Hub's own API confirms the `minio/minio`
+   repository is gone (404). The obvious fallback, `quay.io/minio/minio` (MinIO's other official
+   registry, already used for the `mc` client in the same job), also failed — 401 "Requires
+   authentication" — confirmed to be MinIO's own org specifically, not a general quay.io outage
+   (`quay.io/prometheus/prometheus` pulls fine anonymously from the same daemon). **Both of MinIO's
+   official image sources are currently unreachable without credentials.** Fixed for CI only by
+   switching to `bitnamilegacy/minio` / `bitnamilegacy/minio-client` (Bitnami's frozen "legacy"
+   tier — the only source confirmed still pullable anonymously), verified end-to-end locally
+   (start container, health-check, `mc alias set` + `mb` + `anonymous set`, matching what CI does).
+   **This is flagged, not silently fixed, for `docker-compose.yml` and `docker-compose.prod.yml`**,
+   which still reference the now-broken `minio/minio:latest` — a real risk to any fresh pull (new
+   dev machine, CI, or a from-scratch production/DR restore), and a decision for a separate task,
+   not resolved here.
+2. **`web` job — Vitest failing only in CI.** `src/lib/attendance/format.test.ts` failed 4
+   assertions, all on AM/PM letter-casing (e.g. expected `"09:05 am IST"`, got `"09:05 AM IST"`).
+   Root cause: `formatClockTime`/`formatDateTime` (`apps/web/src/lib/attendance/format.ts`) call
+   `toLocaleTimeString`/`toLocaleString` with an undefined locale, whose meridiem casing is decided
+   by the runtime's bundled ICU/CLDR data — confirmed to differ between the developer's local Node
+   22.19.0 (lowercase) and CI's pinned Node 20 (uppercase; unchanged by this phase, already present
+   in the workflow before Phase A). Pre-existing latent bug, invisible locally because the local
+   Node version has always produced the expected casing, and invisible in CI because CI has never
+   successfully run against this test file before. Fixed by normalizing the meridiem casing inside
+   both functions (a `lowercaseMeridiem()` helper), so the rendered string is deterministic
+   regardless of which Node/ICU version executes it — not a business-logic change, and it makes
+   actual displayed output more correct (previously, which case a viewer saw depended on server
+   Node version, not on anything about the data).
+
+Both fixes committed and pushed; workflow re-run pending.
+
 ## 17. Phase B Readiness
 
 **Mechanically ready:** the CI foundation (backend static+test gates, frontend static+test+build
