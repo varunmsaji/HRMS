@@ -1,0 +1,27 @@
+title = "HRMS gitleaks config — DevOps Phase A"
+
+# CI's security-scan job runs `gitleaks detect --no-git` against a fresh checkout (no build, no
+# `npm ci`/`uv sync` has happened in that job), so none of the paths below are ever actually
+# present there. They're excluded anyway so a developer running the same command locally — where
+# these directories do exist — gets the same, narrowly-scoped result CI does, instead of noise
+# from their own build/tool-cache output. None of this whitelists a real secret; see
+# docs/devops/CI.md ("Secret scanning") for how each entry below was verified.
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+  '''\.next/''',
+  '''\.mypy_cache/''',
+  '''\.ruff_cache/''',
+  '''\.pytest_cache/''',
+  '''node_modules/''',
+  '''\.venv/''',
+  '''test-results/''',
+  # docs/product/25_Project_Plan_Estimation_and_Team.md:220 — a project-planning table cell
+  # describing the developer's responsibilities in plain English ("FastAPI backend,
+  # SQLAlchemy/Alembic data layer, Celery workers, ..."). The `generic-api-key` rule matches on
+  # token shape, not content; hand-verified, this line contains no credential of any kind.
+  # Scoped to this one file, not a blanket rule disable.
+  '''docs/product/25_Project_Plan_Estimation_and_Team\.md''',
+]

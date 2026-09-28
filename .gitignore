@@ -42,6 +42,7 @@ logs/
 # Test / coverage
 coverage/
 .nyc_output/
+test-results/
 
 # Editor / OS
 .vscode/*

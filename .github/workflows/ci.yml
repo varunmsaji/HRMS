@@ -141,7 +141,44 @@ jobs:
           REDIS_URL: redis://localhost:6380/0
           JWT_ACCESS_SECRET: ci-test-access-secret-min-16
           JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
-        run: uv run pytest tests/unit
+        run: uv run pytest tests/unit --junitxml=test-results/backend-unit.xml
+
+      # DevOps Phase A — several tests/integration files (test_storage.py, employee_import's
+      # upload tests, onboarding's document/upload tests) talk to a *real* MinIO over the S3 API,
+      # no mocking, the same convention this repo already uses for Postgres/Redis. Until now CI
+      # never provided one: these env vars were simply unset, so `Settings.s3_endpoint_url` stayed
+      # None and any test that actually opened the S3 client either errored or (worse) tried to
+      # resolve real AWS S3. The two steps below start a disposable MinIO — same image, same
+      # credentials, same bucket name as docker-compose.yml's `minio`/`minio-init` services, for
+      # the same "no CI-only path" reason the Postgres/Redis services above give — and provision
+      # its bucket exactly the way `minio-init`'s entrypoint does, before any test can reach it.
+      - name: Start MinIO (disposable, test-only — mirrors docker-compose.yml's `minio` service)
+        run: |
+          docker run -d --name ci-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=hrms_minio \
+            -e MINIO_ROOT_PASSWORD=hrms_minio_dev_password \
+            minio/minio:latest server /data
+
+      - name: Wait for MinIO
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/live >/dev/null; then
+              echo "MinIO is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO did not become healthy within 30s" >&2
+          docker logs ci-minio || true
+          exit 1
+
+      - name: Create MinIO test bucket (mirrors docker-compose.yml's `minio-init` service)
+        run: |
+          docker run --rm --network host --entrypoint /bin/sh quay.io/minio/mc:latest -c "
+            mc alias set local http://localhost:9000 hrms_minio hrms_minio_dev_password &&
+            mc mb --ignore-existing local/hrms-documents &&
+            mc anonymous set none local/hrms-documents
+          "
 
       # DATABASE_URL points at `hrms`, the schema owner — deliberately, and contrary to the
       # execution gate's §18.4 checklist item 3. See the "CI" section of
@@ -154,17 +191,45 @@ jobs:
       # not read this variable: it repoints the app engine at hrms_app for the duration of each
       # test, and additionally opens its own raw hrms_app engine to prove that the DATABASE — not
       # application WHERE-clauses — blocks cross-tenant SELECT/INSERT/UPDATE/DELETE.
-      - name: Integration + security tests (database required)
+      #
+      # AWS_REGION/S3_BUCKET_DOCUMENTS/S3_ENDPOINT_URL/AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+      # match apps/api/.env.example's local-dev MinIO block exactly (DevOps Phase A) — same reason
+      # the Postgres/Redis credentials above are the repo-visible dev ones, not real secrets.
+      - name: Integration + security tests (database + MinIO required)
         env:
           ENVIRONMENT: development
           DATABASE_URL: postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev
           REDIS_URL: redis://localhost:6380/0
           JWT_ACCESS_SECRET: ci-test-access-secret-min-16
           JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
-        run: uv run pytest tests/integration tests/security
+          AWS_REGION: ap-south-1
+          S3_BUCKET_DOCUMENTS: hrms-documents
+          S3_ENDPOINT_URL: http://localhost:9000
+          AWS_ACCESS_KEY_ID: hrms_minio
+          AWS_SECRET_ACCESS_KEY: hrms_minio_dev_password
+        run: uv run pytest tests/integration tests/security --junitxml=test-results/backend-integration-security.xml
+
+      - name: Stop MinIO
+        if: always()
+        run: docker rm -f ci-minio || true
+
+      - name: Upload backend test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: apps/api/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### Backend — API job" >> "$GITHUB_STEP_SUMMARY"
+          echo "Ruff, Ruff-format, mypy, import-linter, unit tests, integration+security tests (real Postgres + Redis + MinIO, fresh every run)." >> "$GITHUB_STEP_SUMMARY"
 
   web:
-    name: Web — typecheck, vitest
+    name: Web — lint, typecheck, vitest, build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -175,6 +240,7 @@ jobs:
     # falls back to the host timezone slip through on values that happen to look close enough.
     env:
       TZ: America/New_York
+      NEXT_PUBLIC_API_URL: http://localhost:8000
 
     steps:
       - uses: actions/checkout@v4
@@ -188,18 +254,132 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # NOT `npm run lint`. The execution gate's §18.4 checklist item 6 assumed that script was
-      # usable; it is not. `apps/web` has no ESLint configuration and no ESLint dev dependency, so
-      # `next lint` drops into an interactive "How would you like to configure ESLint?" prompt,
-      # which in CI would hang rather than gate anything. Adding and triaging a fresh ESLint
-      # baseline across the whole web app is real work, but it is not timezone remediation, so it
-      # is recorded as a residual gap in the completion report rather than absorbed here.
+      # DevOps Phase A — `apps/web` had no ESLint configuration or dependency at all (that is what
+      # made `npm run lint` / `next lint` hang on an interactive setup prompt in CI). `eslint` +
+      # `eslint-config-next` (pinned to this repo's exact Next version) plus the new
+      # `.eslintrc.json` fix that: `next lint` is now genuinely non-interactive.
       #
-      # `tsc --noEmit` is substituted because it is a genuine static gate that passes cleanly on
-      # the current tree (verified), and it is what actually catches the class of mistake Phase 6
-      # can introduce: a formatter whose required `tz` parameter is missing at a call site.
+      # Deliberately NOT a blocking gate yet: turning ESLint on for the first time immediately
+      # surfaced 7 pre-existing violations (6 `react/no-unescaped-entities`, 1
+      # `react-hooks/exhaustive-deps`) across 6 files untouched by this CI change. Fixing those is
+      # real frontend code modification outside this phase's scope (see
+      # docs/devops/PHASE_A_CI_IMPLEMENTATION.md §5) — `continue-on-error` is used here openly, as
+      # a documented initial policy, not to hide a required check: A12 does not list lint in the
+      # set of checks that must fail CI, and A8's "don't fail every PR over a pre-existing
+      # backlog" policy applies exactly as well to a first-time lint adoption. The step's output is
+      # still fully visible in the log either way. Promote to blocking once the backlog is cleared.
+      - name: ESLint (non-blocking — see step comment)
+        continue-on-error: true
+        run: npx next lint
+
       - name: Typecheck
         run: npx tsc --noEmit
 
       - name: Vitest
-        run: npm test
+        run: npx vitest run --reporter=default --reporter=junit --outputFile=test-results/frontend-vitest.xml
+
+      # DevOps Phase A — CI never actually built the frontend for production before; only the
+      # local `run_full_tests.py` did. `ignoreDuringBuilds: true` in `next.config.mjs` (new) keeps
+      # this step's pass/fail meaning "the production bundle compiles," not "and also has zero
+      # pre-existing lint findings" — see the ESLint step comment above for why those are kept
+      # separate for now.
+      - name: Production build
+        run: npx next build
+
+      - name: Upload frontend test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-test-reports
+          path: apps/web/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### Frontend — Web job" >> "$GITHUB_STEP_SUMMARY"
+          echo "ESLint (non-blocking, see workflow comment), TypeScript, Vitest, production build." >> "$GITHUB_STEP_SUMMARY"
+
+  security-scan:
+    name: Security — secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # DevOps Phase A — A7. Real, blocking gate: unlike the lint/dependency-scan jobs, a detected
+      # secret must fail the build, no continue-on-error. `--redact` (per A7's own instruction)
+      # keeps the actual secret value out of the CI log even when a real one is found.
+      #
+      # `--no-git`, deliberately: `gitleaks detect` on a git checkout defaults to walking the
+      # *entire commit history* every single run, which would re-flag the same already-reviewed
+      # history on every future PR (and get slower as the repo grows) instead of checking "is
+      # there a secret in the code as it would be if this merges" — the question this gate is
+      # actually meant to answer. The full-history scan was run once, by hand, as part of the
+      # Phase 0 pre-push audit (docs/devops/PHASE_A_CI_IMPLEMENTATION.md §Secret scanning) before
+      # anything was pushed; this job checks the ongoing, per-PR case.
+      #
+      # `.gitleaks.toml` (new, repo root) narrowly excludes build/tool-cache paths (never present
+      # in this job's checkout anyway) and one hand-verified false positive in a planning doc —
+      # see that file's own comments for exactly what and why.
+      - name: Gitleaks (secret scanning)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo" zricethezav/gitleaks:latest \
+            detect --source=/repo --no-git --no-banner --redact \
+            --config=/repo/.gitleaks.toml
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### Security — secret scanning" >> "$GITHUB_STEP_SUMMARY"
+          echo "Gitleaks scanned the checked-out tree. Blocking: a real detected secret fails this job." >> "$GITHUB_STEP_SUMMARY"
+
+  dependency-scan:
+    name: Security — dependency vulnerability scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-path: apps/api/uv.lock
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # DevOps Phase A — A8. pip-audit is run via `uvx` (ephemeral) rather than added as a project
+      # dev-dependency, so it never touches uv.lock. Checked today: clean, 0 known vulnerabilities.
+      # Non-blocking for this first rollout by explicit policy (see docs/devops/CI.md §Dependency
+      # scanning) — the intent is to make findings visible immediately, not to silently fail every
+      # PR the day a new low-severity advisory is published for a transitive dependency.
+      - name: pip-audit (Python dependencies) — non-blocking, see step comment
+        continue-on-error: true
+        working-directory: apps/api
+        run: |
+          uv export --no-hashes --no-emit-project -o /tmp/requirements-audit.txt
+          uvx pip-audit -r /tmp/requirements-audit.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      # Checked today: 8 real advisories against the pinned Next.js 14.2.28 (1 critical, 5 high,
+      # 2 moderate — cache poisoning, SSRF, DoS, and an Image-Optimization-API RCE among them).
+      # Remediation is a Next.js major-version upgrade (14 -> 16), which is a breaking change well
+      # outside this phase's "CI foundation" scope and needs its own dedicated, tested effort — see
+      # docs/devops/PHASE_A_CI_IMPLEMENTATION.md §5 and the human decision this raises. Non-blocking
+      # for the same reason as pip-audit above, but reported loudly, not buried.
+      - name: npm audit (frontend dependencies) — non-blocking, see step comment
+        continue-on-error: true
+        working-directory: apps/web
+        run: npm ci && npm audit --audit-level=high
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "### Security — dependency vulnerability scanning" >> "$GITHUB_STEP_SUMMARY"
+          echo "pip-audit (Python) + npm audit (frontend). Non-blocking for this first rollout — see workflow step comments for the documented policy and today's findings." >> "$GITHUB_STEP_SUMMARY"
