@@ -43,7 +43,7 @@ class LoggingEmailSender:
 
     async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
         del html_body  # not useful in a log line; the text body is
-        logger.info(
+        get_logger(__name__).info(
             "onboarding_email_not_sent_smtp_not_configured",
             to=to,
             subject=subject,
@@ -87,7 +87,7 @@ class SmtpEmailSender:
             # keeps the "never log credentials" guarantee independent of any future change to
             # `aiosmtplib`'s own error formatting. The original exception is still preserved on
             # the Python exception chain (`from exc`) for local debugging/`repr()` in a traceback.
-            logger.error(  # noqa: TRY400 — see comment above; exception() is deliberately avoided
+            get_logger(__name__).error(  # noqa: TRY400 — see comment above; exception() is deliberately avoided
                 "onboarding_email_smtp_send_failed",
                 to=to,
                 subject=subject,

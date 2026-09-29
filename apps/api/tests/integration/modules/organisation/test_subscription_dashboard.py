@@ -157,9 +157,9 @@ async def test_get_dashboard_success(client: AsyncClient, seeded_plan_catalogue:
         assert data["subscription"] is not None
         assert data["subscription"]["plan_code"] == "FREE"
         assert data["subscription"]["status"] == "TRIALING"
-        assert data["branch_count"] is None
-        assert data["department_count"] is None
-        assert data["employee_count"] is None
+        assert data["branch_count"] == 0
+        assert data["department_count"] == 0
+        assert data["employee_count"] == 0
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)
 

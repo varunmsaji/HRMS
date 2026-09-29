@@ -96,6 +96,7 @@ def service() -> OrganisationService:
     svc = OrganisationService(session)
     svc._repo = AsyncMock()
     svc._audit = AsyncMock()
+    svc._employee_repo = AsyncMock()
     return svc
 
 
@@ -201,7 +202,7 @@ async def test_get_subscription_summary_missing_plan_raises(
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_summary_null_sibling_counts(
+async def test_get_dashboard_summary_zero_sibling_counts(
     service: OrganisationService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     company_id = uuid4()
@@ -246,6 +247,9 @@ async def test_get_dashboard_summary_null_sibling_counts(
 
     service._repo.update_setup_progress.side_effect = _fake_update
     service._repo.get_active_subscription.return_value = None
+    service._repo.list_branches.return_value = []
+    service._repo.list_departments.return_value = []
+    service._employee_repo.count_employees.return_value = 0
 
     dashboard = await service.get_dashboard_summary(company_id)
 
@@ -253,9 +257,9 @@ async def test_get_dashboard_summary_null_sibling_counts(
     assert dashboard.setup_progress.steps_completed == 0
     assert dashboard.setup_progress.steps_total == 1
     assert dashboard.subscription is None
-    assert dashboard.branch_count is None
-    assert dashboard.department_count is None
-    assert dashboard.employee_count is None
+    assert dashboard.branch_count == 0
+    assert dashboard.department_count == 0
+    assert dashboard.employee_count == 0
 
 
 @pytest.mark.asyncio
@@ -310,6 +314,9 @@ async def test_get_dashboard_summary_includes_subscription(
     service._repo.get_plan.return_value = plan
     service._repo.get_plan_features.return_value = [_plan_feature(plan_id=plan.id, limit_value=25)]
     service._repo.get_company_feature_flags.return_value = []
+    service._repo.list_branches.return_value = [MagicMock(), MagicMock()]
+    service._repo.list_departments.return_value = [MagicMock()]
+    service._employee_repo.count_employees.return_value = 5
 
     dashboard = await service.get_dashboard_summary(company_id)
 
@@ -318,3 +325,6 @@ async def test_get_dashboard_summary_includes_subscription(
     assert dashboard.subscription is not None
     assert dashboard.subscription.plan_code == "STARTER"
     assert dashboard.subscription.status == "ACTIVE"
+    assert dashboard.branch_count == 2
+    assert dashboard.department_count == 1
+    assert dashboard.employee_count == 5

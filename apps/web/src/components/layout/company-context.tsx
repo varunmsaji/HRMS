@@ -35,8 +35,8 @@ export function CompanyContext() {
   }, [session]);
 
   return (
-    <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-      <Building2 className="h-4 w-4 text-foreground-muted" aria-hidden="true" />
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1 text-sm font-medium text-foreground">
+      <Building2 className="h-3.5 w-3.5 text-foreground-muted" aria-hidden="true" />
       <span>{company?.name ?? "…"}</span>
     </div>
   );

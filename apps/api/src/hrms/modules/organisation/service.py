@@ -24,6 +24,7 @@ from hrms.modules.employee.permissions import (
     EMPLOYEE_VIEW_SENSITIVE,
     EMPLOYEE_VIEW_STATUTORY,
 )
+from hrms.modules.employee.repository import EmployeeRepository
 from hrms.modules.identity.permissions import (
     EMPLOYEE_VIEW,
     SETTINGS_ROLE_MANAGE,
@@ -277,6 +278,7 @@ class OrganisationService:
         self._policy_assignment_repo = PolicyAssignmentRepository()
         self._shift_version_repo = ShiftVersionRepository()
         self._calendar_resolution = CalendarResolutionService(session)
+        self._employee_repo = EmployeeRepository()
 
     async def register_company(
         self,
@@ -1038,11 +1040,7 @@ class OrganisationService:
         )
 
     async def get_dashboard_summary(self, company_id: UUID) -> CompanyDashboardSummary:
-        """Company Admin dashboard aggregation (04_API_Design.md §7).
-
-        Sibling counts (branches / departments / employees) stay ``null`` until those
-        modules exist — never fabricated ``0``.
-        """
+        """Company Admin dashboard aggregation (04_API_Design.md §7)."""
         setup = await self.get_setup_progress(company_id)
         steps_completed = sum(1 for step in setup.steps if step.is_complete)
 
@@ -1057,6 +1055,12 @@ class OrganisationService:
         except NotFoundError:
             subscription_block = None
 
+        branches = await self._repo.list_branches(self._session, company_id=company_id)
+        departments = await self._repo.list_departments(self._session, company_id=company_id)
+        employee_count = await self._employee_repo.count_employees(
+            self._session, company_id=company_id
+        )
+
         return CompanyDashboardSummary(
             setup_progress=DashboardSetupProgress(
                 status=setup.status,
@@ -1064,9 +1068,9 @@ class OrganisationService:
                 steps_total=len(setup.steps),
             ),
             subscription=subscription_block,
-            branch_count=None,
-            department_count=None,
-            employee_count=None,
+            branch_count=len(branches),
+            department_count=len(departments),
+            employee_count=employee_count,
         )
 
     async def create_legal_entity(

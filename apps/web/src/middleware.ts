@@ -34,7 +34,10 @@ export function middleware(request: NextRequest) {
 
   const cspDirectives = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    // 'unsafe-eval' is dev-only: Next.js's dev bundler executes chunks via eval() for fast
+    // refresh, and without this the CSP silently blocks all client-side hydration (forms never
+    // become interactive, no client-side JS runs at all) — production builds don't eval().
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isProduction ? "" : " 'unsafe-eval'"}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",

@@ -13,33 +13,33 @@
  * lands with the app shell (Task 1.4.x) — this just makes the tokens ready.
  */
 :root {
-  /* Surfaces & text — §9 light mode */
-  --color-background: #fbfbfe; /* near-white, very slightly warm to reduce eye strain */
+  /* Surfaces & text — Stitch "Staff Spectrum HRMS" design system (technobeala project) */
+  --color-background: #f8fafc;
   --color-surface: #ffffff;
-  --color-border: #e4e4e7;
-  --color-border-strong: #d4d4d8;
-  --color-foreground: #18181b; /* near-black, not pure black */
-  --color-foreground-secondary: #52525b;
-  --color-foreground-muted: #71717a;
-  --color-foreground-disabled: #a1a1aa;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+  --color-foreground: #0f172a;
+  --color-foreground-secondary: #475569;
+  --color-foreground-muted: #64748b;
+  --color-foreground-disabled: #94a3b8;
 
-  /* Brand hue — indigo family anchored at #4F46E5 (§1.3) */
-  --color-primary: #4f46e5;
-  --color-primary-hover: #4338ca;
-  --color-primary-active: #3730a3;
-  --color-primary-subtle: #eef2ff;
-  --color-primary-disabled: #c7d2fe;
+  /* Brand hue — blue family anchored at #2563EB, per Stitch's primary-container */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-active: #1e40af;
+  --color-primary-subtle: #dbeafe;
+  --color-primary-disabled: #93c5fd;
   --color-on-primary: #ffffff;
 
-  /* Semantic set (§1.4) */
+  /* Semantic set — danger/info follow Stitch's error/tertiary; success/warning unspecified there, kept */
   --color-success: #16a34a;
   --color-success-subtle: #f0fdf4;
   --color-warning: #f59e0b;
   --color-warning-subtle: #fffbeb;
-  --color-danger: #dc2626;
-  --color-danger-subtle: #fef2f2;
-  --color-info: #2563eb;
-  --color-info-subtle: #eff6ff;
+  --color-danger: #ef4444;
+  --color-danger-subtle: #fee2e2;
+  --color-info: #0ea5e9;
+  --color-info-subtle: #e0f2fe;
 
   /* HRMS status states (§1.4) — violet distinct from brand indigo by design */
   --color-on-leave: #8b5cf6;
@@ -53,25 +53,25 @@
 
   /* Neutral-subtle surface — backs shadcn's muted/secondary/accent slots
    * (see tailwind.config.ts), none of which the design system distinguishes. */
-  --color-muted: #f4f4f5;
+  --color-muted: #f1f5f9;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-background: #131316; /* deep neutral, never pure black — §10 */
-    --color-surface: #1c1c21; /* one step lighter than background = elevation */
-    --color-border: rgba(228, 228, 231, 0.12);
-    --color-border-strong: rgba(228, 228, 231, 0.2);
-    --color-foreground: #f4f4f5; /* off-white, not pure white */
-    --color-foreground-secondary: #d4d4d8;
-    --color-foreground-muted: #a1a1aa;
-    --color-foreground-disabled: #71717a;
+    --color-background: #0f172a;
+    --color-surface: #1e293b;
+    --color-border: rgba(226, 232, 240, 0.12);
+    --color-border-strong: rgba(226, 232, 240, 0.2);
+    --color-foreground: #f1f5f9;
+    --color-foreground-secondary: #cbd5e1;
+    --color-foreground-muted: #94a3b8;
+    --color-foreground-disabled: #64748b;
 
-    --color-primary: #6366f1; /* lightened one step from light-mode value */
-    --color-primary-hover: #818cf8;
-    --color-primary-active: #a5b4fc;
-    --color-primary-subtle: #1e1b4b;
-    --color-primary-disabled: #3730a3;
+    --color-primary: #3b82f6; /* Stitch's surface-tint value — the dark-mode brand step */
+    --color-primary-hover: #60a5fa;
+    --color-primary-active: #93c5fd;
+    --color-primary-subtle: #1e3a8a;
+    --color-primary-disabled: #1e40af;
     --color-on-primary: #ffffff;
 
     --color-success: #4ade80;
@@ -80,8 +80,8 @@
     --color-warning-subtle: #451a03;
     --color-danger: #f87171;
     --color-danger-subtle: #450a0a;
-    --color-info: #60a5fa;
-    --color-info-subtle: #172554;
+    --color-info: #38bdf8;
+    --color-info-subtle: #0c4a6e;
 
     --color-on-leave: #a78bfa;
     --color-on-leave-subtle: #2e1065;
@@ -92,25 +92,25 @@
     --color-wfh: #2dd4bf;
     --color-wfh-subtle: #042f2e;
 
-    --color-muted: #27272a;
+    --color-muted: #334155;
   }
 }
 
 :root[data-theme="dark"] {
-  --color-background: #131316;
-  --color-surface: #1c1c21;
-  --color-border: rgba(228, 228, 231, 0.12);
-  --color-border-strong: rgba(228, 228, 231, 0.2);
-  --color-foreground: #f4f4f5;
-  --color-foreground-secondary: #d4d4d8;
-  --color-foreground-muted: #a1a1aa;
-  --color-foreground-disabled: #71717a;
+  --color-background: #0f172a;
+  --color-surface: #1e293b;
+  --color-border: rgba(226, 232, 240, 0.12);
+  --color-border-strong: rgba(226, 232, 240, 0.2);
+  --color-foreground: #f1f5f9;
+  --color-foreground-secondary: #cbd5e1;
+  --color-foreground-muted: #94a3b8;
+  --color-foreground-disabled: #64748b;
 
-  --color-primary: #6366f1;
-  --color-primary-hover: #818cf8;
-  --color-primary-active: #a5b4fc;
-  --color-primary-subtle: #1e1b4b;
-  --color-primary-disabled: #3730a3;
+  --color-primary: #3b82f6;
+  --color-primary-hover: #60a5fa;
+  --color-primary-active: #93c5fd;
+  --color-primary-subtle: #1e3a8a;
+  --color-primary-disabled: #1e40af;
   --color-on-primary: #ffffff;
 
   --color-success: #4ade80;
@@ -119,8 +119,8 @@
   --color-warning-subtle: #451a03;
   --color-danger: #f87171;
   --color-danger-subtle: #450a0a;
-  --color-info: #60a5fa;
-  --color-info-subtle: #172554;
+  --color-info: #38bdf8;
+  --color-info-subtle: #0c4a6e;
 
   --color-on-leave: #a78bfa;
   --color-on-leave-subtle: #2e1065;
@@ -131,7 +131,7 @@
   --color-wfh: #2dd4bf;
   --color-wfh-subtle: #042f2e;
 
-  --color-muted: #27272a;
+  --color-muted: #334155;
 }
 
 /*

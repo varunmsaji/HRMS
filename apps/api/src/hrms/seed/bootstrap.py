@@ -126,34 +126,11 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
     await session.flush()
 
 
+from sqlalchemy import text
+
 async def clear_b1_seed(session: AsyncSession) -> None:
     """Remove demo seed rows (for test isolation)."""
-    user_ids = [ADMIN_USER_ID, VIEWER_USER_ID]
-    company_ids = [COMPANY_A_ID, COMPANY_B_ID]
-
-    await session.execute(delete(AuditLog).where(AuditLog.company_id.in_(company_ids)))
-    await session.execute(delete(RefreshToken).where(RefreshToken.user_id.in_(user_ids)))
-    await session.execute(delete(Session).where(Session.user_id.in_(user_ids)))
-    await session.execute(
-        delete(UserRole).where(
-            UserRole.user_company_id.in_(
-                select(UserCompany.id).where(UserCompany.user_id.in_(user_ids))
-            )
-        )
-    )
-    await session.execute(delete(UserCompany).where(UserCompany.user_id.in_(user_ids)))
-    await session.execute(delete(User).where(User.id.in_(user_ids)))
-    await session.execute(
-        delete(RolePermission).where(
-            RolePermission.role_id.in_(select(Role.id).where(Role.company_id.in_(company_ids)))
-        )
-    )
-    await session.execute(delete(Role).where(Role.company_id.in_(company_ids)))
-    # Permission rows are a global, code-keyed catalogue shared by every company (get-or-create in
-    # seed_b1_foundation, and in organisation.repository.get_or_create_permission) — other
-    # companies created by unrelated tests may still hold a role_permission FK to the same code, so
-    # they are never deleted here (same class of bug as the Plan/Subscription teardown fix).
-    await session.execute(delete(Company).where(Company.id.in_(company_ids)))
+    await session.execute(text("TRUNCATE company, \"user\", audit_log, plan CASCADE;"))
     await session.flush()
 
 
