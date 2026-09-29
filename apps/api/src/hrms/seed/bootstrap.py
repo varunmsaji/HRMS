@@ -1,18 +1,15 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from hrms.core.audit.models import AuditLog
 from hrms.core.auth.passwords import hash_password
 from hrms.core.db.models.identity import (
     Company,
     Permission,
-    RefreshToken,
     Role,
     RolePermission,
-    Session,
     User,
     UserCompany,
     UserRole,
@@ -126,11 +123,9 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
     await session.flush()
 
 
-from sqlalchemy import text
-
 async def clear_b1_seed(session: AsyncSession) -> None:
     """Remove demo seed rows (for test isolation)."""
-    await session.execute(text("TRUNCATE company, \"user\", audit_log, plan CASCADE;"))
+    await session.execute(text('TRUNCATE company, "user", audit_log, plan CASCADE;'))
     await session.flush()
 
 
