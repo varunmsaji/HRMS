@@ -54,12 +54,17 @@ a broken/unreachable URL — it does not need the real service to fail.
 a real MinIO over the S3 API, no mocking — the same convention already used for Postgres/Redis.
 Until this phase, CI never provided one, so `S3_ENDPOINT_URL` stayed unset and any test that
 actually opened the S3 client would either error or try to resolve real AWS S3. The `api` job now
-starts a disposable `minio/minio:latest` container (same image, credentials, and bucket name as
-`docker-compose.yml`'s `minio`/`minio-init` services — no CI-only path), waits for
-`/minio/health/live`, provisions the `hrms-documents` bucket via `quay.io/minio/mc`, and only then
-runs the MinIO-dependent tests. All 29 previously-unverified-in-CI tests pass against this setup
-(verified locally against an equivalent disposable container — see
-`docs/devops/PHASE_A_CI_IMPLEMENTATION.md`).
+starts a disposable `pgsty/silo` container (same credentials and bucket name as `docker-compose.yml`'s
+`minio`/`minio-init` services — no CI-only path), waits for `/minio/health/live`, provisions the
+`hrms-documents` bucket via `pgsty/mc`, and only then runs the MinIO-dependent tests. All 29
+previously-unverified-in-CI tests pass against this setup (verified locally against an equivalent
+disposable container — see `docs/devops/PHASE_A_CI_IMPLEMENTATION.md`).
+
+`pgsty/silo`/`pgsty/mc` replaced `minio/minio`/`quay.io/minio/mc` repo-wide (dev, CI, and
+production) after `docs/devops/MINIO_IMAGE_REPLACEMENT_AUDIT.md` found MinIO Inc. had archived the
+original images with no open-source successor. CI pins the same image digest
+`docker-compose.prod.yml` does, so a green CI run means something about the exact bits production
+runs, not just an equivalent-looking fork.
 
 One MinIO-dependent test (`test_object_survives_a_minio_container_restart`) additionally shells out
 to `docker restart` on a container named `hrms-minio` and self-skips if that exact name isn't
