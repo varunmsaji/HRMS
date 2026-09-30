@@ -159,12 +159,17 @@ jobs:
       # docker-compose.yml/.prod.yml now, restoring the "no CI-only path" invariant this file's
       # other services already follow. Pinned by digest, matching docker-compose.prod.yml, so CI
       # is testing the same bits production runs, not just an equivalent-looking fork.
+      # Explicit `server /data ...` command required: unlike the old bitnamilegacy stop-gap image
+      # (whose own default CMD ran `minio server` automatically), pgsty/silo's default CMD is a
+      # bare `silo` with no subcommand, which just prints top-level help and exits — matching
+      # docker-compose.yml's explicit `command:` for the same image.
       - name: Start MinIO (disposable, test-only — mirrors docker-compose.yml's `minio` service)
         run: |
           docker run -d --name ci-minio -p 9000:9000 \
             -e MINIO_ROOT_USER=hrms_minio \
             -e MINIO_ROOT_PASSWORD=hrms_minio_dev_password \
-            pgsty/silo@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+            pgsty/silo@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46 \
+            server /data --console-address ":9001"
 
       - name: Wait for MinIO
         run: |
