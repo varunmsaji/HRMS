@@ -4,6 +4,18 @@
 producing this document. `docs/devops/MINIO_IMAGE_REPLACEMENT_AUDIT.md` is the only file this task
 created.
 
+**Update (2026-09-30):** Decision 1 (§14) approved — `pgsty/silo`/`pgsty/mc` adopted repo-wide per
+this audit's §10 recommendation. `docker-compose.yml` (`latest`, dev convenience) and
+`docker-compose.prod.yml`/`.github/workflows/ci.yml` (both pinned to digest
+`sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46` for `silo`,
+`sha256:8ac3333f012adb27c406df77c7cae6ce700892cc44ee489036404e3fc356e9ea` for `mc` —
+`RELEASE.2026-09-16T00-00-00Z`, current at implementation time) updated in the same change, per
+§9's "together" recommendation. Verified before committing: both images pull cleanly, `pgsty/silo`
+boots and reports healthy, and `pgsty/mc` completes the identical `alias set`/`mb`/`anonymous set`
+sequence `minio-init` runs. Decision 2 (checking the production VPS's image cache) is **not**
+covered by this update — that still needs a human with VPS access, per §14's note that it's a
+read-only check independent of this decision.
+
 **Date:** 2026-09-28
 
 **Trigger:** Phase A CI verification (`docs/devops/PHASE_A_CI_IMPLEMENTATION.md` §17a) found that

@@ -153,28 +153,18 @@ jobs:
       # CI-only path" reason the Postgres/Redis services above give — and provision its bucket
       # exactly the way `minio-init`'s entrypoint does, before any test can reach it.
       #
-      # Image source deliberately differs from docker-compose.yml/.prod.yml (both still pin
-      # `minio/minio:latest`): confirmed by direct reproduction (both here and against this same
-      # local Docker daemon) that BOTH of MinIO's own registries are currently unreachable
-      # anonymously — Docker Hub's `minio/minio` repository no longer exists at all ("pull access
-      # denied ... repository does not exist"; the Docker Hub API confirms 404), and `quay.io/
-      # minio/minio` (and even `quay.io/minio/mc`, previously used below) now returns 401
-      # "Requires authentication" — this is not a CI-specific or network-specific problem: a
-      # sibling public quay.io image (`quay.io/prometheus/prometheus`) pulls fine from the same
-      # daemon. `bitnamilegacy/minio` is a stop-gap for this disposable, ephemeral CI-only
-      # container (never holds real data): Bitnami's frozen, no-longer-updated "legacy" tier
-      # (Broadcom moved Bitnami's free images there in 2025), but it is the only registry
-      # confirmed to still serve a MinIO image without credentials. Same env vars, verified
-      # working end-to-end locally. This is flagged as a real, pre-existing finding affecting the
-      # dev/prod compose files too — see docs/devops/PHASE_A_CI_IMPLEMENTATION.md — not silently
-      # fixed there, since picking a durable replacement for production is a bigger decision than
-      # this CI job's scope.
+      # minio/minio is archived upstream and no longer pullable from any registry (MinIO Inc.
+      # ended open-source distribution). pgsty/silo is the durable, drop-in-compatible fork
+      # adopted repo-wide after docs/devops/MINIO_IMAGE_REPLACEMENT_AUDIT.md — same image used by
+      # docker-compose.yml/.prod.yml now, restoring the "no CI-only path" invariant this file's
+      # other services already follow. Pinned by digest, matching docker-compose.prod.yml, so CI
+      # is testing the same bits production runs, not just an equivalent-looking fork.
       - name: Start MinIO (disposable, test-only — mirrors docker-compose.yml's `minio` service)
         run: |
           docker run -d --name ci-minio -p 9000:9000 \
             -e MINIO_ROOT_USER=hrms_minio \
             -e MINIO_ROOT_PASSWORD=hrms_minio_dev_password \
-            bitnamilegacy/minio:latest
+            pgsty/silo@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
 
       - name: Wait for MinIO
         run: |
@@ -189,8 +179,7 @@ jobs:
           docker logs ci-minio || true
           exit 1
 
-      # Same registry-availability finding as the MinIO server step above — `quay.io/minio/mc`
-      # also now 401s anonymously. `bitnamilegacy/minio-client` bundles the identical `mc` binary.
+      # pgsty/mc, pinned to match docker-compose.prod.yml's `minio-init` image (see note above).
       #
       # Retry loop: a real run (2026-09-28, run 36368896052) hit "connection reset by peer" on the
       # very first `mc alias set` immediately after "Wait for MinIO" reported /minio/health/live
@@ -201,7 +190,7 @@ jobs:
       - name: Create MinIO test bucket (mirrors docker-compose.yml's `minio-init` service)
         run: |
           for i in $(seq 1 10); do
-            docker run --rm --network host --entrypoint /bin/sh bitnamilegacy/minio-client:latest -c "
+            docker run --rm --network host --entrypoint /bin/sh pgsty/mc@sha256:8ac3333f012adb27c406df77c7cae6ce700892cc44ee489036404e3fc356e9ea -c "
               mc alias set local http://localhost:9000 hrms_minio hrms_minio_dev_password &&
               mc mb --ignore-existing local/hrms-documents &&
               mc anonymous set none local/hrms-documents

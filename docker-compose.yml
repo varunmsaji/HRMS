@@ -43,7 +43,12 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # minio/minio is archived upstream and no longer pullable from any registry (MinIO Inc. ended
+    # open-source distribution — see docs/devops/MINIO_IMAGE_REPLACEMENT_AUDIT.md). pgsty/silo is
+    # an actively maintained, drop-in-compatible fork (same env vars, same on-disk format,
+    # verified in that audit). Dev stays on `latest` for convenience, per the audit's own
+    # recommendation; CI and prod pin an explicit release digest instead.
+    image: pgsty/silo:latest
     container_name: hrms-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -55,7 +60,7 @@ services:
       - "9001:9001"
     volumes:
       - minio_data:/data
-    # minio/minio does not ship mc or curl; port check is sufficient for local dev.
+    # pgsty/silo does not ship mc or curl; port check is sufficient for local dev.
     healthcheck:
       test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/9000' || exit 1"]
       interval: 10s
@@ -68,7 +73,7 @@ services:
   # commands are idempotent (`--ignore-existing`, `anonymous set none` is MinIO's already-private
   # default) so re-running this on every `docker compose up` is a no-op once the bucket exists.
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: pgsty/mc:latest
     container_name: hrms-minio-init
     depends_on:
       minio:

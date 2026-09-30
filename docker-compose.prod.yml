@@ -80,7 +80,12 @@ services:
     logging: *default-logging
 
   minio:
-    image: minio/minio:latest
+    # minio/minio is archived upstream and no longer pullable (MinIO Inc. ended open-source
+    # distribution — see docs/devops/MINIO_IMAGE_REPLACEMENT_AUDIT.md). pgsty/silo is a
+    # drop-in-compatible fork, verified in that audit: same env vars, same on-disk data format,
+    # real integration-test suite passing against it, 41/41. Pinned by digest (not `latest`,
+    # per the audit's versioning policy) since this is production and we don't control the fork.
+    image: pgsty/silo@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46 # RELEASE.2026-09-16T00-00-00Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -97,7 +102,7 @@ services:
     logging: *default-logging
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    image: pgsty/mc@sha256:8ac3333f012adb27c406df77c7cae6ce700892cc44ee489036404e3fc356e9ea # RELEASE.2026-09-16T00-00-00Z
     depends_on:
       minio:
         condition: service_healthy

@@ -1,5 +1,11 @@
 # DevOps Phase A — CI Foundation Implementation Report
 
+**Superseded (2026-09-30):** the `bitnamilegacy/minio` / `bitnamilegacy/minio-client` stop-gap
+described below (§4) was replaced repo-wide by `pgsty/silo`/`pgsty/mc`, per
+`docs/devops/MINIO_IMAGE_REPLACEMENT_AUDIT.md`'s durable recommendation. This report is left
+as-is below as the historical record of the stop-gap fix; it no longer describes what `ci.yml`
+currently runs.
+
 **Scope:** Phase 0 (repository release baseline) + Phase A (CI foundation) only, per
 `docs/devops/CI_CD_DEVOPS_IMPLEMENTATION_PLAN.md`. Docker image CI, compose-boot validation, GHCR,
 VPS provisioning, deployment, backups, monitoring, and staging are explicitly Phase B+ and are not
