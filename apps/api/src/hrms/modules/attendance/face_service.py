@@ -1,17 +1,21 @@
-"""Face enrollment: creating, extending, and revoking an employee's face profile.
+"""Face enrollment and face punching.
 
-Consistency with the provider: the provider call happens inside the request transaction. If the
-DB write that follows a successful provider enrollment fails, the just-created provider person is
-deleted again (best effort) so no orphaned biometric record is left at the vendor. Revocation
-deletes at the provider *first*: if that fails the profile stays ENROLLED and the revoke can be
-retried (provider deletion is idempotent)."""
+Enrollment is self-service inside a one-time, HR-opened window, followed by HR approval:
+HR opens a window -> the employee submits five captures (front, left, right, up, down) from the
+mobile app -> the profile is PENDING_APPROVAL -> HR approves (ENROLLED) or rejects. Only
+ENROLLED profiles can punch.
+
+Consistency with the provider: provider calls happen inside the request transaction. If anything
+after a successful provider enrollment fails, the just-created provider person (and any stored
+review photo) is deleted again, best effort, so nothing biometric is orphaned. Rejection and
+revocation delete at the provider *first*: if that fails the profile is left unchanged and the
+action can be retried (provider deletion is idempotent)."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
@@ -21,6 +25,9 @@ from hrms.core.observability.logging import get_logger
 from hrms.core.rbac.types import DataScope
 from hrms.modules.attendance.exceptions import (
     FaceConsentRequiredError,
+    FaceEnrollmentAngleMismatchError,
+    FaceEnrollmentWindowNotFoundError,
+    FaceEnrollmentWindowNotOpenError,
     FaceImageInvalidError,
     FaceLivenessFailedError,
     FaceNotDetectedError,
@@ -29,9 +36,11 @@ from hrms.modules.attendance.exceptions import (
     FaceProfileAlreadyEnrolledError,
     FaceProfileNotEnrolledError,
     FaceProfileNotFoundError,
+    FaceProfileNotPendingError,
+    FaceProfilePendingApprovalError,
     FaceProviderFailedError,
     FacePunchAttemptsExceededError,
-    FaceReferencePhotoLimitError,
+    FaceReviewPhotoNotFoundError,
     FaceVerificationUnavailableError,
 )
 from hrms.modules.attendance.face_verification import (
@@ -39,14 +48,21 @@ from hrms.modules.attendance.face_verification import (
     FaceProviderNoFaceError,
     FaceVerificationProvider,
 )
-from hrms.modules.attendance.models import EmployeeFaceProfile
-from hrms.modules.attendance.repository import FaceAttemptRepository, FaceProfileRepository
+from hrms.modules.attendance.models import EmployeeFaceProfile, FaceEnrollmentWindow
+from hrms.modules.attendance.repository import (
+    FaceAttemptRepository,
+    FaceEnrollmentWindowRepository,
+    FaceProfileRepository,
+)
 from hrms.modules.attendance.schemas import (
+    FACE_ENROLLMENT_ANGLES,
     FACE_IMAGE_MAX_BYTES,
-    FACE_MAX_REFERENCE_PHOTOS,
+    FaceEnrollmentStatusRead,
+    FaceEnrollmentWindowRead,
     FaceProfileRead,
     FacePunchRead,
     face_profile_to_read,
+    face_window_to_read,
 )
 from hrms.modules.attendance.service import (
     PunchService,
@@ -60,27 +76,48 @@ _JPEG_MAGIC = b"\xff\xd8\xff"
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def sniff_face_image(image: bytes) -> str:
+def sniff_face_image(image: bytes, *, field: str = "photo") -> str:
     """Returns the content type from the file's own bytes; the client-declared type is not
     trusted."""
     if not image:
-        raise FaceImageInvalidError("The photo is empty")
+        raise FaceImageInvalidError(f"The {field} photo is empty")
     if len(image) > FACE_IMAGE_MAX_BYTES:
         raise FaceImageInvalidError(
-            f"The photo exceeds the {FACE_IMAGE_MAX_BYTES // (1024 * 1024)} MB limit"
+            f"The {field} photo exceeds the {FACE_IMAGE_MAX_BYTES // (1024 * 1024)} MB limit"
         )
     if image.startswith(_JPEG_MAGIC):
         return "image/jpeg"
     if image.startswith(_PNG_MAGIC):
         return "image/png"
-    raise FaceImageInvalidError("The photo must be a JPEG or PNG image")
+    raise FaceImageInvalidError(f"The {field} photo must be a JPEG or PNG image")
+
+
+class FacePhotoStorage(Protocol):
+    async def put_object(self, *, key: str, body: bytes, content_type: str) -> None: ...
+
+    async def get_object(self, *, key: str) -> bytes: ...
+
+    async def delete_object(self, *, key: str) -> None: ...
+
+
+def _dump(row: EmployeeFaceProfile | None) -> dict[str, Any] | None:
+    return face_profile_to_read(row).model_dump(mode="json") if row is not None else None
 
 
 class FaceEnrollmentService:
-    def __init__(self, session: AsyncSession, provider: FaceVerificationProvider | None) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        provider: FaceVerificationProvider | None,
+        settings: Settings,
+        storage: FacePhotoStorage,
+    ) -> None:
         self._session = session
         self._provider = provider
-        self._repo = FaceProfileRepository()
+        self._settings = settings
+        self._storage = storage
+        self._profiles = FaceProfileRepository()
+        self._windows = FaceEnrollmentWindowRepository()
         self._audit = AuditService()
 
     def _require_provider(self) -> FaceVerificationProvider:
@@ -88,106 +125,309 @@ class FaceEnrollmentService:
             raise FaceVerificationUnavailableError()
         return self._provider
 
+    async def _audit_profile(
+        self,
+        company_id: UUID,
+        action: str,
+        row: EmployeeFaceProfile,
+        *,
+        before: dict[str, Any] | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action=action,
+            entity_type="employee_face_profile",
+            entity_id=row.id,
+            before=before,
+            after=_dump(row),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+    # --- reads -------------------------------------------------------------------------------
+
     async def list_profiles(
         self, company_id: UUID, *, scope: DataScope, caller_employee_id: UUID | None
     ) -> list[FaceProfileRead]:
         visible = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._repo.list_for_company(
+        rows = await self._profiles.list_for_company(
             self._session, company_id=company_id, visible_employee_ids=visible
         )
         return [face_profile_to_read(r) for r in rows]
 
-    async def get_profile(
+    async def get_status(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> FaceEnrollmentStatusRead:
+        """`scope=None` is the employee reading their own status."""
+        if scope is not None:
+            await _ensure_employee_visible(
+                self._session, company_id, employee_id, scope, caller_employee_id
+            )
+        profile = await self._profiles.get_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        window = await self._windows.get_open(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        usable = window is not None and window.expires_at > datetime.now(UTC)
+        return FaceEnrollmentStatusRead(
+            profile=face_profile_to_read(profile) if profile else None,
+            open_window=face_window_to_read(window) if window is not None and usable else None,
+        )
+
+    async def get_review_photo(
         self,
         company_id: UUID,
         employee_id: UUID,
         *,
         scope: DataScope,
         caller_employee_id: UUID | None,
-    ) -> FaceProfileRead:
+    ) -> tuple[bytes, str]:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
-        row = await self._repo.get_for_employee(
+        profile = await self._profiles.get_for_employee(
             self._session, company_id=company_id, employee_id=employee_id
         )
-        if row is None:
-            raise FaceProfileNotFoundError()
-        return face_profile_to_read(row)
+        if profile is None or profile.review_photo_key is None:
+            raise FaceReviewPhotoNotFoundError()
+        image = await self._storage.get_object(key=profile.review_photo_key)
+        return image, sniff_face_image(image)
 
-    async def enroll(
+    # --- HR: enrollment window ---------------------------------------------------------------
+
+    async def open_window(
         self,
         company_id: UUID,
         employee_id: UUID,
         *,
-        image: bytes,
-        consent_confirmed: bool,
         scope: DataScope,
         caller_employee_id: UUID | None,
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
-    ) -> FaceProfileRead:
+    ) -> FaceEnrollmentWindowRead:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
-        if not consent_confirmed:
-            raise FaceConsentRequiredError()
-        provider = self._require_provider()
-        content_type = sniff_face_image(image)
-
-        existing = await self._repo.get_for_employee(
+        self._require_provider()
+        profile = await self._profiles.get_for_employee(
             self._session, company_id=company_id, employee_id=employee_id, for_update=True
         )
-        if existing is not None and existing.status == "ENROLLED":
+        if profile is not None and profile.status == "ENROLLED":
             raise FaceProfileAlreadyEnrolledError()
-        before = face_profile_to_read(existing).model_dump(mode="json") if existing else None
-
-        try:
-            person_id = await provider.enroll(
-                label=str(employee_id), image=image, content_type=content_type
-            )
-        except FaceProviderNoFaceError as exc:
-            raise FaceNotDetectedError() from exc
-        except FaceProviderError as exc:
-            raise FaceProviderFailedError() from exc
+        if profile is not None and profile.status == "PENDING_APPROVAL":
+            raise FaceProfilePendingApprovalError()
 
         now = datetime.now(UTC)
-        try:
-            async with self._session.begin_nested():
-                row = await self._write_enrollment(
-                    existing,
-                    company_id=company_id,
-                    employee_id=employee_id,
-                    provider_name=provider.provider_name,
-                    person_id=person_id,
-                    now=now,
-                    actor_user_id=actor_user_id,
-                )
-        except Exception as exc:
-            await self._discard_provider_person(provider, person_id)
-            if isinstance(exc, IntegrityError):
-                raise FaceProfileAlreadyEnrolledError() from exc
-            raise
+        previous = await self._windows.get_open(
+            self._session, company_id=company_id, employee_id=employee_id, for_update=True
+        )
+        if previous is not None:
+            if previous.expires_at <= now:
+                previous.status = "EXPIRED"
+            else:
+                previous.status = "CANCELLED"
+                previous.cancelled_at = now
+                previous.cancelled_by_user_id = actor_user_id
+            await self._session.flush()
 
-        read = face_profile_to_read(row)
+        window = await self._windows.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "status": "OPEN",
+                "opened_by_user_id": actor_user_id,
+                "opened_at": now,
+                "expires_at": now + timedelta(hours=self._settings.face_enrollment_window_hours),
+            },
+        )
+        read = face_window_to_read(window)
         await self._audit.record(
             self._session,
             company_id=company_id,
             actor_user_id=actor_user_id,
-            action="FACE_PROFILE_ENROLLED",
-            entity_type="employee_face_profile",
-            entity_id=row.id,
-            before=before,
+            action="FACE_ENROLLMENT_OPENED",
+            entity_type="face_enrollment_window",
+            entity_id=window.id,
             after=read.model_dump(mode="json"),
             ip=ip_address,
             user_agent=user_agent,
         )
         return read
 
-    async def _write_enrollment(
+    async def cancel_window(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        await _ensure_employee_visible(
+            self._session, company_id, employee_id, scope, caller_employee_id
+        )
+        window = await self._windows.get_open(
+            self._session, company_id=company_id, employee_id=employee_id, for_update=True
+        )
+        now = datetime.now(UTC)
+        if window is None or window.expires_at <= now:
+            raise FaceEnrollmentWindowNotFoundError()
+        before = face_window_to_read(window).model_dump(mode="json")
+        window.status = "CANCELLED"
+        window.cancelled_at = now
+        window.cancelled_by_user_id = actor_user_id
+        await self._session.flush()
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="FACE_ENROLLMENT_CANCELLED",
+            entity_type="face_enrollment_window",
+            entity_id=window.id,
+            before=before,
+            after=face_window_to_read(window).model_dump(mode="json"),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+    # --- Employee: self-enrollment -----------------------------------------------------------
+
+    async def submit_self(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        images: dict[str, bytes],
+        consent_confirmed: bool,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> FaceProfileRead:
+        if not consent_confirmed:
+            raise FaceConsentRequiredError()
+        provider = self._require_provider()
+        content_types = {
+            angle: sniff_face_image(images[angle], field=angle) for angle in FACE_ENROLLMENT_ANGLES
+        }
+
+        now = datetime.now(UTC)
+        window = await self._windows.get_open(
+            self._session, company_id=company_id, employee_id=employee_id, for_update=True
+        )
+        if window is None or window.expires_at <= now:
+            raise FaceEnrollmentWindowNotOpenError()
+        profile = await self._profiles.get_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id, for_update=True
+        )
+        if profile is not None and profile.status == "ENROLLED":
+            raise FaceProfileAlreadyEnrolledError()
+        if profile is not None and profile.status == "PENDING_APPROVAL":
+            raise FaceProfilePendingApprovalError()
+
+        front, front_type = images["front"], content_types["front"]
+        try:
+            liveness = await provider.check_liveness(image=front, content_type=front_type)
+        except FaceProviderError as exc:
+            raise FaceProviderFailedError() from exc
+        if liveness.decision == "NO_FACE":
+            raise FaceNotDetectedError()
+        if liveness.decision != "LIVE":
+            raise FaceLivenessFailedError()
+
+        try:
+            person_id = await provider.enroll(
+                label=str(employee_id), image=front, content_type=front_type
+            )
+        except FaceProviderNoFaceError as exc:
+            raise FaceNotDetectedError() from exc
+        except FaceProviderError as exc:
+            raise FaceProviderFailedError() from exc
+
+        review_key = f"face-review/{company_id}/{employee_id}/{uuid4()}"
+        try:
+            await self._verify_and_add_angles(provider, person_id, images, content_types)
+            await self._storage.put_object(key=review_key, body=front, content_type=front_type)
+        except FaceProviderError as exc:
+            await self._discard_provider_person(provider, person_id)
+            raise FaceProviderFailedError() from exc
+        except Exception:
+            await self._discard_provider_person(provider, person_id)
+            raise
+
+        before = _dump(profile)
+        try:
+            async with self._session.begin_nested():
+                row = await self._write_submission(
+                    profile,
+                    company_id=company_id,
+                    employee_id=employee_id,
+                    provider_name=provider.provider_name,
+                    person_id=person_id,
+                    window=window,
+                    review_key=review_key,
+                    now=now,
+                    actor_user_id=actor_user_id,
+                )
+        except Exception:
+            await self._discard_provider_person(provider, person_id)
+            await self._delete_review_photo(review_key)
+            raise
+
+        await self._audit_profile(
+            company_id,
+            "FACE_PROFILE_SUBMITTED",
+            row,
+            before=before,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return face_profile_to_read(row)
+
+    async def _verify_and_add_angles(
+        self,
+        provider: FaceVerificationProvider,
+        person_id: str,
+        images: dict[str, bytes],
+        content_types: dict[str, str],
+    ) -> None:
+        """Every turned capture must match the front one before any is added — so a profile is
+        never built from a mix of faces."""
+        minimum = Decimal(str(self._settings.face_enrollment_angle_min_similarity))
+        others = [a for a in FACE_ENROLLMENT_ANGLES if a != "front"]
+        for angle in others:
+            match = await provider.verify(
+                person_id=person_id, image=images[angle], content_type=content_types[angle]
+            )
+            if match.similarity is None or match.similarity < minimum:
+                raise FaceEnrollmentAngleMismatchError(angle)
+        for angle in others:
+            try:
+                await provider.add_reference_photo(
+                    person_id=person_id, image=images[angle], content_type=content_types[angle]
+                )
+            except FaceProviderNoFaceError as exc:
+                raise FaceEnrollmentAngleMismatchError(angle) from exc
+
+    async def _write_submission(
         self,
         existing: EmployeeFaceProfile | None,
         *,
@@ -195,22 +435,29 @@ class FaceEnrollmentService:
         employee_id: UUID,
         provider_name: str,
         person_id: str,
+        window: FaceEnrollmentWindow,
+        review_key: str,
         now: datetime,
         actor_user_id: UUID | None,
     ) -> EmployeeFaceProfile:
-        fields = {
+        fields: dict[str, Any] = {
             "provider": provider_name,
             "provider_person_id": person_id,
-            "status": "ENROLLED",
-            "reference_photo_count": 1,
+            "status": "PENDING_APPROVAL",
+            "reference_photo_count": len(FACE_ENROLLMENT_ANGLES),
             "consent_recorded_at": now,
             "enrolled_at": now,
             "enrolled_by_user_id": actor_user_id,
+            "enrollment_window_id": window.id,
+            "review_photo_key": review_key,
+            "reviewed_at": None,
+            "reviewed_by_user_id": None,
+            "review_note": None,
             "revoked_at": None,
             "revoked_by_user_id": None,
         }
         if existing is None:
-            return await self._repo.insert(
+            row = await self._profiles.insert(
                 self._session,
                 data={
                     "id": uuid4(),
@@ -219,10 +466,14 @@ class FaceEnrollmentService:
                     **fields,
                 },
             )
-        for name, value in fields.items():
-            setattr(existing, name, value)
+        else:
+            for name, value in fields.items():
+                setattr(existing, name, value)
+            row = existing
+        window.status = "USED"
+        window.used_at = now
         await self._session.flush()
-        return existing
+        return row
 
     async def _discard_provider_person(
         self, provider: FaceVerificationProvider, person_id: str
@@ -235,12 +486,67 @@ class FaceEnrollmentService:
                 "face_enrollment_orphaned_provider_person", provider=provider.provider_name
             )
 
-    async def add_reference_photo(
+    async def _delete_review_photo(self, key: str) -> None:
+        try:
+            await self._storage.delete_object(key=key)
+        except Exception:  # noqa: BLE001 - cleanup must never mask the real outcome
+            _logger.error("face_review_photo_delete_failed")  # noqa: TRY400
+
+    # --- HR: review and revocation -----------------------------------------------------------
+
+    async def _pending_profile_for_update(
+        self, company_id: UUID, employee_id: UUID
+    ) -> EmployeeFaceProfile:
+        row = await self._profiles.get_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id, for_update=True
+        )
+        if row is None:
+            raise FaceProfileNotFoundError()
+        if row.status != "PENDING_APPROVAL":
+            raise FaceProfileNotPendingError()
+        return row
+
+    async def approve(
         self,
         company_id: UUID,
         employee_id: UUID,
         *,
-        image: bytes,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> FaceProfileRead:
+        await _ensure_employee_visible(
+            self._session, company_id, employee_id, scope, caller_employee_id
+        )
+        row = await self._pending_profile_for_update(company_id, employee_id)
+        before = _dump(row)
+        review_key = row.review_photo_key
+        row.status = "ENROLLED"
+        row.reviewed_at = datetime.now(UTC)
+        row.reviewed_by_user_id = actor_user_id
+        row.review_photo_key = None
+        await self._session.flush()
+        await self._audit_profile(
+            company_id,
+            "FACE_PROFILE_APPROVED",
+            row,
+            before=before,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        if review_key:
+            await self._delete_review_photo(review_key)
+        return face_profile_to_read(row)
+
+    async def reject(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        note: str | None,
         scope: DataScope,
         caller_employee_id: UUID | None,
         actor_user_id: UUID | None,
@@ -251,37 +557,32 @@ class FaceEnrollmentService:
             self._session, company_id, employee_id, scope, caller_employee_id
         )
         provider = self._require_provider()
-        content_type = sniff_face_image(image)
-        row = await self._enrolled_profile_for_update(company_id, employee_id)
-        if row.reference_photo_count >= FACE_MAX_REFERENCE_PHOTOS:
-            raise FaceReferencePhotoLimitError(FACE_MAX_REFERENCE_PHOTOS)
-
+        row = await self._pending_profile_for_update(company_id, employee_id)
         try:
-            await provider.add_reference_photo(
-                person_id=row.provider_person_id, image=image, content_type=content_type
-            )
-        except FaceProviderNoFaceError as exc:
-            raise FaceNotDetectedError() from exc
+            await provider.delete_person(person_id=row.provider_person_id)
         except FaceProviderError as exc:
             raise FaceProviderFailedError() from exc
 
-        before = face_profile_to_read(row).model_dump(mode="json")
-        row.reference_photo_count += 1
+        before = _dump(row)
+        review_key = row.review_photo_key
+        row.status = "REJECTED"
+        row.reviewed_at = datetime.now(UTC)
+        row.reviewed_by_user_id = actor_user_id
+        row.review_note = note
+        row.review_photo_key = None
         await self._session.flush()
-        read = face_profile_to_read(row)
-        await self._audit.record(
-            self._session,
-            company_id=company_id,
-            actor_user_id=actor_user_id,
-            action="FACE_PROFILE_PHOTO_ADDED",
-            entity_type="employee_face_profile",
-            entity_id=row.id,
+        await self._audit_profile(
+            company_id,
+            "FACE_PROFILE_REJECTED",
+            row,
             before=before,
-            after=read.model_dump(mode="json"),
-            ip=ip_address,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
             user_agent=user_agent,
         )
-        return read
+        if review_key:
+            await self._delete_review_photo(review_key)
+        return face_profile_to_read(row)
 
     async def revoke(
         self,
@@ -298,44 +599,34 @@ class FaceEnrollmentService:
             self._session, company_id, employee_id, scope, caller_employee_id
         )
         provider = self._require_provider()
-        row = await self._enrolled_profile_for_update(company_id, employee_id)
-
-        try:
-            await provider.delete_person(person_id=row.provider_person_id)
-        except FaceProviderError as exc:
-            raise FaceProviderFailedError() from exc
-
-        before = face_profile_to_read(row).model_dump(mode="json")
-        row.status = "REVOKED"
-        row.revoked_at = datetime.now(UTC)
-        row.revoked_by_user_id = actor_user_id
-        await self._session.flush()
-        read = face_profile_to_read(row)
-        await self._audit.record(
-            self._session,
-            company_id=company_id,
-            actor_user_id=actor_user_id,
-            action="FACE_PROFILE_REVOKED",
-            entity_type="employee_face_profile",
-            entity_id=row.id,
-            before=before,
-            after=read.model_dump(mode="json"),
-            ip=ip_address,
-            user_agent=user_agent,
-        )
-        return read
-
-    async def _enrolled_profile_for_update(
-        self, company_id: UUID, employee_id: UUID
-    ) -> EmployeeFaceProfile:
-        row = await self._repo.get_for_employee(
+        row = await self._profiles.get_for_employee(
             self._session, company_id=company_id, employee_id=employee_id, for_update=True
         )
         if row is None:
             raise FaceProfileNotFoundError()
         if row.status != "ENROLLED":
             raise FaceProfileNotEnrolledError()
-        return row
+
+        try:
+            await provider.delete_person(person_id=row.provider_person_id)
+        except FaceProviderError as exc:
+            raise FaceProviderFailedError() from exc
+
+        before = _dump(row)
+        row.status = "REVOKED"
+        row.revoked_at = datetime.now(UTC)
+        row.revoked_by_user_id = actor_user_id
+        await self._session.flush()
+        await self._audit_profile(
+            company_id,
+            "FACE_PROFILE_REVOKED",
+            row,
+            before=before,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return face_profile_to_read(row)
 
 
 class FacePunchService:

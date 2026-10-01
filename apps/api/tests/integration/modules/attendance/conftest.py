@@ -67,6 +67,9 @@ class FakeFaceProvider:
         )
     )
 
+    #: Consumed one per `verify` call before falling back to `match` — lets a test fail one angle.
+    verify_results: list[FaceMatchResult] = field(default_factory=list)
+
     def _call(self, name: str, **kwargs: Any) -> None:
         self.calls.append((name, kwargs))
         if name in self.fail_with:
@@ -84,7 +87,7 @@ class FakeFaceProvider:
 
     async def verify(self, *, person_id: str, image: bytes, content_type: str) -> FaceMatchResult:
         self._call("verify", person_id=person_id)
-        return self.match
+        return self.verify_results.pop(0) if self.verify_results else self.match
 
     async def check_liveness(self, *, image: bytes, content_type: str) -> LivenessResult:
         self._call("check_liveness")
@@ -106,6 +109,35 @@ async def fake_face_provider() -> AsyncIterator[FakeFaceProvider]:
     app.dependency_overrides.pop(get_face_provider, None)
 
 
+@dataclass
+class FakePhotoStorage:
+    objects: dict[str, bytes] = field(default_factory=dict)
+    fail_put: bool = False
+
+    async def put_object(self, *, key: str, body: bytes, content_type: str) -> None:
+        if self.fail_put:
+            raise RuntimeError("storage down")
+        self.objects[key] = body
+
+    async def get_object(self, *, key: str) -> bytes:
+        return self.objects[key]
+
+    async def delete_object(self, *, key: str) -> None:
+        self.objects.pop(key, None)
+
+
+@pytest.fixture
+async def fake_photo_storage() -> AsyncIterator[FakePhotoStorage]:
+    from entrypoints.api import app
+
+    from hrms.modules.attendance.dependencies import get_face_photo_storage
+
+    storage = FakePhotoStorage()
+    app.dependency_overrides[get_face_photo_storage] = lambda: storage
+    yield storage
+    app.dependency_overrides.pop(get_face_photo_storage, None)
+
+
 @pytest.fixture
 async def face_tenant(
     client: AsyncClient, seeded_plan_catalogue: None
@@ -125,7 +157,11 @@ async def face_tenant(
     factory = get_session_factory()
     async with factory() as session:
         await set_rls_company_id(session, str(company_id))
-        for table in ("face_verification_attempt", "employee_face_profile"):
+        for table in (
+            "face_verification_attempt",
+            "employee_face_profile",
+            "face_enrollment_window",
+        ):
             await session.execute(
                 text(f"DELETE FROM {table} WHERE company_id = :cid"), {"cid": str(company_id)}
             )

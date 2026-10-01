@@ -8,14 +8,14 @@ import pytest
 from entrypoints.api import app
 from httpx import AsyncClient
 from sqlalchemy import text
-from tests.integration.modules.attendance.conftest import FakeFaceProvider
+from tests.integration.modules.attendance.conftest import FakeFaceProvider, FakePhotoStorage
 from tests.integration.modules.attendance.test_attendance_security import (
     _create_permission_scoped_user,
 )
 from tests.integration.modules.attendance.test_face_enrollment import (
-    _JPEG,
+    IMAGES,
     _employee,
-    _enroll,
+    enroll_and_approve,
 )
 
 from hrms.core.db.session import get_session_factory, set_rls_company_id
@@ -30,17 +30,23 @@ from hrms.modules.attendance.permissions import ATTENDANCE_PUNCH, ATTENDANCE_VIE
 pytestmark = pytest.mark.asyncio
 
 Tenant = tuple[dict[str, str], UUID]
+_JPEG = IMAGES["front"]
+
+
+@pytest.fixture(autouse=True)
+def _photo_storage(fake_photo_storage: FakePhotoStorage) -> None:
+    """Enrollment stores a review photo; keep it in memory for every test here."""
 
 
 async def _enrolled_self(
     client: AsyncClient, face_tenant: Tenant, *, enroll: bool = True
 ) -> tuple[dict[str, str], str]:
-    """An employee (enrolled by the admin) plus headers for a user linked to that employee
-    holding `ATTENDANCE.PUNCH`/`ATTENDANCE.VIEW` at SELF scope."""
+    """An employee (self-enrolled and HR-approved unless `enroll=False`) plus headers for a user
+    linked to that employee holding `ATTENDANCE.PUNCH`/`ATTENDANCE.VIEW` at SELF scope."""
     admin_headers, company_id = face_tenant
     employee_id = await _employee(client, admin_headers)
     if enroll:
-        assert (await _enroll(client, admin_headers, employee_id)).status_code == 201
+        return await enroll_and_approve(client, admin_headers, company_id, employee_id), employee_id
     self_headers, _ = await _create_permission_scoped_user(
         company_id=company_id,
         permission_codes=[ATTENDANCE_PUNCH, ATTENDANCE_VIEW],

@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         AttendanceRegularizationRequest,
         AttendanceRegularizationRequestedPunch,
         EmployeeFaceProfile,
+        FaceEnrollmentWindow,
         LeaveDayProjection,
         OvertimeAction,
         OvertimePolicy,
@@ -2227,11 +2228,14 @@ def leave_day_projection_to_audit_dict(read: LeaveDayProjectionRead) -> dict[str
 # ---------------------------------------------------------------------------
 
 FACE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
-FACE_MAX_REFERENCE_PHOTOS = 5
+#: Self-enrollment captures, in order. "front" is the anchor: it must pass liveness and every
+#: other angle must match it.
+FACE_ENROLLMENT_ANGLES = ("front", "left", "right", "up", "down")
 
 
 class FaceProfileRead(BaseModel):
-    """Never exposes `provider_person_id` — it is a handle into the vendor's biometric store."""
+    """Never exposes `provider_person_id` (a handle into the vendor's biometric store) or the
+    review photo's storage key."""
 
     id: UUID
     employee_id: UUID
@@ -2241,6 +2245,10 @@ class FaceProfileRead(BaseModel):
     consent_recorded_at: str
     enrolled_at: str
     enrolled_by_user_id: UUID | None
+    has_review_photo: bool
+    reviewed_at: str | None
+    reviewed_by_user_id: UUID | None
+    review_note: str | None
     revoked_at: str | None
     revoked_by_user_id: UUID | None
 
@@ -2255,9 +2263,47 @@ def face_profile_to_read(row: "EmployeeFaceProfile") -> FaceProfileRead:
         consent_recorded_at=_format_timestamp(row.consent_recorded_at) or "",
         enrolled_at=_format_timestamp(row.enrolled_at) or "",
         enrolled_by_user_id=row.enrolled_by_user_id,
+        has_review_photo=row.review_photo_key is not None,
+        reviewed_at=_format_timestamp(row.reviewed_at),
+        reviewed_by_user_id=row.reviewed_by_user_id,
+        review_note=row.review_note,
         revoked_at=_format_timestamp(row.revoked_at),
         revoked_by_user_id=row.revoked_by_user_id,
     )
+
+
+class FaceEnrollmentWindowRead(BaseModel):
+    id: UUID
+    employee_id: UUID
+    status: str
+    opened_by_user_id: UUID | None
+    opened_at: str
+    expires_at: str
+
+
+def face_window_to_read(row: "FaceEnrollmentWindow") -> FaceEnrollmentWindowRead:
+    return FaceEnrollmentWindowRead(
+        id=row.id,
+        employee_id=row.employee_id,
+        status=row.status,
+        opened_by_user_id=row.opened_by_user_id,
+        opened_at=_format_timestamp(row.opened_at) or "",
+        expires_at=_format_timestamp(row.expires_at) or "",
+    )
+
+
+class FaceEnrollmentStatusRead(BaseModel):
+    """Everything a screen needs to decide what to show: the profile (if any) and the currently
+    usable enrollment window (OPEN and unexpired), if any."""
+
+    profile: FaceProfileRead | None
+    open_window: FaceEnrollmentWindowRead | None
+
+
+class FaceProfileRejectInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(default=None, max_length=500)
 
 
 class FacePunchRead(BaseModel):

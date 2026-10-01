@@ -121,8 +121,16 @@ class LuxandFaceVerificationProvider:
             status_code = (
                 exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
             )
+            # Luxand reports an exhausted plan as a 401, indistinguishable from a bad token by
+            # status alone. The body is inspected only to name the event, never logged.
+            quota_exhausted = (
+                isinstance(exc, httpx.HTTPStatusError)
+                and "requests number per month" in exc.response.text.lower()
+            )
             get_logger(__name__).error(
-                "face_provider_request_failed",
+                "face_provider_quota_exhausted"
+                if quota_exhausted
+                else "face_provider_request_failed",
                 provider=PROVIDER_LUXAND,
                 operation=operation,
                 error_type=type(exc).__name__,

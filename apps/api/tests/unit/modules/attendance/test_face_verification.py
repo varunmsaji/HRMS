@@ -237,6 +237,18 @@ async def test_unauthorized_raises_and_never_logs_token_or_body() -> None:
     assert logs[0]["status_code"] == 401
 
 
+async def test_exhausted_plan_is_logged_as_quota_not_auth() -> None:
+    body = {
+        "message": "Requests number per month reached. Upgrade your plan: https://example.invalid"
+    }
+    provider = _provider(_respond(body, status=401))
+    with capture_logs() as logs, pytest.raises(FaceProviderError):
+        await provider.check_liveness(image=_IMG, content_type="image/jpeg")
+
+    assert logs[0]["event"] == "face_provider_quota_exhausted"
+    assert "Upgrade" not in json.dumps(logs, default=str)
+
+
 async def test_timeout_raises_provider_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("timed out", request=request)

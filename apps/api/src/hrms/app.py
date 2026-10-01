@@ -96,12 +96,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_bytes=MAX_IMPORT_FILE_SIZE_BYTES + 1024 * 1024,
         path_prefixes=("/v1/employee-imports",),
     )
-    from hrms.modules.attendance.schemas import FACE_IMAGE_MAX_BYTES
+    from hrms.modules.attendance.schemas import FACE_ENROLLMENT_ANGLES, FACE_IMAGE_MAX_BYTES
 
     app.add_middleware(
         MaxUploadSizeMiddleware,
         max_bytes=FACE_IMAGE_MAX_BYTES + 1024 * 1024,
-        path_prefixes=("/v1/attendance/face-",),
+        path_prefixes=("/v1/attendance/face-punches",),
+    )
+    app.add_middleware(
+        MaxUploadSizeMiddleware,
+        max_bytes=len(FACE_ENROLLMENT_ANGLES) * FACE_IMAGE_MAX_BYTES + 1024 * 1024,
+        path_prefixes=("/v1/attendance/face-enrollment",),
     )
     # SEC-03 (docs/audits/UPLOAD_BATCH_C_RATE_LIMITING.md) — abuse/DoS protection for the same
     # public, unauthenticated upload endpoint the middleware above already size-bounds. Added
