@@ -26,6 +26,7 @@ from hrms.modules.attendance.models import (
     AttendanceRegularizationRequest,
     AttendanceRegularizationRequestedPunch,
     EmployeeFaceProfile,
+    FaceEnrollmentWindow,
     FaceVerificationAttempt,
     LeaveDayProjection,
     OvertimeAction,
@@ -2256,3 +2257,29 @@ class FaceAttemptRepository:
             FaceVerificationAttempt.created_at >= since,
         )
         return int((await session.execute(stmt)).scalar_one())
+
+
+class FaceEnrollmentWindowRepository:
+    async def get_open(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        for_update: bool = False,
+    ) -> FaceEnrollmentWindow | None:
+        """The OPEN row, whether or not it has passed `expires_at` — callers decide expiry."""
+        stmt = select(FaceEnrollmentWindow).where(
+            FaceEnrollmentWindow.company_id == company_id,
+            FaceEnrollmentWindow.employee_id == employee_id,
+            FaceEnrollmentWindow.status == "OPEN",
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> FaceEnrollmentWindow:
+        row = FaceEnrollmentWindow(**data)
+        session.add(row)
+        await session.flush()
+        return row

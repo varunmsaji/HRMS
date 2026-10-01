@@ -176,6 +176,11 @@ class Settings(BaseSettings):
     # Failed face punches allowed per employee within the window before further tries get a 429.
     face_punch_max_failed_attempts: int = Field(default=5, ge=1)
     face_punch_attempt_window_minutes: int = Field(default=10, ge=1)
+    # How long an HR-opened self-enrollment window stays usable.
+    face_enrollment_window_hours: int = Field(default=48, ge=1)
+    # Turned-head captures score lower than straight-on ones; each must still clear this against
+    # the front capture to prove all angles are the same person.
+    face_enrollment_angle_min_similarity: float = Field(default=0.80, ge=0.0, le=1.0)
 
     web_app_base_url: str = "http://localhost:3000"
 

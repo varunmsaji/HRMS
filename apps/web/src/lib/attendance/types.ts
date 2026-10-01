@@ -164,9 +164,9 @@ export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
   CONFIG_ERROR: "Config error",
 };
 
-export type FaceProfileStatus = "ENROLLED" | "REVOKED";
+export type FaceProfileStatus = "PENDING_APPROVAL" | "ENROLLED" | "REJECTED" | "REVOKED";
 
-/** `GET /v1/attendance/face-profiles/{employee_id}` — no biometric data, only enrollment state. */
+/** A face profile — enrollment and review state only, never biometric data. */
 export interface FaceProfile {
   id: string;
   employee_id: string;
@@ -176,8 +176,27 @@ export interface FaceProfile {
   consent_recorded_at: string;
   enrolled_at: string;
   enrolled_by_user_id: string | null;
+  has_review_photo: boolean;
+  reviewed_at: string | null;
+  reviewed_by_user_id: string | null;
+  review_note: string | null;
   revoked_at: string | null;
   revoked_by_user_id: string | null;
 }
 
-export const FACE_MAX_REFERENCE_PHOTOS = 5;
+/** A one-time, HR-opened window in which the employee self-enrolls from the mobile app. */
+export interface FaceEnrollmentWindow {
+  id: string;
+  employee_id: string;
+  status: "OPEN" | "USED" | "CANCELLED" | "EXPIRED";
+  opened_by_user_id: string | null;
+  opened_at: string;
+  expires_at: string;
+}
+
+/** `GET /v1/attendance/face-profiles/{employee_id}/enrollment`. `open_window` is set only while
+ * a window is OPEN and unexpired. */
+export interface FaceEnrollmentStatus {
+  profile: FaceProfile | null;
+  open_window: FaceEnrollmentWindow | null;
+}

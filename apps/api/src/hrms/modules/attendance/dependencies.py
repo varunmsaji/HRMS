@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
-from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
+from hrms.core.storage import DocumentStorageService
+from hrms.modules.attendance.face_service import (
+    FaceEnrollmentService,
+    FacePhotoStorage,
+    FacePunchService,
+)
 from hrms.modules.attendance.face_verification import (
     FaceVerificationProvider,
     get_face_verification_provider,
@@ -76,11 +81,16 @@ def get_face_provider() -> FaceVerificationProvider | None:
     return get_face_verification_provider(get_settings())
 
 
+def get_face_photo_storage() -> FacePhotoStorage:
+    return DocumentStorageService(get_settings())
+
+
 def get_face_enrollment_service(
     session: Annotated[AsyncSession, Depends(get_session)],
     provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
+    storage: Annotated[FacePhotoStorage, Depends(get_face_photo_storage)],
 ) -> FaceEnrollmentService:
-    return FaceEnrollmentService(session, provider)
+    return FaceEnrollmentService(session, provider, get_settings(), storage)
 
 
 def get_face_punch_service(

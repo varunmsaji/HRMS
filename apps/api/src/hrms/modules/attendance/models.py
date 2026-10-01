@@ -472,9 +472,34 @@ class Punch(Base):
 # ---------------------------------------------------------------------------
 
 
+class FaceEnrollmentWindow(Base, TimestampMixin):
+    """A one-time, HR-opened window in which one employee may self-enroll their face. OPEN past
+    `expires_at` counts as expired; USED once a submission succeeds, never reusable."""
+
+    __tablename__ = "face_enrollment_window"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    status: Mapped[str] = mapped_column(String(20))
+    opened_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class EmployeeFaceProfile(Base, TimestampMixin):
-    """An employee's enrollment with the face-verification provider. Stores only the provider's
-    person id — never a face image. `consent_recorded_at` is mandatory: no consent, no row."""
+    """An employee's enrollment with the face-verification provider. Stores the provider's person
+    id; the only image ever kept is the straight-on capture awaiting HR review
+    (`review_photo_key`), deleted once reviewed. `consent_recorded_at` is mandatory."""
 
     __tablename__ = "employee_face_profile"
 
@@ -496,6 +521,17 @@ class EmployeeFaceProfile(Base, TimestampMixin):
     revoked_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
+    enrollment_window_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("face_enrollment_window.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    review_photo_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    review_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class FaceVerificationAttempt(Base):

@@ -844,14 +844,57 @@ class FaceNotDetectedError(ValidationError):
         )
 
 
-class FaceReferencePhotoLimitError(ValidationError):
-    code = "FACE_REFERENCE_PHOTO_LIMIT"
+class FaceProfilePendingApprovalError(ConflictError):
+    code = "FACE_PROFILE_PENDING_APPROVAL"
 
-    def __init__(self, limit: int) -> None:
-        message = f"A face profile can hold at most {limit} reference photos"
-        super().__init__(
-            message, details=[{"field": "photo", "code": self.code, "message": message}]
+    def __init__(self, message: str = "This face profile is waiting for HR approval") -> None:
+        super().__init__(message)
+
+
+class FaceProfileNotPendingError(ConflictError):
+    code = "FACE_PROFILE_NOT_PENDING"
+
+    def __init__(
+        self, message: str = "Only a face profile waiting for approval can be approved or rejected"
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceReviewPhotoNotFoundError(NotFoundError):
+    code = "FACE_REVIEW_PHOTO_NOT_FOUND"
+
+    def __init__(self, message: str = "There is no photo awaiting review") -> None:
+        super().__init__(message)
+
+
+class FaceEnrollmentWindowNotOpenError(ConflictError):
+    code = "FACE_ENROLLMENT_NOT_OPEN"
+
+    def __init__(
+        self,
+        message: str = "Face enrollment is not open for you. Ask HR to open it.",
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceEnrollmentWindowNotFoundError(NotFoundError):
+    code = "FACE_ENROLLMENT_WINDOW_NOT_FOUND"
+
+    def __init__(self, message: str = "There is no open face enrollment to cancel") -> None:
+        super().__init__(message)
+
+
+class FaceEnrollmentAngleMismatchError(ValidationError):
+    """One of the turned-head captures did not match the straight-on capture (or had no face)."""
+
+    code = "FACE_ENROLLMENT_ANGLE_MISMATCH"
+
+    def __init__(self, angle: str) -> None:
+        message = (
+            f"The '{angle}' photo did not clearly show the same face. Retake the photos in good "
+            "light, turning your head only part of the way."
         )
+        super().__init__(message, details=[{"field": angle, "code": self.code, "message": message}])
 
 
 class FaceNotEnrolledForPunchError(ConflictError):

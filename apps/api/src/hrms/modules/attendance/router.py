@@ -17,7 +17,18 @@ from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
@@ -75,7 +86,10 @@ from hrms.modules.attendance.schemas import (
     AttendancePolicyVersionUpdate,
     AttendanceRangeCalculateInput,
     AttendanceRangeCalculateQueued,
+    FaceEnrollmentStatusRead,
+    FaceEnrollmentWindowRead,
     FaceProfileRead,
+    FaceProfileRejectInput,
     FacePunchRead,
     LeaveDayProjectionRead,
     LeaveProjectionCancelInput,
@@ -1692,39 +1706,37 @@ async def list_face_profiles(
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
-@router.get("/attendance/face-profiles/{employee_id}", status_code=status.HTTP_200_OK)
-async def get_face_profile(
+@router.get("/attendance/face-profiles/{employee_id}/enrollment", status_code=status.HTTP_200_OK)
+async def get_face_enrollment_status(
     employee_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
     service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
-) -> DataEnvelope[FaceProfileRead]:
-    data = await service.get_profile(
+) -> DataEnvelope[FaceEnrollmentStatusRead]:
+    data = await service.get_status(
         tenant.company_id, employee_id, scope=scope, caller_employee_id=user.employee_id
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
-@router.post("/attendance/face-profiles/{employee_id}", status_code=status.HTTP_201_CREATED)
-async def enroll_face_profile(
+@router.post(
+    "/attendance/face-profiles/{employee_id}/enrollment-window",
+    status_code=status.HTTP_201_CREATED,
+)
+async def open_face_enrollment_window(
     employee_id: UUID,
     request: Request,
-    photo: Annotated[UploadFile, File()],
-    consent_confirmed: Annotated[bool, Form()],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
     service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
-) -> DataEnvelope[FaceProfileRead]:
-    """Enrolls (or re-enrolls a REVOKED profile). `consent_confirmed` must be true: the caller
-    attests the employee gave biometric consent, and that instant is recorded."""
-    image = await read_upload_bounded(photo, max_bytes=FACE_IMAGE_MAX_BYTES)
-    data = await service.enroll(
+) -> DataEnvelope[FaceEnrollmentWindowRead]:
+    """Opens a one-time self-enrollment window for this employee (replacing any earlier one).
+    The employee then captures their face in the mobile app; the window closes once used."""
+    data = await service.open_window(
         tenant.company_id,
         employee_id,
-        image=image,
-        consent_confirmed=consent_confirmed,
         scope=scope,
         caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
@@ -1733,21 +1745,80 @@ async def enroll_face_profile(
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
-@router.post("/attendance/face-profiles/{employee_id}/photos", status_code=status.HTTP_200_OK)
-async def add_face_reference_photo(
+@router.delete(
+    "/attendance/face-profiles/{employee_id}/enrollment-window",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def cancel_face_enrollment_window(
     employee_id: UUID,
     request: Request,
-    photo: Annotated[UploadFile, File()],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> None:
+    await service.cancel_window(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
+    )
+
+
+@router.get("/attendance/face-profiles/{employee_id}/review-photo")
+async def get_face_review_photo(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> Response:
+    """The straight-on capture of a profile awaiting approval — the only face image the system
+    keeps, and only until HR decides."""
+    image, content_type = await service.get_review_photo(
+        tenant.company_id, employee_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return Response(
+        content=image, media_type=content_type, headers={"Cache-Control": "no-store, private"}
+    )
+
+
+@router.post("/attendance/face-profiles/{employee_id}/approve", status_code=status.HTTP_200_OK)
+async def approve_face_profile(
+    employee_id: UUID,
+    request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
     service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
 ) -> DataEnvelope[FaceProfileRead]:
-    image = await read_upload_bounded(photo, max_bytes=FACE_IMAGE_MAX_BYTES)
-    data = await service.add_reference_photo(
+    data = await service.approve(
         tenant.company_id,
         employee_id,
-        image=image,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/face-profiles/{employee_id}/reject", status_code=status.HTTP_200_OK)
+async def reject_face_profile(
+    employee_id: UUID,
+    body: FaceProfileRejectInput,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceProfileRead]:
+    data = await service.reject(
+        tenant.company_id,
+        employee_id,
+        note=body.note,
         scope=scope,
         caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
@@ -1772,6 +1843,60 @@ async def revoke_face_profile(
         employee_id,
         scope=scope,
         caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Face attendance — employee self-enrollment (ATTENDANCE.PUNCH, SELF)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/attendance/face-enrollment/me", status_code=status.HTTP_200_OK)
+async def get_my_face_enrollment(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceEnrollmentStatusRead]:
+    if user.employee_id is None:
+        raise ValidationError("The caller has no linked employee record")
+    data = await service.get_status(
+        tenant.company_id, user.employee_id, scope=None, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/face-enrollment/me", status_code=status.HTTP_201_CREATED)
+async def submit_my_face_enrollment(
+    request: Request,
+    front: Annotated[UploadFile, File()],
+    left: Annotated[UploadFile, File()],
+    right: Annotated[UploadFile, File()],
+    up: Annotated[UploadFile, File()],
+    down: Annotated[UploadFile, File()],
+    consent_confirmed: Annotated[bool, Form()],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceProfileRead]:
+    """Self-enrollment inside an HR-opened window. The front capture must pass liveness and
+    every other angle must match it; the result waits for HR approval before it can punch."""
+    if user.employee_id is None:
+        raise ValidationError("The caller has no linked employee record")
+    uploads = {"front": front, "left": left, "right": right, "up": up, "down": down}
+    images = {
+        angle: await read_upload_bounded(upload, max_bytes=FACE_IMAGE_MAX_BYTES)
+        for angle, upload in uploads.items()
+    }
+    data = await service.submit_self(
+        tenant.company_id,
+        user.employee_id,
+        images=images,
+        consent_confirmed=consent_confirmed,
         actor_user_id=tenant.user_id,
         **_client_meta(request),
     )
