@@ -13,12 +13,19 @@ original `SesEmailSender` (a hard AWS SES/`aioboto3` dependency — the only rea
 this module ever had, directly contradicting this deployment's no-AWS-managed-services
 architecture) with `SmtpEmailSender`, a provider-agnostic authenticated-SMTP transport. Nothing
 about the `EmailSender` protocol, the caller sites, or the message content this module receives
-changed — only the transport."""
+changed — only the transport.
+
+`MailtrapEmailSender` (added after Phase 5A) is a second real transport, selected via
+`Settings.email_provider="mailtrap"` — same `EmailSender` protocol, same caller sites, only the
+transport differs again. It calls Mailtrap's HTTP Send API directly over `httpx` (already a
+dependency) rather than via Mailtrap's own synchronous Python SDK, so sending stays fully async
+like `SmtpEmailSender` instead of blocking the event loop on a sync HTTP call."""
 
 from email.message import EmailMessage
 from typing import Protocol
 
 import aiosmtplib
+import httpx
 
 from hrms.core.config.settings import Settings
 from hrms.core.observability.logging import get_logger
@@ -31,8 +38,8 @@ class EmailSender(Protocol):
 
 
 class LoggingEmailSender:
-    """Selected whenever `Settings.email_provider != "smtp"` — every local dev environment and
-    this module's own test suite today (default `"logging"`). Logs the email instead of sending
+    """Selected whenever `Settings.email_provider == "logging"` (the default) — every local dev
+    environment and this module's own test suite today. Logs the email instead of sending
     it, so onboarding is fully exercisable end-to-end (including reading the invite URL back out
     of the admin API response) without a real mailbox or SMTP credentials.
 
@@ -96,14 +103,64 @@ class SmtpEmailSender:
             raise EmailDeliveryError("Failed to send email via SMTP.") from exc
 
 
+class MailtrapEmailSender:
+    """Real delivery via the Mailtrap Send API (https://send.api.mailtrap.io/api/send). Called
+    directly over `httpx.AsyncClient` rather than Mailtrap's own (synchronous) Python SDK — same
+    reasoning as `SmtpEmailSender` using `aiosmtplib` instead of a blocking SMTP client.
+    `Settings._guard_mailtrap_config` has already validated the API token and sender address
+    before this class is ever constructed, so `send` itself does no config validation."""
+
+    _API_URL = "https://send.api.mailtrap.io/api/send"
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
+        settings = self._settings
+        payload = {
+            "from": {"email": settings.smtp_from_email, "name": settings.smtp_from_name},
+            "to": [{"email": to}],
+            "subject": subject,
+            "text": text_body,
+            "html": html_body,
+            "category": "Onboarding",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    self._API_URL,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {settings.mailtrap_api_token}"},
+                )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            # Same log-hygiene rule as `SmtpEmailSender` above: never the API token, never the
+            # response body (which Mailtrap may echo request content into on a validation error).
+            status_code = (
+                exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            )
+            get_logger(__name__).error(
+                "onboarding_email_mailtrap_send_failed",
+                to=to,
+                subject=subject,
+                error_type=type(exc).__name__,
+                status_code=status_code,
+            )
+            raise EmailDeliveryError("Failed to send email via Mailtrap.") from exc
+
+
 class EmailDeliveryError(Exception):
-    """Raised by `SmtpEmailSender.send` on any SMTP-layer failure. Deliberately carries no
-    exception chain data in its own message (`from exc` preserves the original for local
-    debugging/`repr()` in a traceback, never for anything serialized into a log line or an API
-    response) — callers must not surface `str(exc)` to an HTTP response or a structured log."""
+    """Raised by `SmtpEmailSender.send`/`MailtrapEmailSender.send` on any transport-layer
+    failure. Deliberately carries no exception chain data in its own message (`from exc`
+    preserves the original for local debugging/`repr()` in a traceback, never for anything
+    serialized into a log line or an API response) — callers must not surface `str(exc)` to an
+    HTTP response or a structured log."""
 
 
 def get_email_sender(settings: Settings) -> EmailSender:
     if settings.email_provider == "smtp":
         return SmtpEmailSender(settings)
+    if settings.email_provider == "mailtrap":
+        return MailtrapEmailSender(settings)
     return LoggingEmailSender()

@@ -127,11 +127,20 @@ class Settings(BaseSettings):
     # RELEASE_HARDENING_PHASE_5A (`docs/audits/RELEASE_HARDENING_PHASE_5A_EMAIL.md`) replaced the
     # previous `"ses"` option (a hard AWS SES dependency, contradicting this deployment's no-AWS
     # architecture — the same contradiction Phase 3A found and fixed for KMS) with `"smtp"`, a
-    # provider-agnostic authenticated-SMTP transport. Defaults to the logging-only sender
-    # everywhere until explicitly switched to `"smtp"`; `_guard_non_development_config` below
-    # refuses to boot staging/production with `"logging"` still selected, so a pilot deployment
-    # can never silently believe emails are being sent when they are merely being logged.
-    email_provider: Literal["logging", "smtp"] = "logging"
+    # provider-agnostic authenticated-SMTP transport; `"mailtrap"` (a transactional-email vendor's
+    # HTTP API, called via `httpx` rather than SMTP) was added alongside it so switching providers
+    # is a config change, not a code change — both implement the same `EmailSender` protocol in
+    # `onboarding/email_sender.py`. Defaults to the logging-only sender everywhere until
+    # explicitly switched; `_guard_non_development_config` below refuses to boot staging/
+    # production with `"logging"` still selected, so a pilot deployment can never silently believe
+    # emails are being sent when they are merely being logged.
+    email_provider: Literal["logging", "smtp", "mailtrap"] = "logging"
+
+    # Sender identity shown on outgoing email — shared by whichever provider is active (`"smtp"`
+    # or `"mailtrap"`); not itself an SMTP protocol detail, despite the field name predating the
+    # `"mailtrap"` option.
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Staff Spectrum HRMS"
 
     # SMTP transport config (RELEASE_HARDENING_PHASE_5A) — only meaningful, and only validated,
     # when `email_provider == "smtp"` (see `_guard_smtp_config` below). Deliberately provider-
@@ -141,14 +150,18 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
-    smtp_from_email: str = ""
-    smtp_from_name: str = "Staff Spectrum HRMS"
     # STARTTLS (upgrade a plaintext connection) — the common case for port 587/25.
     smtp_use_tls: bool = True
     # Implicit TLS from the first byte (common for port 465). Mutually exclusive in practice with
     # STARTTLS, but both are validated together, not toggled automatically by port number, so the
     # operator's choice is always explicit.
     smtp_use_ssl: bool = False
+
+    # Mailtrap Send API config — only meaningful, and only validated, when
+    # `email_provider == "mailtrap"` (see `_guard_mailtrap_config` below). `MailtrapEmailSender`
+    # calls Mailtrap's HTTP API directly over `httpx` rather than via Mailtrap's own (synchronous)
+    # Python SDK, to stay consistent with this module's fully async transport.
+    mailtrap_api_token: str = ""
 
     web_app_base_url: str = "http://localhost:3000"
 
@@ -239,6 +252,27 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _guard_mailtrap_config(self) -> "Settings":
+        """Mirrors `_guard_smtp_config` above for the `"mailtrap"` provider: validated whenever
+        `"mailtrap"` is selected, in every environment, so a half-configured Mailtrap transport
+        fails loudly at boot rather than on the first email a real user is waiting on."""
+        if self.email_provider != "mailtrap":
+            return self
+
+        if not self.mailtrap_api_token:
+            raise ValueError(
+                "mailtrap_api_token must be set explicitly when email_provider='mailtrap' — "
+                "refusing to boot without an API token to authenticate with."
+            )
+        if not self.smtp_from_email:
+            raise ValueError(
+                "smtp_from_email must be set explicitly when email_provider='mailtrap' — "
+                "refusing to boot without a sender address."
+            )
+
+        return self
+
+    @model_validator(mode="after")
     def _guard_non_development_config(self) -> "Settings":
         """SEC-01/OPS-01 (PLATFORM_READINESS_SECURITY_AUDIT_2026-09-17) — enforced here, not
         only documented, because `env/.env.production.example` already documented Secrets
@@ -303,11 +337,12 @@ class Settings(BaseSettings):
 
         # RELEASE_HARDENING_PHASE_5A — `"logging"` never delivers a real email; a pilot deployment
         # must never be able to silently believe verification/invite/password-reset emails are
-        # being sent when they are, in fact, only written to a log line. `_guard_smtp_config`
-        # (above) has already validated the SMTP fields themselves when this is reached.
-        if self.email_provider != "smtp":
+        # being sent when they are, in fact, only written to a log line. `_guard_smtp_config`/
+        # `_guard_mailtrap_config` (above) have already validated the chosen provider's own fields
+        # by the time this is reached.
+        if self.email_provider not in ("smtp", "mailtrap"):
             raise ValueError(
-                "email_provider must be 'smtp' for environment="
+                "email_provider must be 'smtp' or 'mailtrap' for environment="
                 f"{self.environment!r} — refusing to boot with the logging-only email sender in "
                 "a non-development environment; real users cannot receive verification, invite, "
                 "or password-reset emails otherwise."
