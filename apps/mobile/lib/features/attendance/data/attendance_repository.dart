@@ -336,6 +336,35 @@ class FacePunchResult {
   }
 }
 
+/// The signed-in employee's face enrollment state (`GET /attendance/face-enrollment/me`).
+class FaceEnrollmentStatus {
+  FaceEnrollmentStatus({this.profileStatus, this.reviewNote, this.windowExpiresAt});
+
+  /// `PENDING_APPROVAL` | `ENROLLED` | `REJECTED` | `REVOKED`, or null if never enrolled.
+  final String? profileStatus;
+  final String? reviewNote;
+
+  /// Set only while an HR-opened enrollment window is open and unexpired.
+  final DateTime? windowExpiresAt;
+
+  bool get isEnrolled => profileStatus == 'ENROLLED';
+  bool get isPendingApproval => profileStatus == 'PENDING_APPROVAL';
+  bool get canEnroll => windowExpiresAt != null && !isEnrolled && !isPendingApproval;
+
+  factory FaceEnrollmentStatus.fromJson(Map<String, dynamic> json) {
+    final profile = json['profile'] as Map<String, dynamic>?;
+    final window = json['open_window'] as Map<String, dynamic>?;
+    return FaceEnrollmentStatus(
+      profileStatus: profile?['status'] as String?,
+      reviewNote: profile?['review_note'] as String?,
+      windowExpiresAt: window == null ? null : DateTime.parse(window['expires_at'] as String),
+    );
+  }
+}
+
+/// Capture order for self-enrollment; must match the server's form field names.
+const faceEnrollmentAngles = ['front', 'left', 'right', 'up', 'down'];
+
 class AttendanceRepository {
   AttendanceRepository(this._client);
   final ApiClient _client;
@@ -500,6 +529,24 @@ class AttendanceRepository {
           'photo': MultipartFile.fromBytes(photoJpeg, filename: 'selfie.jpg', contentType: DioMediaType('image', 'jpeg')),
         }),
         parse: (d) => FacePunchResult.fromJson(d as Map<String, dynamic>),
+      );
+
+  Future<FaceEnrollmentStatus> getMyFaceEnrollment() => _client.get(
+        '/attendance/face-enrollment/me',
+        parse: (d) => FaceEnrollmentStatus.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// Submits the five captures (keyed by [faceEnrollmentAngles]) inside an open window. The
+  /// result waits for HR approval before it can be used to punch.
+  Future<void> submitFaceEnrollment({required Map<String, List<int>> photos, required bool consentConfirmed}) =>
+      _client.postMultipart(
+        '/attendance/face-enrollment/me',
+        buildForm: () => FormData.fromMap({
+          'consent_confirmed': consentConfirmed ? 'true' : 'false',
+          for (final angle in faceEnrollmentAngles)
+            angle: MultipartFile.fromBytes(photos[angle]!, filename: '$angle.jpg', contentType: DioMediaType('image', 'jpeg')),
+        }),
+        parse: (_) {},
       );
 
   // Policy assignments

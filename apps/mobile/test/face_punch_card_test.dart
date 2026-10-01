@@ -11,11 +11,17 @@ import 'package:hrms_mobile/features/attendance/presentation/holiday_calendars_s
 
 const _selfie = [0xff, 0xd8, 0xff, 0xe0];
 
+FaceEnrollmentStatus _enrolled() => FaceEnrollmentStatus(profileStatus: 'ENROLLED');
+
 class _FakeRepository implements AttendanceRepository {
-  _FakeRepository(this.respond);
+  _FakeRepository(this.respond, {FaceEnrollmentStatus? status}) : status = status ?? _enrolled();
 
   final Future<FacePunchResult> Function() respond;
+  final FaceEnrollmentStatus status;
   final calls = <({String direction, List<int> photo})>[];
+
+  @override
+  Future<FaceEnrollmentStatus> getMyFaceEnrollment() async => status;
 
   @override
   Future<FacePunchResult> facePunchMe({required String direction, required List<int> photoJpeg}) {
@@ -47,8 +53,14 @@ Future<void> _pump(
       faceCaptureProvider.overrideWithValue(capture),
     ],
     child: MaterialApp(home: Scaffold(body: FacePunchCard(onPunched: onPunched))),
-  ));
+  )).then((_) => tester.pumpAndSettle());
 }
+
+Future<void> _pumpStatus(WidgetTester tester, FaceEnrollmentStatus status) => _pump(
+      tester,
+      repository: _FakeRepository(() async => _result('IN'), status: status),
+      capture: () async => _selfie,
+    );
 
 void main() {
   testWidgets('punches in with the captured selfie and reports the match', (tester) async {
@@ -117,5 +129,40 @@ void main() {
 
     expect(find.textContaining('Allow camera access'), findsOneWidget);
     expect(repository.calls, isEmpty);
+  });
+
+  testWidgets('offers set-up when HR has opened enrollment', (tester) async {
+    await _pumpStatus(tester, FaceEnrollmentStatus(windowExpiresAt: DateTime.utc(2026, 10, 3, 2)));
+
+    expect(find.text('Set up face attendance'), findsOneWidget);
+    expect(find.text('Face punch in'), findsNothing);
+
+    await tester.tap(find.text('Set up face attendance'));
+    await tester.pumpAndSettle();
+    expect(find.text('Register your face'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byWidgetPredicate((w) => w is FilledButton)).onPressed, isNull,
+        reason: 'Start stays disabled until consent is ticked');
+  });
+
+  testWidgets('waits for HR approval after submitting', (tester) async {
+    await _pumpStatus(tester, FaceEnrollmentStatus(profileStatus: 'PENDING_APPROVAL'));
+
+    expect(find.textContaining('waiting for HR approval'), findsOneWidget);
+    expect(find.text('Face punch in'), findsNothing);
+    expect(find.text('Set up face attendance'), findsNothing);
+  });
+
+  testWidgets('shows the rejection reason', (tester) async {
+    await _pumpStatus(tester, FaceEnrollmentStatus(profileStatus: 'REJECTED', reviewNote: 'Photo too dark'));
+
+    expect(find.textContaining('Reason: Photo too dark'), findsOneWidget);
+    expect(find.text('Face punch in'), findsNothing);
+  });
+
+  testWidgets('tells an unenrolled employee to ask HR', (tester) async {
+    await _pumpStatus(tester, FaceEnrollmentStatus());
+
+    expect(find.textContaining('Ask HR to open face enrollment'), findsOneWidget);
+    expect(find.text('Face punch in'), findsNothing);
   });
 }

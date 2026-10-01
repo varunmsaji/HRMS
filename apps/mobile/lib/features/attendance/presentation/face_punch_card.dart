@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/api/api_error.dart';
+import '../data/attendance_repository.dart';
+import 'face_enrollment_screen.dart';
 import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 /// Opens the front camera and returns the selfie as JPEG bytes, or null if cancelled.
@@ -23,8 +25,10 @@ final faceCaptureProvider = Provider<FaceCapture>((ref) {
   };
 });
 
-/// Face punch in/out for the signed-in employee: selfie -> server liveness + face match ->
-/// server-timed punch. Every rejection message comes from the server and is shown as-is.
+/// Face attendance for the signed-in employee. Shows whichever applies: set up (when HR has
+/// opened enrollment), waiting for HR approval, rejected, not set up — or, once enrolled,
+/// selfie punch in/out (server liveness + face match -> server-timed punch). Server messages
+/// are shown as-is.
 class FacePunchCard extends ConsumerStatefulWidget {
   const FacePunchCard({super.key, this.onPunched});
 
@@ -36,7 +40,43 @@ class FacePunchCard extends ConsumerStatefulWidget {
 }
 
 class _FacePunchCardState extends ConsumerState<FacePunchCard> {
+  FaceEnrollmentStatus? _status;
+  String? _loadError;
+  bool _loading = true;
   String? _verifyingDirection;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final status = await ref.read(attendanceRepositoryProvider).getMyFaceEnrollment();
+      if (mounted) setState(() => _status = status);
+    } catch (error) {
+      if (mounted) setState(() => _loadError = describeApiError(error));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _openEnrollment() async {
+    final submitted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const FaceEnrollmentScreen()),
+    );
+    if (submitted == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Face submitted. HR will review it before face punching is switched on.'),
+      ));
+    }
+    await _load();
+  }
 
   Future<void> _punch(String direction) async {
     final messenger = ScaffoldMessenger.of(context);
@@ -61,6 +101,7 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
       widget.onPunched?.call();
     } catch (error) {
       messenger.showSnackBar(SnackBar(content: Text(describeApiError(error))));
+      if (error is ApiError && error.code == 'FACE_NOT_ENROLLED') _load();
     } finally {
       if (mounted) setState(() => _verifyingDirection = null);
     }
@@ -69,7 +110,63 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final busy = _verifyingDirection != null;
+    final text = Theme.of(context).textTheme;
+    final status = _status;
+
+    String message;
+    List<Widget> actions = const [];
+    if (_loading) {
+      message = 'Loading…';
+    } else if (_loadError != null) {
+      message = _loadError!;
+      actions = [OutlinedButton(onPressed: _load, child: const Text('Retry'))];
+    } else if (status!.isEnrolled) {
+      final busy = _verifyingDirection != null;
+      message = busy
+          ? 'Verifying your face…'
+          : 'Take a selfie to punch. Face the camera in good light, with no one else in frame.';
+      actions = [
+        if (busy) const LinearProgressIndicator(),
+        if (busy) const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: busy ? null : () => _punch('IN'),
+              icon: const Icon(Icons.camera_front),
+              label: const Text('Face punch in'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: busy ? null : () => _punch('OUT'),
+              icon: const Icon(Icons.camera_front_outlined),
+              label: const Text('Face punch out'),
+            ),
+          ),
+        ]),
+      ];
+    } else if (status.isPendingApproval) {
+      message = 'Your face has been submitted and is waiting for HR approval.';
+    } else if (status.canEnroll) {
+      final expires = status.windowExpiresAt!.toLocal();
+      message = 'HR has opened face enrollment for you until '
+          '${MaterialLocalizations.of(context).formatShortDate(expires)} '
+          '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(expires))}. '
+          'It takes about a minute.';
+      actions = [
+        FilledButton.icon(
+          onPressed: _openEnrollment,
+          icon: const Icon(Icons.face),
+          label: const Text('Set up face attendance'),
+        ),
+      ];
+    } else if (status.profileStatus == 'REJECTED') {
+      message = 'Your face enrollment was not approved. Ask HR to open it again.'
+          '${status.reviewNote != null ? ' Reason: ${status.reviewNote}' : ''}';
+    } else {
+      message = 'Face attendance is not set up yet. Ask HR to open face enrollment for you.';
+    }
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -79,40 +176,17 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
         border: Border.all(color: scheme.outlineVariant),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(children: [
             Icon(Icons.face_retouching_natural, color: scheme.primary),
             const SizedBox(width: 8),
-            Text('Face attendance', style: Theme.of(context).textTheme.titleSmall),
+            Text('Face attendance', style: text.titleSmall),
           ]),
           const SizedBox(height: 4),
-          Text(
-            busy
-                ? 'Verifying your face…'
-                : 'Take a selfie to punch. Face the camera in good light, with no one else in frame.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 12),
-          if (busy) const LinearProgressIndicator(),
-          if (busy) const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: busy ? null : () => _punch('IN'),
-                icon: const Icon(Icons.camera_front),
-                label: const Text('Face punch in'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: busy ? null : () => _punch('OUT'),
-                icon: const Icon(Icons.camera_front_outlined),
-                label: const Text('Face punch out'),
-              ),
-            ),
-          ]),
+          Text(message, style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+          if (actions.isNotEmpty) const SizedBox(height: 12),
+          ...actions,
         ],
       ),
     );
