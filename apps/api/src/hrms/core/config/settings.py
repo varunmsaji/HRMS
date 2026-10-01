@@ -163,6 +163,20 @@ class Settings(BaseSettings):
     # Python SDK, to stay consistent with this module's fully async transport.
     mailtrap_api_token: str = ""
 
+    # Face attendance (`attendance/face_verification.py`). `"disabled"` (the default) rejects every
+    # face punch/enrollment as unavailable — there is deliberately no fake always-match provider,
+    # since one leaking into a real deployment would let anyone punch as anyone.
+    face_verification_provider: Literal["disabled", "luxand"] = "disabled"
+    luxand_api_token: str = ""
+    luxand_api_base_url: str = "https://api.luxand.cloud"
+    # Applied on top of the provider's own verified/not-verified verdict.
+    face_match_min_similarity: float = Field(default=0.90, ge=0.0, le=1.0)
+    face_liveness_min_score: float = Field(default=0.80, ge=0.0, le=1.0)
+    face_provider_timeout_seconds: float = Field(default=15.0, gt=0.0)
+    # Failed face punches allowed per employee within the window before further tries get a 429.
+    face_punch_max_failed_attempts: int = Field(default=5, ge=1)
+    face_punch_attempt_window_minutes: int = Field(default=10, ge=1)
+
     web_app_base_url: str = "http://localhost:3000"
 
     # PAY-006 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decision 16) — employees with
@@ -270,6 +284,15 @@ class Settings(BaseSettings):
                 "refusing to boot without a sender address."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def _guard_face_verification_config(self) -> "Settings":
+        if self.face_verification_provider == "luxand" and not self.luxand_api_token:
+            raise ValueError(
+                "luxand_api_token must be set explicitly when face_verification_provider='luxand' "
+                "— refusing to boot without an API token to authenticate with."
+            )
         return self
 
     @model_validator(mode="after")

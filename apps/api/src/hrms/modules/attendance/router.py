@@ -14,10 +14,10 @@ caller is punching for themselves or on behalf of someone else, so — like
 and instead calls `rbac.resolve_data_scope()` directly."""
 
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
@@ -27,17 +27,22 @@ from hrms.core.rbac.service import RbacService
 from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
+from hrms.core.uploads import read_upload_bounded
 from hrms.modules.attendance.dependencies import (
     get_attendance_day_service,
     get_attendance_period_service,
     get_attendance_service,
+    get_face_enrollment_service,
+    get_face_punch_service,
     get_leave_projection_service,
     get_overtime_record_service,
     get_punch_service,
     get_regularization_request_service,
     get_shift_roster_service,
 )
+from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
 from hrms.modules.attendance.permissions import (
+    ATTENDANCE_FACE_ENROLLMENT_MANAGE,
     ATTENDANCE_LEAVE_PROJECTION_SYNC,
     ATTENDANCE_LOCK,
     ATTENDANCE_OVERTIME_APPROVE,
@@ -54,6 +59,7 @@ from hrms.modules.attendance.permissions import (
     ATTENDANCE_VIEW_ALL,
 )
 from hrms.modules.attendance.schemas import (
+    FACE_IMAGE_MAX_BYTES,
     AttendanceDayRead,
     AttendancePeriodCreate,
     AttendancePeriodRead,
@@ -69,6 +75,8 @@ from hrms.modules.attendance.schemas import (
     AttendancePolicyVersionUpdate,
     AttendanceRangeCalculateInput,
     AttendanceRangeCalculateQueued,
+    FaceProfileRead,
+    FacePunchRead,
     LeaveDayProjectionRead,
     LeaveProjectionCancelInput,
     LeaveProjectionSync,
@@ -1655,5 +1663,149 @@ async def cancel_leave_projection(
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Face attendance — enrollment (ATTENDANCE.FACE_ENROLLMENT_MANAGE, data-scoped)
+# ---------------------------------------------------------------------------
+
+
+def _client_meta(request: Request) -> dict[str, str | None]:
+    return {
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("User-Agent"),
+    }
+
+
+@router.get("/attendance/face-profiles", status_code=status.HTTP_200_OK)
+async def list_face_profiles(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> ListEnvelope[FaceProfileRead]:
+    data = await service.list_profiles(
+        tenant.company_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance/face-profiles/{employee_id}", status_code=status.HTTP_200_OK)
+async def get_face_profile(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceProfileRead]:
+    data = await service.get_profile(
+        tenant.company_id, employee_id, scope=scope, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/face-profiles/{employee_id}", status_code=status.HTTP_201_CREATED)
+async def enroll_face_profile(
+    employee_id: UUID,
+    request: Request,
+    photo: Annotated[UploadFile, File()],
+    consent_confirmed: Annotated[bool, Form()],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceProfileRead]:
+    """Enrolls (or re-enrolls a REVOKED profile). `consent_confirmed` must be true: the caller
+    attests the employee gave biometric consent, and that instant is recorded."""
+    image = await read_upload_bounded(photo, max_bytes=FACE_IMAGE_MAX_BYTES)
+    data = await service.enroll(
+        tenant.company_id,
+        employee_id,
+        image=image,
+        consent_confirmed=consent_confirmed,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/face-profiles/{employee_id}/photos", status_code=status.HTTP_200_OK)
+async def add_face_reference_photo(
+    employee_id: UUID,
+    request: Request,
+    photo: Annotated[UploadFile, File()],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceProfileRead]:
+    image = await read_upload_bounded(photo, max_bytes=FACE_IMAGE_MAX_BYTES)
+    data = await service.add_reference_photo(
+        tenant.company_id,
+        employee_id,
+        image=image,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete("/attendance/face-profiles/{employee_id}", status_code=status.HTTP_200_OK)
+async def revoke_face_profile(
+    employee_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceProfileRead]:
+    """Deletes the employee's biometric record at the provider, then marks the profile REVOKED.
+    The profile row itself is kept as the audit trail of consent and enrollment."""
+    data = await service.revoke(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Face attendance — self-service face punch (ATTENDANCE.PUNCH, SELF)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/attendance/face-punches/me", status_code=status.HTTP_201_CREATED)
+async def create_face_punch(
+    request: Request,
+    photo: Annotated[UploadFile, File()],
+    direction: Annotated[Literal["IN", "OUT"], Form()],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
+    service: Annotated[FacePunchService, Depends(get_face_punch_service)],
+) -> DataEnvelope[FacePunchRead]:
+    """Same contract as `POST /attendance/punches/me` — no time, source or employee field; the
+    server stamps the instant — plus a live photo that must pass liveness and match the caller's
+    enrolled face profile before any punch is written."""
+    if user.employee_id is None:
+        raise ValidationError("The caller has no linked employee record")
+    image = await read_upload_bounded(photo, max_bytes=FACE_IMAGE_MAX_BYTES)
+    data = await service.punch_self(
+        tenant.company_id,
+        user.employee_id,
+        image=image,
+        direction=direction,
+        scope=scope,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))

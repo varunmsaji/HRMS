@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { FaceEnrollmentCard } from "@/components/attendance/face-enrollment-card";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -101,6 +102,9 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
 
   return (
     <div className="space-y-4">
+      {can("ATTENDANCE.FACE_ENROLLMENT_MANAGE") ? (
+        <FaceEnrollmentCard employeeId={employeeId} employeeLabel={employeeLabel} />
+      ) : null}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-wrap items-end gap-3">
           <FormField id="att-panel-from" label="From" className="w-40">

@@ -163,3 +163,21 @@ export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
   INCOMPLETE: "Incomplete",
   CONFIG_ERROR: "Config error",
 };
+
+export type FaceProfileStatus = "ENROLLED" | "REVOKED";
+
+/** `GET /v1/attendance/face-profiles/{employee_id}` — no biometric data, only enrollment state. */
+export interface FaceProfile {
+  id: string;
+  employee_id: string;
+  provider: string;
+  status: FaceProfileStatus;
+  reference_photo_count: number;
+  consent_recorded_at: string;
+  enrolled_at: string;
+  enrolled_by_user_id: string | null;
+  revoked_at: string | null;
+  revoked_by_user_id: string | null;
+}
+
+export const FACE_MAX_REFERENCE_PHOTOS = 5;

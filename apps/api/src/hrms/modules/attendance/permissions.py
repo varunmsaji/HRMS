@@ -54,6 +54,11 @@ ATTENDANCE_UNLOCK = "ATTENDANCE.UNLOCK"
 # precedent in this file (WD-28 decision 6 / WD-29 decision 6 / WD-30's identical reasoning).
 ATTENDANCE_LEAVE_PROJECTION_SYNC = "ATTENDANCE.LEAVE_PROJECTION_SYNC"
 
+# Face attendance — enrolling someone's biometric profile is a materially higher-risk act than
+# punching, so it gets its own code rather than riding on `PUNCH_ON_BEHALF`. Data-scoped like
+# `PUNCH_ON_BEHALF`: the target employee must be inside the caller's scope.
+ATTENDANCE_FACE_ENROLLMENT_MANAGE = "ATTENDANCE.FACE_ENROLLMENT_MANAGE"
+
 ATTENDANCE_PERMISSIONS = [
     (
         ATTENDANCE_POLICY_MANAGE,
@@ -104,5 +109,10 @@ ATTENDANCE_PERMISSIONS = [
         ATTENDANCE_LEAVE_PROJECTION_SYNC,
         "ATTENDANCE",
         "Publish or cancel an approved leave projection (Leave -> Attendance adapter)",
+    ),
+    (
+        ATTENDANCE_FACE_ENROLLMENT_MANAGE,
+        "ATTENDANCE",
+        "Enroll, add reference photos for, and revoke employee face profiles",
     ),
 ]

@@ -8,6 +8,7 @@ children they carry, not in the versioning state machine)."""
 from typing import Any
 
 from hrms.core.errors.base import (
+    AppError,
     ConflictError,
     NotFoundError,
     PermissionDeniedError,
@@ -752,3 +753,147 @@ class AttendanceRangeInFutureError(ValidationError):
 
     def __init__(self, message: str = "date_to cannot be after today") -> None:
         super().__init__(message)
+
+
+# ---------------------------------------------------------------------------
+# Face attendance
+# ---------------------------------------------------------------------------
+
+
+class FaceVerificationUnavailableError(AppError):
+    """`face_verification_provider` is `"disabled"` — face enrollment/punching is switched off
+    for this deployment, not broken."""
+
+    code = "FACE_VERIFICATION_UNAVAILABLE"
+    status_code = 503
+
+    def __init__(
+        self, message: str = "Face verification is not enabled for this deployment"
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceProviderFailedError(AppError):
+    """The face provider could not be reached or answered unexpectedly. Never carries the
+    provider's own error text."""
+
+    code = "FACE_PROVIDER_FAILED"
+    status_code = 502
+
+    def __init__(
+        self, message: str = "Face verification service is unavailable; try again shortly"
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceProfileNotFoundError(NotFoundError):
+    code = "FACE_PROFILE_NOT_FOUND"
+
+    def __init__(self, message: str = "This employee has no face profile") -> None:
+        super().__init__(message)
+
+
+class FaceProfileAlreadyEnrolledError(ConflictError):
+    code = "FACE_PROFILE_ALREADY_ENROLLED"
+
+    def __init__(
+        self,
+        message: str = "This employee is already enrolled; revoke the profile to re-enroll",
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceProfileNotEnrolledError(ConflictError):
+    code = "FACE_PROFILE_NOT_ENROLLED"
+
+    def __init__(self, message: str = "This employee's face profile is not enrolled") -> None:
+        super().__init__(message)
+
+
+class FaceConsentRequiredError(ValidationError):
+    code = "FACE_CONSENT_REQUIRED"
+
+    def __init__(
+        self,
+        message: str = "Biometric consent must be confirmed before enrolling a face profile",
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "consent_confirmed", "code": self.code, "message": message}],
+        )
+
+
+class FaceImageInvalidError(ValidationError):
+    code = "FACE_IMAGE_INVALID"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message, details=[{"field": "photo", "code": self.code, "message": message}]
+        )
+
+
+class FaceNotDetectedError(ValidationError):
+    code = "FACE_NOT_DETECTED"
+
+    def __init__(
+        self,
+        message: str = "No face was detected in the photo. Face the camera in good light.",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "photo", "code": self.code, "message": message}]
+        )
+
+
+class FaceReferencePhotoLimitError(ValidationError):
+    code = "FACE_REFERENCE_PHOTO_LIMIT"
+
+    def __init__(self, limit: int) -> None:
+        message = f"A face profile can hold at most {limit} reference photos"
+        super().__init__(
+            message, details=[{"field": "photo", "code": self.code, "message": message}]
+        )
+
+
+class FaceNotEnrolledForPunchError(ConflictError):
+    code = "FACE_NOT_ENROLLED"
+
+    def __init__(
+        self, message: str = "You are not enrolled for face attendance. Ask HR to enroll you."
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceNotMatchedError(ValidationError):
+    code = "FACE_NOT_MATCHED"
+
+    def __init__(
+        self, message: str = "Your face did not match your enrolled profile. Please try again."
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "photo", "code": self.code, "message": message}]
+        )
+
+
+class FaceLivenessFailedError(ValidationError):
+    """The photo looks like a photo of a photo or a screen rather than a live person."""
+
+    code = "FACE_LIVENESS_FAILED"
+
+    def __init__(
+        self,
+        message: str = "We could not confirm a live face. Face the camera directly and try again.",
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "photo", "code": self.code, "message": message}]
+        )
+
+
+class FacePunchAttemptsExceededError(AppError):
+    code = "FACE_ATTEMPTS_EXCEEDED"
+    status_code = 429
+
+    def __init__(self, window_minutes: int) -> None:
+        super().__init__(
+            f"Too many failed face attempts. Try again in {window_minutes} minutes or ask HR "
+            "to record your punch."
+        )

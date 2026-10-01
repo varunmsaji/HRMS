@@ -262,6 +262,7 @@ async def test_registration_success_full_row_graph(
                 "ATTENDANCE.LOCK",
                 "ATTENDANCE.UNLOCK",
                 "ATTENDANCE.LEAVE_PROJECTION_SYNC",
+                "ATTENDANCE.FACE_ENROLLMENT_MANAGE",
                 "EMPLOYEE.VIEW",
                 "EMPLOYEE.VIEW_ALL",
                 "EMPLOYEE.CREATE",

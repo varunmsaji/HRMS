@@ -5,7 +5,13 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
+from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
+from hrms.modules.attendance.face_verification import (
+    FaceVerificationProvider,
+    get_face_verification_provider,
+)
 from hrms.modules.attendance.service import (
     AttendanceDayService,
     AttendancePeriodService,
@@ -64,3 +70,21 @@ def get_leave_projection_service(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> LeaveProjectionService:
     return LeaveProjectionService(session)
+
+
+def get_face_provider() -> FaceVerificationProvider | None:
+    return get_face_verification_provider(get_settings())
+
+
+def get_face_enrollment_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
+) -> FaceEnrollmentService:
+    return FaceEnrollmentService(session, provider)
+
+
+def get_face_punch_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
+) -> FacePunchService:
+    return FacePunchService(session, provider, get_settings())
