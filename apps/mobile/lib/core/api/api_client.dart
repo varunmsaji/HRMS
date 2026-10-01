@@ -96,7 +96,9 @@ class ApiClient {
     try {
       response = await _dio.request<dynamic>(
         path,
-        data: body,
+        // A FormData can only be sent once, so multipart callers pass a builder and the
+        // 401-refresh retry gets a fresh one.
+        data: body is FormData Function() ? body() : body,
         options: Options(method: method, headers: requestHeaders, responseType: responseType),
       );
     } on DioException catch (e) {
@@ -257,6 +259,14 @@ class ApiClient {
     bool authenticated = true,
   }) =>
       _request<T>(path, method: 'POST', body: body, authenticated: authenticated, parseData: parse);
+
+  /// Multipart POST. [buildForm] is called once per attempt (see `_rawRequest`).
+  Future<T> postMultipart<T>(
+    String path, {
+    required FormData Function() buildForm,
+    required T Function(dynamic) parse,
+  }) =>
+      _request<T>(path, method: 'POST', body: buildForm, parseData: parse);
 
   Future<T> patch<T>(
     String path, {

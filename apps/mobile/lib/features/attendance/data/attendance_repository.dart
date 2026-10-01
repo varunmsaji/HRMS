@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+
 import '../../../core/api/api_client.dart';
 
 class Shift {
@@ -306,6 +308,34 @@ class CalendarResolution {
 /// Calendars, Regularizations, Overtime, Shift Rosters, Attendance Periods,
 /// Attendance Days, Punches, Policy Assignments and Calendar Resolution —
 /// mirrors `apps/api/src/hrms/modules/{attendance,organisation}/router.py`.
+/// `POST /attendance/face-punches/me` — the punch plus the scores that justified it.
+class FacePunchResult {
+  FacePunchResult({
+    required this.punchId,
+    required this.direction,
+    required this.punchTime,
+    required this.similarity,
+    required this.livenessScore,
+  });
+
+  final String punchId;
+  final String direction;
+  final String punchTime;
+  final double similarity;
+  final double livenessScore;
+
+  factory FacePunchResult.fromJson(Map<String, dynamic> json) {
+    final punch = json['punch'] as Map<String, dynamic>;
+    return FacePunchResult(
+      punchId: punch['id'] as String,
+      direction: punch['direction'] as String,
+      punchTime: punch['punch_time'] as String,
+      similarity: double.parse(json['similarity'].toString()),
+      livenessScore: double.parse(json['liveness_score'].toString()),
+    );
+  }
+}
+
 class AttendanceRepository {
   AttendanceRepository(this._client);
   final ApiClient _client;
@@ -458,6 +488,18 @@ class AttendanceRepository {
         '/attendance/punches/me',
         body: {'direction': direction, if (reference != null) 'reference': reference},
         parse: (_) {},
+      );
+
+  /// Self punch gated on a live selfie: the server checks liveness and matches it against
+  /// the caller's enrolled face before recording a punch (server-timed, source `FACE`).
+  Future<FacePunchResult> facePunchMe({required String direction, required List<int> photoJpeg}) =>
+      _client.postMultipart(
+        '/attendance/face-punches/me',
+        buildForm: () => FormData.fromMap({
+          'direction': direction,
+          'photo': MultipartFile.fromBytes(photoJpeg, filename: 'selfie.jpg', contentType: DioMediaType('image', 'jpeg')),
+        }),
+        parse: (d) => FacePunchResult.fromJson(d as Map<String, dynamic>),
       );
 
   // Policy assignments

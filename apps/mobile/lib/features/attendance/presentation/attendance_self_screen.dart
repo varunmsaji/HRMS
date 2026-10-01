@@ -6,6 +6,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
+import 'face_punch_card.dart';
 import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 /// Mirrors the "My Attendance" portion of the Stitch Mobile Dashboard —
@@ -100,6 +101,8 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            FacePunchCard(onPunched: _load),
+            const SizedBox(height: 16),
             Row(children: [
               Expanded(
                 child: FilledButton.icon(
