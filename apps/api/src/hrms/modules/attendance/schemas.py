@@ -61,6 +61,7 @@ if TYPE_CHECKING:
         AttendanceRegularizationAction,
         AttendanceRegularizationRequest,
         AttendanceRegularizationRequestedPunch,
+        EmployeeFaceProfile,
         LeaveDayProjection,
         OvertimeAction,
         OvertimePolicy,
@@ -1242,7 +1243,16 @@ def build_shift_roster_update_values(patch: ShiftRosterUpdate) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 
 _PUNCH_DIRECTIONS = ("IN", "OUT")
-_PUNCH_SOURCES = ("WEB", "MOBILE", "DEVICE", "IMPORT", "ADMIN", "API", "REGULARIZATION")
+_PUNCH_SOURCES = (
+    "WEB",
+    "MOBILE",
+    "DEVICE",
+    "IMPORT",
+    "ADMIN",
+    "API",
+    "REGULARIZATION",
+    "FACE",
+)
 _ATTENDANCE_STATUSES = (
     "NOT_JOINED",
     "EXITED",
@@ -2210,3 +2220,49 @@ def leave_day_projection_to_read(row: "LeaveDayProjection") -> LeaveDayProjectio
 
 def leave_day_projection_to_audit_dict(read: LeaveDayProjectionRead) -> dict[str, Any]:
     return read.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# Face attendance
+# ---------------------------------------------------------------------------
+
+FACE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
+FACE_MAX_REFERENCE_PHOTOS = 5
+
+
+class FaceProfileRead(BaseModel):
+    """Never exposes `provider_person_id` — it is a handle into the vendor's biometric store."""
+
+    id: UUID
+    employee_id: UUID
+    provider: str
+    status: str
+    reference_photo_count: int
+    consent_recorded_at: str
+    enrolled_at: str
+    enrolled_by_user_id: UUID | None
+    revoked_at: str | None
+    revoked_by_user_id: UUID | None
+
+
+def face_profile_to_read(row: "EmployeeFaceProfile") -> FaceProfileRead:
+    return FaceProfileRead(
+        id=row.id,
+        employee_id=row.employee_id,
+        provider=row.provider,
+        status=row.status,
+        reference_photo_count=row.reference_photo_count,
+        consent_recorded_at=_format_timestamp(row.consent_recorded_at) or "",
+        enrolled_at=_format_timestamp(row.enrolled_at) or "",
+        enrolled_by_user_id=row.enrolled_by_user_id,
+        revoked_at=_format_timestamp(row.revoked_at),
+        revoked_by_user_id=row.revoked_by_user_id,
+    )
+
+
+class FacePunchRead(BaseModel):
+    """`POST /attendance/face-punches/me` — the punch recorded plus the scores that justified it."""
+
+    punch: PunchRead
+    similarity: Decimal
+    liveness_score: Decimal

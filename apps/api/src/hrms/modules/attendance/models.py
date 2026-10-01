@@ -468,6 +468,62 @@ class Punch(Base):
 
 
 # ---------------------------------------------------------------------------
+# Face attendance — enrollment profile + verification attempt log
+# ---------------------------------------------------------------------------
+
+
+class EmployeeFaceProfile(Base, TimestampMixin):
+    """An employee's enrollment with the face-verification provider. Stores only the provider's
+    person id — never a face image. `consent_recorded_at` is mandatory: no consent, no row."""
+
+    __tablename__ = "employee_face_profile"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_person_id: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20))
+    reference_photo_count: Mapped[int] = mapped_column(Integer, default=1)
+    consent_recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    enrolled_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class FaceVerificationAttempt(Base):
+    """Insert-only log of every face check, rejected ones included. `punch_id` is set only when a
+    MATCHED attempt produced a punch. No image is ever persisted."""
+
+    __tablename__ = "face_verification_attempt"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    punch_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("punch.id"), nullable=True, unique=True
+    )
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_person_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    decision: Mapped[str] = mapped_column(String(30))
+    similarity: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    liveness_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    provider_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# ---------------------------------------------------------------------------
 # AttendanceDay — derived, recomputable calculation result (W4, WD-10/WD-11)
 # ---------------------------------------------------------------------------
 

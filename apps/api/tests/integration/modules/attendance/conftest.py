@@ -1,9 +1,21 @@
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from decimal import Decimal
+from typing import Any
+from uuid import UUID, uuid4
+
 import pytest
 import redis.asyncio as redis
-from sqlalchemy import delete, select
+from httpx import AsyncClient
+from sqlalchemy import delete, select, text
 
 from hrms.core.config.settings import get_settings
-from hrms.core.db.session import get_session_factory
+from hrms.core.db.session import get_session_factory, set_rls_company_id
+from hrms.modules.attendance.face_verification import (
+    PROVIDER_LUXAND,
+    FaceMatchResult,
+    LivenessResult,
+)
 from hrms.modules.organisation.models import Plan, PlanFeature, Subscription
 from hrms.seed.plan_catalogue import PLAN_CATALOGUE, seed_plan_catalogue
 
@@ -36,3 +48,88 @@ async def seeded_plan_catalogue() -> None:
         await session.execute(delete(PlanFeature).where(PlanFeature.plan_id.in_(plan_ids)))
         await session.execute(delete(Plan).where(Plan.code.in_(codes)))
         await session.commit()
+
+
+# --- Face attendance (fake provider; nothing here contacts Luxand) ---
+
+
+@dataclass
+class FakeFaceProvider:
+    provider_name: str = PROVIDER_LUXAND
+    calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    fail_with: dict[str, Exception] = field(default_factory=dict)
+    liveness: LivenessResult = field(
+        default_factory=lambda: LivenessResult("LIVE", Decimal("0.9500"), {"result": "real"})
+    )
+    match: FaceMatchResult = field(
+        default_factory=lambda: FaceMatchResult(
+            "MATCHED", Decimal("0.9700"), {"message": "verified"}
+        )
+    )
+
+    def _call(self, name: str, **kwargs: Any) -> None:
+        self.calls.append((name, kwargs))
+        if name in self.fail_with:
+            raise self.fail_with[name]
+
+    def names(self) -> list[str]:
+        return [name for name, _ in self.calls]
+
+    async def enroll(self, *, label: str, image: bytes, content_type: str) -> str:
+        self._call("enroll", label=label, content_type=content_type)
+        return str(uuid4())
+
+    async def add_reference_photo(self, *, person_id: str, image: bytes, content_type: str) -> None:
+        self._call("add_reference_photo", person_id=person_id)
+
+    async def verify(self, *, person_id: str, image: bytes, content_type: str) -> FaceMatchResult:
+        self._call("verify", person_id=person_id)
+        return self.match
+
+    async def check_liveness(self, *, image: bytes, content_type: str) -> LivenessResult:
+        self._call("check_liveness")
+        return self.liveness
+
+    async def delete_person(self, *, person_id: str) -> None:
+        self._call("delete_person", person_id=person_id)
+
+
+@pytest.fixture
+async def fake_face_provider() -> AsyncIterator[FakeFaceProvider]:
+    from entrypoints.api import app
+
+    from hrms.modules.attendance.dependencies import get_face_provider
+
+    provider = FakeFaceProvider()
+    app.dependency_overrides[get_face_provider] = lambda: provider
+    yield provider
+    app.dependency_overrides.pop(get_face_provider, None)
+
+
+@pytest.fixture
+async def face_tenant(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> AsyncIterator[tuple[dict[str, str], UUID]]:
+    """A freshly registered company (admin headers, company id), torn down afterwards."""
+    from tests.integration.modules.attendance.test_attendance_day import (
+        _cleanup_attendance_day,
+        _register_tenant,
+    )
+    from tests.integration.modules.attendance.test_attendance_security import (
+        _cleanup_scoped_users,
+    )
+    from tests.integration.modules.organisation.test_registration_flow import _cleanup
+
+    headers, company_id, user_id = await _register_tenant(client)
+    yield headers, company_id
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        for table in ("face_verification_attempt", "employee_face_profile"):
+            await session.execute(
+                text(f"DELETE FROM {table} WHERE company_id = :cid"), {"cid": str(company_id)}
+            )
+        await session.commit()
+    await _cleanup_attendance_day(company_id=company_id)
+    await _cleanup(company_id=company_id, user_id=user_id)
+    await _cleanup_scoped_users()

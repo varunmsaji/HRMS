@@ -25,6 +25,8 @@ from hrms.modules.attendance.models import (
     AttendanceRegularizationAction,
     AttendanceRegularizationRequest,
     AttendanceRegularizationRequestedPunch,
+    EmployeeFaceProfile,
+    FaceVerificationAttempt,
     LeaveDayProjection,
     OvertimeAction,
     OvertimePolicy,
@@ -2195,3 +2197,62 @@ class LeaveDayProjectionRepository:
             .returning(LeaveDayProjection)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class FaceProfileRepository:
+    async def get_for_employee(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        for_update: bool = False,
+    ) -> EmployeeFaceProfile | None:
+        stmt = select(EmployeeFaceProfile).where(
+            EmployeeFaceProfile.company_id == company_id,
+            EmployeeFaceProfile.employee_id == employee_id,
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_for_company(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+    ) -> list[EmployeeFaceProfile]:
+        stmt = select(EmployeeFaceProfile).where(EmployeeFaceProfile.company_id == company_id)
+        if visible_employee_ids is not None:
+            stmt = stmt.where(EmployeeFaceProfile.employee_id.in_(visible_employee_ids))
+        return list(
+            (await session.execute(stmt.order_by(EmployeeFaceProfile.enrolled_at))).scalars()
+        )
+
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> EmployeeFaceProfile:
+        row = EmployeeFaceProfile(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+
+class FaceAttemptRepository:
+    async def insert(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> FaceVerificationAttempt:
+        row = FaceVerificationAttempt(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def count_failed_since(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, since: datetime
+    ) -> int:
+        stmt = select(func.count()).where(
+            FaceVerificationAttempt.company_id == company_id,
+            FaceVerificationAttempt.employee_id == employee_id,
+            FaceVerificationAttempt.decision != "MATCHED",
+            FaceVerificationAttempt.created_at >= since,
+        )
+        return int((await session.execute(stmt)).scalar_one())
