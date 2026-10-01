@@ -28,7 +28,7 @@ const BASE = "/attendance/face-profiles/emp-1";
 const PROFILE: FaceProfile = {
   id: "fp-1",
   employee_id: "emp-1",
-  provider: "LUXAND",
+  provider: "FACEPP",
   status: "PENDING_APPROVAL",
   reference_photo_count: 5,
   consent_recorded_at: "2026-10-01T02:11:00Z",
