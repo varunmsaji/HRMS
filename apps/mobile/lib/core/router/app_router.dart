@@ -1,0 +1,200 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../features/auth/presentation/accept_invite_screen.dart';
+import '../../features/auth/presentation/forgot_password_screen.dart';
+import '../../features/auth/presentation/login_screen.dart';
+import '../../features/auth/presentation/register_screen.dart';
+import '../../features/auth/presentation/reset_password_screen.dart';
+import '../../features/auth/presentation/verify_email_screen.dart';
+import '../../features/attendance/presentation/attendance_periods_screen.dart';
+import '../../features/attendance/presentation/attendance_self_screen.dart';
+import '../../features/attendance/presentation/holiday_calendars_screen.dart';
+import '../../features/attendance/presentation/overtime_screen.dart';
+import '../../features/attendance/presentation/policy_assignments_screen.dart';
+import '../../features/attendance/presentation/policy_resolution_screen.dart';
+import '../../features/attendance/presentation/policy_screens.dart';
+import '../../features/attendance/presentation/policy_version_forms.dart';
+import '../../features/attendance/presentation/regularizations_screen.dart';
+import '../../features/attendance/presentation/roster_calendar_screen.dart';
+import '../../features/attendance/presentation/rosters_screen.dart';
+import '../../features/attendance/presentation/weekly_off_patterns_screen.dart';
+import '../../features/attendance/presentation/work_calendars_screen.dart';
+import '../../features/auth/state/auth_controller.dart';
+import '../../features/auth/state/auth_state.dart';
+import '../../features/dashboard/presentation/dashboard_screen.dart';
+import '../../features/employees/presentation/employees_screen.dart';
+import '../../features/leave/presentation/leave_applications_screen.dart';
+import '../../features/leave/presentation/leave_balances_screen.dart';
+import '../../features/leave/presentation/leave_combination_rules_screen.dart';
+import '../../features/leave/presentation/leave_policies_screen.dart';
+import '../../features/leave/presentation/leave_types_screen.dart';
+import '../../features/leave/presentation/leave_year_setting_screen.dart';
+import '../../features/leave/presentation/statutory_leave_minimums_screen.dart';
+import '../../features/onboarding/presentation/onboarding_cases_screen.dart';
+import '../../features/onboarding/presentation/setup_screen.dart';
+import '../../features/onboarding/presentation/users_screen.dart';
+import '../../features/payroll/presentation/my_payslips_screen.dart';
+import '../../features/payroll/presentation/pay_runs_screen.dart';
+import '../../features/payroll/presentation/salary_components_screen.dart';
+import '../../features/payroll/presentation/salary_structures_screen.dart';
+import '../../features/payroll/presentation/statutory_rates_screen.dart';
+import '../../features/organisation/presentation/branches_screen.dart';
+import '../../features/organisation/presentation/company_profile_screen.dart';
+import '../../features/organisation/presentation/departments_screen.dart';
+import '../../features/organisation/presentation/designations_screen.dart';
+import '../../features/organisation/presentation/grades_screen.dart';
+import '../../features/organisation/presentation/legal_entities_screen.dart';
+import '../../features/profile/presentation/profile_screen.dart';
+import '../../features/shell/app_shell.dart';
+import '../../features/shell/settings_hub_screen.dart';
+import '../../features/splash/splash_screen.dart';
+
+/// Redirected away from once authenticated (there's no reason to see a
+/// sign-in/sign-up form with a live session).
+const _authOnlyPaths = ['/login', '/register', '/forgot-password'];
+
+/// Standalone token-driven flows that mirror the web app's pages outside its
+/// `/app` layout guard entirely — accessible regardless of auth status (a
+/// signed-in user can still open a password-reset or invite link from email).
+const _alwaysPublicPaths = ['/reset-password', '/verify-email', '/accept-invite'];
+
+/// Bridges Riverpod's [authControllerProvider] to go_router's
+/// `refreshListenable` so a login/logout re-runs the redirect below without
+/// the router itself being rebuilt.
+class _AuthRefreshNotifier extends ChangeNotifier {
+  _AuthRefreshNotifier(Ref ref) {
+    ref.listen(authControllerProvider, (_, __) => notifyListeners());
+  }
+}
+
+final _authRefreshProvider = Provider<_AuthRefreshNotifier>((ref) => _AuthRefreshNotifier(ref));
+
+final appRouterProvider = Provider<GoRouter>((ref) {
+  return GoRouter(
+    initialLocation: '/splash',
+    refreshListenable: ref.watch(_authRefreshProvider),
+    redirect: (context, state) {
+      final auth = ref.read(authControllerProvider);
+      final location = state.matchedLocation;
+
+      if (_alwaysPublicPaths.any((p) => location.startsWith(p))) return null;
+
+      if (auth.status == AuthStatus.loading) {
+        return location == '/splash' ? null : '/splash';
+      }
+
+      final isAuthOnly = _authOnlyPaths.any((p) => location.startsWith(p));
+      if (auth.status == AuthStatus.unauthenticated) {
+        return isAuthOnly ? null : '/login';
+      }
+
+      // Authenticated.
+      if (location == '/splash' || isAuthOnly) return landingPathFor(auth.user);
+      return null;
+    },
+    routes: [
+      GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
+      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(path: '/register', builder: (context, state) => const RegisterScreen()),
+      GoRoute(path: '/forgot-password', builder: (context, state) => const ForgotPasswordScreen()),
+      GoRoute(
+        path: '/reset-password/:token',
+        builder: (context, state) => ResetPasswordScreen(token: state.pathParameters['token']!),
+      ),
+      GoRoute(
+        path: '/verify-email/:token',
+        builder: (context, state) => VerifyEmailScreen(token: state.pathParameters['token']!),
+      ),
+      GoRoute(
+        path: '/accept-invite/:token',
+        builder: (context, state) => AcceptInviteScreen(token: state.pathParameters['token']!),
+      ),
+      GoRoute(path: '/app/more', builder: (context, state) => const SettingsHubScreen()),
+      GoRoute(path: '/app/company', builder: (context, state) => const CompanyProfileScreen()),
+      GoRoute(path: '/app/branches', builder: (context, state) => const BranchesScreen()),
+      GoRoute(path: '/app/departments', builder: (context, state) => const DepartmentsScreen()),
+      GoRoute(path: '/app/designations', builder: (context, state) => const DesignationsScreen()),
+      GoRoute(path: '/app/grades', builder: (context, state) => const GradesScreen()),
+      GoRoute(path: '/app/legal-entities', builder: (context, state) => const LegalEntitiesScreen()),
+      GoRoute(
+        path: '/app/attendance-policies',
+        builder: (context, state) => PolicyListScreen(
+          title: 'Attendance Policies',
+          basePath: 'attendance-policies',
+          versionFormBuilder: (context, repository, policyId) =>
+              AttendancePolicyVersionForm(repository: repository, policyId: policyId),
+        ),
+      ),
+      GoRoute(
+        path: '/app/overtime-policies',
+        builder: (context, state) => PolicyListScreen(
+          title: 'Overtime Policies',
+          basePath: 'overtime-policies',
+          versionFormBuilder: (context, repository, policyId) =>
+              OvertimePolicyVersionForm(repository: repository, policyId: policyId),
+        ),
+      ),
+      GoRoute(
+        path: '/app/regularization-policies',
+        builder: (context, state) => PolicyListScreen(
+          title: 'Regularization Policies',
+          basePath: 'regularization-policies',
+          versionFormBuilder: (context, repository, policyId) =>
+              RegularizationPolicyVersionForm(repository: repository, policyId: policyId),
+        ),
+      ),
+      GoRoute(
+        path: '/app/shifts',
+        builder: (context, state) => PolicyListScreen(
+          title: 'Shifts',
+          basePath: 'shifts',
+          versionFormBuilder: (context, repository, policyId) => ShiftVersionForm(repository: repository, policyId: policyId),
+        ),
+      ),
+      GoRoute(path: '/app/holiday-calendars', builder: (context, state) => const HolidayCalendarsScreen()),
+      GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => const WeeklyOffPatternsScreen()),
+      GoRoute(path: '/app/work-calendars', builder: (context, state) => const WorkCalendarsScreen()),
+      GoRoute(path: '/app/regularizations', builder: (context, state) => const RegularizationsScreen()),
+      GoRoute(path: '/app/overtime', builder: (context, state) => const OvertimeScreen()),
+      GoRoute(path: '/app/rosters', builder: (context, state) => const RostersScreen()),
+      GoRoute(path: '/app/roster-calendar', builder: (context, state) => const RosterCalendarScreen()),
+      GoRoute(path: '/app/attendance-periods', builder: (context, state) => const AttendancePeriodsScreen()),
+      GoRoute(path: '/app/policy-assignments', builder: (context, state) => const PolicyAssignmentsScreen()),
+      GoRoute(path: '/app/policy-resolution', builder: (context, state) => const PolicyResolutionScreen()),
+      GoRoute(path: '/app/leave-types', builder: (context, state) => const LeaveTypesScreen()),
+      GoRoute(path: '/app/leave-policies', builder: (context, state) => const LeavePoliciesScreen()),
+      GoRoute(path: '/app/leave-combination-rules', builder: (context, state) => const LeaveCombinationRulesScreen()),
+      GoRoute(path: '/app/leave-year-setting', builder: (context, state) => const LeaveYearSettingScreen()),
+      GoRoute(path: '/app/statutory-leave-minimums', builder: (context, state) => const StatutoryLeaveMinimumsScreen()),
+      GoRoute(path: '/app/leave-balances', builder: (context, state) => const LeaveBalancesScreen()),
+      GoRoute(path: '/app/payroll/pay-runs', builder: (context, state) => const PayRunsScreen()),
+      GoRoute(path: '/app/payroll/salary-components', builder: (context, state) => const SalaryComponentsScreen()),
+      GoRoute(path: '/app/payroll/salary-structures', builder: (context, state) => const SalaryStructuresScreen()),
+      GoRoute(path: '/app/payroll/statutory-rates', builder: (context, state) => const StatutoryRatesScreen()),
+      GoRoute(path: '/app/me/payslips', builder: (context, state) => const MyPayslipsScreen()),
+      GoRoute(path: '/app/employees', builder: (context, state) => const EmployeesScreen()),
+      GoRoute(path: '/app/onboarding', builder: (context, state) => const OnboardingCasesScreen()),
+      GoRoute(path: '/app/setup', builder: (context, state) => const SetupScreen()),
+      GoRoute(path: '/app/users', builder: (context, state) => const UsersScreen()),
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) => AppShell(navigationShell: navigationShell),
+        branches: [
+          StatefulShellBranch(routes: [
+            GoRoute(path: '/app/dashboard', builder: (context, state) => const DashboardScreen()),
+          ]),
+          StatefulShellBranch(routes: [
+            GoRoute(path: '/app/attendance', builder: (context, state) => const AttendanceSelfScreen()),
+          ]),
+          StatefulShellBranch(routes: [
+            GoRoute(path: '/app/leave-applications', builder: (context, state) => const LeaveApplicationsScreen()),
+          ]),
+          StatefulShellBranch(routes: [
+            GoRoute(path: '/app/me', builder: (context, state) => const ProfileScreen()),
+          ]),
+        ],
+      ),
+    ],
+  );
+});
