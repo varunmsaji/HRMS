@@ -775,7 +775,7 @@ class FacePunchService:
         response: dict[str, Any] | None = None,
         punch_id: UUID | None = None,
     ) -> dict[str, Any]:
-        provider_name = self._provider.provider_name if self._provider else "LUXAND"
+        provider_name = self._provider.provider_name if self._provider else "FACEPP"
         return {
             "id": uuid4(),
             "company_id": company_id,
