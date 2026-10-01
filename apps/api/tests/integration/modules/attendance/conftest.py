@@ -12,7 +12,7 @@ from sqlalchemy import delete, select, text
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session_factory, set_rls_company_id
 from hrms.modules.attendance.face_verification import (
-    PROVIDER_LUXAND,
+    PROVIDER_FACEPP,
     FaceMatchResult,
     LivenessResult,
 )
@@ -50,12 +50,12 @@ async def seeded_plan_catalogue() -> None:
         await session.commit()
 
 
-# --- Face attendance (fake provider; nothing here contacts Luxand) ---
+# --- Face attendance (fake provider; nothing here contacts Face++) ---
 
 
 @dataclass
 class FakeFaceProvider:
-    provider_name: str = PROVIDER_LUXAND
+    provider_name: str = PROVIDER_FACEPP
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     fail_with: dict[str, Exception] = field(default_factory=dict)
     liveness: LivenessResult = field(

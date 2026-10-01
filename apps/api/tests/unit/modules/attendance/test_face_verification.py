@@ -1,5 +1,5 @@
-"""`LuxandFaceVerificationProvider` against canned responses captured from the live Luxand API
-(2026-10-01). Uses `httpx.MockTransport`; nothing here contacts Luxand."""
+"""`FaceppFaceVerificationProvider` against canned Face++ (faceplusplus.com) response shapes.
+Uses `httpx.MockTransport`; nothing here contacts Face++."""
 
 import json
 from collections.abc import Callable
@@ -12,23 +12,25 @@ from structlog.testing import capture_logs
 
 from hrms.core.config.settings import Settings
 from hrms.modules.attendance.face_verification import (
+    FaceppFaceVerificationProvider,
     FaceProviderError,
     FaceProviderNoFaceError,
-    LuxandFaceVerificationProvider,
     get_face_verification_provider,
 )
 
-_TOKEN = "s3cr3t-luxand-token-marker-zzz"
-_PERSON = "37aab195-bd3a-11f1-86d3-0242ac120002"
+_API_KEY = "s3cr3t-facepp-key-marker-zzz"
+_API_SECRET = "s3cr3t-facepp-secret-marker-zzz"
+_PERSON = "fs_37aab195bd3a11f186d30242ac120002"
+_FACE_TOKEN = "ft_e1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6"
 _IMG = b"\xff\xd8fake-jpeg"
-_NO_FACE = "No face detected in the photo. Check lighting, avoid backlight and strong shadows."
 
 
 def _settings(**overrides: object) -> Settings:
     base: dict[str, object] = {
         "environment": "development",
-        "face_verification_provider": "luxand",
-        "luxand_api_token": _TOKEN,
+        "face_verification_provider": "facepp",
+        "facepp_api_key": _API_KEY,
+        "facepp_api_secret": _API_SECRET,
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
@@ -36,8 +38,8 @@ def _settings(**overrides: object) -> Settings:
 
 def _provider(
     handler: Callable[[httpx.Request], httpx.Response], **overrides: object
-) -> LuxandFaceVerificationProvider:
-    return LuxandFaceVerificationProvider(
+) -> FaceppFaceVerificationProvider:
+    return FaceppFaceVerificationProvider(
         _settings(**overrides), transport=httpx.MockTransport(handler)
     )
 
@@ -46,7 +48,15 @@ def _respond(body: object, status: int = 200) -> Callable[[httpx.Request], httpx
     return lambda _request: httpx.Response(status, json=body)
 
 
-# --- settings / factory ------------------------------------------------------------------------
+def _detect(faces: list[dict[str, object]]) -> dict[str, object]:
+    return {"faces": faces, "image_id": "img-1", "request_id": "req-1", "time_used": 100}
+
+
+def _face(token: str = _FACE_TOKEN) -> dict[str, object]:
+    return {"face_token": token, "face_rectangle": {"top": 1, "left": 1, "width": 1, "height": 1}}
+
+
+# --- settings / factory --------------------------------------------------------------------------
 
 
 def test_disabled_by_default() -> None:
@@ -54,13 +64,17 @@ def test_disabled_by_default() -> None:
     assert get_face_verification_provider(settings) is None
 
 
-def test_luxand_selected_when_configured() -> None:
-    assert isinstance(get_face_verification_provider(_settings()), LuxandFaceVerificationProvider)
+def test_facepp_selected_when_configured() -> None:
+    assert isinstance(
+        get_face_verification_provider(_settings()), FaceppFaceVerificationProvider
+    )
 
 
-def test_luxand_without_token_rejected() -> None:
+def test_facepp_without_credentials_rejected() -> None:
     with pytest.raises(ValidationError):
-        _settings(luxand_api_token="")
+        _settings(facepp_api_key="")
+    with pytest.raises(ValidationError):
+        _settings(facepp_api_secret="")
 
 
 def test_threshold_out_of_range_rejected() -> None:
@@ -68,22 +82,24 @@ def test_threshold_out_of_range_rejected() -> None:
         _settings(face_match_min_similarity=1.5)
 
 
-# --- enroll -------------------------------------------------------------------------------------
+# --- enroll -----------------------------------------------------------------------------------
 
 
-async def test_enroll_sends_store_0_and_returns_uuid() -> None:
+async def test_enroll_detects_then_creates_faceset() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
         return httpx.Response(
             200,
             json={
-                "status": "success",
-                "uuid": _PERSON,
-                "name": "x",
-                "faces": [],
-                "collections": [],
+                "faceset_token": _PERSON,
+                "face_count": 1,
+                "face_tokens": [_FACE_TOKEN],
+                "request_id": "req-2",
+                "time_used": 50,
             },
         )
 
@@ -92,132 +108,156 @@ async def test_enroll_sends_store_0_and_returns_uuid() -> None:
     )
 
     assert person_id == _PERSON
-    (request,) = seen
-    assert request.method == "POST"
-    assert request.url.path == "/v2/person"
-    assert request.headers["token"] == _TOKEN
-    body = request.content
-    # Never let Luxand host the face image publicly.
-    assert b'name="store"\r\n\r\n0' in body
-    assert b'name="name"\r\n\r\nemp-1' in body
+    assert [r.url.path for r in seen] == ["/facepp/v3/detect", "/facepp/v3/faceset/create"]
+    create_body = seen[1].content
+    assert _API_KEY.encode() in create_body
+    assert _API_SECRET.encode() in create_body
+    assert _FACE_TOKEN.encode() in create_body
 
 
 async def test_enroll_no_face_is_user_correctable() -> None:
-    provider = _provider(
-        _respond({"status": "failure", "message": "Can't find faces in attached images"})
-    )
+    provider = _provider(_respond(_detect([])))
     with pytest.raises(FaceProviderNoFaceError):
         await provider.enroll(label="emp-1", image=_IMG, content_type="image/jpeg")
 
 
-# --- verify -------------------------------------------------------------------------------------
+# --- add_reference_photo ------------------------------------------------------------------------
+
+
+async def test_add_reference_photo_adds_face_to_existing_faceset() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        return httpx.Response(
+            200,
+            json={"faceset_token": _PERSON, "face_added": 1, "face_count": 2, "failure_detail": []},
+        )
+
+    await _provider(handler).add_reference_photo(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
+    assert seen[1].url.path == "/facepp/v3/faceset/addface"
+    assert _PERSON.encode() in seen[1].content
+
+
+async def test_add_reference_photo_no_face_is_user_correctable() -> None:
+    provider = _provider(_respond(_detect([])))
+    with pytest.raises(FaceProviderNoFaceError):
+        await provider.add_reference_photo(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
+
+
+# --- verify -----------------------------------------------------------------------------------
 
 
 async def test_verify_match_above_threshold() -> None:
-    provider = _provider(
-        _respond({"status": "success", "message": "verified", "probability": 0.97, "rotation": 0})
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"confidence": 97.123, "face_token": _FACE_TOKEN}],
+                "thresholds": {"1e-3": 62.0, "1e-4": 69.9, "1e-5": 73.8},
+            },
+        )
+
+    result = await _provider(handler).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
     )
-    result = await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
     assert result.decision == "MATCHED"
-    assert result.similarity == Decimal("0.97")
+    assert result.similarity == Decimal("0.9712")
 
 
 async def test_verify_provider_match_below_our_threshold_is_no_match() -> None:
-    provider = _provider(
-        _respond({"status": "success", "message": "verified", "probability": 0.85}),
-        face_match_min_similarity=0.9,
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        return httpx.Response(200, json={"results": [{"confidence": 85.0}]})
+
+    result = await _provider(handler, face_match_min_similarity=0.9).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
     )
-    result = await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
     assert result.decision == "NO_MATCH"
     assert result.similarity == Decimal("0.85")
 
 
-async def test_verify_not_verified() -> None:
-    provider = _provider(_respond({"status": "failure", "message": "Not verified"}))
-    result = await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
+async def test_verify_empty_results_is_no_match() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        return httpx.Response(200, json={"results": []})
+
+    result = await _provider(handler).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
     assert result.decision == "NO_MATCH"
     assert result.similarity is None
 
 
 async def test_verify_no_face() -> None:
-    provider = _provider(_respond({"status": "failure", "message": _NO_FACE}))
+    provider = _provider(_respond(_detect([])))
     result = await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
     assert result.decision == "NO_FACE"
 
 
-async def test_verify_success_without_probability_is_unrecognised() -> None:
-    provider = _provider(_respond({"status": "success", "message": "verified"}))
-    with pytest.raises(FaceProviderError):
-        await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
-
-
-async def test_verify_unknown_failure_message_is_error_not_silent_reject() -> None:
-    provider = _provider(_respond({"status": "failure", "message": "Quota exceeded"}))
-    with pytest.raises(FaceProviderError):
-        await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
-
-
-async def test_verify_rejects_malformed_person_id_without_request() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise AssertionError("must not call the provider")
+async def test_verify_result_without_confidence_is_unrecognised() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        return httpx.Response(200, json={"results": [{"face_token": _FACE_TOKEN}]})
 
     with pytest.raises(FaceProviderError):
-        await _provider(handler).verify(
-            person_id="../v2/person", image=_IMG, content_type="image/jpeg"
-        )
+        await _provider(handler).verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
 
 
-# --- liveness -----------------------------------------------------------------------------------
+async def test_verify_unknown_error_is_error_not_silent_reject() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        return httpx.Response(400, json={"error_message": "CONCURRENCY_LIMIT_EXCEEDED"})
+
+    with pytest.raises(FaceProviderError):
+        await _provider(handler).verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
 
 
-async def test_liveness_real_above_threshold() -> None:
-    provider = _provider(_respond({"status": "success", "score": 0.980349, "result": "real"}))
+# --- liveness (presence-only placeholder, not real anti-spoofing) -------------------------------
+
+
+async def test_liveness_face_present_is_live_with_no_score() -> None:
+    provider = _provider(_respond(_detect([_face()])))
     result = await provider.check_liveness(image=_IMG, content_type="image/jpeg")
     assert result.decision == "LIVE"
-    assert result.score == Decimal("0.9803")
-
-
-async def test_liveness_fake_is_spoof() -> None:
-    provider = _provider(_respond({"status": "success", "score": 0.694354, "result": "fake"}))
-    result = await provider.check_liveness(image=_IMG, content_type="image/jpeg")
-    assert result.decision == "SPOOF"
-
-
-async def test_liveness_real_below_threshold_is_spoof() -> None:
-    provider = _provider(
-        _respond({"status": "success", "score": 0.7, "result": "real"}),
-        face_liveness_min_score=0.8,
-    )
-    result = await provider.check_liveness(image=_IMG, content_type="image/jpeg")
-    assert result.decision == "SPOOF"
+    assert result.score is None
 
 
 async def test_liveness_no_face() -> None:
-    provider = _provider(
-        _respond({"status": "failure", "message": "there is no faces in the photo"})
-    )
+    provider = _provider(_respond(_detect([])))
     result = await provider.check_liveness(image=_IMG, content_type="image/jpeg")
     assert result.decision == "NO_FACE"
 
 
-# --- delete -------------------------------------------------------------------------------------
+# --- delete -----------------------------------------------------------------------------------
 
 
-async def test_delete_uses_legacy_person_route() -> None:
+async def test_delete_sends_faceset_token() -> None:
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200, json={"status": "success", "message": "Successfully deleted"})
+        return httpx.Response(200, json={"faceset_token": _PERSON})
 
     await _provider(handler).delete_person(person_id=_PERSON)
-    assert seen[0].method == "DELETE"
-    assert seen[0].url.path == f"/person/{_PERSON}"
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/facepp/v3/faceset/delete"
+    assert _PERSON.encode() in seen[0].content
 
 
 async def test_delete_already_gone_is_success() -> None:
     provider = _provider(
-        _respond({"status": "failure", "message": f"There is no Person with ID {_PERSON}"})
+        _respond({"error_message": "INVALID_FACESET_TOKEN"}, status=400)
     )
     await provider.delete_person(person_id=_PERSON)
 
@@ -225,28 +265,14 @@ async def test_delete_already_gone_is_success() -> None:
 # --- transport failures & log hygiene ----------------------------------------------------------
 
 
-async def test_unauthorized_raises_and_never_logs_token_or_body() -> None:
-    body = {"message": "You are not authorized for the request: can't get your token"}
-    provider = _provider(_respond(body, status=401))
+async def test_error_response_raises_and_never_logs_credentials() -> None:
+    provider = _provider(_respond({"error_message": "AUTHENTICATION_ERROR"}, status=403))
     with capture_logs() as logs, pytest.raises(FaceProviderError) as exc_info:
-        await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
+        await provider.delete_person(person_id=_PERSON)
 
     rendered = json.dumps(logs, default=str) + str(exc_info.value)
-    assert _TOKEN not in rendered
-    assert "not authorized" not in rendered
-    assert logs[0]["status_code"] == 401
-
-
-async def test_exhausted_plan_is_logged_as_quota_not_auth() -> None:
-    body = {
-        "message": "Requests number per month reached. Upgrade your plan: https://example.invalid"
-    }
-    provider = _provider(_respond(body, status=401))
-    with capture_logs() as logs, pytest.raises(FaceProviderError):
-        await provider.check_liveness(image=_IMG, content_type="image/jpeg")
-
-    assert logs[0]["event"] == "face_provider_quota_exhausted"
-    assert "Upgrade" not in json.dumps(logs, default=str)
+    assert _API_KEY not in rendered
+    assert _API_SECRET not in rendered
 
 
 async def test_timeout_raises_provider_error() -> None:

@@ -1,6 +1,6 @@
 """Face enrollment end to end through the real app, database, RBAC and audit log:
 HR opens a one-time window -> the employee self-submits five captures -> HR approves/rejects.
-The face provider and photo storage are in-memory fakes; nothing here contacts Luxand or MinIO."""
+The face provider and photo storage are in-memory fakes; nothing here contacts Face++ or MinIO."""
 
 from decimal import Decimal
 from typing import Any
@@ -356,7 +356,7 @@ async def test_turned_angle_below_angle_threshold_is_rejected(
     employee_id = await _employee(client, admin)
     await _open(client, admin, employee_id)
     me = await _self_headers(company_id, employee_id)
-    # Luxand said "verified" but with low similarity — below the 0.80 angle floor.
+    # The provider matched, but with low similarity — below the 0.80 angle floor.
     fake_face_provider.verify_results = [FaceMatchResult("NO_MATCH", Decimal("0.70"), {})]
 
     response = await _submit(client, me)

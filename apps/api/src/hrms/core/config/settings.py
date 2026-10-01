@@ -166,12 +166,12 @@ class Settings(BaseSettings):
     # Face attendance (`attendance/face_verification.py`). `"disabled"` (the default) rejects every
     # face punch/enrollment as unavailable — there is deliberately no fake always-match provider,
     # since one leaking into a real deployment would let anyone punch as anyone.
-    face_verification_provider: Literal["disabled", "luxand"] = "disabled"
-    luxand_api_token: str = ""
-    luxand_api_base_url: str = "https://api.luxand.cloud"
+    face_verification_provider: Literal["disabled", "facepp"] = "disabled"
+    facepp_api_key: str = ""
+    facepp_api_secret: str = ""
+    facepp_api_base_url: str = "https://api-us.faceplusplus.com"
     # Applied on top of the provider's own verified/not-verified verdict.
     face_match_min_similarity: float = Field(default=0.90, ge=0.0, le=1.0)
-    face_liveness_min_score: float = Field(default=0.80, ge=0.0, le=1.0)
     face_provider_timeout_seconds: float = Field(default=15.0, gt=0.0)
     # Failed face punches allowed per employee within the window before further tries get a 429.
     face_punch_max_failed_attempts: int = Field(default=5, ge=1)
@@ -293,10 +293,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _guard_face_verification_config(self) -> "Settings":
-        if self.face_verification_provider == "luxand" and not self.luxand_api_token:
+        if self.face_verification_provider == "facepp" and not (
+            self.facepp_api_key and self.facepp_api_secret
+        ):
             raise ValueError(
-                "luxand_api_token must be set explicitly when face_verification_provider='luxand' "
-                "— refusing to boot without an API token to authenticate with."
+                "facepp_api_key and facepp_api_secret must both be set explicitly when "
+                "face_verification_provider='facepp' — refusing to boot without credentials to "
+                "authenticate with."
             )
         return self
 
