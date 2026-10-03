@@ -98,6 +98,31 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
   }
 
+  /// The invite email links to the web app; a new joiner pastes that link (or just its token)
+  /// here to continue the same onboarding on mobile.
+  Future<void> _openOnboardingLink() async {
+    final controller = TextEditingController();
+    final pasted = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Onboarding link'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Paste the link from your invite email'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(ctx).pop(controller.text), child: const Text('Continue')),
+        ],
+      ),
+    );
+    controller.dispose();
+    final token = (pasted ?? '').trim().split('?').first.split('/').where((s) => s.isNotEmpty).lastOrNull;
+    if (token == null || !mounted) return;
+    context.go('/onboarding/$token');
+  }
+
   @override
   Widget build(BuildContext context) {
     return AuthScaffold(
@@ -110,6 +135,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           GestureDetector(
             onTap: () => context.go('/register'),
             child: Text('Register', style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)),
+          ),
+          const Text('  ·  New joiner? '),
+          GestureDetector(
+            onTap: _openOnboardingLink,
+            child: Text('Open onboarding link', style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)),
           ),
         ],
       ),

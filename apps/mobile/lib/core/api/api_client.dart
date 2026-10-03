@@ -265,8 +265,9 @@ class ApiClient {
     String path, {
     required FormData Function() buildForm,
     required T Function(dynamic) parse,
+    bool authenticated = true,
   }) =>
-      _request<T>(path, method: 'POST', body: buildForm, parseData: parse);
+      _request<T>(path, method: 'POST', body: buildForm, authenticated: authenticated, parseData: parse);
 
   Future<T> patch<T>(
     String path, {

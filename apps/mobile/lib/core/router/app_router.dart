@@ -47,6 +47,7 @@ import '../../features/organisation/presentation/designations_screen.dart';
 import '../../features/organisation/presentation/grades_screen.dart';
 import '../../features/organisation/presentation/legal_entities_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
+import '../../features/onboarding/presentation/public_onboarding_screen.dart';
 import '../../features/shell/app_shell.dart';
 import '../../features/shell/settings_hub_screen.dart';
 import '../../features/splash/splash_screen.dart';
@@ -58,7 +59,7 @@ const _authOnlyPaths = ['/login', '/register', '/forgot-password'];
 /// Standalone token-driven flows that mirror the web app's pages outside its
 /// `/app` layout guard entirely — accessible regardless of auth status (a
 /// signed-in user can still open a password-reset or invite link from email).
-const _alwaysPublicPaths = ['/reset-password', '/verify-email', '/accept-invite'];
+const _alwaysPublicPaths = ['/reset-password', '/verify-email', '/accept-invite', '/onboarding'];
 
 /// Bridges Riverpod's [authControllerProvider] to go_router's
 /// `refreshListenable` so a login/logout re-runs the redirect below without
@@ -110,6 +111,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/accept-invite/:token',
         builder: (context, state) => AcceptInviteScreen(token: state.pathParameters['token']!),
+      ),
+      GoRoute(
+        path: '/onboarding/:token',
+        builder: (context, state) => PublicOnboardingScreen(token: state.pathParameters['token']!),
       ),
       GoRoute(path: '/app/more', builder: (context, state) => const SettingsHubScreen()),
       GoRoute(path: '/app/company', builder: (context, state) => const CompanyProfileScreen()),
