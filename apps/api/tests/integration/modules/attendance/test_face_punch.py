@@ -112,6 +112,55 @@ async def test_matched_face_records_server_timed_face_punch(
     assert await _punch_count(client, self_headers) == 1
 
 
+async def test_live_without_numeric_score_records_face_punch(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    """Real Face++ adapter contract: `LivenessResult("LIVE", None, {})` (no liveness score)."""
+    _, company_id = face_tenant
+    self_headers, _ = await _enrolled_self(client, face_tenant)
+    fake_face_provider.calls.clear()
+    fake_face_provider.liveness = LivenessResult("LIVE", None, {})
+
+    response = await _face_punch(client, self_headers, "IN")
+
+    assert response.status_code == 201, response.text
+    data = response.json()["data"]
+    assert data["punch"]["source"] == "FACE"
+    assert data["liveness_score"] is None
+    assert Decimal(data["similarity"]) == Decimal("0.97")
+    (attempt,) = await _attempts(company_id)
+    assert attempt["decision"] == "MATCHED"
+    assert attempt["liveness_score"] is None
+    assert str(attempt["punch_id"]) == data["punch"]["id"]
+    assert await _punch_count(client, self_headers) == 1
+
+
+async def test_live_without_score_but_low_similarity_is_rejected(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    _, company_id = face_tenant
+    self_headers, _ = await _enrolled_self(client, face_tenant)
+    fake_face_provider.liveness = LivenessResult("LIVE", None, {})
+    fake_face_provider.match = FaceMatchResult("NO_MATCH", Decimal("0.85"), {"message": "low"})
+
+    response = await _face_punch(client, self_headers)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "FACE_NOT_MATCHED"
+    (attempt,) = await _attempts(company_id)
+    assert attempt["decision"] == "NO_MATCH"
+    assert attempt["similarity"] == Decimal("0.85")
+    assert attempt["punch_id"] is None
+    assert await _punch_count(client, self_headers) == 0
+
+
+async def test_face_punch_read_accepts_missing_liveness_score() -> None:
+    from hrms.modules.attendance.schemas import FacePunchRead
+
+    assert FacePunchRead.model_fields["liveness_score"].is_required() is False
+    assert FacePunchRead.model_fields["liveness_score"].default is None
+
+
 async def test_not_enrolled_is_rejected_and_logged(
     client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:

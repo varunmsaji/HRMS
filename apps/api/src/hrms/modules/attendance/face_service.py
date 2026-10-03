@@ -709,7 +709,7 @@ class FacePunchService:
             )
             raise FaceProviderFailedError() from exc
         response = {"liveness": liveness.provider_response, "verify": match.provider_response}
-        if match.decision != "MATCHED" or match.similarity is None or liveness.score is None:
+        if match.decision != "MATCHED" or match.similarity is None:
             await self._record_rejection(
                 company_id,
                 employee_id,

@@ -2311,4 +2311,4 @@ class FacePunchRead(BaseModel):
 
     punch: PunchRead
     similarity: Decimal
-    liveness_score: Decimal
+    liveness_score: Decimal | None = None
