@@ -1,0 +1,16 @@
+{
+ "aadhaar_number_enc": null,
+ "date_of_birth": null,
+ "document_id": null,
+ "full_name": "x",
+ "gender": null,
+ "gratuity_nominee_share_percentage": null,
+ "guardian_name": null,
+ "guardian_relationship": null,
+ "is_esi_dependent": true,
+ "is_gratuity_nominee": true,
+ "is_minor": true,
+ "is_pf_nominee": true,
+ "pf_nominee_share_percentage": null,
+ "relationship": "x"
+}

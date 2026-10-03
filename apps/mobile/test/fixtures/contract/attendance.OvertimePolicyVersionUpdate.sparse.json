@@ -1,0 +1,20 @@
+{
+ "approval_chain": null,
+ "comp_off_day_length_minutes": null,
+ "comp_off_expiry_days": null,
+ "comp_off_instead_of_pay": null,
+ "daily_cap_minutes": null,
+ "effective_from": null,
+ "eligibility": null,
+ "min_ot_minutes": null,
+ "monthly_cap_minutes": null,
+ "night_ot_mode": null,
+ "night_window_end": null,
+ "night_window_start": null,
+ "rate_rows": null,
+ "requires_post_approval": null,
+ "requires_pre_approval": null,
+ "rounding_minutes": null,
+ "rounding_mode": null,
+ "weekly_cap_minutes": null
+}

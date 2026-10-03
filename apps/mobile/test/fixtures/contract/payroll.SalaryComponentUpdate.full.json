@@ -1,0 +1,11 @@
+{
+ "component_type": "x",
+ "display_order": 1,
+ "is_active": true,
+ "is_esi_wage": true,
+ "is_pf_wage": true,
+ "is_prorated": true,
+ "is_taxable": true,
+ "name": "x",
+ "show_on_payslip": true
+}

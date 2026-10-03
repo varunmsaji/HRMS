@@ -1,0 +1,8 @@
+{
+ "is_active": true,
+ "is_comp_off": true,
+ "is_paid_default": true,
+ "name": "x",
+ "requires_balance": true,
+ "statutory_category": "x"
+}

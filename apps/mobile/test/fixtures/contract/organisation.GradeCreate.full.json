@@ -1,0 +1,10 @@
+{
+ "approval_limit": 1,
+ "code": "x",
+ "level": 1,
+ "max_ctc": 1,
+ "min_ctc": 1,
+ "name": "x",
+ "notice_period_days": 1,
+ "probation_days": 1
+}

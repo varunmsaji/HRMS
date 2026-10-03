@@ -1,0 +1,19 @@
+{
+ "branch_id": null,
+ "candidate_first_name": "x",
+ "candidate_last_name": null,
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "created_by_user_id": "00000000-0000-0000-0000-000000001234",
+ "department_id": null,
+ "designation_id": null,
+ "employee_id": null,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "legal_entity_id": null,
+ "personal_email": "x",
+ "personal_mobile": null,
+ "proposed_joining_date": "2026-01-15",
+ "status": "x",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

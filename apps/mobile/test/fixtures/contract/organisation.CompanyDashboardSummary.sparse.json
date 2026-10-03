@@ -1,0 +1,11 @@
+{
+ "branch_count": null,
+ "department_count": null,
+ "employee_count": null,
+ "setup_progress": {
+  "status": "x",
+  "steps_completed": 1,
+  "steps_total": 1
+ },
+ "subscription": null
+}

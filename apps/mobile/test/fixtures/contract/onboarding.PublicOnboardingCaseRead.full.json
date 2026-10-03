@@ -1,0 +1,23 @@
+{
+ "address_info": {},
+ "bank_info": {},
+ "candidate_first_name": "x",
+ "candidate_last_name": "x",
+ "compensation_info": {},
+ "education_info": {},
+ "emergency_contact": {},
+ "nominee_info": {},
+ "personal_info": {},
+ "previous_employment_info": {},
+ "proposed_joining_date": "2026-01-15",
+ "section_reviews": [
+  {
+   "rejection_reason": "x",
+   "section": "x",
+   "status": "x"
+  }
+ ],
+ "status": "x",
+ "statutory_info": {},
+ "writable": true
+}

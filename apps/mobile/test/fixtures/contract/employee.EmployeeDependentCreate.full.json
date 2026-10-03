@@ -1,0 +1,16 @@
+{
+ "aadhaar_number_enc": "x",
+ "date_of_birth": "2026-01-15",
+ "document_id": "00000000-0000-0000-0000-000000001234",
+ "full_name": "x",
+ "gender": "x",
+ "gratuity_nominee_share_percentage": 1.5,
+ "guardian_name": "x",
+ "guardian_relationship": "x",
+ "is_esi_dependent": true,
+ "is_gratuity_nominee": true,
+ "is_minor": true,
+ "is_pf_nominee": true,
+ "pf_nominee_share_percentage": 1.5,
+ "relationship": "x"
+}

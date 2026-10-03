@@ -1,0 +1,18 @@
+{
+ "allows_split": true,
+ "break_kind": "x",
+ "crosses_midnight": true,
+ "end_time": "x",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_mandatory": true,
+ "is_paid": true,
+ "max_minutes": 1,
+ "min_minutes": 1,
+ "name": "x",
+ "scheduled_minutes": 1,
+ "shift_version_id": "00000000-0000-0000-0000-000000001234",
+ "sort_order": 1,
+ "start_time": "x",
+ "window_end": "x",
+ "window_start": "x"
+}

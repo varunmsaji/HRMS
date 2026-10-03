@@ -1,0 +1,17 @@
+{
+ "code": "x",
+ "description": "x",
+ "lines": [
+  {
+   "amount_monthly_minor": 1,
+   "applies_when": "x",
+   "base_salary_component_id": "00000000-0000-0000-0000-000000001234",
+   "calculation_type": "x",
+   "display_order": 1,
+   "max_monthly_minor": 1,
+   "percentage": "1.50",
+   "salary_component_id": "00000000-0000-0000-0000-000000001234"
+  }
+ ],
+ "name": "x"
+}

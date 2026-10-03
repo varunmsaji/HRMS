@@ -1,0 +1,16 @@
+{
+ "effective_from": "2026-01-15",
+ "esi_ip_number": "x",
+ "is_director": true,
+ "is_esi_applicable": true,
+ "is_international_worker": true,
+ "is_lwf_applicable": true,
+ "is_pf_applicable": true,
+ "pf_number": "x",
+ "pf_wage_ceiling_opt_out": true,
+ "pt_state_code": "x",
+ "revision_reason": "x",
+ "tax_regime": "OLD",
+ "vpf_amount": 1,
+ "vpf_percentage": 1.5
+}

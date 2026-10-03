@@ -1,0 +1,11 @@
+{
+ "slabs": [
+  {
+   "amount_minor": 1,
+   "gender": "x",
+   "max_minor": 1,
+   "min_minor": 1,
+   "month_amounts": {}
+  }
+ ]
+}

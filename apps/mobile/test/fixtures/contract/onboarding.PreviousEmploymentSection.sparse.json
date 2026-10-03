@@ -1,0 +1,16 @@
+{
+ "items": [
+  {
+   "company_name": "x",
+   "designation": null,
+   "from_date": "2026-01-15",
+   "had_prior_pf_membership": true,
+   "last_ctc_minor": null,
+   "previous_esi_ip_number": null,
+   "previous_pf_account_number": null,
+   "previous_uan": null,
+   "reason_for_leaving": null,
+   "to_date": null
+  }
+ ]
+}

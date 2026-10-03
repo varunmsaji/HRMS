@@ -1,0 +1,13 @@
+{
+ "admin_email": "a@example.com",
+ "admin_first_name": "x",
+ "admin_last_name": "x",
+ "admin_password": "x",
+ "company_size": "x",
+ "country_code": "x",
+ "currency": "x",
+ "fy_start_month": 1,
+ "industry_code": "x",
+ "name": "x",
+ "timezone": "x"
+}

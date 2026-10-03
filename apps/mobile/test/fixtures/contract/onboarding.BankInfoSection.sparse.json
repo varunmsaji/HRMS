@@ -1,0 +1,8 @@
+{
+ "account_holder_name": null,
+ "account_number_enc": null,
+ "bank_name": null,
+ "branch_name": null,
+ "ifsc": null,
+ "payment_mode": "BANK"
+}

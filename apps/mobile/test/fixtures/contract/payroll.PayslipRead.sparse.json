@@ -1,0 +1,67 @@
+{
+ "account_last4": null,
+ "bank_name": null,
+ "company_name": null,
+ "date_of_joining": null,
+ "days_in_month": 1,
+ "deductions": [
+  {
+   "amount_minor": 1,
+   "component_code": "x",
+   "component_name": "x",
+   "full_monthly_minor": null,
+   "note": null
+  }
+ ],
+ "deductions_minor": 1,
+ "department": null,
+ "designation": null,
+ "earnings": [
+  {
+   "amount_minor": 1,
+   "component_code": "x",
+   "component_name": "x",
+   "full_monthly_minor": null,
+   "note": null
+  }
+ ],
+ "employee_code": null,
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "employee_name": null,
+ "employer_contributions": [
+  {
+   "amount_minor": 1,
+   "component_code": "x",
+   "component_name": "x",
+   "full_monthly_minor": null,
+   "note": null
+  }
+ ],
+ "esi_ip_number": null,
+ "gross_minor": 1,
+ "is_final": true,
+ "leave_balances": [
+  {
+   "balance": "x",
+   "code": "x",
+   "name": "x"
+  }
+ ],
+ "legal_entity_address": null,
+ "legal_entity_name": null,
+ "legal_entity_pan": null,
+ "legal_entity_tan": null,
+ "lop_days": null,
+ "month": "x",
+ "net_in_words": "x",
+ "net_minor": 1,
+ "paid_days": null,
+ "pan_masked": null,
+ "pay_date": "2026-01-15",
+ "pay_run_id": "00000000-0000-0000-0000-000000001234",
+ "payment_mode": null,
+ "period_end": "2026-01-15",
+ "period_start": "2026-01-15",
+ "status": "x",
+ "uan_number": null
+}

@@ -1,0 +1,22 @@
+{
+ "breaks": null,
+ "core_end": null,
+ "core_start": null,
+ "duty_blocks": null,
+ "effective_from": null,
+ "end_time": null,
+ "is_night_shift": null,
+ "is_ot_eligible": null,
+ "max_scheduled_minutes": null,
+ "min_scheduled_minutes": null,
+ "operates_on_holiday": null,
+ "operates_on_weekly_off": null,
+ "required_minutes": null,
+ "scheduled_minutes": null,
+ "shift_type": null,
+ "start_time": null,
+ "timezone": null,
+ "weekly_off_pattern_id": null,
+ "window_end": null,
+ "window_start": null
+}

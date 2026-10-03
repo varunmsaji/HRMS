@@ -1,0 +1,15 @@
+{
+ "code": "x",
+ "is_active": true,
+ "name": "x",
+ "pattern_kind": "x",
+ "rules": [
+  {
+   "cycle_start_date": "2026-01-15",
+   "nth_in_month": 1,
+   "off_fraction": "1.50",
+   "week_parity": "x",
+   "weekday": 1
+  }
+ ]
+}

@@ -120,17 +120,21 @@ class SetupProgress {
 }
 
 class UserSummary {
-  UserSummary({required this.userId, required this.email, this.firstName, this.lastName, required this.status, required this.roleCodes});
+  UserSummary({required this.userId, this.email, this.firstName, this.lastName, required this.status, required this.roleCodes});
   final String userId;
-  final String email;
+
+  /// Null for a user without an email address (the backend allows it).
+  final String? email;
   final String? firstName;
   final String? lastName;
   final String status;
   final List<String> roleCodes;
 
+  String get emailLabel => email ?? 'No email';
+
   factory UserSummary.fromJson(Map<String, dynamic> json) => UserSummary(
         userId: json['user_id'] as String,
-        email: json['email'] as String,
+        email: json['email'] as String?,
         firstName: json['first_name'] as String?,
         lastName: json['last_name'] as String?,
         status: json['status'] as String,

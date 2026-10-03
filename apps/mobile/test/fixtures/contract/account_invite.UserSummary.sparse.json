@@ -1,0 +1,11 @@
+{
+ "email": null,
+ "first_name": null,
+ "is_primary": true,
+ "last_name": null,
+ "role_codes": [
+  "x"
+ ],
+ "status": "x",
+ "user_id": "00000000-0000-0000-0000-000000001234"
+}

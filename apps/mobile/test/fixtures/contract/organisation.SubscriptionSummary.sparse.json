@@ -1,0 +1,19 @@
+{
+ "current_period_end": null,
+ "current_period_start": null,
+ "features": [
+  {
+   "code": "x",
+   "is_enabled": true,
+   "limit_value": null,
+   "source": "x"
+  }
+ ],
+ "plan": {
+  "code": "x",
+  "name": "x"
+ },
+ "seat_limit": null,
+ "status": "x",
+ "trial_ends_at": null
+}

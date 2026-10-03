@@ -1,0 +1,9 @@
+{
+ "holiday_type": "x",
+ "is_active": true,
+ "is_paid": true,
+ "is_working": true,
+ "name": "x",
+ "region_note": "x",
+ "replaced_holiday_id": "00000000-0000-0000-0000-000000001234"
+}

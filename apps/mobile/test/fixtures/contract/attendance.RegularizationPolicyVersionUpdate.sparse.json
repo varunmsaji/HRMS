@@ -1,0 +1,14 @@
+{
+ "allow_employee_request": null,
+ "allow_hr_request": null,
+ "allow_manager_request": null,
+ "allowed_types": null,
+ "approval_chain": null,
+ "attachment_required": null,
+ "auto_approve_within_minutes": null,
+ "blocked_when_locked": null,
+ "effective_from": null,
+ "max_backdated_days": null,
+ "max_requests_per_month": null,
+ "reason_required": null
+}

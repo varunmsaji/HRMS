@@ -1,0 +1,15 @@
+{
+ "allows_split": true,
+ "break_kind": "x",
+ "end_time": null,
+ "is_mandatory": true,
+ "is_paid": true,
+ "max_minutes": null,
+ "min_minutes": null,
+ "name": "x",
+ "scheduled_minutes": null,
+ "sort_order": 1,
+ "start_time": null,
+ "window_end": null,
+ "window_start": null
+}

@@ -1,0 +1,7 @@
+{
+ "direction": "x",
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "idempotency_key": "x",
+ "punch_time": "2026-01-15T10:00:00Z",
+ "reference": "x"
+}

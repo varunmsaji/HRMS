@@ -71,7 +71,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text(user.email),
+          title: Text(user.emailLabel),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -115,8 +115,8 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       onCreate: _invite,
       emptyLabel: 'No users yet.',
       itemBuilder: (context, user) => ListTile(
-        title: Text([user.firstName, user.lastName].where((s) => s != null && s.isNotEmpty).join(' ').trim().isEmpty ? user.email : '${user.firstName ?? ''} ${user.lastName ?? ''}'.trim()),
-        subtitle: Text([user.email, user.roleCodes.join(', ')].join(' · ')),
+        title: Text([user.firstName, user.lastName].where((s) => s != null && s.isNotEmpty).join(' ').trim().isEmpty ? user.emailLabel : '${user.firstName ?? ''} ${user.lastName ?? ''}'.trim()),
+        subtitle: Text([user.emailLabel, user.roleCodes.join(', ')].join(' · ')),
         onTap: () => _editRoles(user),
       ),
     );

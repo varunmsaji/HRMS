@@ -1,0 +1,10 @@
+{
+ "attachment_reference": null,
+ "employee_id": null,
+ "end_date": "2026-01-15",
+ "expected_delivery_date": null,
+ "half_day": null,
+ "leave_type_id": "00000000-0000-0000-0000-000000001234",
+ "reason": null,
+ "start_date": "2026-01-15"
+}

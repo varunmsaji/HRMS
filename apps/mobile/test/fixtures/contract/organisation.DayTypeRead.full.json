@@ -1,0 +1,13 @@
+{
+ "date": "2026-01-15",
+ "day_type": "x",
+ "exception_type": "x",
+ "holiday_is_paid": true,
+ "holiday_name": "x",
+ "holiday_on_weekly_off": true,
+ "holiday_type": "x",
+ "is_holiday_named": true,
+ "optional_holiday_name": "x",
+ "restricted_holiday_name": "x",
+ "weekly_off_fraction": "1.50"
+}

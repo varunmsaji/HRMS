@@ -1,0 +1,9 @@
+{
+ "admin_percent": "1.50",
+ "edli_percent": "1.50",
+ "employee_percent": "1.50",
+ "employer_percent": "1.50",
+ "eps_age_limit": 1,
+ "eps_percent": "1.50",
+ "wage_ceiling_minor": 1
+}

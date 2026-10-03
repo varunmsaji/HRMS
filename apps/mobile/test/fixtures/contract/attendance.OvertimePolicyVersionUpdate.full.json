@@ -1,0 +1,27 @@
+{
+ "approval_chain": "x",
+ "comp_off_day_length_minutes": 1,
+ "comp_off_expiry_days": 1,
+ "comp_off_instead_of_pay": true,
+ "daily_cap_minutes": 1,
+ "effective_from": "2026-01-15",
+ "eligibility": "x",
+ "min_ot_minutes": 1,
+ "monthly_cap_minutes": 1,
+ "night_ot_mode": "x",
+ "night_window_end": "x",
+ "night_window_start": "x",
+ "rate_rows": [
+  {
+   "classification_code": "x",
+   "day_class": "x",
+   "multiplier_decimal": "1.50",
+   "sort_order": 1
+  }
+ ],
+ "requires_post_approval": true,
+ "requires_pre_approval": true,
+ "rounding_minutes": 1,
+ "rounding_mode": "x",
+ "weekly_cap_minutes": 1
+}

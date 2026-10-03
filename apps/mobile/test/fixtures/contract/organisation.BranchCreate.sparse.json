@@ -1,0 +1,14 @@
+{
+ "address_line1": null,
+ "address_line2": null,
+ "city": null,
+ "code": null,
+ "geofence_radius_m": null,
+ "latitude": null,
+ "legal_entity_id": "00000000-0000-0000-0000-000000001234",
+ "longitude": null,
+ "name": "x",
+ "pincode": null,
+ "state_code": null,
+ "timezone": null
+}

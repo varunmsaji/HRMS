@@ -1,0 +1,42 @@
+{
+ "deductions_minor": 1,
+ "employee_code": null,
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "employee_name": null,
+ "employer_contributions_minor": 1,
+ "gross_minor": 1,
+ "has_error": true,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_computed": true,
+ "issues": [
+  {
+   "code": "x",
+   "message": "x",
+   "severity": "x"
+  }
+ ],
+ "lines": [
+  {
+   "amount_minor": 1,
+   "component_code": "x",
+   "component_name": "x",
+   "display_order": 1,
+   "full_monthly_minor": null,
+   "line_type": "x",
+   "trace": {}
+  }
+ ],
+ "lop_days": null,
+ "net_minor": 1,
+ "paid_days": null,
+ "pay_basis": null,
+ "payable_days": null,
+ "previous_net_minor": null,
+ "rounding_minor": 1,
+ "snapshot": {},
+ "variance_acknowledged_at": null,
+ "variance_acknowledged_by_user_id": null,
+ "variance_flagged": true,
+ "variance_percent": null,
+ "variance_reason": null
+}

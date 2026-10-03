@@ -1,0 +1,10 @@
+{
+ "branch_id": null,
+ "candidate_first_name": "x",
+ "candidate_last_name": null,
+ "department_id": null,
+ "designation_id": null,
+ "personal_email": "a@example.com",
+ "personal_mobile": null,
+ "proposed_joining_date": "2026-01-15"
+}

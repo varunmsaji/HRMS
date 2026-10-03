@@ -1,0 +1,15 @@
+{
+ "branch_count": 1,
+ "department_count": 1,
+ "employee_count": 1,
+ "setup_progress": {
+  "status": "x",
+  "steps_completed": 1,
+  "steps_total": 1
+ },
+ "subscription": {
+  "plan_code": "x",
+  "status": "x",
+  "trial_ends_at": "2026-01-15T10:00:00Z"
+ }
+}

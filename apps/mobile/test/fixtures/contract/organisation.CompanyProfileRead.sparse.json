@@ -1,0 +1,49 @@
+{
+ "address": {
+  "city": null,
+  "country_code": null,
+  "line1": null,
+  "line2": null,
+  "postal_code": null,
+  "state": null
+ },
+ "branding": {
+  "logo_url": null,
+  "theme": null
+ },
+ "business_hours": null,
+ "company_size": null,
+ "contact": {
+  "email": null,
+  "phone": null,
+  "website": null
+ },
+ "country_code": "x",
+ "currency": "x",
+ "fiscal_year": {
+  "start_month": 1
+ },
+ "id": "00000000-0000-0000-0000-000000001234",
+ "industry_code": null,
+ "legal_name": null,
+ "locale": {
+  "date_format": "x",
+  "language_code": "x"
+ },
+ "name": "x",
+ "onboarded_at": null,
+ "primary_legal_entity": null,
+ "registration_number": null,
+ "status": "x",
+ "subdomain": null,
+ "timezone": "x",
+ "trial_ends_at": null,
+ "version": 1,
+ "working_days": [
+  {
+   "day": "x",
+   "is_alternate": true,
+   "is_working": true
+  }
+ ]
+}

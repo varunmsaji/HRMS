@@ -1,0 +1,26 @@
+{
+ "effective_from": null,
+ "effective_to": null,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "lines": [
+  {
+   "amount_monthly_minor": null,
+   "applies_when": "x",
+   "base_salary_component_id": null,
+   "calculation_type": "x",
+   "component_code": "x",
+   "component_name": "x",
+   "component_type": "x",
+   "display_order": 1,
+   "id": "00000000-0000-0000-0000-000000001234",
+   "max_monthly_minor": null,
+   "percentage": null,
+   "salary_component_id": "00000000-0000-0000-0000-000000001234"
+  }
+ ],
+ "published_at": null,
+ "salary_structure_id": "00000000-0000-0000-0000-000000001234",
+ "status": "x",
+ "version": 1,
+ "version_number": 1
+}

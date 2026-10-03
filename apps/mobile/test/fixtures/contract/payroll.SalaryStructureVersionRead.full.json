@@ -1,0 +1,26 @@
+{
+ "effective_from": "2026-01-15",
+ "effective_to": "2026-01-15",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "lines": [
+  {
+   "amount_monthly_minor": 1,
+   "applies_when": "x",
+   "base_salary_component_id": "00000000-0000-0000-0000-000000001234",
+   "calculation_type": "x",
+   "component_code": "x",
+   "component_name": "x",
+   "component_type": "x",
+   "display_order": 1,
+   "id": "00000000-0000-0000-0000-000000001234",
+   "max_monthly_minor": 1,
+   "percentage": "x",
+   "salary_component_id": "00000000-0000-0000-0000-000000001234"
+  }
+ ],
+ "published_at": "2026-01-15T10:00:00Z",
+ "salary_structure_id": "00000000-0000-0000-0000-000000001234",
+ "status": "x",
+ "version": 1,
+ "version_number": 1
+}

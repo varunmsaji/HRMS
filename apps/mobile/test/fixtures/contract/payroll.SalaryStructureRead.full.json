@@ -1,0 +1,39 @@
+{
+ "code": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "description": "x",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "name": "x",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1,
+ "versions": [
+  {
+   "effective_from": "2026-01-15",
+   "effective_to": "2026-01-15",
+   "id": "00000000-0000-0000-0000-000000001234",
+   "lines": [
+    {
+     "amount_monthly_minor": null,
+     "applies_when": null,
+     "base_salary_component_id": null,
+     "calculation_type": null,
+     "component_code": null,
+     "component_name": null,
+     "component_type": null,
+     "display_order": null,
+     "id": null,
+     "max_monthly_minor": null,
+     "percentage": null,
+     "salary_component_id": null
+    }
+   ],
+   "published_at": "2026-01-15T10:00:00Z",
+   "salary_structure_id": "00000000-0000-0000-0000-000000001234",
+   "status": "x",
+   "version": 1,
+   "version_number": 1
+  }
+ ]
+}

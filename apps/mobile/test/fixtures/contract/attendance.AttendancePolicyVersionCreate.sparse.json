@@ -1,0 +1,57 @@
+{
+ "auto_close_after_minutes": null,
+ "auto_close_uses_shift_end": true,
+ "core_hours_breach_behaviour": "x",
+ "duplicate_punch_window_seconds": 1,
+ "early_departure_bands": [
+  {
+   "classification": "x",
+   "counts_toward_cap": true,
+   "max_minutes": null,
+   "min_minutes": 1,
+   "sort_order": 1
+  }
+ ],
+ "early_departure_requires_approval": true,
+ "early_out_uses_core_end": true,
+ "effective_from": null,
+ "excess_break_behaviour": "x",
+ "excess_break_count_window": "x",
+ "excess_break_days_to_half_day_count": null,
+ "grace_in_minutes": 1,
+ "grace_out_minutes": 1,
+ "half_day_boundary_minutes": null,
+ "half_day_split": "x",
+ "hour_bands": [
+  {
+   "max_minutes": null,
+   "min_minutes": 1,
+   "result_status": "x",
+   "sort_order": 1
+  }
+ ],
+ "incomplete_at_lock_behaviour": "x",
+ "late_bands": [
+  {
+   "classification": "x",
+   "counts_toward_cap": true,
+   "max_minutes": null,
+   "min_minutes": 1,
+   "sort_order": 1
+  }
+ ],
+ "late_count_window": "x",
+ "lates_to_half_day_count": null,
+ "missing_punch_behaviour": "x",
+ "missing_shift_behaviour": "x",
+ "multi_punch_mode": "x",
+ "on_duty_requires_punch": true,
+ "punch_rounding": "x",
+ "rounding_minutes": null,
+ "split_shift_allow_hours_compensation": true,
+ "split_shift_block_mandatory": true,
+ "split_shift_missed_block_behaviour": "x",
+ "wfh_requires_punch": true,
+ "wfh_uses_shift_hours": true,
+ "work_on_leave_behaviour": "x"
+}

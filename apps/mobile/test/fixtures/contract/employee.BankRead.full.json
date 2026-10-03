@@ -1,0 +1,19 @@
+{
+ "account_holder_name": "x",
+ "account_number_enc": "x",
+ "bank_name": "x",
+ "branch_name": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "effective_from": "2026-01-15",
+ "effective_to": "2026-01-15",
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "ifsc": "x",
+ "is_primary": true,
+ "payment_mode": "x",
+ "penny_drop_reference": "x",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "verification_status": "x",
+ "version": 1
+}

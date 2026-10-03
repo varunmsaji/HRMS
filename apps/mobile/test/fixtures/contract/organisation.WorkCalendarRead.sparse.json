@@ -1,0 +1,16 @@
+{
+ "code": null,
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "description": null,
+ "holiday_calendar_ids": [
+  "00000000-0000-0000-0000-000000001234"
+ ],
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "name": "x",
+ "restricted_holidays_are_off_by_default": true,
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1,
+ "weekly_off_pattern_id": null
+}

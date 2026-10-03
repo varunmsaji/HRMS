@@ -1,0 +1,44 @@
+{
+ "breaks": [
+  {
+   "allows_split": true,
+   "break_kind": "x",
+   "end_time": "x",
+   "is_mandatory": true,
+   "is_paid": true,
+   "max_minutes": 1,
+   "min_minutes": 1,
+   "name": "x",
+   "scheduled_minutes": 1,
+   "sort_order": 1,
+   "start_time": "x",
+   "window_end": "x",
+   "window_start": "x"
+  }
+ ],
+ "core_end": "x",
+ "core_start": "x",
+ "duty_blocks": [
+  {
+   "end_time": "x",
+   "sequence": 1,
+   "start_time": "x"
+  }
+ ],
+ "effective_from": "2026-01-15",
+ "end_time": "x",
+ "is_night_shift": true,
+ "is_ot_eligible": true,
+ "max_scheduled_minutes": 1,
+ "min_scheduled_minutes": 1,
+ "operates_on_holiday": true,
+ "operates_on_weekly_off": true,
+ "required_minutes": 1,
+ "scheduled_minutes": 1,
+ "shift_type": "x",
+ "start_time": "x",
+ "timezone": "x",
+ "weekly_off_pattern_id": "00000000-0000-0000-0000-000000001234",
+ "window_end": "x",
+ "window_start": "x"
+}

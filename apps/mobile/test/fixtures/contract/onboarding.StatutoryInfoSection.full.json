@@ -1,0 +1,15 @@
+{
+ "esi_ip_number": "x",
+ "is_director": true,
+ "is_esi_applicable": true,
+ "is_international_worker": true,
+ "is_lwf_applicable": true,
+ "is_pf_applicable": true,
+ "pf_number": "x",
+ "pf_wage_ceiling_opt_out": true,
+ "pt_state_code": "x",
+ "tax_regime": "OLD",
+ "uan_number": "x",
+ "vpf_amount": 1,
+ "vpf_percentage": 1.5
+}

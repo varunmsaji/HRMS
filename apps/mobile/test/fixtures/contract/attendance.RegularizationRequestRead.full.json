@@ -1,0 +1,47 @@
+{
+ "actions": [
+  {
+   "action": "x",
+   "actor_employee_id": "00000000-0000-0000-0000-000000001234",
+   "actor_user_id": "00000000-0000-0000-0000-000000001234",
+   "comment": "x",
+   "created_at": "2026-01-15T10:00:00Z",
+   "id": "00000000-0000-0000-0000-000000001234",
+   "stage": "x"
+  }
+ ],
+ "applied_at": "2026-01-15T10:00:00Z",
+ "approval_chain": "x",
+ "approval_stage": "x",
+ "attachment_reference": "x",
+ "attendance_date": "2026-01-15",
+ "attendance_day_id": "00000000-0000-0000-0000-000000001234",
+ "cancelled_at": "2026-01-15T10:00:00Z",
+ "cancelled_by_user_id": "00000000-0000-0000-0000-000000001234",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "reason": "x",
+ "regularization_policy_version_id": "00000000-0000-0000-0000-000000001234",
+ "rejection_reason": "x",
+ "request_type": "x",
+ "requested_punches": [
+  {
+   "direction": "x",
+   "id": "00000000-0000-0000-0000-000000001234",
+   "requested_time": "x",
+   "sort_order": 1
+  }
+ ],
+ "requested_shift_id": "00000000-0000-0000-0000-000000001234",
+ "resolved_approver_manager_id": "00000000-0000-0000-0000-000000001234",
+ "reviewed_at": "2026-01-15T10:00:00Z",
+ "reviewed_by_user_id": "00000000-0000-0000-0000-000000001234",
+ "reviewer_comment": "x",
+ "status": "x",
+ "submitted_at": "2026-01-15T10:00:00Z",
+ "submitted_by_user_id": "00000000-0000-0000-0000-000000001234",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

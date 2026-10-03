@@ -1,0 +1,15 @@
+{
+ "address_line1": "x",
+ "address_line2": "x",
+ "city": "x",
+ "country_code": "x",
+ "permanent_address_line1": "x",
+ "permanent_address_line2": "x",
+ "permanent_city": "x",
+ "permanent_country_code": "x",
+ "permanent_pincode": "x",
+ "permanent_same_as_present": true,
+ "permanent_state_code": "x",
+ "pincode": "x",
+ "state_code": "x"
+}

@@ -1,0 +1,62 @@
+{
+ "breaks": [
+  {
+   "allows_split": true,
+   "break_kind": "x",
+   "crosses_midnight": true,
+   "end_time": "x",
+   "id": "00000000-0000-0000-0000-000000001234",
+   "is_mandatory": true,
+   "is_paid": true,
+   "max_minutes": 1,
+   "min_minutes": 1,
+   "name": "x",
+   "scheduled_minutes": 1,
+   "shift_version_id": "00000000-0000-0000-0000-000000001234",
+   "sort_order": 1,
+   "start_time": "x",
+   "window_end": "x",
+   "window_start": "x"
+  }
+ ],
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "core_end": "x",
+ "core_start": "x",
+ "created_at": "2026-01-15T10:00:00Z",
+ "duty_blocks": [
+  {
+   "crosses_midnight": true,
+   "end_time": "x",
+   "id": "00000000-0000-0000-0000-000000001234",
+   "sequence": 1,
+   "shift_version_id": "00000000-0000-0000-0000-000000001234",
+   "start_time": "x"
+  }
+ ],
+ "effective_from": "2026-01-15",
+ "effective_to": "2026-01-15",
+ "end_time": "x",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_cross_midnight": true,
+ "is_night_shift": true,
+ "is_ot_eligible": true,
+ "max_scheduled_minutes": 1,
+ "min_scheduled_minutes": 1,
+ "operates_on_holiday": true,
+ "operates_on_weekly_off": true,
+ "publish_reason": "x",
+ "published_at": "2026-01-15T10:00:00Z",
+ "published_by": "00000000-0000-0000-0000-000000001234",
+ "required_minutes": 1,
+ "scheduled_minutes": 1,
+ "shift_id": "00000000-0000-0000-0000-000000001234",
+ "shift_type": "x",
+ "start_time": "x",
+ "status": "x",
+ "timezone": "x",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1,
+ "weekly_off_pattern_id": "00000000-0000-0000-0000-000000001234",
+ "window_end": "x",
+ "window_start": "x"
+}
