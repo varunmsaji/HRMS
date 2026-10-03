@@ -5,7 +5,9 @@ import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/widgets/async_list_screen.dart';
+import '../../attendance/presentation/employee_attendance_panel.dart';
 import '../../auth/state/auth_controller.dart';
+import '../../payroll/presentation/employee_salary_panel.dart';
 import '../../profile/data/employee_repository.dart';
 import '../../profile/presentation/employee_overview.dart';
 import '../../profile/presentation/employee_record_sections.dart';
@@ -186,6 +188,11 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
         if (s.permission == null || permissions.contains(s.permission)) s,
     ];
     final e = _employee;
+    // The web page's Salary and Attendance tabs, after the record sections.
+    final extraTabs = <(String, Widget)>[
+      if (permissions.contains(employeeViewCompensation)) ('Salary', EmployeeSalaryPanel(employeeId: e.id)),
+      if (permissions.contains(attendanceView)) ('Attendance', EmployeeAttendancePanel(employeeId: e.id)),
+    ];
     final actions = <Widget>[
       if (permissions.contains(employeeUpdate)) FilledButton.icon(icon: const Icon(Icons.edit_outlined), label: const Text('Edit'), onPressed: _busy ? null : _edit),
       if (permissions.contains(employeeConfirm) && e.status == 'PROBATION') OutlinedButton(onPressed: _busy ? null : _confirmProbation, child: const Text('Confirm')),
@@ -193,20 +200,21 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
       if (permissions.contains(employeeDeactivate)) OutlinedButton(onPressed: _busy ? null : _toggleActive, child: Text(e.isActive ? 'Deactivate' : 'Reactivate')),
     ];
     return DefaultTabController(
-      length: sections.length + 1,
+      length: sections.length + extraTabs.length + 1,
       child: Scaffold(
         appBar: AppBar(
           title: Text(e.fullName.isEmpty ? e.employeeCode : e.fullName),
           bottom: TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
-            tabs: [const Tab(text: 'Overview'), for (final s in sections) Tab(text: s.title)],
+            tabs: [const Tab(text: 'Overview'), for (final s in sections) Tab(text: s.title), for (final x in extraTabs) Tab(text: x.$1)],
           ),
         ),
         body: TabBarView(
           children: [
             RefreshIndicator(onRefresh: _reload, child: EmployeeOverview(employee: e, actions: actions)),
             for (final s in sections) EmployeeRecordPanel(employeeId: e.id, section: s),
+            for (final x in extraTabs) x.$2,
           ],
         ),
       ),

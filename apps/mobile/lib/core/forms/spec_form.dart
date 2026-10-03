@@ -77,6 +77,17 @@ class _SpecFormState extends State<SpecForm> {
     _set(f.key, value);
   }
 
+  Future<void> _pickDateTime(FieldSpec f) async {
+    final current = DateTime.tryParse((widget.values[f.key] ?? '').toString());
+    final date = await showDatePicker(context: context, initialDate: current ?? DateTime.now(), firstDate: DateTime(1900), lastDate: DateTime(2100));
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(context: context, initialTime: current == null ? const TimeOfDay(hour: 9, minute: 0) : TimeOfDay(hour: current.hour, minute: current.minute));
+    if (time == null) return;
+    final value = '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}T${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    _controller(f).text = value.replaceFirst('T', ' ');
+    _set(f.key, value);
+  }
+
   TextInputType _keyboard(FieldKind t) {
     switch (t) {
       case FieldKind.integer:
@@ -150,6 +161,18 @@ class _SpecFormState extends State<SpecForm> {
                     )
                   : const Icon(Icons.calendar_today_outlined, size: 18),
             ),
+          ),
+        );
+      case FieldKind.dateTime:
+        return AuthFormField(
+          label: f.label,
+          required: f.required,
+          errorText: error,
+          child: TextField(
+            controller: _controller(f)..text = (widget.values[f.key] ?? '').toString().replaceFirst('T', ' '),
+            readOnly: true,
+            onTap: _disabled(f) ? null : () => _pickDateTime(f),
+            decoration: const InputDecoration(hintText: 'YYYY-MM-DD HH:MM', suffixIcon: Icon(Icons.event_available_outlined, size: 18)),
           ),
         );
       case FieldKind.time:

@@ -223,32 +223,80 @@ class AttendanceDay {
     required this.employeeId,
     required this.attendanceDate,
     required this.attendanceStatus,
+    this.timezone = 'Asia/Kolkata',
     this.actualFirstIn,
     this.actualLastOut,
     this.workedMinutes,
     this.lateMinutes,
     required this.isLocked,
+    this.raw = const {},
   });
   final String id;
   final String employeeId;
   final String attendanceDate;
   final String attendanceStatus;
+
+  /// The zone this day was computed in — every timestamp on it is shown in this zone.
+  final String timezone;
   final String? actualFirstIn;
   final String? actualLastOut;
   final int? workedMinutes;
   final int? lateMinutes;
   final bool isLocked;
 
+  /// The full `AttendanceDayRead` JSON, for the detail screen.
+  final Map<String, dynamic> raw;
+
   factory AttendanceDay.fromJson(Map<String, dynamic> json) => AttendanceDay(
         id: json['id'] as String,
         employeeId: json['employee_id'] as String,
         attendanceDate: json['attendance_date'] as String,
         attendanceStatus: json['attendance_status'] as String,
+        timezone: (json['timezone'] as String?) ?? 'Asia/Kolkata',
         actualFirstIn: json['actual_first_in'] as String?,
         actualLastOut: json['actual_last_out'] as String?,
         workedMinutes: json['worked_minutes'] as int?,
         lateMinutes: json['late_minutes'] as int?,
         isLocked: json['is_locked'] as bool,
+        raw: json,
+      );
+}
+
+/// `PunchRead`.
+class Punch {
+  Punch({required this.id, required this.employeeId, required this.punchTime, required this.direction, required this.source, this.reference});
+  final String id;
+  final String employeeId;
+  final String punchTime;
+  final String direction;
+  final String source;
+  final String? reference;
+
+  factory Punch.fromJson(Map<String, dynamic> json) => Punch(
+        id: json['id'] as String,
+        employeeId: json['employee_id'] as String,
+        punchTime: json['punch_time'] as String,
+        direction: json['direction'] as String,
+        source: json['source'] as String,
+        reference: json['reference'] as String?,
+      );
+}
+
+/// `LeaveDayProjectionRead` — approved leave published onto a calendar day (provenance only).
+class LeaveDayProjection {
+  LeaveDayProjection({required this.leaveApplicationId, required this.fraction, this.half, required this.isPaid, required this.status});
+  final String leaveApplicationId;
+  final String fraction;
+  final String? half;
+  final bool isPaid;
+  final String status;
+
+  factory LeaveDayProjection.fromJson(Map<String, dynamic> json) => LeaveDayProjection(
+        leaveApplicationId: json['leave_application_id'] as String,
+        fraction: json['fraction'].toString(),
+        half: json['half'] as String?,
+        isPaid: json['is_paid'] as bool,
+        status: json['status'] as String,
       );
 }
 
@@ -513,11 +561,17 @@ class AttendanceRepository {
       );
 
   // Attendance days + punches
-  Future<List<AttendanceDay>> listAttendanceDays({required String employeeId, required String dateFrom, required String dateTo}) =>
+  Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) =>
       _client
           .getList(
             '/attendance/days',
-            filters: {'employee_id': employeeId, 'date_from': dateFrom, 'date_to': dateTo},
+            query: PageQuery(perPage: 100),
+            filters: {
+              if (employeeId != null) 'employee_id': employeeId,
+              'date_from': dateFrom,
+              'date_to': dateTo,
+              if (attendanceStatus != null) 'attendance_status': attendanceStatus,
+            },
             parseItem: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>),
           )
           .then((e) => e.data);
@@ -538,6 +592,39 @@ class AttendanceRepository {
         }),
         parse: (d) => FacePunchResult.fromJson(d as Map<String, dynamic>),
       );
+
+  Future<AttendanceDay> getAttendanceDay(String id) =>
+      _client.get('/attendance/days/$id', parse: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>));
+
+  /// `POST /attendance/days/{id}/recompute` — privileged (`ATTENDANCE.RECOMPUTE`), refused on a locked day.
+  Future<AttendanceDay> recomputeAttendanceDay(String id) =>
+      _client.post('/attendance/days/$id/recompute', parse: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>));
+
+  /// BUS-012 — HR confirms an approved full-day leave stands over punches on the same day.
+  Future<AttendanceDay> keepLeaveOverPunches(String id, {required String reason}) => _client.post(
+        '/attendance/days/$id/work-on-leave/keep-leave',
+        body: {'reason': reason},
+        parse: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// Calculates the employee's attendance for the *business* "today" — the date is deliberately
+  /// not sent; the server defaults it (a client-computed date would use the device's zone).
+  Future<void> calculateToday(String employeeId) => _client.post('/attendance/days/calculate?employee_id=$employeeId', parse: (_) {});
+
+  Future<List<Punch>> listPunches({required String employeeId, required String dateFrom, required String dateTo}) => _client
+      .getList('/attendance/punches', filters: {'employee_id': employeeId, 'date_from': dateFrom, 'date_to': dateTo}, parseItem: (d) => Punch.fromJson(d as Map<String, dynamic>))
+      .then((e) => e.data);
+
+  /// `POST /attendance/punches` (`ATTENDANCE.PUNCH_ON_BEHALF`) — [punchTimeUtcIso] is the UTC instant.
+  Future<Punch> createPunchOnBehalf({required String employeeId, required String direction, required String punchTimeUtcIso, required String reference}) => _client.post(
+        '/attendance/punches',
+        body: {'employee_id': employeeId, 'punch_time': punchTimeUtcIso, 'direction': direction, 'reference': reference},
+        parse: (d) => Punch.fromJson(d as Map<String, dynamic>),
+      );
+
+  Future<List<LeaveDayProjection>> listLeaveProjections({required String employeeId, required String dateFrom, required String dateTo}) => _client
+      .getList('/leave-projections', filters: {'employee_id': employeeId, 'date_from': dateFrom, 'date_to': dateTo}, parseItem: (d) => LeaveDayProjection.fromJson(d as Map<String, dynamic>))
+      .then((e) => e.data);
 
   Future<FaceEnrollmentStatus> getMyFaceEnrollment() => _client.get(
         '/attendance/face-enrollment/me',

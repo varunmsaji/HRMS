@@ -21,6 +21,7 @@ class _HubGroup {
 const _quickLinks = _HubGroup('Quick links', [
   _HubItem('Employees', Icons.people_outline, '/app/employees'),
   _HubItem('Onboarding', Icons.person_add_alt, '/app/onboarding'),
+  _HubItem('Team Attendance', Icons.groups_outlined, '/app/team-attendance'),
   _HubItem('Shift Rosters', Icons.event_available, '/app/rosters'),
   _HubItem('Regularizations', Icons.edit_note, '/app/regularizations'),
   _HubItem('Overtime', Icons.alarm_on_outlined, '/app/overtime'),

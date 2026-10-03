@@ -5,9 +5,11 @@ import 'core/api/api_client.dart';
 import 'core/providers.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
+import 'core/time.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  initTimeZones();
   final apiClient = await ApiClient.getInstance();
   runApp(
     ProviderScope(

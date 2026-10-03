@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
+import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
+import 'attendance_widgets.dart';
 import 'face_punch_card.dart';
 import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
@@ -40,13 +42,13 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
       _loading = true;
       _error = null;
     });
-    final to = DateTime.now();
-    final from = to.subtract(const Duration(days: 13));
+    // The window is the last 14 *business* days in the company's zone (TZ-06), not the device's.
+    final zone = ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
     try {
       final days = await ref.read(attendanceRepositoryProvider).listAttendanceDays(
             employeeId: employeeId,
-            dateFrom: from.toIso8601String().split('T').first,
-            dateTo: to.toIso8601String().split('T').first,
+            dateFrom: businessDayOffset(zone, -13),
+            dateTo: businessToday(zone),
           );
       days.sort((a, b) => b.attendanceDate.compareTo(a.attendanceDate));
       if (mounted) setState(() => _days = days);
@@ -75,7 +77,6 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
   @override
   Widget build(BuildContext context) {
     final employeeId = ref.watch(authControllerProvider).user?.employeeId;
-    final scheme = Theme.of(context).colorScheme;
 
     Widget body;
     if (employeeId == null) {
@@ -127,20 +128,9 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
               const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Text('No attendance records yet.'))
             else
               for (final day in _days)
-                InkWell(
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(day: day))),
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: scheme.surfaceContainerLowest, borderRadius: BorderRadius.circular(10), border: Border.all(color: scheme.outlineVariant)),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(day.attendanceDate),
-                        _StatusBadge(status: day.attendanceStatus),
-                      ],
-                    ),
-                  ),
+                AttendanceDayTile(
+                  day: day,
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: day.id, initial: day))),
                 ),
           ],
         ),
@@ -150,41 +140,6 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Attendance'), automaticallyImplyLeading: false, actions: const [MoreAction()]),
       body: body,
-    );
-  }
-}
-
-/// Defensive enum-mapping (the backend's `attendance_status` set isn't
-/// frozen client-side) — mirrors the web app's `AttendanceStatusBadge`.
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status});
-  final String status;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    Color color;
-    switch (status) {
-      case 'PRESENT':
-        color = Colors.green;
-      case 'HALF_DAY':
-      case 'INCOMPLETE':
-        color = Colors.amber;
-      case 'ABSENT':
-      case 'CONFIG_ERROR':
-        color = Colors.red;
-      case 'ON_DUTY':
-      case 'WFH':
-        color = Colors.blue;
-      case 'LEAVE':
-        color = Colors.purple;
-      default:
-        color = scheme.onSurfaceVariant;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
-      child: Text(status.replaceAll('_', ' '), style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
     );
   }
 }

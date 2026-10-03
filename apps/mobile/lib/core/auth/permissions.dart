@@ -41,3 +41,19 @@ const employeeUpdateSensitive = 'EMPLOYEE.UPDATE_SENSITIVE';
 const employeeConfirm = 'EMPLOYEE.CONFIRM';
 const employeeInvite = 'EMPLOYEE.INVITE';
 const employeeBulkImport = 'EMPLOYEE.BULK_IMPORT';
+
+// Attendance (mirrors `apps/api/src/hrms/modules/attendance/permissions.py`).
+const attendanceView = 'ATTENDANCE.VIEW';
+const attendanceViewAll = 'ATTENDANCE.VIEW_ALL';
+const attendancePunch = 'ATTENDANCE.PUNCH';
+const attendancePunchOnBehalf = 'ATTENDANCE.PUNCH_ON_BEHALF';
+const attendanceRecompute = 'ATTENDANCE.RECOMPUTE';
+const attendanceRosterManage = 'ATTENDANCE.ROSTER_MANAGE';
+const attendancePolicyManage = 'ATTENDANCE.POLICY_MANAGE';
+const attendanceRegularizationRequest = 'ATTENDANCE.REGULARIZATION_REQUEST';
+const attendanceRegularizationRequestOnBehalf = 'ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF';
+const attendanceRegularizationApprove = 'ATTENDANCE.REGULARIZATION_APPROVE';
+const attendanceOvertimeApprove = 'ATTENDANCE.OVERTIME_APPROVE';
+const attendanceLock = 'ATTENDANCE.LOCK';
+const attendanceUnlock = 'ATTENDANCE.UNLOCK';
+const attendanceFaceEnrollmentManage = 'ATTENDANCE.FACE_ENROLLMENT_MANAGE';

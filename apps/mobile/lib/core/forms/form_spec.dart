@@ -9,6 +9,9 @@ enum FieldKind {
   multiline,
   date,
   time,
+
+  /// A wall-clock `YYYY-MM-DDTHH:mm`, interpreted by the caller in the company zone.
+  dateTime,
   select,
 
   /// Options supplied at runtime (`choices[choiceKey]` on the form) — stores the option's value.
@@ -100,6 +103,7 @@ typedef Choice = ({String value, String label});
 final _panPattern = RegExp(r'^[A-Z]{5}[0-9]{4}[A-Z]$');
 final _aadhaarPattern = RegExp(r'^[0-9]{12}$');
 final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+final _dateTimePattern = RegExp(r'^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 final _timePattern = RegExp(r'^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 
 bool fieldVisible(FieldSpec f, Map<String, dynamic> values) {
@@ -203,6 +207,8 @@ Map<String, String> validateRow(FormSpec spec, Map<String, dynamic> values) {
         if (!_emailPattern.hasMatch(text)) errors[f.key] = 'Enter a valid email address.';
       case FieldKind.time:
         if (!_timePattern.hasMatch(text)) errors[f.key] = 'Use HH:MM (24-hour).';
+      case FieldKind.dateTime:
+        if (!_dateTimePattern.hasMatch(text)) errors[f.key] = 'Pick a date and time.';
       case FieldKind.date:
         if (DateTime.tryParse(text) == null) errors[f.key] = 'Enter a valid date (YYYY-MM-DD).';
       case FieldKind.money:

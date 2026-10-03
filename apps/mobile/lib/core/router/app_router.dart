@@ -47,6 +47,7 @@ import '../../features/organisation/presentation/designations_screen.dart';
 import '../../features/organisation/presentation/grades_screen.dart';
 import '../../features/organisation/presentation/legal_entities_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
+import '../../features/attendance/presentation/team_attendance_screen.dart';
 import '../../features/onboarding/presentation/public_onboarding_screen.dart';
 import '../../features/shell/app_shell.dart';
 import '../../features/shell/settings_hub_screen.dart';
@@ -163,6 +164,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/work-calendars', builder: (context, state) => const WorkCalendarsScreen()),
       GoRoute(path: '/app/regularizations', builder: (context, state) => const RegularizationsScreen()),
       GoRoute(path: '/app/overtime', builder: (context, state) => const OvertimeScreen()),
+      GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
       GoRoute(path: '/app/rosters', builder: (context, state) => const RostersScreen()),
       GoRoute(path: '/app/roster-calendar', builder: (context, state) => const RosterCalendarScreen()),
       GoRoute(path: '/app/attendance-periods', builder: (context, state) => const AttendancePeriodsScreen()),
