@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/forms/form_spec.dart';
+import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/core/auth/auth_types.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/data/policy_repository.dart';
@@ -101,6 +103,7 @@ final Map<String, _Parser> _models = {
 };
 
 void main() {
+  writeFormTests();
   group('every mobile model parses the backend schema', () {
     for (final entry in _models.entries) {
       for (final variant in const ['full', 'sparse']) {
@@ -156,5 +159,41 @@ void main() {
         expect(backend.difference(mine), isEmpty, reason: 'backend fields the form would silently drop');
       });
     }
+  });
+}
+
+// ---- write forms -----------------------------------------------------------------------------
+
+Set<String> _requiredBy(String schema) => ((jsonDecode(File('test/fixtures/contract/_required.json').readAsStringSync()) as Map<String, dynamic>)[schema] as List).cast<String>().toSet();
+
+void _writeFormMatches(String name, FormSpec spec, String schema, {Set<String> notInForm = const {}}) {
+  test('$name -> $schema', () {
+    final backend = (_load(schema, 'full') as Map<String, dynamic>).keys.toSet();
+    final mine = spec.fields.map((f) => f.key).toSet();
+    expect(mine.difference(backend), isEmpty, reason: 'keys the backend (extra="forbid") would reject');
+    expect(backend.difference(mine).difference(notInForm), isEmpty, reason: 'backend fields the form does not offer');
+    final requiredInSpec = spec.fields.where((f) => f.required).map((f) => f.key).toSet();
+    // A field the backend requires must be required in the form too — unless it is a toggle,
+    // which always has a value (false).
+    final toggles = spec.fields.where((f) => f.kind == FieldKind.toggle).map((f) => f.key).toSet();
+    expect(_requiredBy(schema).difference(requiredInSpec).difference(toggles), isEmpty, reason: 'backend-required fields the form lets you leave empty');
+  });
+}
+
+void writeFormTests() {
+  group('employee write forms match the backend create/update schemas', () {
+    _writeFormMatches('employeeSpec', employeeSpec, 'employee.EmployeeCreate', notInForm: {'custom_fields'});
+    _writeFormMatches('employeeSpec (update)', employeeSpec, 'employee.EmployeeUpdate', notInForm: {'custom_fields', 'is_active'});
+    _writeFormMatches('employmentCreateSpec', employmentCreateSpec, 'employee.EmploymentCreate');
+    _writeFormMatches('employmentEditSpec', employmentEditSpec, 'employee.EmploymentUpdate');
+    _writeFormMatches('employmentTerminateSpec', employmentTerminateSpec, 'employee.EmploymentTerminate');
+    _writeFormMatches('assignmentSpec', assignmentSpec(const ['INITIAL']), 'employee.AssignmentCreate', notInForm: {'cost_centre_id'});
+    _writeFormMatches('compensationSpec', compensationSpec, 'employee.CompensationCreate');
+    _writeFormMatches('statutorySpec', statutorySpec, 'employee.StatutoryCreate');
+    _writeFormMatches('bankSpec', bankSpec, 'employee.BankCreate');
+    _writeFormMatches('identitySpec', identitySpec, 'employee.EmployeeIdentityUpdate');
+    _writeFormMatches('experienceSpec', experienceSpec, 'employee.EmployeeExperienceCreate', notInForm: {'document_id'});
+    _writeFormMatches('educationSpec', educationSpec, 'employee.EmployeeEducationCreate', notInForm: {'document_id'});
+    _writeFormMatches('dependentSpec', dependentSpec, 'employee.EmployeeDependentCreate', notInForm: {'document_id'});
   });
 }

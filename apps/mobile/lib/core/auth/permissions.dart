@@ -28,3 +28,16 @@ const payrollRunApprove = 'PAYROLL.RUN_APPROVE';
 const payrollBankAdviceDownload = 'PAYROLL.BANK_ADVICE_DOWNLOAD';
 const payrollSetupManage = 'PAYROLL.SETUP_MANAGE';
 const payrollStatutoryManage = 'PAYROLL.STATUTORY_MANAGE';
+
+// Employee writes (mirrors `apps/api/src/hrms/modules/employee/permissions.py`).
+const employeeCreate = 'EMPLOYEE.CREATE';
+const employeeUpdate = 'EMPLOYEE.UPDATE';
+const employeeDeactivate = 'EMPLOYEE.DEACTIVATE';
+const employeeTerminate = 'EMPLOYEE.TERMINATE';
+const employeeTransfer = 'EMPLOYEE.TRANSFER';
+const employeePromote = 'EMPLOYEE.PROMOTE';
+const employeeUpdateCompensation = 'EMPLOYEE.UPDATE_COMPENSATION';
+const employeeUpdateSensitive = 'EMPLOYEE.UPDATE_SENSITIVE';
+const employeeConfirm = 'EMPLOYEE.CONFIRM';
+const employeeInvite = 'EMPLOYEE.INVITE';
+const employeeBulkImport = 'EMPLOYEE.BULK_IMPORT';

@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/api/api_client.dart' show PageQuery;
+import '../../../core/api/api_client.dart' show ApiClient, PageQuery;
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
+import '../../../core/forms/choice_sources.dart';
+import '../../../core/forms/form_spec.dart';
+import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
+import '../../auth/state/auth_controller.dart';
+import '../../employees/domain/employee_forms.dart';
 
 enum RecordFormat { text, yesNo, money }
 
@@ -26,6 +31,8 @@ class RecordSection {
     required this.cardTitle,
     this.permission,
     this.single = false,
+    this.actions = const [],
+    this.rowActions = const [],
   });
 
   final String title;
@@ -40,6 +47,91 @@ class RecordSection {
 
   /// The endpoint returns one object (identity) instead of a list.
   final bool single;
+
+  /// Section-level writes (create / revise / terminate…), shown above the records.
+  final List<RecordAction> actions;
+
+  /// Per-record writes (delete…), shown on each card.
+  final List<RecordRowAction> rowActions;
+}
+
+typedef Items = List<Map<String, dynamic>>;
+
+/// The row that is currently in force: an effective-dated record with no end date.
+Map<String, dynamic>? openRow(Items items) {
+  for (final i in items) {
+    if (i['effective_to'] == null) return i;
+  }
+  return null;
+}
+
+/// A write offered on a section, opened as a spec-driven form. The backend decides; [permission]
+/// and [visible] only hide actions that could never succeed.
+class RecordAction {
+  const RecordAction({
+    required this.label,
+    required this.spec,
+    required this.submit,
+    this.permission,
+    this.anyOf = const [],
+    this.visible,
+    this.initial,
+    this.defaults = const {},
+    this.choiceKeys = const [],
+    this.intro,
+    this.destructive = false,
+    this.specFor,
+  });
+
+  /// Shown on the button (and as the form title); may depend on the loaded records.
+  final String Function(Items items) label;
+  final FormSpec spec;
+
+  /// Overrides [spec] when it depends on who is asking (e.g. which change types they may record).
+  final FormSpec Function(List<String> permissions)? specFor;
+  final String? permission;
+
+  /// Alternative permissions — any one is enough.
+  final List<String> anyOf;
+  final bool Function(Items items)? visible;
+  final Map<String, dynamic>? Function(Items items)? initial;
+  final Map<String, dynamic> defaults;
+  final List<String> choiceKeys;
+  final String? intro;
+  final bool destructive;
+  final Future<void> Function(ApiClient client, String employeeId, Items items, Map<String, dynamic> payload, Map<String, dynamic> changed) submit;
+
+  bool allowed(List<String> permissions) =>
+      (permission == null && anyOf.isEmpty) || (permission != null && permissions.contains(permission)) || anyOf.any(permissions.contains);
+}
+
+class RecordRowAction {
+  const RecordRowAction({required this.label, required this.permission, required this.confirm, required this.perform});
+  final String label;
+  final String permission;
+  final String confirm;
+  final Future<void> Function(ApiClient client, String employeeId, Map<String, dynamic> row) perform;
+}
+
+Map<String, dynamic> _withoutNulls(Map<String, dynamic> m) => {
+      for (final e in m.entries)
+        if (e.value != null) e.key: e.value,
+    };
+
+/// Effective-dated create: `If-Match` is needed only while a current row exists.
+Future<void> _createRevision(ApiClient client, String employeeId, String path, Items items, Map<String, dynamic> payload) {
+  final current = openRow(items);
+  return client.post<Object?>('/employees/$employeeId$path', body: payload, ifMatch: current?['version']?.toString(), parse: (_) => null);
+}
+
+Future<void> _deleteRow(ApiClient client, String employeeId, String path, Map<String, dynamic> row) =>
+    client.delete<Object?>('/employees/$employeeId$path/${row['id']}', ifMatch: row['version']?.toString(), parse: (_) => null);
+
+Map<String, dynamic>? _active(Items items) {
+  for (final i in items) {
+    if (i['status'] == 'ACTIVE') return i;
+  }
+  return null;
 }
 
 String _s(Map<String, dynamic> m, String k) => (m[k] ?? '').toString();
@@ -53,6 +145,41 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Employment',
     path: '/employments',
+    actions: [
+      RecordAction(
+        label: (items) => items.isEmpty ? 'Create first employment' : 'Rehire',
+        permission: employeeCreate,
+        visible: (items) => _active(items) == null,
+        spec: employmentCreateSpec,
+        choiceKeys: const ['legal_entities'],
+        intro: "The employee's identity and history are retained — a rehire starts a new employment episode.",
+        submit: (client, id, items, payload, _) => client.post<Object?>('/employees/$id/employments', body: payload, parse: (_) => null),
+      ),
+      RecordAction(
+        label: (_) => 'Edit employment',
+        permission: employeeUpdate,
+        visible: (items) => _active(items) != null,
+        spec: employmentEditSpec,
+        choiceKeys: const ['legal_entities'],
+        initial: _active,
+        submit: (client, id, items, payload, changed) {
+          final current = _active(items)!;
+          return client.patch<Object?>('/employees/$id/employments/${current['id']}', body: changed, ifMatch: current['version'].toString(), parse: (_) => null);
+        },
+      ),
+      RecordAction(
+        label: (_) => 'Terminate',
+        permission: employeeTerminate,
+        visible: (items) => _active(items) != null,
+        spec: employmentTerminateSpec,
+        destructive: true,
+        intro: 'Ends the current employment on the last working day. This cannot be undone.',
+        submit: (client, id, items, payload, _) {
+          final current = _active(items)!;
+          return client.post<Object?>('/employees/$id/employments/${current['id']}/terminate', body: payload, ifMatch: current['version'].toString(), parse: (_) => null);
+        },
+      ),
+    ],
     cardTitle: (m) => 'Joined ${_s(m, 'joining_date')}',
     fields: const [
       RecordField('Status', 'status'),
@@ -65,6 +192,20 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Assignment',
     path: '/assignments',
+    actions: [
+      RecordAction(
+        label: (items) => items.isEmpty ? 'Record initial placement' : 'Record a change',
+        anyOf: const [employeeTransfer, employeePromote],
+        spec: assignmentSpec(const ['INITIAL', 'TRANSFER', 'PROMOTION', 'MANAGER_CHANGE', 'SHIFT_CHANGE']),
+        specFor: (permissions) => assignmentSpec([
+          if (permissions.contains(employeeTransfer)) ...const ['INITIAL', 'TRANSFER', 'MANAGER_CHANGE', 'SHIFT_CHANGE'],
+          if (permissions.contains(employeePromote)) 'PROMOTION',
+        ]),
+        choiceKeys: const ['branches', 'departments', 'designations', 'grades', 'employees', 'shifts'],
+        intro: 'Anything you leave empty carries forward unchanged from the current assignment.',
+        submit: (client, id, items, payload, _) => _createRevision(client, id, '/assignments', items, _withoutNulls(payload)),
+      ),
+    ],
     cardTitle: (m) => _range(m, 'effective_from', 'effective_to'),
     fields: const [
       RecordField('Work location type', 'work_location_type'),
@@ -81,6 +222,15 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Compensation',
     path: '/compensation',
+    actions: [
+      RecordAction(
+        label: (items) => items.isEmpty ? 'Set compensation' : 'Revise compensation',
+        permission: employeeUpdateCompensation,
+        spec: compensationSpec,
+        intro: 'Closes the current compensation and starts a new one on the effective date.',
+        submit: (client, id, items, payload, _) => _createRevision(client, id, '/compensation', items, payload),
+      ),
+    ],
     permission: employeeViewCompensation,
     cardTitle: (m) => _range(m, 'effective_from', 'effective_to'),
     fields: const [
@@ -93,6 +243,15 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Statutory',
     path: '/statutory',
+    actions: [
+      RecordAction(
+        label: (items) => items.isEmpty ? 'Set statutory profile' : 'Revise statutory profile',
+        permission: employeeUpdateSensitive,
+        spec: statutorySpec,
+        intro: 'Closes the current statutory profile and starts a new one on the effective date.',
+        submit: (client, id, items, payload, _) => _createRevision(client, id, '/statutory', items, payload),
+      ),
+    ],
     permission: employeeViewStatutory,
     cardTitle: (m) => _range(m, 'effective_from', 'effective_to'),
     fields: const [
@@ -113,6 +272,15 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Banking',
     path: '/bank',
+    actions: [
+      RecordAction(
+        label: (items) => items.isEmpty ? 'Add bank details' : 'Change bank details',
+        permission: employeeUpdateSensitive,
+        spec: bankSpec,
+        intro: 'Closes the current bank account and starts a new one on the effective date.',
+        submit: (client, id, items, payload, _) => _createRevision(client, id, '/bank', items, payload),
+      ),
+    ],
     permission: employeeViewBanking,
     cardTitle: (m) => _s(m, 'bank_name').isEmpty ? _range(m, 'effective_from', 'effective_to') : _s(m, 'bank_name'),
     fields: const [
@@ -130,6 +298,16 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Identity',
     path: '/identity',
+    actions: [
+      RecordAction(
+        label: (_) => 'Edit identity',
+        permission: employeeUpdateSensitive,
+        spec: identitySpec,
+        initial: (items) => items.isEmpty ? null : items.first,
+        submit: (client, id, items, payload, changed) =>
+            client.patch<Object?>('/employees/$id/identity', body: changed, ifMatch: items.first['version'].toString(), parse: (_) => null),
+      ),
+    ],
     permission: employeeViewSensitive,
     single: true,
     cardTitle: (m) => 'Identity documents',
@@ -143,6 +321,22 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Experience',
     path: '/experience',
+    actions: [
+      RecordAction(
+        label: (_) => 'Add experience',
+        permission: employeeUpdateSensitive,
+        spec: experienceSpec,
+        submit: (client, id, items, payload, _) => client.post<Object?>('/employees/$id/experience', body: payload, parse: (_) => null),
+      ),
+    ],
+    rowActions: [
+      RecordRowAction(
+        label: 'Delete',
+        permission: employeeUpdateSensitive,
+        confirm: 'Delete this experience entry?',
+        perform: (client, id, row) => _deleteRow(client, id, '/experience', row),
+      ),
+    ],
     permission: employeeViewExperience,
     cardTitle: (m) => _s(m, 'company_name'),
     fields: const [
@@ -160,6 +354,22 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Education',
     path: '/education',
+    actions: [
+      RecordAction(
+        label: (_) => 'Add education',
+        permission: employeeUpdateSensitive,
+        spec: educationSpec,
+        submit: (client, id, items, payload, _) => client.post<Object?>('/employees/$id/education', body: payload, parse: (_) => null),
+      ),
+    ],
+    rowActions: [
+      RecordRowAction(
+        label: 'Delete',
+        permission: employeeUpdateSensitive,
+        confirm: 'Delete this education entry?',
+        perform: (client, id, row) => _deleteRow(client, id, '/education', row),
+      ),
+    ],
     permission: employeeViewExperience,
     cardTitle: (m) => _s(m, 'qualification'),
     fields: const [
@@ -170,6 +380,22 @@ final employeeRecordSections = <RecordSection>[
   RecordSection(
     title: 'Dependents',
     path: '/dependents',
+    actions: [
+      RecordAction(
+        label: (_) => 'Add dependent / nominee',
+        permission: employeeUpdateSensitive,
+        spec: dependentSpec,
+        submit: (client, id, items, payload, _) => client.post<Object?>('/employees/$id/dependents', body: payload, parse: (_) => null),
+      ),
+    ],
+    rowActions: [
+      RecordRowAction(
+        label: 'Delete',
+        permission: employeeUpdateSensitive,
+        confirm: 'Delete this dependent?',
+        perform: (client, id, row) => _deleteRow(client, id, '/dependents', row),
+      ),
+    ],
     permission: employeeViewNominee,
     cardTitle: (m) => '${_s(m, 'full_name')} (${_s(m, 'relationship')})',
     fields: const [
@@ -272,30 +498,98 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
       );
     }
     final scheme = Theme.of(context).colorScheme;
+    final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
+    final actions = [
+      for (final a in widget.section.actions)
+        if (a.allowed(permissions) && (a.visible?.call(_items) ?? true)) a,
+    ];
     return RefreshIndicator(
       onRefresh: _load,
-      child: _items.isEmpty
-          ? ListView(children: [
-              Padding(
-                padding: const EdgeInsets.all(32),
-                child: Text('No ${widget.section.title.toLowerCase()} records yet.', textAlign: TextAlign.center, style: TextStyle(color: scheme.onSurfaceVariant)),
-              ),
-            ])
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: _items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, i) => _RecordCard(section: widget.section, item: _items[i]),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (actions.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final a in actions)
+                  (a.destructive ? OutlinedButton.new : FilledButton.new)(
+                    style: a.destructive ? OutlinedButton.styleFrom(foregroundColor: scheme.error) : null,
+                    onPressed: () => _runAction(a, permissions),
+                    child: Text(a.label(_items)),
+                  ),
+              ]),
             ),
+          if (_items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text('No ${widget.section.title.toLowerCase()} records yet.', textAlign: TextAlign.center, style: TextStyle(color: scheme.onSurfaceVariant)),
+            ),
+          for (final item in _items) ...[
+            _RecordCard(
+              section: widget.section,
+              item: item,
+              rowActions: [for (final r in widget.section.rowActions) if (permissions.contains(r.permission)) r],
+              onRowAction: _runRowAction,
+            ),
+            const SizedBox(height: 12),
+          ],
+        ],
+      ),
     );
+  }
+
+  void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+
+  Future<void> _runAction(RecordAction a, List<String> permissions) async {
+    final client = ref.read(apiClientProvider);
+    final saved = await openSpecForm(
+      context,
+      title: a.label(_items),
+      spec: a.specFor?.call(permissions) ?? a.spec,
+      initial: a.initial?.call(_items),
+      defaults: a.defaults,
+      intro: a.intro,
+      loadChoices: a.choiceKeys.isEmpty ? null : () => loadChoices(client, a.choiceKeys),
+      submitLabel: a.destructive ? a.label(_items) : null,
+      onSubmit: (payload, changed) => a.submit(client, widget.employeeId, _items, payload, changed),
+    );
+    if (saved && mounted) {
+      _toast('Saved.');
+      await _load();
+    }
+  }
+
+  Future<void> _runRowAction(RecordRowAction r, Map<String, dynamic> row) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(r.label),
+        content: Text(r.confirm),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text(r.label)),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    try {
+      await r.perform(ref.read(apiClientProvider), widget.employeeId, row);
+      if (mounted) _toast('Done.');
+      await _load();
+    } catch (e) {
+      if (mounted) _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This record was changed by someone else. Pull to refresh and try again.' : e.message) : 'Something went wrong.');
+    }
   }
 }
 
 class _RecordCard extends StatelessWidget {
-  const _RecordCard({required this.section, required this.item});
+  const _RecordCard({required this.section, required this.item, this.rowActions = const [], this.onRowAction});
 
   final RecordSection section;
   final Map<String, dynamic> item;
+  final List<RecordRowAction> rowActions;
+  final void Function(RecordRowAction action, Map<String, dynamic> row)? onRowAction;
 
   @override
   Widget build(BuildContext context) {
@@ -322,6 +616,18 @@ class _RecordCard extends StatelessWidget {
                   Expanded(flex: 5, child: Text(formatRecordValue(field, item[field.key]), textAlign: TextAlign.end)),
                 ],
               ),
+            ),
+          if (rowActions.isNotEmpty)
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(spacing: 8, children: [
+                for (final r in rowActions)
+                  TextButton(
+                    style: TextButton.styleFrom(foregroundColor: scheme.error),
+                    onPressed: () => onRowAction?.call(r, item),
+                    child: Text(r.label),
+                  ),
+              ]),
             ),
         ],
       ),

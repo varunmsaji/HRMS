@@ -87,6 +87,7 @@ def main() -> None:
     for old in OUT.glob("*.json"):
         old.unlink()
     written = 0
+    required: dict[str, list[str]] = {}
     for module in MODULES:
         schemas = importlib.import_module(f"hrms.modules.{module}.schemas")
         for name, cls in vars(schemas).items():
@@ -97,11 +98,16 @@ def main() -> None:
             except Exception:
                 continue
             defs = schema.get("$defs", {})
+            try:
+                required[f"{module}.{name}"] = sorted(cls.model_json_schema(mode="validation").get("required", []))
+            except Exception:
+                pass
             for variant, sparse in (("full", False), ("sparse", True)):
                 (OUT / f"{module}.{name}.{variant}.json").write_text(
                     json.dumps(sample(schema, defs, sparse), indent=1, sort_keys=True) + "\n"
                 )
             written += 1
+    (OUT / "_required.json").write_text(json.dumps(required, indent=1, sort_keys=True) + "\n")
     print(f"wrote fixtures for {written} schemas to {OUT}")
 
 

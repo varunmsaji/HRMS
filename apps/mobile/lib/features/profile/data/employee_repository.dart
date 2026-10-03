@@ -30,6 +30,8 @@ class Employee {
     this.emergencyContactPhone,
     required this.status,
     required this.isActive,
+    required this.version,
+    required this.raw,
   });
 
   final String id;
@@ -56,6 +58,10 @@ class Employee {
   final String? emergencyContactPhone;
   final String status;
   final bool isActive;
+  final int version;
+
+  /// The wire JSON, so edit forms can diff against exactly what the server sent.
+  final Map<String, dynamic> raw;
 
   /// Mirrors `employee-overview.tsx`'s name resolution:
   /// `display_name?.trim() || [first, middle, last].filter(Boolean).join(' ')`.
@@ -89,6 +95,8 @@ class Employee {
         emergencyContactPhone: json['emergency_contact_phone'] as String?,
         status: json['status'] as String,
         isActive: json['is_active'] as bool,
+        version: json['version'] as int,
+        raw: json,
       );
 }
 
@@ -100,6 +108,37 @@ class EmployeeRepository {
   Future<Employee> getEmployee(String employeeId) => _client.get(
         '/employees/$employeeId',
         parse: (data) => Employee.fromJson(data as Map<String, dynamic>),
+      );
+
+  Future<Employee> updateEmployee(String employeeId, Map<String, dynamic> changes, {required int version}) => _client.patch(
+        '/employees/$employeeId',
+        body: changes,
+        ifMatch: version.toString(),
+        parse: (data) => Employee.fromJson(data as Map<String, dynamic>),
+      );
+
+  /// `DELETE /employees/{id}` deactivates (soft) — reactivation is `PATCH {is_active: true}`.
+  Future<Employee> deactivateEmployee(String employeeId, {required int version}) => _client.delete(
+        '/employees/$employeeId',
+        ifMatch: version.toString(),
+        parse: (data) => Employee.fromJson(data as Map<String, dynamic>),
+      );
+
+  Future<Employee> confirmEmployee(String employeeId, {required int version}) => _client.post(
+        '/employees/$employeeId/confirm',
+        body: const {},
+        ifMatch: version.toString(),
+        parse: (data) => Employee.fromJson(data as Map<String, dynamic>),
+      );
+
+  /// `POST /employees/{id}/invite` — emails the employee a login invite.
+  Future<({String email, bool emailSent})> inviteEmployee(String employeeId) => _client.post(
+        '/employees/$employeeId/invite',
+        body: const {},
+        parse: (data) {
+          final m = data as Map<String, dynamic>;
+          return (email: m['email'] as String, emailSent: m['email_sent'] == true);
+        },
       );
 
   Future<List<Employee>> listEmployees() =>
