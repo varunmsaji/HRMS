@@ -3,14 +3,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/widgets/async_list_screen.dart';
+import '../../../core/auth/permissions.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
+import '../../auth/state/auth_controller.dart';
 import '../data/onboarding_repository.dart';
 import 'onboarding_cases_screen.dart' show onboardingRepositoryProvider;
 
 /// Known role codes — mirrors the roles seeded for every company
 /// (`apps/api` RBAC bootstrap). Not fetched from an endpoint since there
 /// isn't a "list roles" route; these are the fixed built-in roles.
-const _roleCodes = ['COMPANY_ADMIN', 'HR_ADMIN', 'REPORTING_MANAGER', 'EMPLOYEE'];
+const _roleCodes = ['COMPANY_ADMIN', 'HR_ADMIN', 'REPORTING_MANAGER', 'BRANCH_MANAGER', 'EMPLOYEE'];
+
+/// Role codes shown as words (`HR_ADMIN` -> `HR admin`).
+String roleLabel(String code) => code.replaceAll('_', ' ').toLowerCase().replaceFirstMapped(RegExp(r'^.'), (m) => m[0]!.toUpperCase()).replaceAll('Hr ', 'HR ');
 
 class UsersScreen extends ConsumerStatefulWidget {
   const UsersScreen({super.key});
@@ -37,7 +42,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
               label: 'Role',
               child: DropdownButtonFormField<String>(
                 value: roleCode,
-                items: [for (final r in _roleCodes) DropdownMenuItem(value: r, child: Text(r.replaceAll('_', ' ')))],
+                items: [for (final r in _roleCodes) DropdownMenuItem(value: r, child: Text(roleLabel(r)))],
                 onChanged: (v) => setState(() => roleCode = v ?? roleCode),
               ),
             ),
@@ -77,7 +82,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
             children: [
               for (final role in _roleCodes)
                 CheckboxListTile(
-                  title: Text(role.replaceAll('_', ' ')),
+                  title: Text(roleLabel(role)),
                   value: selected.contains(role),
                   onChanged: (v) => setState(() => (v ?? false) ? selected.add(role) : selected.remove(role)),
                 ),
@@ -107,17 +112,21 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
+    final canInvite = permissions.contains(settingsUserManage);
+    final canManageRoles = permissions.contains(settingsRoleManage);
     return AsyncListScreen<UserSummary>(
       key: _listKey,
       title: 'Users',
       fetch: () => ref.read(onboardingRepositoryProvider).listUsers(),
       createLabel: 'Invite user',
-      onCreate: _invite,
+      onCreate: canInvite ? _invite : null,
       emptyLabel: 'No users yet.',
       itemBuilder: (context, user) => ListTile(
         title: Text([user.firstName, user.lastName].where((s) => s != null && s.isNotEmpty).join(' ').trim().isEmpty ? user.emailLabel : '${user.firstName ?? ''} ${user.lastName ?? ''}'.trim()),
-        subtitle: Text([user.emailLabel, user.roleCodes.join(', ')].join(' · ')),
-        onTap: () => _editRoles(user),
+        subtitle: Text([user.emailLabel, user.roleCodes.isEmpty ? 'No roles' : user.roleCodes.map(roleLabel).join(', ')].join(' · ')),
+        trailing: canManageRoles ? const Icon(Icons.chevron_right, size: 20) : null,
+        onTap: canManageRoles ? () => _editRoles(user) : null,
       ),
     );
   }

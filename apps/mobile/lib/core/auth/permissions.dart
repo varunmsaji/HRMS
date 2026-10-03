@@ -76,3 +76,7 @@ const leaveApplicationApprove = 'LEAVE.APPLICATION_APPROVE';
 const leaveApplicationSubmit = 'LEAVE.APPLICATION_SUBMIT';
 const leaveApplicationSubmitOnBehalf = 'LEAVE.APPLICATION_SUBMIT_ON_BEHALF';
 const leaveApplicationCancelApproved = 'LEAVE.APPLICATION_CANCEL_APPROVED';
+
+// Settings (users and roles).
+const settingsUserManage = 'SETTINGS.USER.MANAGE';
+const settingsRoleManage = 'SETTINGS.ROLE.MANAGE';

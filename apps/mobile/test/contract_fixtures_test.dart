@@ -42,7 +42,6 @@ final Map<String, _Parser> _models = {
   // attendance
   'organisation.ShiftRead': Shift.fromJson,
   'attendance.AttendanceDayRead': AttendanceDay.fromJson,
-  'organisation.CalendarResolutionRead': CalendarResolution.fromJson,
   'organisation.HolidayCalendarRead': HolidayCalendar.fromJson,
   'organisation.HolidayRead': Holiday.fromJson,
   'organisation.WeeklyOffPatternRead': WeeklyOffPattern.fromJson,
@@ -393,7 +392,19 @@ void leaveConfigTests() {
   });
 }
 
+void resolutionContractTests() {
+  test('the policy-resolution screen reads keys that exist on the backend schemas', () {
+    final policy = (_load('attendance.PolicyResolutionRead', 'full') as Map<String, dynamic>).keys.toSet();
+    expect(policy, containsAll(['config_incomplete', 'resolved_policy_name', 'resolved_policy_code', 'resolved_through', 'resolved_version_id']));
+    final calendar = (_load('organisation.CalendarResolutionRead', 'full') as Map<String, dynamic>).keys.toSet();
+    expect(calendar, containsAll(['config_incomplete', 'work_calendar_name', 'resolved_scope_type', 'weekly_off_resolved_scope_type', 'day_type']));
+    final dayType = (_load('organisation.DayTypeRead', 'full') as Map<String, dynamic>).keys.toSet();
+    expect(dayType, containsAll(['day_type', 'holiday_name']));
+  });
+}
+
 void policyAssignmentContractTests() {
+  resolutionContractTests();
   group('policy assignment form matches PolicyAssignmentCreate', () {
     _writeFormMatches('policyAssignmentSpec', policyAssignmentSpec, 'organisation.PolicyAssignmentCreate', notInForm: const {'priority', 'effective_to'});
     test('every policy and scope source the form can offer is a loadable choice source', () {

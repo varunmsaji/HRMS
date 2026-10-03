@@ -181,23 +181,6 @@ class LeaveDayProjection {
       );
 }
 
-class CalendarResolution {
-  CalendarResolution({required this.employeeId, required this.date, required this.configIncomplete, this.workCalendarName, this.dayType});
-  final String employeeId;
-  final String date;
-  final bool configIncomplete;
-  final String? workCalendarName;
-  final Map<String, dynamic>? dayType;
-
-  factory CalendarResolution.fromJson(Map<String, dynamic> json) => CalendarResolution(
-        employeeId: json['employee_id'] as String,
-        date: json['date'] as String,
-        configIncomplete: json['config_incomplete'] as bool,
-        workCalendarName: json['work_calendar_name'] as String?,
-        dayType: json['day_type'] as Map<String, dynamic>?,
-      );
-}
-
 /// Covers Shifts, Holiday Calendars/Holidays, Weekly-Off Patterns, Work
 /// Calendars, Regularizations, Overtime, Shift Rosters, Attendance Periods,
 /// Attendance Days, Punches, Policy Assignments and Calendar Resolution —
@@ -414,12 +397,5 @@ class AttendanceRepository {
             angle: MultipartFile.fromBytes(photos[angle]!, filename: '$angle.jpg', contentType: DioMediaType('image', 'jpeg')),
         }),
         parse: (_) {},
-      );
-
-  // Policy assignments
-
-  Future<CalendarResolution> resolveCalendar({required String employeeId, required String date}) => _client.get(
-        '/calendar-resolution?${Uri(queryParameters: {'employee_id': employeeId, 'date': date}).query}',
-        parse: (d) => CalendarResolution.fromJson(d as Map<String, dynamic>),
       );
 }
