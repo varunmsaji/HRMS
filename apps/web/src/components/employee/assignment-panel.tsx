@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -193,6 +193,7 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
             gradeId: getFieldError(err.details, "grade_id"),
             reportingManagerId: getFieldError(err.details, "reporting_manager_id"),
           });
+          toast({ title: "Could not save assignment", description: describeLifecycleError(err), variant: "danger" });
           return;
         }
         if (err.status === 403) {
@@ -201,7 +202,7 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
           return;
         }
       }
-      toast({ title: "Could not save assignment", description: describeApiError(err), variant: "danger" });
+      toast({ title: "Could not save assignment", description: describeLifecycleError(err), variant: "danger" });
     } finally {
       setSaving(false);
     }

@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Compensation } from "@/lib/employee/types";
 import {
@@ -137,6 +137,7 @@ export function CompensationPanel({ employeeId }: CompensationPanelProps) {
             revisionType: getFieldError(err.details, "revision_type"),
             revisionReason: getFieldError(err.details, "revision_reason"),
           });
+          toast({ title: "Could not save compensation", description: describeLifecycleError(err), variant: "danger" });
           return;
         }
         if (err.status === 403) {
@@ -145,7 +146,7 @@ export function CompensationPanel({ employeeId }: CompensationPanelProps) {
           return;
         }
       }
-      toast({ title: "Could not save compensation", description: describeApiError(err), variant: "danger" });
+      toast({ title: "Could not save compensation", description: describeLifecycleError(err), variant: "danger" });
     } finally {
       setSaving(false);
     }

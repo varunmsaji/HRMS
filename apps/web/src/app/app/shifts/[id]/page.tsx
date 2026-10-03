@@ -25,7 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Shift, ShiftVersion } from "@/lib/shift/types";
@@ -288,7 +288,7 @@ export default function ShiftDetailPage() {
     } catch (err) {
       toast({
         title: "Could not update shift status",
-        description: describeApiError(err),
+        description: describeLifecycleError(err),
         variant: "danger",
       });
     } finally {

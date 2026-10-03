@@ -38,7 +38,7 @@ import { StatutoryInfoStep } from "@/components/onboarding/wizard/statutory-info
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeLifecycleError } from "@/lib/api/errors";
 import type { OnboardingDocument, PublicOnboardingCase } from "@/lib/onboarding/types";
 import {
   EMPTY_ADDRESS_INFO,
@@ -326,7 +326,7 @@ export default function OnboardingWizardPage() {
       setOnboardingCase(data);
       return true;
     } catch (err) {
-      toast({ title: "Could not save", description: describeApiError(err), variant: "danger" });
+      toast({ title: "Could not save", description: describeLifecycleError(err), variant: "danger" });
       return false;
     } finally {
       setSaving(false);

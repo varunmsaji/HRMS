@@ -380,7 +380,7 @@ export interface CompensationInfoFormValues {
 
 export const EMPTY_COMPENSATION_INFO: CompensationInfoFormValues = {
   annualCtc: "",
-  currency: "INR",
+  currency: "",
 };
 
 /** `annual_ctc_minor` is integer minor units on the wire (e.g. paise) — matches
@@ -403,16 +403,18 @@ export function compensationInfoFromSection(
 ): CompensationInfoFormValues {
   return {
     annualCtc: ctcMinorToUnits(section.annual_ctc_minor),
-    currency: (section.currency as string | undefined) ?? "INR",
+    currency: (section.currency as string | undefined) ?? "",
   };
 }
 
 export function compensationInfoToPayload(
   values: CompensationInfoFormValues,
 ): Record<string, unknown> {
+  // A blank currency is omitted: the server fills in the company's own configured currency.
+  const currency = values.currency.trim().toUpperCase();
   return {
     annual_ctc_minor: ctcUnitsToMinor(values.annualCtc),
-    currency: values.currency.trim().toUpperCase() || "INR",
+    ...(currency ? { currency } : {}),
   };
 }
 
@@ -422,7 +424,7 @@ export function validateCompensationInfo(
   const errors: Partial<Record<keyof CompensationInfoFormValues, string>> = {};
   const minor = ctcUnitsToMinor(values.annualCtc);
   if (minor === null || minor < 0) errors.annualCtc = "Enter a valid annual CTC.";
-  if (values.currency.trim().length !== 3) {
+  if (values.currency.trim() && values.currency.trim().length !== 3) {
     errors.currency = "Enter a 3-letter currency code (e.g. INR).";
   }
   return errors;

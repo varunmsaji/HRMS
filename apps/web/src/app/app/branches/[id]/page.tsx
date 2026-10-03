@@ -21,7 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import type { Branch } from "@/lib/branch/types";
 import {
   INDIA_STATE_CODES,
@@ -211,7 +211,7 @@ export default function BranchDetailPage() {
       }
       toast({
         title: "Could not update branch status",
-        description: describeApiError(err),
+        description: describeLifecycleError(err),
         variant: "danger",
       });
     } finally {

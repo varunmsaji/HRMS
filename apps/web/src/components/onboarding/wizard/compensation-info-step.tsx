@@ -33,7 +33,12 @@ export function CompensationInfoStep({ values, errors, onChange }: CompensationI
           onChange={(e) => update("annualCtc", e.target.value)}
         />
       </FormField>
-      <FormField id="currency" label="Currency" required error={errors.currency}>
+      <FormField
+        id="currency"
+        label="Currency"
+        error={errors.currency}
+        description="Leave blank to use the company currency."
+      >
         <Input
           value={values.currency}
           maxLength={3}

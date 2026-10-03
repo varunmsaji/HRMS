@@ -21,7 +21,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError, describeApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import type { Grade } from "@/lib/grade/types";
 import {
   buildUpdatePatch,
@@ -199,7 +199,7 @@ export default function GradeDetailPage() {
     } catch (err) {
       toast({
         title: "Could not update grade status",
-        description: describeApiError(err),
+        description: describeLifecycleError(err),
         variant: "danger",
       });
     } finally {

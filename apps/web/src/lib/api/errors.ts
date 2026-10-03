@@ -68,3 +68,37 @@ export function describeApiError(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "Something went wrong. Please try again.";
 }
+
+/**
+ * Human-readable text for the employee-lifecycle rejections: an assignment pointing at an
+ * inactive master record (`INACTIVE_<KIND>`, 422), deactivating a master record active employees
+ * still depend on (`MASTER_DATA_HAS_ACTIVE_EMPLOYEES`, 409), a compensation in a currency other
+ * than the company's (`COMPENSATION_CURRENCY_MISMATCH`, 422) and a non-positive CTC. Anything
+ * else falls back to {@link describeApiError}.
+ */
+export function describeLifecycleError(error: unknown): string {
+  if (!isApiError(error)) return describeApiError(error);
+  const detail = error.details[0];
+  const code = detail?.code ?? error.code;
+
+  if (code === "MASTER_DATA_HAS_ACTIVE_EMPLOYEES") {
+    const context = detail?.context as { kind?: string; active_employee_count?: number } | undefined;
+    const kind = context?.kind ?? "record";
+    const count = context?.active_employee_count;
+    const who =
+      typeof count === "number"
+        ? `${count} active employee${count === 1 ? " is" : "s are"}`
+        : "Active employees are";
+    return `This ${kind} can't be deactivated: ${who} still assigned to it. Reassign them first, then try again.`;
+  }
+  if (code.startsWith("INACTIVE_")) {
+    return detail?.message ?? "That selection is inactive. Choose an active one.";
+  }
+  if (code === "COMPENSATION_CURRENCY_MISMATCH") {
+    return detail?.message
+      ? `Compensation must be in the company currency — ${detail.message}.`
+      : "Compensation must be in the company's currency.";
+  }
+  if (error.status === 422 && detail?.message) return detail.message;
+  return error.message;
+}
