@@ -228,6 +228,32 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
     if (saved && mounted) _toast('${_c.singular} saved.');
   }
 
+  Future<void> _hardDelete() async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${_c.singular.toLowerCase()}?'),
+        content: const Text('This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          FilledButton(style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error), onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    setState(() => _busy = true);
+    try {
+      await _client.delete<Object?>(_url, ifMatch: _row['version']?.toString(), parse: (_) => null);
+      if (mounted) {
+        _toast('${_c.singular} deleted.');
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      _toast(_explain(e));
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _toggleActive() async {
     final deactivating = _row['is_active'] != false;
     final yes = await showDialog<bool>(
@@ -287,7 +313,8 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
               Padding(
                 padding: const EdgeInsets.only(top: 8, bottom: 8),
                 child: Wrap(spacing: 8, runSpacing: 8, children: [
-                  FilledButton.icon(icon: const Icon(Icons.edit_outlined), label: const Text('Edit'), onPressed: _busy ? null : _edit),
+                  if (_c.editable) FilledButton.icon(icon: const Icon(Icons.edit_outlined), label: const Text('Edit'), onPressed: _busy ? null : _edit),
+                  if (_c.hardDelete) OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error), onPressed: _busy ? null : _hardDelete, child: const Text('Delete')),
                   if (_c.hasActive && _c.canDeactivate) OutlinedButton(onPressed: _busy ? null : _toggleActive, child: Text(active ? 'Deactivate' : 'Reactivate')),
                 ]),
               ),

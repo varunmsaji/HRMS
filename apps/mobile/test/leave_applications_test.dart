@@ -10,7 +10,6 @@ import 'package:hrms_mobile/features/leave/data/leave_repository.dart';
 import 'package:hrms_mobile/features/leave/domain/leave_application_form.dart';
 import 'package:hrms_mobile/features/leave/presentation/leave_application_detail_screen.dart';
 import 'package:hrms_mobile/features/leave/presentation/leave_applications_screen.dart';
-import 'package:hrms_mobile/features/leave/presentation/leave_types_screen.dart' show leaveRepositoryProvider;
 
 import 'support/fake_api_client.dart';
 import 'support/fake_auth.dart';

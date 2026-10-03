@@ -376,7 +376,25 @@ void attendancePeriodTests() {
   });
 }
 
+void leaveConfigTests() {
+  group('leave configuration forms match the backend schemas', () {
+    _writeFormMatches('leaveTypeSpec (create)', leaveTypeSpec, 'leave.LeaveTypeCreate');
+    _writeFormMatches('leaveTypeSpec (update)', leaveTypeSpec, 'leave.LeaveTypeUpdate');
+    _writeFormMatches('leaveCombinationRuleSpec', leaveCombinationRuleSpec, 'leave.LeaveCombinationRuleCreate');
+    _writeFormMatches('statutoryLeaveMinimumSpec', statutoryLeaveMinimumSpec, 'leave.StatutoryLeaveMinimumCreate');
+    for (final (spec, read) in [(leaveTypeSpec, 'leave.LeaveTypeRead'), (leaveCombinationRuleSpec, 'leave.LeaveCombinationRuleRead'), (statutoryLeaveMinimumSpec, 'leave.StatutoryLeaveMinimumRead')]) {
+      test('${spec.name} fields exist on $read', () {
+        final keys = (_load(read, 'full') as Map<String, dynamic>).keys.toSet();
+        for (final f in spec.fields) {
+          expect(keys, contains(f.key));
+        }
+      });
+    }
+  });
+}
+
 void leaveApplicationFormTests() {
+  leaveConfigTests();
   attendancePeriodTests();
   requestConfigTests();
   group('onboarding case form matches OnboardingCaseCreate', () {

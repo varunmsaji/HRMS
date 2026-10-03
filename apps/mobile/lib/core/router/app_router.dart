@@ -20,10 +20,7 @@ import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/employees/presentation/employees_screen.dart';
 import '../../features/leave/presentation/leave_applications_screen.dart';
 import '../../features/leave/presentation/leave_balances_screen.dart';
-import '../../features/leave/presentation/leave_combination_rules_screen.dart';
-import '../../features/leave/presentation/leave_types_screen.dart';
 import '../../features/leave/presentation/leave_year_setting_screen.dart';
-import '../../features/leave/presentation/statutory_leave_minimums_screen.dart';
 import '../../features/onboarding/presentation/onboarding_cases_screen.dart';
 import '../../features/onboarding/presentation/setup_screen.dart';
 import '../../features/onboarding/presentation/users_screen.dart';
@@ -131,11 +128,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/attendance-periods', builder: (context, state) => const AttendancePeriodsScreen()),
       GoRoute(path: '/app/policy-assignments', builder: (context, state) => const PolicyAssignmentsScreen()),
       GoRoute(path: '/app/policy-resolution', builder: (context, state) => const PolicyResolutionScreen()),
-      GoRoute(path: '/app/leave-types', builder: (context, state) => const LeaveTypesScreen()),
+      GoRoute(path: '/app/leave-types', builder: (context, state) => ResourceListScreen(config: leaveTypeResource)),
       GoRoute(path: '/app/leave-policies', builder: (context, state) => ResourceListScreen(config: leavePolicyResource)),
-      GoRoute(path: '/app/leave-combination-rules', builder: (context, state) => const LeaveCombinationRulesScreen()),
+      GoRoute(path: '/app/leave-combination-rules', builder: (context, state) => ResourceListScreen(config: leaveCombinationRuleResource)),
       GoRoute(path: '/app/leave-year-setting', builder: (context, state) => const LeaveYearSettingScreen()),
-      GoRoute(path: '/app/statutory-leave-minimums', builder: (context, state) => const StatutoryLeaveMinimumsScreen()),
+      GoRoute(path: '/app/statutory-leave-minimums', builder: (context, state) => ResourceListScreen(config: statutoryLeaveMinimumResource)),
       GoRoute(path: '/app/leave-balances', builder: (context, state) => const LeaveBalancesScreen()),
       GoRoute(path: '/app/payroll/pay-runs', builder: (context, state) => const PayRunsScreen()),
       GoRoute(path: '/app/payroll/salary-components', builder: (context, state) => ResourceListScreen(config: salaryComponentResource)),

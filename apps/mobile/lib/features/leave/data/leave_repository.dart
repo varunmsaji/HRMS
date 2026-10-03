@@ -1,4 +1,7 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../core/api/api_client.dart';
+import '../../../core/providers.dart';
 import '../../../core/api/envelope.dart';
 import '../../../core/json.dart';
 
@@ -180,6 +183,8 @@ class LeaveApplication {
         raw: json,
       );
 }
+
+final leaveRepositoryProvider = Provider<LeaveRepository>((ref) => LeaveRepository(ref.watch(apiClientProvider)));
 
 /// Covers Leave Types, Combination Rules, Statutory Minimums, Year Setting,
 /// Balances and Applications — mirrors

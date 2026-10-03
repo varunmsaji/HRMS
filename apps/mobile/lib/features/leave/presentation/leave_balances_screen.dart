@@ -8,7 +8,6 @@ import '../../auth/state/auth_controller.dart';
 import '../../profile/data/employee_repository.dart';
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/leave_repository.dart';
-import 'leave_types_screen.dart' show leaveRepositoryProvider;
 
 /// Mirrors `apps/web/src/app/app/leave-balances/page.tsx`: balance per leave type, the
 /// append-only ledger behind it, and (with `LEAVE.BALANCE_ADJUST`) encashment and manual

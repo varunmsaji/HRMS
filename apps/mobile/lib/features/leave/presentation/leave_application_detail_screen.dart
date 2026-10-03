@@ -11,7 +11,6 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/leave_repository.dart';
 import 'leave_applications_screen.dart' show LeaveStatusChip;
-import 'leave_types_screen.dart' show leaveRepositoryProvider;
 
 /// One leave application — mirrors `apps/web/src/app/app/leave-applications/[id]/page.tsx`: the
 /// request, its day-by-day breakdown and action history, and the review (approve / reject) and

@@ -20,6 +20,8 @@ class ResourceConfig {
     this.emptyLabel,
     this.listFilters = const {},
     this.versions,
+    this.editable = true,
+    this.hardDelete = false,
   });
 
   /// Screen title / list heading ("Branches").
@@ -53,6 +55,13 @@ class ResourceConfig {
 
   /// Extra query params for the list call.
   final Map<String, dynamic> listFilters;
+
+  /// The record can be edited (a `*Update` schema exists). False for create-and-delete-only
+  /// records (leave combination rules, statutory minimums).
+  final bool editable;
+
+  /// `DELETE` removes the record outright (204) instead of deactivating it.
+  final bool hardDelete;
 
   /// Set for effective-dated, versioned resources (policies, shifts): the record is an identity
   /// and its configuration lives in versions (one editable DRAFT, then immutable PUBLISHED ones).

@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
-import 'leave_types_screen.dart' show leaveRepositoryProvider;
+import '../data/leave_repository.dart' show leaveRepositoryProvider;
 
 const _leaveYearTypes = ['CALENDAR', 'FINANCIAL', 'CUSTOM', 'ANNIVERSARY'];
 

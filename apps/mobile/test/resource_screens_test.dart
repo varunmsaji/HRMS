@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/core/resource/resource_screens.dart';
+import 'package:hrms_mobile/features/leave/domain/leave_resources.dart';
 import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
 
 import 'support/fake_api_client.dart';
@@ -35,6 +36,7 @@ Future<void> _pump(WidgetTester tester, FakeApiClient client, List<String> permi
 }
 
 void main() {
+  hardDeleteTests();
   weeklyOffTests();
   group('list', () {
     testWidgets('shows active records and hides inactive ones until asked', (tester) async {
@@ -191,5 +193,41 @@ void weeklyOffTests() {
     expect(rules.length, 3);
     expect(rules.map((r) => r['weekday']), [5, 6, 4]); // integers, in order
     expect(rules.last['off_fraction'], '1.00');
+  });
+}
+
+// ---- create-and-delete-only records (hard delete, no edit) ------------------------------------
+
+void hardDeleteTests() {
+  testWidgets('a combination rule offers Delete — not Edit or Deactivate — and removes it', (tester) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final row = {'id': 'c1', 'leave_type_id_a': 'a', 'leave_type_id_b': 'b', 'allowed': false, 'reason': 'Clash', 'version': null};
+    final client = FakeApiClient(
+      lists: {
+        '/leave-types': [
+          {'id': 'a', 'name': 'Casual', 'is_active': true},
+          {'id': 'b', 'name': 'Sick', 'is_active': true},
+        ],
+      },
+      objects: {'/leave-combination-rules/c1': row},
+    );
+    await tester.pumpWidget(ProviderScope(
+      overrides: [apiClientProvider.overrideWithValue(client), fakeAuth(['LEAVE.COMBINATION_RULE_MANAGE'])],
+      child: MaterialApp(home: ResourceDetailScreen(config: leaveCombinationRuleResource, initial: row)),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Casual'), findsOneWidget);
+    expect(find.text('Sick'), findsOneWidget);
+    expect(find.text('Edit'), findsNothing);
+    expect(find.text('Deactivate'), findsNothing);
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+    final call = client.calls.single;
+    expect(call.method, 'DELETE');
+    expect(call.path, '/leave-combination-rules/c1');
   });
 }

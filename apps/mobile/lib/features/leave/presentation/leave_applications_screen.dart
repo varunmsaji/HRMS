@@ -12,7 +12,6 @@ import '../../shell/more_action.dart';
 import '../data/leave_repository.dart';
 import '../domain/leave_application_form.dart';
 import 'leave_application_detail_screen.dart';
-import 'leave_types_screen.dart' show leaveRepositoryProvider;
 
 /// Leave applications — mirrors `apps/web/src/app/app/leave-applications/page.tsx`. "Mine" and
 /// "Team" are two filters over the same permission-scoped read: the server only returns what the
