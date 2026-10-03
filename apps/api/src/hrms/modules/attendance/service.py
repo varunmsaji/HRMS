@@ -2531,6 +2531,11 @@ class PunchService:
                 self._session, company_id=company_id, idempotency_key=idempotency_key
             )
             if existing is not None:
+                if existing.employee_id != employee_id:
+                    # The key is unique per company, not per employee. Replaying another
+                    # employee's punch would drop this one silently and hand that employee's
+                    # record back to the caller, so a cross-employee reuse is refused instead.
+                    raise DuplicatePunchIdempotencyKeyError()
                 return punch_to_read(existing)
 
         now = datetime.now(UTC)
