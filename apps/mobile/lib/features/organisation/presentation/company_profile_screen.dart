@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
-import '../../auth/presentation/widgets/auth_form_field.dart';
-import '../data/organisation_repository.dart';
+import '../../../core/auth/permissions.dart';
+import '../../../core/forms/spec_form_screen.dart';
+import '../../../core/providers.dart';
+import '../../auth/state/auth_controller.dart';
+import '../domain/company_profile_form.dart';
 
-/// Mirrors `apps/web/src/app/app/company/page.tsx` — view + edit the core
-/// company profile fields. `locale`/`fiscal_year`/`working_days`/
-/// `business_hours`/`branding` aren't editable here yet.
+typedef Rec = Map<String, dynamic>;
+
+/// Mirrors `apps/web/src/app/app/company/page.tsx` — the whole company profile (basic info,
+/// contact, address, localisation, working days, business hours, branding, metadata), viewable by
+/// everyone and editable with `SETTINGS.COMPANY.MANAGE`. The patch carries the profile `version`
+/// as `If-Match`.
 class CompanyProfileScreen extends ConsumerStatefulWidget {
   const CompanyProfileScreen({super.key});
 
@@ -17,8 +24,10 @@ class CompanyProfileScreen extends ConsumerStatefulWidget {
 
 class _CompanyProfileScreenState extends ConsumerState<CompanyProfileScreen> {
   bool _loading = true;
-  CompanyProfile? _profile;
+  Rec? _profile;
   ApiError? _error;
+
+  ApiClient get _client => ref.read(apiClientProvider);
 
   @override
   void initState() {
@@ -32,85 +41,96 @@ class _CompanyProfileScreenState extends ConsumerState<CompanyProfileScreen> {
       _error = null;
     });
     try {
-      final profile = await ref.read(organisationRepositoryProvider).getCompanyProfile();
-      if (mounted) setState(() => _profile = profile);
-    } catch (error) {
-      if (mounted) setState(() => _error = error is ApiError ? error : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
+      final p = await _client.get<Rec>('/companies/current', parse: (d) => d as Rec);
+      if (mounted) setState(() => _profile = p);
+    } catch (e) {
+      if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _edit() async {
-    final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => _CompanyProfileFormScreen(profile: _profile!)),
+    final profile = _profile!;
+    final saved = await openSpecForm(
+      context,
+      title: 'Edit company profile',
+      spec: companyProfileSpec(currencyLocked: profile['status'] != 'TRIAL'),
+      initial: profileToForm(profile),
+      onSubmit: (payload, changed) async {
+        final patch = buildProfilePatch(payload, changed);
+        if (patch.isEmpty) return;
+        await _client.patch<Object?>('/companies/current', body: patch, ifMatch: '${profile['version']}', parse: (_) => null);
+      },
     );
-    if (changed == true) _load();
+    if (saved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Company profile saved.')));
+      _load();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    Widget body;
-    if (_loading) {
-      body = const Center(child: CircularProgressIndicator());
-    } else if (_error != null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!.message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
-      );
-    } else {
-      final profile = _profile!;
-      body = RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _Section('Identity', [
-              _Field('Name', profile.name),
-              _Field('Legal name', profile.legalName),
-              _Field('Registration number', profile.registrationNumber),
-              _Field('Industry', profile.industryCode),
-              _Field('Company size', profile.companySize),
-              _Field('Status', profile.status),
-            ]),
-            const SizedBox(height: 20),
-            _Section('Contact', [
-              _Field('Email', profile.contact.email),
-              _Field('Phone', profile.contact.phone),
-              _Field('Website', profile.contact.website),
-            ]),
-            const SizedBox(height: 20),
-            _Section('Address', [
-              _Field('Line 1', profile.address.line1),
-              _Field('Line 2', profile.address.line2),
-              _Field('City', profile.address.city),
-              _Field('State', profile.address.state),
-              _Field('Postal code', profile.address.postalCode),
-              _Field('Country', profile.address.countryCode),
-            ]),
-            const SizedBox(height: 20),
-            _Section('Locale', [
-              _Field('Country code', profile.countryCode),
-              _Field('Currency', profile.currency),
-              _Field('Timezone', profile.timezone),
-            ]),
-          ],
-        ),
-      );
-    }
-
+    final canEdit = (ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(orgCompanyManage);
     return Scaffold(
       appBar: AppBar(title: const Text('Company'), actions: [
-        if (!_loading && _error == null) IconButton(icon: const Icon(Icons.edit_outlined), onPressed: _edit),
+        if (canEdit && !_loading && _error == null) IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined), onPressed: _edit),
       ]),
-      body: body,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(_error!.status == 403 ? 'You do not have permission to view the company profile.' : _error!.message, textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      FilledButton(onPressed: _load, child: const Text('Retry')),
+                    ]),
+                  ),
+                )
+              : RefreshIndicator(onRefresh: _load, child: _view(_profile!)),
     );
+  }
+
+  Widget _view(Rec p) {
+    final f = profileToForm(p);
+    String? s(String key) => (f[key] == null || '${f[key]}'.isEmpty) ? null : '${f[key]}';
+    final days = [for (final d in weekDays) if (f['wd_$d'] == true) weekDayLabels[d]!].join(', ');
+    final hours = s('bh_start') != null && s('bh_end') != null ? '${s('bh_start')} – ${s('bh_end')}' : null;
+    final month = f['fiscal_start_month'] is int ? monthNames[(f['fiscal_start_month'] as int) - 1] : null;
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      _Section('Basic information', [
+        _Field('Company name', s('name')),
+        _Field('Legal name', s('legal_name')),
+        _Field('Registration number', s('registration_number')),
+        _Field('Industry', s('industry_code')),
+        _Field('Company size', s('company_size')),
+        _Field('Country', s('country_code')),
+        _Field('Currency', s('currency')),
+        _Field('Timezone', s('timezone')),
+      ]),
+      _Section('Contact information', [_Field('Email', s('contact_email')), _Field('Phone', s('contact_phone')), _Field('Website', s('contact_website'))]),
+      _Section('Address', [
+        _Field('Line 1', s('address_line1')),
+        _Field('Line 2', s('address_line2')),
+        _Field('City', s('address_city')),
+        _Field('State', s('address_state')),
+        _Field('Postal code', s('address_postal_code')),
+        _Field('Country code', s('address_country_code')),
+      ]),
+      _Section('Localization', [_Field('Language', s('locale_language_code')), _Field('Date format', s('locale_date_format')), _Field('Fiscal year start', month)]),
+      _Section('Working schedule', [_Field('Working days', days.isEmpty ? null : days)]),
+      _Section('Business hours', [_Field('Hours', hours)]),
+      _Section('Branding', [_Field('Logo URL', s('logo_url')), _Field('Primary color', s('primary_color'))]),
+      _Section('Company metadata', [
+        _Field('Status', p['status'] as String?),
+        _Field('Version', '${p['version']}'),
+        _Field('Subdomain', p['subdomain'] as String?),
+        _Field('Onboarded at', p['onboarded_at'] as String?),
+        _Field('Trial ends at', p['trial_ends_at'] as String?),
+      ]),
+    ]);
   }
 }
 
@@ -129,138 +149,22 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
+      margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: scheme.surfaceContainerLowest, borderRadius: BorderRadius.circular(12), border: Border.all(color: scheme.outlineVariant)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 12),
-          for (final field in fields)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(field.label, style: TextStyle(color: scheme.onSurfaceVariant)),
-                  Flexible(
-                    child: Text(
-                      (field.value != null && field.value!.trim().isNotEmpty) ? field.value! : 'Not configured',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(color: (field.value != null && field.value!.trim().isNotEmpty) ? scheme.onSurface : scheme.onSurfaceVariant),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CompanyProfileFormScreen extends ConsumerStatefulWidget {
-  const _CompanyProfileFormScreen({required this.profile});
-  final CompanyProfile profile;
-
-  @override
-  ConsumerState<_CompanyProfileFormScreen> createState() => _CompanyProfileFormScreenState();
-}
-
-class _CompanyProfileFormScreenState extends ConsumerState<_CompanyProfileFormScreen> {
-  late final _name = TextEditingController(text: widget.profile.name);
-  late final _legalName = TextEditingController(text: widget.profile.legalName);
-  late final _registrationNumber = TextEditingController(text: widget.profile.registrationNumber);
-  late final _industryCode = TextEditingController(text: widget.profile.industryCode);
-  late final _email = TextEditingController(text: widget.profile.contact.email);
-  late final _phone = TextEditingController(text: widget.profile.contact.phone);
-  late final _website = TextEditingController(text: widget.profile.contact.website);
-  late final _addressLine1 = TextEditingController(text: widget.profile.address.line1);
-  late final _addressLine2 = TextEditingController(text: widget.profile.address.line2);
-  late final _city = TextEditingController(text: widget.profile.address.city);
-  late final _state = TextEditingController(text: widget.profile.address.state);
-  late final _postalCode = TextEditingController(text: widget.profile.address.postalCode);
-  bool _submitting = false;
-  String? _formError;
-
-  Future<void> _submit() async {
-    if (_name.text.trim().isEmpty) {
-      setState(() => _formError = 'Name is required.');
-      return;
-    }
-    setState(() {
-      _submitting = true;
-      _formError = null;
-    });
-    final body = {
-      'name': _name.text.trim(),
-      'legal_name': _legalName.text.trim().isEmpty ? null : _legalName.text.trim(),
-      'registration_number': _registrationNumber.text.trim().isEmpty ? null : _registrationNumber.text.trim(),
-      'industry_code': _industryCode.text.trim().isEmpty ? null : _industryCode.text.trim(),
-      'contact': {
-        'email': _email.text.trim().isEmpty ? null : _email.text.trim(),
-        'phone': _phone.text.trim().isEmpty ? null : _phone.text.trim(),
-        'website': _website.text.trim().isEmpty ? null : _website.text.trim(),
-      },
-      'address': {
-        'line1': _addressLine1.text.trim().isEmpty ? null : _addressLine1.text.trim(),
-        'line2': _addressLine2.text.trim().isEmpty ? null : _addressLine2.text.trim(),
-        'city': _city.text.trim().isEmpty ? null : _city.text.trim(),
-        'state': _state.text.trim().isEmpty ? null : _state.text.trim(),
-        'postal_code': _postalCode.text.trim().isEmpty ? null : _postalCode.text.trim(),
-      },
-    };
-    try {
-      await ref.read(organisationRepositoryProvider).updateCompanyProfile(body, ifMatch: widget.profile.version.toString());
-      if (mounted) Navigator.of(context).pop(true);
-    } catch (error) {
-      setState(() => _formError = error is ApiError ? error.message : 'Something went wrong.');
-    } finally {
-      if (mounted) setState(() => _submitting = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Edit company profile')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (_formError != null) ...[InlineAlert(message: _formError!), const SizedBox(height: 16)],
-          AuthFormField(label: 'Name', required: true, child: TextField(controller: _name, enabled: !_submitting)),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Legal name', child: TextField(controller: _legalName, enabled: !_submitting)),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Registration number', child: TextField(controller: _registrationNumber, enabled: !_submitting)),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Industry', child: TextField(controller: _industryCode, enabled: !_submitting)),
-          const SizedBox(height: 20),
-          Text('Contact', style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(height: 12),
-          AuthFormField(label: 'Email', child: TextField(controller: _email, enabled: !_submitting, keyboardType: TextInputType.emailAddress)),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Phone', child: TextField(controller: _phone, enabled: !_submitting, keyboardType: TextInputType.phone)),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Website', child: TextField(controller: _website, enabled: !_submitting)),
-          const SizedBox(height: 20),
-          Text('Address', style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(height: 12),
-          AuthFormField(label: 'Line 1', child: TextField(controller: _addressLine1, enabled: !_submitting)),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Line 2', child: TextField(controller: _addressLine2, enabled: !_submitting)),
-          const SizedBox(height: 16),
-          Row(children: [
-            Expanded(child: AuthFormField(label: 'City', child: TextField(controller: _city, enabled: !_submitting))),
-            const SizedBox(width: 12),
-            Expanded(child: AuthFormField(label: 'State', child: TextField(controller: _state, enabled: !_submitting))),
-          ]),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Postal code', child: TextField(controller: _postalCode, enabled: !_submitting)),
-          const SizedBox(height: 20),
-          PrimaryButton(label: 'Save changes', loading: _submitting, onPressed: _submit),
-        ],
-      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        for (final field in fields)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(field.label, style: TextStyle(color: scheme.onSurfaceVariant)),
+              const SizedBox(width: 12),
+              Flexible(child: Text(field.value ?? 'Not configured', textAlign: TextAlign.right, style: TextStyle(color: field.value != null ? scheme.onSurface : scheme.onSurfaceVariant))),
+            ]),
+          ),
+      ]),
     );
   }
 }

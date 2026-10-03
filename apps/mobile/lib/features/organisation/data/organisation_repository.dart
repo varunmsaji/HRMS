@@ -208,58 +208,6 @@ class CompanyAddress {
       };
 }
 
-/// `GET/PATCH /companies/current` — mirrors `CompanyProfileRead`. Only the
-/// fields the mobile Company screen actually shows/edits; `locale`,
-/// `fiscal_year`, `working_days`, `business_hours`, `branding` are read-only
-/// passthrough here (shown if present, not editable yet).
-class CompanyProfile {
-  CompanyProfile({
-    required this.id,
-    required this.name,
-    this.legalName,
-    this.registrationNumber,
-    required this.contact,
-    required this.address,
-    this.industryCode,
-    this.companySize,
-    required this.countryCode,
-    required this.currency,
-    required this.timezone,
-    required this.status,
-    required this.version,
-  });
-
-  final String id;
-  final String name;
-  final String? legalName;
-  final String? registrationNumber;
-  final CompanyContact contact;
-  final CompanyAddress address;
-  final String? industryCode;
-  final String? companySize;
-  final String countryCode;
-  final String currency;
-  final String timezone;
-  final String status;
-  final int version;
-
-  factory CompanyProfile.fromJson(Map<String, dynamic> json) => CompanyProfile(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        legalName: json['legal_name'] as String?,
-        registrationNumber: json['registration_number'] as String?,
-        contact: CompanyContact.fromJson(json['contact'] as Map<String, dynamic>),
-        address: CompanyAddress.fromJson(json['address'] as Map<String, dynamic>),
-        industryCode: json['industry_code'] as String?,
-        companySize: json['company_size'] as String?,
-        countryCode: json['country_code'] as String,
-        currency: json['currency'] as String,
-        timezone: json['timezone'] as String,
-        status: json['status'] as String,
-        version: json['version'] as int,
-      );
-}
-
 /// Every Organisation-settings resource — mirrors
 /// `apps/api/src/hrms/modules/organisation/{router,schemas}.py`. Delete is
 /// always soft (`is_active=false`, returns 200 with the resource), never a
@@ -270,18 +218,6 @@ class OrganisationRepository {
   OrganisationRepository(this._client);
 
   final ApiClient _client;
-
-  Future<CompanyProfile> getCompanyProfile() => _client.get(
-        '/companies/current',
-        parse: (data) => CompanyProfile.fromJson(data as Map<String, dynamic>),
-      );
-
-  Future<CompanyProfile> updateCompanyProfile(Map<String, dynamic> body, {required String ifMatch}) => _client.patch(
-        '/companies/current',
-        body: body,
-        ifMatch: ifMatch,
-        parse: (data) => CompanyProfile.fromJson(data as Map<String, dynamic>),
-      );
 
   Future<List<LegalEntity>> listLegalEntities() => _client
       .getList('/legal-entities', parseItem: (d) => LegalEntity.fromJson(d as Map<String, dynamic>))

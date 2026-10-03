@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/features/organisation/domain/company_profile_form.dart';
 import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
@@ -87,7 +88,6 @@ final Map<String, _Parser> _models = {
   'organisation.DepartmentRead': Department.fromJson,
   'organisation.DesignationRead': Designation.fromJson,
   'organisation.GradeRead': Grade.fromJson,
-  'organisation.CompanyProfileRead': CompanyProfile.fromJson,
   // payroll
   'payroll.PayRunRead': PayRun.fromJson,
   'payroll.PayRunEmployeeRead': PayRunEmployee.fromJson,
@@ -392,7 +392,20 @@ void leaveConfigTests() {
   });
 }
 
+void companyProfileContractTests() {
+  for (final variant in ['full', 'sparse']) {
+    test('the company profile form reads $variant CompanyProfileRead and builds a patch the backend accepts', () {
+      final profile = _load('organisation.CompanyProfileRead', variant) as Map<String, dynamic>;
+      final form = profileToForm(profile);
+      final spec = companyProfileSpec(currencyLocked: false);
+      expect(form.keys, containsAll([for (final f in spec.fields) f.key]));
+      expect(buildProfilePatch(form, const {}), isEmpty);
+    });
+  }
+}
+
 void resolutionContractTests() {
+  companyProfileContractTests();
   test('the policy-resolution screen reads keys that exist on the backend schemas', () {
     final policy = (_load('attendance.PolicyResolutionRead', 'full') as Map<String, dynamic>).keys.toSet();
     expect(policy, containsAll(['config_incomplete', 'resolved_policy_name', 'resolved_policy_code', 'resolved_through', 'resolved_version_id']));

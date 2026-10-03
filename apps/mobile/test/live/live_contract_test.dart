@@ -85,7 +85,7 @@ void main() {
     await _check('dashboard company profile', dashboard.getCompanyProfile);
 
     final org = OrganisationRepository(client);
-    await _check('company profile', org.getCompanyProfile);
+    await _check('company profile', () => client.get<Map<String, dynamic>>('/companies/current', parse: (d) => d as Map<String, dynamic>));
     await _check('legal entities', org.listLegalEntities);
     await _check('branches', org.listBranches);
     await _check('departments', org.listDepartments);

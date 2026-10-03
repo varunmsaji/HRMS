@@ -1,7 +1,10 @@
+import 'package:flutter/material.dart';
+
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/format.dart';
 import '../../../core/resource/resource_config.dart';
+import '../presentation/bulk_assign_salary_dialog.dart';
 import '../presentation/salary_structure_versions_section.dart';
 
 /// Payroll configuration — salary components, salary structures and statutory rates. Each spec
@@ -104,7 +107,18 @@ final salaryStructureResource = ResourceConfig(
   rowSubtitle: (r) => r['description'] as String?,
   manage: payrollSetupManage,
   detailExtras: (context, row, reload) => SalaryStructureVersionsSection(structure: row, onChanged: reload),
+  listActions: (context, rows, reload) => [
+    IconButton(
+      tooltip: 'Assign to employees',
+      icon: const Icon(Icons.group_add_outlined),
+      onPressed: () => showBulkAssignSalaryDialog(context, [for (final s in rows) if (hasCurrentVersion(s)) s]),
+    ),
+  ],
 );
+
+/// A structure employees can be assigned to: active, with a published, open-ended version.
+bool hasCurrentVersion(Map<String, dynamic> s) =>
+    s['is_active'] != false && ((s['versions'] as List?) ?? const []).any((v) => v is Map && v['status'] == 'PUBLISHED' && v['effective_to'] == null);
 
 /// One line of a structure as text (mirrors the web `describeLine`).
 String describeStructureLine(Map<String, dynamic> line, List<Map<String, dynamic>> allLines) {

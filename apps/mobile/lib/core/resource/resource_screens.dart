@@ -113,7 +113,7 @@ class _ResourceListScreenState extends ConsumerState<ResourceListScreen> {
     final visible = _rows.where((r) => !_c.hasActive || _showInactive || r['is_active'] != false).toList();
     final inactiveCount = _rows.where((r) => r['is_active'] == false).length;
     return Scaffold(
-      appBar: AppBar(title: Text(_c.title), actions: const [MoreAction()]),
+      appBar: AppBar(title: Text(_c.title), actions: [if (canManage && _c.listActions != null) ..._c.listActions!(context, _rows, _load), const MoreAction()]),
       floatingActionButton: canManage ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: Text('New ${_c.singular.toLowerCase()}')) : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())

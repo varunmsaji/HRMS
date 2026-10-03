@@ -22,6 +22,7 @@ class ResourceConfig {
     this.versions,
     this.editable = true,
     this.hardDelete = false,
+    this.listActions,
   });
 
   /// Screen title / list heading ("Branches").
@@ -62,6 +63,10 @@ class ResourceConfig {
 
   /// `DELETE` removes the record outright (204) instead of deactivating it.
   final bool hardDelete;
+
+  /// Extra list-level actions (shown beside the create button for users who can manage), e.g. the
+  /// salary structures' bulk assign. Receives the loaded rows.
+  final List<Widget> Function(BuildContext context, List<Map<String, dynamic>> rows, VoidCallback reload)? listActions;
 
   /// Set for effective-dated, versioned resources (policies, shifts): the record is an identity
   /// and its configuration lives in versions (one editable DRAFT, then immutable PUBLISHED ones).
