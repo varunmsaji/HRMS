@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
+import 'package:hrms_mobile/features/attendance/domain/request_resources.dart';
 import 'package:hrms_mobile/features/leave/domain/leave_application_form.dart';
 import 'package:hrms_mobile/features/leave/domain/leave_resources.dart';
 import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
@@ -35,9 +36,7 @@ typedef _Parser = Object? Function(Map<String, dynamic>);
 
 final Map<String, _Parser> _models = {
   // attendance
-  'attendance.RegularizationRequestRead': RegularizationRequest.fromJson,
   'organisation.ShiftRead': Shift.fromJson,
-  'attendance.OvertimeRecordRead': OvertimeRecord.fromJson,
   'attendance.ShiftRosterRead': ShiftRoster.fromJson,
   'attendance.AttendancePeriodRead': AttendancePeriod.fromJson,
   'attendance.AttendanceDayRead': AttendanceDay.fromJson,
@@ -290,7 +289,54 @@ void payrollFormTests() {
   });
 }
 
+void requestConfigTests() {
+  group('request workflows render every backend field shape', () {
+    for (final (name, config, read) in [
+      ('regularization', regularizationConfig, 'attendance.RegularizationRequestRead'),
+      ('overtime', overtimeConfig, 'attendance.OvertimeRecordRead'),
+    ]) {
+      for (final variant in const ['full', 'sparse']) {
+        test('$name ($variant)', () {
+          final row = _load(read, variant) as Map<String, dynamic>;
+          expect(() => config.rowTitle(row, 'Asha'), returnsNormally);
+          expect(() => config.rowSubtitle?.call(row), returnsNormally);
+          expect(() => config.sections(row, 'Asia/Kolkata'), returnsNormally);
+          expect(() => config.isPending(row), returnsNormally);
+        });
+      }
+    }
+    _writeFormMatchesRegularization();
+  });
+}
+
+/// The regularization form has three UI-only keys that become `requested_punches`/`requested_shift_id`.
+void _writeFormMatchesRegularization() {
+  test('regularization form + body builder match RegularizationRequestCreate', () {
+    final backend = (_load('attendance.RegularizationRequestCreate', 'full') as Map<String, dynamic>).keys.toSet();
+    final body = buildRegularizationBody({
+      'attendance_date': '2026-10-01',
+      'request_type': 'MISSING_PUNCH',
+      'employee_id': 'e',
+      'reason': 'r',
+      'attachment_reference': 'a',
+      'correct_shift': false,
+      'punch_in_time': '09:00',
+      'punch_out_time': null,
+    }, 'Asia/Kolkata');
+    expect(body.keys.toSet().difference(backend), isEmpty, reason: 'keys the backend would reject');
+    expect(body['requested_punches'], [
+      {'direction': 'IN', 'requested_time': '2026-10-01T03:30:00.000Z'},
+    ]);
+    final shiftBody = buildRegularizationBody({'attendance_date': '2026-10-01', 'request_type': 'WRONG_SHIFT', 'correct_shift': true, 'requested_shift_id': 's', 'punch_in_time': null, 'punch_out_time': null}, 'Asia/Kolkata');
+    expect(shiftBody.containsKey('requested_punches'), isFalse);
+    expect(shiftBody['requested_shift_id'], 's');
+    final formKeys = regularizationSpec(true).fields.map((f) => f.key).toSet();
+    expect(backend.difference(formKeys).difference(const {'requested_punches'}), isEmpty, reason: 'backend fields the form does not offer');
+  });
+}
+
 void leaveApplicationFormTests() {
+  requestConfigTests();
   group('leave application form matches LeaveApplicationCreate', () {
     _writeFormMatches('self', leaveApplicationSpec(onBehalf: false), 'leave.LeaveApplicationCreate', notInForm: const {'employee_id'});
     _writeFormMatches('on behalf', leaveApplicationSpec(onBehalf: true), 'leave.LeaveApplicationCreate');

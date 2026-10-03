@@ -96,67 +96,6 @@ class WorkCalendar {
       );
 }
 
-class RegularizationRequest {
-  RegularizationRequest({
-    required this.id,
-    required this.employeeId,
-    required this.attendanceDate,
-    required this.requestType,
-    this.reason,
-    required this.status,
-    this.approvalStage,
-    required this.version,
-  });
-  final String id;
-  final String employeeId;
-  final String attendanceDate;
-  final String requestType;
-  final String? reason;
-  final String status;
-  final String? approvalStage;
-  final int version;
-
-  factory RegularizationRequest.fromJson(Map<String, dynamic> json) => RegularizationRequest(
-        id: json['id'] as String,
-        employeeId: json['employee_id'] as String,
-        attendanceDate: json['attendance_date'] as String,
-        requestType: json['request_type'] as String,
-        reason: json['reason'] as String?,
-        status: json['status'] as String,
-        approvalStage: json['approval_stage'] as String?,
-        version: json['version'] as int,
-      );
-}
-
-class OvertimeRecord {
-  OvertimeRecord({
-    required this.id,
-    required this.employeeId,
-    required this.attendanceDate,
-    required this.minutesDetected,
-    this.minutesApproved,
-    required this.status,
-    required this.version,
-  });
-  final String id;
-  final String employeeId;
-  final String attendanceDate;
-  final int minutesDetected;
-  final int? minutesApproved;
-  final String status;
-  final int version;
-
-  factory OvertimeRecord.fromJson(Map<String, dynamic> json) => OvertimeRecord(
-        id: json['id'] as String,
-        employeeId: json['employee_id'] as String,
-        attendanceDate: json['attendance_date'] as String,
-        minutesDetected: json['minutes_detected'] as int,
-        minutesApproved: json['minutes_approved'] as int?,
-        status: json['status'] as String,
-        version: json['version'] as int,
-      );
-}
-
 class ShiftRoster {
   ShiftRoster({
     required this.id,
@@ -471,57 +410,7 @@ class AttendanceRepository {
       );
 
   // Regularizations
-  Future<List<RegularizationRequest>> listRegularizations({String? employeeId}) => _client
-      .getList(
-        '/regularizations',
-        filters: employeeId == null ? null : {'employee_id': employeeId},
-        parseItem: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
-      )
-      .then((e) => e.data);
-  Future<RegularizationRequest> submitRegularization(Map<String, dynamic> body) => _client.post(
-        '/regularizations',
-        body: body,
-        parse: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
-      );
-  Future<RegularizationRequest> approveRegularization(String id, {required String ifMatch, String? comment}) => _client.post(
-        '/regularizations/$id/approve',
-        ifMatch: ifMatch,
-        body: {if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment},
-        parse: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
-      );
-  Future<RegularizationRequest> rejectRegularization(String id, {required String ifMatch, String? reason}) => _client.post(
-        '/regularizations/$id/reject',
-        ifMatch: ifMatch,
-        body: {if (reason != null && reason.isNotEmpty) 'rejection_reason': reason},
-        parse: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
-      );
-  Future<RegularizationRequest> cancelRegularization(String id, {required String ifMatch}) => _client.post(
-        '/regularizations/$id/cancel',
-        ifMatch: ifMatch,
-        parse: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
-      );
-
   // Overtime records
-  Future<List<OvertimeRecord>> listOvertimeRecords({String? employeeId}) => _client
-      .getList(
-        '/overtime',
-        filters: employeeId == null ? null : {'employee_id': employeeId},
-        parseItem: (d) => OvertimeRecord.fromJson(d as Map<String, dynamic>),
-      )
-      .then((e) => e.data);
-  Future<OvertimeRecord> approveOvertime(String id, {required String ifMatch, String? comment}) => _client.post(
-        '/overtime/$id/approve',
-        ifMatch: ifMatch,
-        body: {if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment},
-        parse: (d) => OvertimeRecord.fromJson(d as Map<String, dynamic>),
-      );
-  Future<OvertimeRecord> rejectOvertime(String id, {required String ifMatch, String? reason}) => _client.post(
-        '/overtime/$id/reject',
-        ifMatch: ifMatch,
-        body: {if (reason != null && reason.isNotEmpty) 'rejection_reason': reason},
-        parse: (d) => OvertimeRecord.fromJson(d as Map<String, dynamic>),
-      );
-
   // Shift rosters
   Future<List<ShiftRoster>> listRosters({String? employeeId, String? dateFrom, String? dateTo}) => _client
       .getList(

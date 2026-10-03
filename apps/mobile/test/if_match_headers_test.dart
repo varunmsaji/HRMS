@@ -37,11 +37,6 @@ void main() {
   test('attendance lifecycle writes send If-Match', () async {
     final repo = AttendanceRepository(client);
     final cases = <String, Future<dynamic> Function()>{
-      '/regularizations/r/approve': () => repo.approveRegularization('r', ifMatch: '7'),
-      '/regularizations/r/reject': () => repo.rejectRegularization('r', ifMatch: '7'),
-      '/regularizations/r/cancel': () => repo.cancelRegularization('r', ifMatch: '7'),
-      '/overtime/r/approve': () => repo.approveOvertime('r', ifMatch: '7'),
-      '/overtime/r/reject': () => repo.rejectOvertime('r', ifMatch: '7'),
       '/attendance-periods/r/finalize': () => repo.finalizeAttendancePeriod('r', ifMatch: '7'),
       '/attendance-periods/r/reopen': () => repo.reopenAttendancePeriod('r', ifMatch: '7', reason: 'x'),
     };

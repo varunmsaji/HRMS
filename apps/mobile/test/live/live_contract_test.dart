@@ -113,8 +113,9 @@ void main() {
     if (calendars.isNotEmpty) await _check('holidays', () => att.listHolidays(calendars.first.id));
     await _check('weekly-off patterns', att.listWeeklyOffPatterns);
     await _check('work calendars', att.listWorkCalendars);
-    await _check('regularizations', att.listRegularizations);
-    await _check('overtime', att.listOvertimeRecords);
+    for (final path in ['/regularizations', '/overtime']) {
+      await _check(path, () => client.getList<Map<String, dynamic>>(path, parseItem: (d) => d as Map<String, dynamic>));
+    }
     await _check('rosters', att.listRosters);
     await _check('attendance periods', att.listAttendancePeriods);
     await _check('policy assignments', att.listPolicyAssignments);

@@ -10,10 +10,8 @@ import '../../features/auth/presentation/reset_password_screen.dart';
 import '../../features/auth/presentation/verify_email_screen.dart';
 import '../../features/attendance/presentation/attendance_periods_screen.dart';
 import '../../features/attendance/presentation/attendance_self_screen.dart';
-import '../../features/attendance/presentation/overtime_screen.dart';
 import '../../features/attendance/presentation/policy_assignments_screen.dart';
 import '../../features/attendance/presentation/policy_resolution_screen.dart';
-import '../../features/attendance/presentation/regularizations_screen.dart';
 import '../../features/attendance/presentation/roster_calendar_screen.dart';
 import '../../features/attendance/presentation/rosters_screen.dart';
 import '../../features/auth/state/auth_controller.dart';
@@ -37,6 +35,8 @@ import '../../features/profile/presentation/profile_screen.dart';
 import '../../features/attendance/presentation/team_attendance_screen.dart';
 import '../../features/onboarding/presentation/public_onboarding_screen.dart';
 import '../../features/attendance/domain/policy_resources.dart';
+import '../../features/attendance/domain/request_resources.dart';
+import '../requests/request_screens.dart';
 import '../../features/leave/domain/leave_resources.dart';
 import '../../features/organisation/domain/org_resources.dart';
 import '../../features/payroll/domain/payroll_resources.dart';
@@ -123,8 +123,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/holiday-calendars', builder: (context, state) => ResourceListScreen(config: holidayCalendarResource)),
       GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => ResourceListScreen(config: weeklyOffPatternResource)),
       GoRoute(path: '/app/work-calendars', builder: (context, state) => ResourceListScreen(config: workCalendarResource)),
-      GoRoute(path: '/app/regularizations', builder: (context, state) => const RegularizationsScreen()),
-      GoRoute(path: '/app/overtime', builder: (context, state) => const OvertimeScreen()),
+      GoRoute(path: '/app/regularizations', builder: (context, state) => RequestListScreen(config: regularizationConfig)),
+      GoRoute(path: '/app/overtime', builder: (context, state) => RequestListScreen(config: overtimeConfig)),
       GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
       GoRoute(path: '/app/rosters', builder: (context, state) => const RostersScreen()),
       GoRoute(path: '/app/roster-calendar', builder: (context, state) => const RosterCalendarScreen()),

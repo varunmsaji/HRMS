@@ -14,10 +14,14 @@ class FakeApiClient implements ApiClient {
   final Map<String, Object> failing;
   final calls = <RecordedCall>[];
 
+  /// Every list GET (path and filters) — the writes are in [calls].
+  final listCalls = <({String path, Map<String, dynamic>? filters})>[];
+
   String _p(String path) => path.split('?').first;
 
   @override
   Future<ListEnvelope<T>> getList<T>(String path, {required T Function(dynamic) parseItem, PageQuery? query, Map<String, dynamic>? filters, bool authenticated = true}) async {
+    listCalls.add((path: _p(path), filters: filters));
     if (failing.containsKey(_p(path))) throw failing[_p(path)]!;
     return ListEnvelope(data: (lists[_p(path)] ?? const []).map(parseItem).toList(), pagination: null, meta: ResponseMeta(requestId: 'r'));
   }
