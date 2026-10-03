@@ -13,7 +13,6 @@ import '../data/attendance_repository.dart';
 import '../domain/punch_form.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_widgets.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
 

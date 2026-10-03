@@ -6,7 +6,6 @@ import '../../auth/state/auth_controller.dart';
 import '../../profile/data/employee_repository.dart';
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/attendance_repository.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 /// Month grid of roster entries for a chosen employee — mirrors
 /// `apps/web/src/app/app/rosters/calendar/page.tsx`. One cell per day; badge

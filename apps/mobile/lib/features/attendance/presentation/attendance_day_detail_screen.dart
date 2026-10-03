@@ -8,7 +8,6 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_widgets.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 /// Mirrors `apps/web/src/app/app/attendance/[id]/page.tsx` — one computed attendance day:
 /// schedule, actuals and breaks, overtime and pay facts, the leave overlay, and the audit trail,

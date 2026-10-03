@@ -9,7 +9,6 @@ import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_enrollment_admin_card.dart';
-import 'package:hrms_mobile/features/attendance/presentation/holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 import 'package:hrms_mobile/features/attendance/presentation/team_attendance_screen.dart';
 import 'package:hrms_mobile/features/payroll/presentation/employee_salary_panel.dart';
 

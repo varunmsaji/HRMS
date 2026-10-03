@@ -16,6 +16,9 @@ enum FieldKind {
 
   /// Options supplied at runtime (`choices[choiceKey]` on the form) — stores the option's value.
   choice,
+
+  /// Several runtime options at once — stores a list of values.
+  multiChoice,
   toggle,
   integer,
   decimal,
@@ -40,6 +43,7 @@ class FieldSpec {
     this.hint,
     this.exactLength,
     this.readOnlyOnEdit = false,
+    this.editOnly = false,
   });
 
   /// Wire key in the JSON (e.g. `pan_number_enc`).
@@ -64,6 +68,9 @@ class FieldSpec {
 
   /// Create-only field (e.g. a code that can't change once set).
   final bool readOnlyOnEdit;
+
+  /// Shown only when editing an existing record (e.g. the active flag).
+  final bool editOnly;
 }
 
 typedef RowValidator = Map<String, String> Function(Map<String, dynamic> values);
@@ -106,6 +113,7 @@ final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 final _dateTimePattern = RegExp(r'^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 final _timePattern = RegExp(r'^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 
+/// Whether [f] applies given the other values. (`editOnly` is the form's concern, not this one's.)
 bool fieldVisible(FieldSpec f, Map<String, dynamic> values) {
   final cond = f.showWhen;
   if (cond == null) return true;
@@ -120,6 +128,8 @@ dynamic toFormValue(FieldSpec f, dynamic wire) {
       return wire == true;
     case FieldKind.money:
       return wire is num ? (wire / 100).toString().replaceAll(RegExp(r'\.0$'), '') : '';
+    case FieldKind.multiChoice:
+      return wire is List ? [for (final v in wire) v.toString()] : <String>[];
     case FieldKind.hidden:
       return wire;
     default:
@@ -134,6 +144,8 @@ dynamic toWireValue(FieldSpec f, dynamic form) {
       return form == true;
     case FieldKind.hidden:
       return form;
+    case FieldKind.multiChoice:
+      return form is List ? [for (final v in form) v.toString()] : <String>[];
     case FieldKind.integer:
       final s = (form ?? '').toString().trim();
       return s.isEmpty ? null : num.tryParse(s)?.truncate();
@@ -180,6 +192,11 @@ Map<String, dynamic> changedOnly(Map<String, dynamic> original, Map<String, dyna
 }
 
 bool _sameWire(dynamic a, dynamic b) {
+  if (a is List && b is List) {
+    final x = a.map((e) => e.toString()).toSet();
+    final y = b.map((e) => e.toString()).toSet();
+    return x.length == y.length && x.containsAll(y);
+  }
   if (a is num && b is num) return a == b;
   if (a is String && b is num) return num.tryParse(a) == b;
   if (a is num && b is String) return a == num.tryParse(b);
@@ -193,6 +210,10 @@ Map<String, String> validateRow(FormSpec spec, Map<String, dynamic> values) {
     if (!fieldVisible(f, values)) continue;
     final raw = values[f.key];
     final text = raw is String ? raw.trim() : '';
+    if (f.kind == FieldKind.multiChoice) {
+      if (f.required && (raw is! List || raw.isEmpty)) errors[f.key] = 'Choose at least one ${f.label.toLowerCase()}.';
+      continue;
+    }
     if (f.required && f.kind != FieldKind.toggle && text.isEmpty) {
       errors[f.key] = '${f.label} is required.';
       continue;

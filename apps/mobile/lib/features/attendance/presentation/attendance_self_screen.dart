@@ -9,7 +9,6 @@ import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_widgets.dart';
 import 'face_punch_card.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 /// Mirrors the "My Attendance" portion of the Stitch Mobile Dashboard —
 /// today's punch status plus the last 14 days, for the signed-in employee.

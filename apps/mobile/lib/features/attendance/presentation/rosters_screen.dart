@@ -7,7 +7,6 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../profile/data/employee_repository.dart';
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/attendance_repository.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 class RostersScreen extends ConsumerStatefulWidget {
   const RostersScreen({super.key});

@@ -6,8 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_punch_card.dart';
-import 'package:hrms_mobile/features/attendance/presentation/holiday_calendars_screen.dart'
-    show attendanceRepositoryProvider;
 
 const _selfie = [0xff, 0xd8, 0xff, 0xe0];
 

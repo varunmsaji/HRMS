@@ -10,7 +10,7 @@ import '../../../core/auth/permissions.dart';
 import '../../../core/format.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
-import '../../organisation/presentation/legal_entities_screen.dart' show organisationRepositoryProvider;
+import '../../organisation/data/organisation_repository.dart' show organisationRepositoryProvider;
 import '../data/payroll_repository.dart';
 import 'pay_run_employee_screen.dart';
 import 'pay_runs_screen.dart' show payrollRepositoryProvider;

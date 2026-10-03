@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
+import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
 import 'package:hrms_mobile/core/auth/auth_types.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/data/policy_repository.dart';
@@ -169,10 +170,14 @@ Set<String> _requiredBy(String schema) => ((jsonDecode(File('test/fixtures/contr
 void _writeFormMatches(String name, FormSpec spec, String schema, {Set<String> notInForm = const {}}) {
   test('$name -> $schema', () {
     final backend = (_load(schema, 'full') as Map<String, dynamic>).keys.toSet();
-    final mine = spec.fields.map((f) => f.key).toSet();
+    // Edit-only fields (the active flag) exist only on the Update schemas.
+    final isCreate = schema.endsWith('Create');
+    // Create-only fields (read-only on edit) never reach a PATCH.
+    final mine = spec.fields.where((f) => !(isCreate && f.editOnly) && !(!isCreate && f.readOnlyOnEdit)).map((f) => f.key).toSet();
     expect(mine.difference(backend), isEmpty, reason: 'keys the backend (extra="forbid") would reject');
     expect(backend.difference(mine).difference(notInForm), isEmpty, reason: 'backend fields the form does not offer');
     final requiredInSpec = spec.fields.where((f) => f.required).map((f) => f.key).toSet();
+    if (!isCreate) return; // Update schemas make everything optional.
     // A field the backend requires must be required in the form too — unless it is a toggle,
     // which always has a value (false).
     final toggles = spec.fields.where((f) => f.kind == FieldKind.toggle).map((f) => f.key).toSet();
@@ -180,7 +185,49 @@ void _writeFormMatches(String name, FormSpec spec, String schema, {Set<String> n
   });
 }
 
+void orgFormTests() {
+  group('organisation write forms match the backend create/update schemas', () {
+    for (final (name, spec, base) in [
+      ('legalEntitySpec', legalEntitySpec, 'LegalEntity'),
+      ('branchSpec', branchSpec(), 'Branch'),
+      ('departmentSpec', departmentSpec, 'Department'),
+      ('designationSpec', designationSpec, 'Designation'),
+      ('gradeSpec', gradeSpec, 'Grade'),
+      ('holidayCalendarSpec', holidayCalendarSpec, 'HolidayCalendar'),
+      ('holidaySpec', holidaySpec, 'Holiday'),
+      ('workCalendarSpec', workCalendarSpec, 'WorkCalendar'),
+      ('calendarExceptionSpec', calendarExceptionSpec, 'CalendarException'),
+    ]) {
+      // `replaced_holiday_id` is an optional link the web does not offer either.
+      _writeFormMatches('$name (create)', spec, 'organisation.${base}Create', notInForm: const {'replaced_holiday_id'});
+      _writeFormMatches('$name (update)', spec, 'organisation.${base}Update', notInForm: const {'replaced_holiday_id'});
+    }
+  });
+
+  group('organisation detail fields exist on the read schema', () {
+    for (final (name, spec, read) in [
+      ('legalEntity', legalEntitySpec, 'LegalEntityRead'),
+      ('branch', branchSpec(), 'BranchRead'),
+      ('department', departmentSpec, 'DepartmentRead'),
+      ('designation', designationSpec, 'DesignationRead'),
+      ('grade', gradeSpec, 'GradeRead'),
+      ('holidayCalendar', holidayCalendarSpec, 'HolidayCalendarRead'),
+      ('holiday', holidaySpec, 'HolidayRead'),
+      ('workCalendar', workCalendarSpec, 'WorkCalendarRead'),
+      ('calendarException', calendarExceptionSpec, 'CalendarExceptionRead'),
+    ]) {
+      test(name, () {
+        final keys = (_load('organisation.$read', 'full') as Map<String, dynamic>).keys.toSet();
+        for (final f in spec.fields) {
+          expect(keys, contains(f.key), reason: '$name shows "${f.key}" but $read has no such field');
+        }
+      });
+    }
+  });
+}
+
 void writeFormTests() {
+  orgFormTests();
   group('employee write forms match the backend create/update schemas', () {
     _writeFormMatches('employeeSpec', employeeSpec, 'employee.EmployeeCreate', notInForm: {'custom_fields'});
     _writeFormMatches('employeeSpec (update)', employeeSpec, 'employee.EmployeeUpdate', notInForm: {'custom_fields', 'is_active'});

@@ -8,7 +8,6 @@ import '../../../core/providers.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../organisation/data/organisation_repository.dart';
-import '../../organisation/presentation/legal_entities_screen.dart' show organisationRepositoryProvider;
 import '../../shell/more_action.dart';
 import '../data/payroll_repository.dart';
 import 'pay_run_detail_screen.dart';

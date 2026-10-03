@@ -7,7 +7,6 @@ import '../../../core/api/api_error.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 /// HR side of face enrollment — mirrors `apps/web/src/components/attendance/face-enrollment-card.tsx`:
 /// open a one-time self-enrollment window (the employee captures their face in the app), then

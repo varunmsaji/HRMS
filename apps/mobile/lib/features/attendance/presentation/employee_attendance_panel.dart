@@ -9,7 +9,6 @@ import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_widgets.dart';
 import 'face_enrollment_admin_card.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 import 'team_attendance_screen.dart' show openPunchOnBehalf;
 
 /// The Attendance tab of an employee record — mirrors

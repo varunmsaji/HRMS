@@ -6,7 +6,6 @@ import '../../../core/widgets/async_list_screen.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 class RegularizationsScreen extends ConsumerStatefulWidget {
   const RegularizationsScreen({super.key});

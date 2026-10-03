@@ -5,7 +5,6 @@ import 'package:image_picker/image_picker.dart';
 import '../../../core/api/api_error.dart';
 import '../data/attendance_repository.dart';
 import 'face_enrollment_screen.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 /// Opens the front camera and returns the selfie as JPEG bytes, or null if cancelled.
 typedef FaceCapture = Future<List<int>?> Function();

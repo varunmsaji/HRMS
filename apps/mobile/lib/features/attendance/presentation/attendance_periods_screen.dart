@@ -5,7 +5,6 @@ import '../../../core/api/api_error.dart';
 import '../../../core/widgets/async_list_screen.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../data/attendance_repository.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 class AttendancePeriodsScreen extends ConsumerStatefulWidget {
   const AttendancePeriodsScreen({super.key});

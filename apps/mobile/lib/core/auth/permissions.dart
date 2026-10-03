@@ -57,3 +57,14 @@ const attendanceOvertimeApprove = 'ATTENDANCE.OVERTIME_APPROVE';
 const attendanceLock = 'ATTENDANCE.LOCK';
 const attendanceUnlock = 'ATTENDANCE.UNLOCK';
 const attendanceFaceEnrollmentManage = 'ATTENDANCE.FACE_ENROLLMENT_MANAGE';
+
+// Organisation (mirrors `apps/api/src/hrms/modules/organisation/permissions.py`).
+const orgCompanyManage = 'ORG.COMPANY.MANAGE';
+const orgLegalEntityManage = 'ORG.LEGAL_ENTITY.MANAGE';
+const orgBranchManage = 'ORG.BRANCH.MANAGE';
+const orgDepartmentManage = 'ORG.DEPARTMENT.MANAGE';
+const orgDesignationManage = 'ORG.DESIGNATION.MANAGE';
+const orgGradeManage = 'ORG.GRADE.MANAGE';
+const orgShiftManage = 'ORG.SHIFT.MANAGE';
+const orgCalendarManage = 'ORG.CALENDAR.MANAGE';
+const orgHolidayManage = 'ORG.HOLIDAY.MANAGE';

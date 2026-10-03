@@ -1,4 +1,7 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../core/api/api_client.dart';
+import '../../../core/providers.dart';
 
 class LegalEntity {
   LegalEntity({
@@ -261,6 +264,8 @@ class CompanyProfile {
 /// `apps/api/src/hrms/modules/organisation/{router,schemas}.py`. Delete is
 /// always soft (`is_active=false`, returns 200 with the resource), never a
 /// hard 204 delete.
+final organisationRepositoryProvider = Provider<OrganisationRepository>((ref) => OrganisationRepository(ref.watch(apiClientProvider)));
+
 class OrganisationRepository {
   OrganisationRepository(this._client);
 

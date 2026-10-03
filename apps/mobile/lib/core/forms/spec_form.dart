@@ -140,6 +140,26 @@ class _SpecFormState extends State<SpecForm> {
         return _dropdown(f, [for (final o in f.options) (value: o, label: f.optionLabels[o] ?? o)], error);
       case FieldKind.choice:
         return _dropdown(f, widget.choices[f.choiceKey] ?? const [], error);
+      case FieldKind.multiChoice:
+        final selected = ((widget.values[f.key] as List?) ?? const []).map((e) => e.toString()).toSet();
+        final options = widget.choices[f.choiceKey] ?? const <Choice>[];
+        return AuthFormField(
+          label: f.label,
+          required: f.required,
+          errorText: error,
+          child: Column(children: [
+            if (options.isEmpty) const Align(alignment: Alignment.centerLeft, child: Text('Nothing to choose from yet.')),
+            for (final o in options)
+              CheckboxListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(o.label),
+                value: selected.contains(o.value),
+                onChanged: _disabled(f) ? null : (v) => _set(f.key, [for (final x in options) if (x.value == o.value ? v == true : selected.contains(x.value)) x.value]),
+              ),
+          ]),
+        );
       case FieldKind.date:
         return AuthFormField(
           label: f.label,
@@ -208,7 +228,7 @@ class _SpecFormState extends State<SpecForm> {
 
   @override
   Widget build(BuildContext context) {
-    final visible = widget.spec.fields.where((f) => f.kind != FieldKind.hidden && fieldVisible(f, widget.values));
+    final visible = widget.spec.fields.where((f) => f.kind != FieldKind.hidden && (!f.editOnly || widget.editing) && fieldVisible(f, widget.values));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

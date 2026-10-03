@@ -5,7 +5,6 @@ import '../../../core/api/api_error.dart';
 import '../../../core/widgets/async_list_screen.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../data/attendance_repository.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 
 const _policyKinds = ['WORK_CALENDAR', 'WEEKLY_OFF', 'ATTENDANCE_POLICY', 'OVERTIME_POLICY', 'REGULARIZATION_POLICY'];
 const _scopeTypes = ['COMPANY', 'LEGAL_ENTITY', 'BRANCH', 'DEPARTMENT', 'GRADE', 'DESIGNATION', 'SHIFT', 'EMPLOYEE'];

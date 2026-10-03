@@ -1,6 +1,9 @@
 import 'package:dio/dio.dart';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../../core/api/api_client.dart';
+import '../../../core/providers.dart';
 
 class Shift {
   Shift({required this.id, required this.name, this.code, required this.isActive, required this.version});
@@ -413,6 +416,8 @@ class FaceEnrollmentStatus {
 
 /// Capture order for self-enrollment; must match the server's form field names.
 const faceEnrollmentAngles = ['front', 'left', 'right', 'up', 'down'];
+
+final attendanceRepositoryProvider = Provider<AttendanceRepository>((ref) => AttendanceRepository(ref.watch(apiClientProvider)));
 
 class AttendanceRepository {
   AttendanceRepository(this._client);

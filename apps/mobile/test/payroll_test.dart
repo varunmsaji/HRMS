@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/format.dart';
 import 'package:hrms_mobile/features/organisation/data/organisation_repository.dart';
-import 'package:hrms_mobile/features/organisation/presentation/legal_entities_screen.dart' show organisationRepositoryProvider;
 import 'package:hrms_mobile/features/payroll/data/payroll_repository.dart';
 import 'package:hrms_mobile/features/payroll/presentation/pay_run_detail_screen.dart';
 import 'package:hrms_mobile/features/payroll/presentation/pay_runs_screen.dart' show payrollRepositoryProvider;

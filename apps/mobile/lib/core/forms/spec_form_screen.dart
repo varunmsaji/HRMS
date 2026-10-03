@@ -72,7 +72,16 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
       _banner = errors.isEmpty ? null : 'Please fix the highlighted fields.';
     });
     if (errors.isNotEmpty) return;
-    final payload = rowToPayload(widget.spec, _values);
+    var payload = rowToPayload(widget.spec, _values);
+    if (!_editing) {
+      // A create sends only what was filled in: edit-only fields don't exist yet, and an optional
+      // field with a server-side default must be omitted, not sent as null.
+      final editOnlyKeys = widget.spec.fields.where((f) => f.editOnly).map((f) => f.key).toSet();
+      payload = {
+        for (final e in payload.entries)
+          if (e.value != null && !editOnlyKeys.contains(e.key)) e.key: e.value,
+      };
+    }
     final changed = _editing ? changedOnly(widget.initial!, payload) : payload;
     if (_editing && changed.isEmpty) {
       setState(() => _banner = 'No changes to save.');

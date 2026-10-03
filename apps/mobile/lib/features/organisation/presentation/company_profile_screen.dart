@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_error.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../data/organisation_repository.dart';
-import 'legal_entities_screen.dart' show organisationRepositoryProvider;
 
 /// Mirrors `apps/web/src/app/app/company/page.tsx` — view + edit the core
 /// company profile fields. `locale`/`fiscal_year`/`working_days`/

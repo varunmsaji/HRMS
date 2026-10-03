@@ -8,7 +8,7 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
 import '../../../core/api/api_error.dart';
 import '../domain/face_pose_tracker.dart';
-import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
+import '../data/attendance_repository.dart' show attendanceRepositoryProvider;
 
 enum _Stage { consent, capturing, review, submitting }
 

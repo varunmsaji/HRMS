@@ -87,3 +87,10 @@ String nowInZoneForInput(String zone, {DateTime? now}) {
   final t = tz.TZDateTime.from(now ?? DateTime.now(), _location(zone));
   return '${_date(t)}T${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 }
+
+/// Every IANA zone the tz database knows, sorted — the options for a timezone picker. (The
+/// backend validates against `zoneinfo.available_timezones()`, which this list covers.)
+List<String> allTimeZones() {
+  initTimeZones();
+  return tz.timeZoneDatabase.locations.keys.where((k) => k.contains('/') || k == 'UTC').toList()..sort();
+}
