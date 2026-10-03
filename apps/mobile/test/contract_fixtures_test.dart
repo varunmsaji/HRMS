@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
+import 'package:hrms_mobile/features/leave/domain/leave_application_form.dart';
 import 'package:hrms_mobile/features/leave/domain/leave_resources.dart';
 import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
 import 'package:hrms_mobile/features/payroll/domain/payroll_resources.dart';
@@ -289,7 +290,15 @@ void payrollFormTests() {
   });
 }
 
+void leaveApplicationFormTests() {
+  group('leave application form matches LeaveApplicationCreate', () {
+    _writeFormMatches('self', leaveApplicationSpec(onBehalf: false), 'leave.LeaveApplicationCreate', notInForm: const {'employee_id'});
+    _writeFormMatches('on behalf', leaveApplicationSpec(onBehalf: true), 'leave.LeaveApplicationCreate');
+  });
+}
+
 void versionedFormTests() {
+  leaveApplicationFormTests();
   payrollFormTests();
   weeklyOffRuleTest();
   void rowsMatch(FormSpec spec, Map<String, String> rowSchemas, {Set<String> orderKeys = const {'sort_order', 'sequence'}}) {

@@ -149,6 +149,7 @@ class LeaveApplication {
     required this.status,
     this.approvalStage,
     required this.version,
+    this.raw = const {},
   });
   final String id;
   final String employeeId;
@@ -161,6 +162,10 @@ class LeaveApplication {
   final String? approvalStage;
   final int version;
 
+  /// The full `LeaveApplicationRead` JSON (days, action history, review/cancellation facts) for
+  /// the detail screen.
+  final Map<String, dynamic> raw;
+
   factory LeaveApplication.fromJson(Map<String, dynamic> json) => LeaveApplication(
         id: json['id'] as String,
         employeeId: json['employee_id'] as String,
@@ -172,6 +177,7 @@ class LeaveApplication {
         status: json['status'] as String,
         approvalStage: json['approval_stage'] as String?,
         version: json['version'] as int,
+        raw: json,
       );
 }
 
@@ -272,6 +278,23 @@ class LeaveRepository {
         parse: (_) {},
       );
 
+  Future<LeaveApplication> getLeaveApplication(String id) =>
+      _client.get('/leave-applications/$id', parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>));
+
+  /// One page of applications (`date_from`/`date_to`/`application_status`/`employee_id` are the
+  /// server's filter names). The server scopes the rows to what the caller may see.
+  Future<ListEnvelope<LeaveApplication>> listLeaveApplicationsPage({String? employeeId, String? dateFrom, String? dateTo, String? status, int page = 1}) => _client.getList(
+        '/leave-applications',
+        query: PageQuery(page: page),
+        filters: {
+          if (employeeId != null) 'employee_id': employeeId,
+          if (dateFrom != null) 'date_from': dateFrom,
+          if (dateTo != null) 'date_to': dateTo,
+          if (status != null) 'application_status': status,
+        },
+        parseItem: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
+      );
+
   Future<List<LeaveApplication>> listLeaveApplications({String? employeeId}) => _client
       .getList(
         '/leave-applications',
@@ -288,13 +311,16 @@ class LeaveRepository {
       _client.post(
         '/leave-applications/$id/approve',
         ifMatch: ifMatch,
-        body: {if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment, 'excess_as_lop': excessAsLop},
+        body: {if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment, if (excessAsLop) 'excess_as_lop': true},
         parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       );
-  Future<LeaveApplication> rejectLeaveApplication(String id, {required String ifMatch, String? reason}) => _client.post(
+  Future<LeaveApplication> rejectLeaveApplication(String id, {required String ifMatch, String? comment, String? reason}) => _client.post(
         '/leave-applications/$id/reject',
         ifMatch: ifMatch,
-        body: {if (reason != null && reason.isNotEmpty) 'rejection_reason': reason},
+        body: {
+          if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment,
+          if (reason != null && reason.isNotEmpty) 'rejection_reason': reason,
+        },
         parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       );
   Future<LeaveApplication> cancelLeaveApplication(String id, {required String ifMatch, String? reason}) => _client.post(
