@@ -3,6 +3,29 @@
 Audited 2026-10-03: `main` (83e4d2c) vs `feature/flutter-mobile-app` (8b5fda9).
 Goal: the Flutter app (`apps/mobile`) exposes the same features as the web app, on the same backend.
 
+## Status update (2026-10-03, mobile branch)
+
+Every item in the gap checklist below has been built on the mobile branch (`HRMS-mobile-wt`, `apps/mobile`), except the non-goals at the end of this section. Items were checked against the web pages, which are the functional spec.
+
+| Area | Mobile now covers |
+|---|---|
+| Employee record | Detail screen with Overview, nine record tabs (with their actions), Salary and Attendance; edit, deactivate/reactivate, confirm probation, invite |
+| Onboarding | Public candidate wizard (9 sections, by link), HR case detail (section and document review, invite link, activate) |
+| Leave | Applications (Mine/Team, review, cancel), balances with ledger, encash and adjust, policies with versions, types, combination rules, statutory minimums, leave year |
+| Payroll | Pay runs and per-employee detail, payslips with PDF share and print, my payslips, salary components, structures with versions, bulk assign, statutory rates, employee salary panel |
+| Attendance | Day detail, team attendance, periods, rosters and roster calendar, regularizations, overtime, policies and shifts with versions, policy assignments, policy resolution (including the work calendar), face enrolment admin |
+| Organisation | Company profile (all sections), legal entities, branches, departments, designations, grades, holiday and work calendars, weekly-off patterns |
+| Settings | Users (invite, roles, gated by permission), company setup progress with next step |
+
+Verification: offline contract tests generated from the backend Pydantic response schemas (full and sparse variants), widget tests with a fake API client, and an opt-in live test (`HRMS_LIVE_API=1 flutter test test/live`). 458 tests pass. `flutter build apk --debug` succeeds (Kotlin Gradle plugin bumped to 2.1.0).
+
+Not done:
+- Android and iOS deep links for `/onboarding/:token`. They need the production web host, which is not decided. Meanwhile the login screen has an "Open onboarding link" dialog.
+- iOS build not attempted (no macOS host).
+- Nothing is pushed or merged. The face-attendance commits exist on both branches under different SHAs, so rebase onto main first.
+
+The original audit follows, as written on 2026-10-01.
+
 ## Backend parity
 
 - Outside `apps/mobile`, the two branches are tree-identical (API, web, migrations, tests). No backend drift.
