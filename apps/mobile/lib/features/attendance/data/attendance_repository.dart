@@ -315,14 +315,15 @@ class FacePunchResult {
     required this.direction,
     required this.punchTime,
     required this.similarity,
-    required this.livenessScore,
+    this.livenessScore,
   });
 
   final String punchId;
   final String direction;
   final String punchTime;
   final double similarity;
-  final double livenessScore;
+  /// Null when the server accepted the punch without a liveness score.
+  final double? livenessScore;
 
   factory FacePunchResult.fromJson(Map<String, dynamic> json) {
     final punch = json['punch'] as Map<String, dynamic>;
@@ -331,7 +332,7 @@ class FacePunchResult {
       direction: punch['direction'] as String,
       punchTime: punch['punch_time'] as String,
       similarity: double.parse(json['similarity'].toString()),
-      livenessScore: double.parse(json['liveness_score'].toString()),
+      livenessScore: json['liveness_score'] == null ? null : double.parse(json['liveness_score'].toString()),
     );
   }
 }
