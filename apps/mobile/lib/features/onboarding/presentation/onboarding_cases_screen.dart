@@ -6,6 +6,7 @@ import '../../../core/providers.dart';
 import '../../../core/widgets/async_list_screen.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../data/onboarding_repository.dart';
+import 'onboarding_case_detail_screen.dart';
 
 final onboardingRepositoryProvider = Provider<OnboardingRepository>((ref) => OnboardingRepository(ref.watch(apiClientProvider)));
 
@@ -40,7 +41,7 @@ class _OnboardingCasesScreenState extends ConsumerState<OnboardingCasesScreen> {
         subtitle: Text([onboardingCase.status.replaceAll('_', ' '), onboardingCase.personalEmail].join(' · ')),
         trailing: const Icon(Icons.chevron_right, size: 20),
         onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(builder: (_) => OnboardingCaseReviewScreen(caseSummary: onboardingCase)));
+          await Navigator.of(context).push(MaterialPageRoute(builder: (_) => OnboardingCaseDetailScreen(caseSummary: onboardingCase)));
           _listKey.currentState?.reload();
         },
       ),
@@ -116,128 +117,6 @@ class _OnboardingWizardScreenState extends ConsumerState<OnboardingWizardScreen>
           PrimaryButton(label: 'Create case', loading: _submitting, onPressed: _submit),
         ],
       ),
-    );
-  }
-}
-
-/// "Mobile Onboarding Case Review" — status, section review states, and the
-/// admin actions (send invite / request changes / activate).
-class OnboardingCaseReviewScreen extends ConsumerStatefulWidget {
-  const OnboardingCaseReviewScreen({super.key, required this.caseSummary});
-  final OnboardingCase caseSummary;
-
-  @override
-  ConsumerState<OnboardingCaseReviewScreen> createState() => _OnboardingCaseReviewScreenState();
-}
-
-class _OnboardingCaseReviewScreenState extends ConsumerState<OnboardingCaseReviewScreen> {
-  bool _loading = true;
-  OnboardingCaseDetail? _detail;
-  bool _busy = false;
-  String? _message;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final detail = await ref.read(onboardingRepositoryProvider).getCase(widget.caseSummary.id);
-      if (mounted) setState(() => _detail = detail);
-    } catch (_) {
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _sendInvite() async {
-    setState(() => _busy = true);
-    try {
-      final result = await ref.read(onboardingRepositoryProvider).sendInvite(widget.caseSummary.id);
-      setState(() => _message = result['email_sent'] == true ? 'Invite sent.' : 'Invite created: ${result['invite_url']}');
-      _load();
-    } catch (error) {
-      setState(() => _message = error is ApiError ? error.message : 'Something went wrong.');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _requestChanges() async {
-    setState(() => _busy = true);
-    try {
-      await ref.read(onboardingRepositoryProvider).requestChanges(widget.caseSummary.id);
-      setState(() => _message = 'Changes requested.');
-      _load();
-    } catch (error) {
-      setState(() => _message = error is ApiError ? error.message : 'Something went wrong.');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _activate() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Activate employee'),
-        content: const Text('This creates a real employee record from this case. This cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Activate')),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    setState(() => _busy = true);
-    try {
-      await ref.read(onboardingRepositoryProvider).activate(widget.caseSummary.id);
-      setState(() => _message = 'Activated.');
-      _load();
-    } catch (error) {
-      setState(() => _message = error is ApiError ? error.message : 'Something went wrong.');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final detail = _detail;
-    final status = detail?.status ?? widget.caseSummary.status;
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.caseSummary.candidateName)),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                if (_message != null) ...[InlineAlert(message: _message!), const SizedBox(height: 16)],
-                Text('Status: ${status.replaceAll('_', ' ')}', style: Theme.of(context).textTheme.headlineSmall),
-                Text(widget.caseSummary.personalEmail),
-                if (detail?.tokenStatus != null) Text('Invite: ${detail!.tokenStatus}'),
-                const SizedBox(height: 20),
-                if (detail != null && detail.sectionReviews.isNotEmpty) ...[
-                  Text('Sections', style: Theme.of(context).textTheme.labelMedium),
-                  const SizedBox(height: 8),
-                  for (final review in detail.sectionReviews)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text((review['section'] as String).replaceAll('_', ' ')),
-                      trailing: Text(review['status'] as String),
-                    ),
-                  const SizedBox(height: 12),
-                ],
-                if (status == 'DRAFT') FilledButton(onPressed: _busy ? null : _sendInvite, child: const Text('Send invite')),
-                if (status == 'UNDER_REVIEW') ...[
-                  OutlinedButton(onPressed: _busy ? null : _requestChanges, child: const Text('Request changes')),
-                  const SizedBox(height: 8),
-                ],
-                if (status == 'VERIFIED') FilledButton(onPressed: _busy ? null : _activate, child: const Text('Activate employee')),
-              ],
-            ),
     );
   }
 }

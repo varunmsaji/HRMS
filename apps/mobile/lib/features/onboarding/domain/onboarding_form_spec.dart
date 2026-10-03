@@ -351,3 +351,21 @@ String? validateNomineeTotals(List<Map<String, dynamic>> rows) {
   }
   return null;
 }
+
+/// Read-only `(label, value)` rows for HR review: wire JSON through the spec's labels/types.
+List<(String, String)> displayRows(OnboardingSectionSpec spec, Map<String, dynamic> wire) {
+  final out = <(String, String)>[];
+  for (final f in spec.fields) {
+    if (f.type == OnboardingFieldType.hidden) continue;
+    final v = wire[f.key];
+    if (v == null || v == '') continue;
+    if (f.type == OnboardingFieldType.toggle) {
+      out.add((f.label, v == true ? 'Yes' : 'No'));
+    } else if (f.type == OnboardingFieldType.money && v is num) {
+      out.add((f.label, (v / 100).toStringAsFixed(2)));
+    } else {
+      out.add((f.label, v.toString()));
+    }
+  }
+  return out;
+}

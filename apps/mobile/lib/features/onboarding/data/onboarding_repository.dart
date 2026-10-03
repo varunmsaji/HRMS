@@ -1,4 +1,5 @@
 import '../../../core/api/api_client.dart';
+import 'public_onboarding_repository.dart' show OnboardingDocument;
 
 class OnboardingCase {
   OnboardingCase({
@@ -38,9 +39,33 @@ class OnboardingCaseDetail extends OnboardingCase {
     super.proposedJoiningDate,
     required this.tokenStatus,
     required this.sectionReviews,
+    this.tokenExpiresAt,
+    this.employeeId,
+    this.personalMobile,
+    this.sections = const {},
   });
   final String? tokenStatus;
+  final String? tokenExpiresAt;
+  final String? employeeId;
+  final String? personalMobile;
   final List<Map<String, dynamic>> sectionReviews;
+
+  /// The nine section JSON blobs, keyed by wire name.
+  final Map<String, Map<String, dynamic>> sections;
+
+  String reviewStatus(String section) {
+    for (final r in sectionReviews) {
+      if (r['section'] == section) return r['status'] as String;
+    }
+    return 'PENDING';
+  }
+
+  String? rejectionReason(String section) {
+    for (final r in sectionReviews) {
+      if (r['section'] == section) return r['rejection_reason'] as String?;
+    }
+    return null;
+  }
 
   factory OnboardingCaseDetail.fromJson(Map<String, dynamic> json) => OnboardingCaseDetail(
         id: json['id'] as String,
@@ -50,7 +75,24 @@ class OnboardingCaseDetail extends OnboardingCase {
         status: json['status'] as String,
         proposedJoiningDate: json['proposed_joining_date'] as String?,
         tokenStatus: json['token_status'] as String?,
+        tokenExpiresAt: json['token_expires_at'] as String?,
+        employeeId: json['employee_id'] as String?,
+        personalMobile: json['personal_mobile'] as String?,
         sectionReviews: (json['section_reviews'] as List? ?? []).cast<Map<String, dynamic>>(),
+        sections: {
+          for (final n in const [
+            'personal_info',
+            'address_info',
+            'emergency_contact',
+            'bank_info',
+            'statutory_info',
+            'compensation_info',
+            'previous_employment_info',
+            'education_info',
+            'nominee_info',
+          ])
+            n: Map<String, dynamic>.from((json[n] as Map?) ?? const {}),
+        },
       );
 }
 
@@ -117,6 +159,19 @@ class OnboardingRepository {
   Future<Map<String, dynamic>> sendInvite(String caseId) => _client.post(
         '/onboarding-cases/$caseId/send-invite',
         parse: (d) => d as Map<String, dynamic>,
+      );
+  Future<List<OnboardingDocument>> listCaseDocuments(String caseId) => _client
+      .getList('/onboarding-cases/$caseId/documents', parseItem: (d) => OnboardingDocument.fromJson(d as Map<String, dynamic>))
+      .then((e) => e.data);
+  Future<void> reviewSection(String caseId, String section, {required bool verified, String? reason}) => _client.post(
+        '/onboarding-cases/$caseId/sections/$section/review',
+        body: {'status': verified ? 'VERIFIED' : 'REJECTED', if (!verified) 'rejection_reason': reason},
+        parse: (_) {},
+      );
+  Future<OnboardingDocument> reviewDocument(String caseId, String documentId, {required bool verified, String? reason}) => _client.post(
+        '/onboarding-cases/$caseId/documents/$documentId/review',
+        body: {'status': verified ? 'VERIFIED' : 'REJECTED', if (!verified) 'rejection_reason': reason},
+        parse: (d) => OnboardingDocument.fromJson(d as Map<String, dynamic>),
       );
   Future<OnboardingCase> requestChanges(String caseId) => _client.post(
         '/onboarding-cases/$caseId/request-changes',

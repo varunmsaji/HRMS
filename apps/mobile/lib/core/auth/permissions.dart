@@ -12,3 +12,8 @@ const employeeViewBanking = 'EMPLOYEE.VIEW_BANKING';
 const employeeViewSensitive = 'EMPLOYEE.VIEW_SENSITIVE';
 const employeeViewExperience = 'EMPLOYEE.VIEW_EXPERIENCE';
 const employeeViewNominee = 'EMPLOYEE.VIEW_NOMINEE';
+
+// Onboarding (mirrors `apps/api/src/hrms/modules/onboarding/permissions.py`).
+const onboardingCreate = 'ONBOARDING.CREATE';
+const onboardingReview = 'ONBOARDING.REVIEW';
+const onboardingActivate = 'ONBOARDING.ACTIVATE';
