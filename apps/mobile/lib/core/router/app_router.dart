@@ -13,8 +13,6 @@ import '../../features/attendance/presentation/attendance_self_screen.dart';
 import '../../features/attendance/presentation/overtime_screen.dart';
 import '../../features/attendance/presentation/policy_assignments_screen.dart';
 import '../../features/attendance/presentation/policy_resolution_screen.dart';
-import '../../features/attendance/presentation/policy_screens.dart';
-import '../../features/attendance/presentation/policy_version_forms.dart';
 import '../../features/attendance/presentation/regularizations_screen.dart';
 import '../../features/attendance/presentation/roster_calendar_screen.dart';
 import '../../features/attendance/presentation/rosters_screen.dart';
@@ -26,7 +24,6 @@ import '../../features/employees/presentation/employees_screen.dart';
 import '../../features/leave/presentation/leave_applications_screen.dart';
 import '../../features/leave/presentation/leave_balances_screen.dart';
 import '../../features/leave/presentation/leave_combination_rules_screen.dart';
-import '../../features/leave/presentation/leave_policies_screen.dart';
 import '../../features/leave/presentation/leave_types_screen.dart';
 import '../../features/leave/presentation/leave_year_setting_screen.dart';
 import '../../features/leave/presentation/statutory_leave_minimums_screen.dart';
@@ -42,6 +39,8 @@ import '../../features/organisation/presentation/company_profile_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
 import '../../features/attendance/presentation/team_attendance_screen.dart';
 import '../../features/onboarding/presentation/public_onboarding_screen.dart';
+import '../../features/attendance/domain/policy_resources.dart';
+import '../../features/leave/domain/leave_resources.dart';
 import '../../features/organisation/domain/org_resources.dart';
 import '../resource/resource_screens.dart';
 import '../../features/shell/app_shell.dart';
@@ -119,41 +118,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/designations', builder: (context, state) => ResourceListScreen(config: designationResource)),
       GoRoute(path: '/app/grades', builder: (context, state) => ResourceListScreen(config: gradeResource)),
       GoRoute(path: '/app/legal-entities', builder: (context, state) => ResourceListScreen(config: legalEntityResource)),
-      GoRoute(
-        path: '/app/attendance-policies',
-        builder: (context, state) => PolicyListScreen(
-          title: 'Attendance Policies',
-          basePath: 'attendance-policies',
-          versionFormBuilder: (context, repository, policyId) =>
-              AttendancePolicyVersionForm(repository: repository, policyId: policyId),
-        ),
-      ),
-      GoRoute(
-        path: '/app/overtime-policies',
-        builder: (context, state) => PolicyListScreen(
-          title: 'Overtime Policies',
-          basePath: 'overtime-policies',
-          versionFormBuilder: (context, repository, policyId) =>
-              OvertimePolicyVersionForm(repository: repository, policyId: policyId),
-        ),
-      ),
-      GoRoute(
-        path: '/app/regularization-policies',
-        builder: (context, state) => PolicyListScreen(
-          title: 'Regularization Policies',
-          basePath: 'regularization-policies',
-          versionFormBuilder: (context, repository, policyId) =>
-              RegularizationPolicyVersionForm(repository: repository, policyId: policyId),
-        ),
-      ),
-      GoRoute(
-        path: '/app/shifts',
-        builder: (context, state) => PolicyListScreen(
-          title: 'Shifts',
-          basePath: 'shifts',
-          versionFormBuilder: (context, repository, policyId) => ShiftVersionForm(repository: repository, policyId: policyId),
-        ),
-      ),
+      GoRoute(path: '/app/attendance-policies', builder: (context, state) => ResourceListScreen(config: attendancePolicyResource)),
+      GoRoute(path: '/app/overtime-policies', builder: (context, state) => ResourceListScreen(config: overtimePolicyResource)),
+      GoRoute(path: '/app/regularization-policies', builder: (context, state) => ResourceListScreen(config: regularizationPolicyResource)),
+      GoRoute(path: '/app/shifts', builder: (context, state) => ResourceListScreen(config: shiftResource())),
       GoRoute(path: '/app/holiday-calendars', builder: (context, state) => ResourceListScreen(config: holidayCalendarResource)),
       GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => const WeeklyOffPatternsScreen()),
       GoRoute(path: '/app/work-calendars', builder: (context, state) => ResourceListScreen(config: workCalendarResource)),
@@ -166,7 +134,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/policy-assignments', builder: (context, state) => const PolicyAssignmentsScreen()),
       GoRoute(path: '/app/policy-resolution', builder: (context, state) => const PolicyResolutionScreen()),
       GoRoute(path: '/app/leave-types', builder: (context, state) => const LeaveTypesScreen()),
-      GoRoute(path: '/app/leave-policies', builder: (context, state) => const LeavePoliciesScreen()),
+      GoRoute(path: '/app/leave-policies', builder: (context, state) => ResourceListScreen(config: leavePolicyResource)),
       GoRoute(path: '/app/leave-combination-rules', builder: (context, state) => const LeaveCombinationRulesScreen()),
       GoRoute(path: '/app/leave-year-setting', builder: (context, state) => const LeaveYearSettingScreen()),
       GoRoute(path: '/app/statutory-leave-minimums', builder: (context, state) => const StatutoryLeaveMinimumsScreen()),

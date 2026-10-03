@@ -10,6 +10,7 @@ import '../providers.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/shell/more_action.dart';
 import 'resource_config.dart';
+import 'versions_section.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -27,7 +28,7 @@ String displayValue(FieldSpec f, dynamic raw, Map<String, Map<String, String>> n
     case FieldKind.money:
       return raw is num ? (raw / 100).toStringAsFixed(2) : raw.toString();
     case FieldKind.select:
-      return f.optionLabels[raw.toString()] ?? raw.toString();
+      return f.optionLabels[raw.toString()] ?? prettyEnum(raw.toString());
     case FieldKind.choice:
       return names[f.choiceKey]?[raw.toString()] ?? raw.toString();
     case FieldKind.multiChoice:
@@ -294,6 +295,7 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
               ]),
             ),
             if (_c.detailExtras != null) _c.detailExtras!(context, _row, _reload),
+            if (_c.versions != null) VersionsSection(config: _c, parent: _row),
           ],
         ),
       ),

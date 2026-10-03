@@ -19,6 +19,7 @@ class ResourceConfig {
     this.detailExtras,
     this.emptyLabel,
     this.listFilters = const {},
+    this.versions,
   });
 
   /// Screen title / list heading ("Branches").
@@ -52,4 +53,24 @@ class ResourceConfig {
 
   /// Extra query params for the list call.
   final Map<String, dynamic> listFilters;
+
+  /// Set for effective-dated, versioned resources (policies, shifts): the record is an identity
+  /// and its configuration lives in versions (one editable DRAFT, then immutable PUBLISHED ones).
+  final VersionsConfig? versions;
+}
+
+/// How a versioned resource's versions are edited — mirrors the web policy/shift `[id]` pages:
+/// create a draft (the server seeds it), edit the draft in full, discard it, or publish it.
+class VersionsConfig {
+  const VersionsConfig({required this.spec, this.noun = 'version', this.manage, this.summary});
+
+  /// The full version form (`*VersionCreate`/`*VersionUpdate`), nested lists as `FieldKind.rows`.
+  final FormSpec spec;
+  final String noun;
+
+  /// Overrides [ResourceConfig.manage] for the version actions.
+  final String? manage;
+
+  /// One line under a version's status.
+  final String? Function(Map<String, dynamic> version)? summary;
 }

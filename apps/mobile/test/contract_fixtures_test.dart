@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
+import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
+import 'package:hrms_mobile/features/leave/domain/leave_resources.dart';
 import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
 import 'package:hrms_mobile/core/auth/auth_types.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
@@ -226,8 +228,66 @@ void orgFormTests() {
   });
 }
 
+void versionedFormTests() {
+  void rowsMatch(FormSpec spec, Map<String, String> rowSchemas, {Set<String> orderKeys = const {'sort_order', 'sequence'}}) {
+    for (final e in rowSchemas.entries) {
+      final field = spec.fields.firstWhere((f) => f.key == e.key);
+      test('${spec.name}.${e.key} rows -> ${e.value}', () {
+        final backend = (_load(e.value, 'full') as Map<String, dynamic>).keys.toSet();
+        final mine = field.rowSpec!.fields.map((f) => f.key).toSet();
+        expect(mine.difference(backend), isEmpty, reason: 'row keys the backend would reject');
+        expect(backend.difference(mine).difference(orderKeys), isEmpty, reason: 'row fields the form does not offer');
+        final requiredInSpec = field.rowSpec!.fields.where((f) => f.required).map((f) => f.key).toSet();
+        final toggles = field.rowSpec!.fields.where((f) => f.kind == FieldKind.toggle).map((f) => f.key).toSet();
+        expect(_requiredBy(e.value).difference(requiredInSpec).difference(toggles).difference(orderKeys), isEmpty, reason: 'backend-required row fields left optional');
+      });
+    }
+  }
+
+  void readHas(String label, FormSpec spec, String read) {
+    test('$label version fields exist on $read', () {
+      final keys = (_load(read, 'full') as Map<String, dynamic>).keys.toSet();
+      for (final f in spec.fields) {
+        expect(keys, contains(f.key), reason: '$label shows "${f.key}" but $read has no such field');
+      }
+    });
+  }
+
+  group('versioned resources match the backend schemas', () {
+    final shiftSpec = shiftVersionSpec();
+    final all = <(String, FormSpec, String, String, Map<String, String>)>[
+      ('attendance policy', attendancePolicyVersionSpec, 'attendance.AttendancePolicyVersion', 'attendance.AttendancePolicyVersionRead', {
+        'hour_bands': 'attendance.AttendancePolicyHourBandInput',
+        'late_bands': 'attendance.AttendancePolicyLateBandInput',
+        'early_departure_bands': 'attendance.AttendancePolicyEarlyDepartureBandInput',
+      }),
+      ('overtime policy', overtimePolicyVersionSpec, 'attendance.OvertimePolicyVersion', 'attendance.OvertimePolicyVersionRead', {'rate_rows': 'attendance.OvertimePolicyRateRowInput'}),
+      ('regularization policy', regularizationPolicyVersionSpec, 'attendance.RegularizationPolicyVersion', 'attendance.RegularizationPolicyVersionRead', {'allowed_types': 'attendance.RegularizationPolicyAllowedTypeInput'}),
+      ('shift', shiftSpec, 'organisation.ShiftVersion', 'organisation.ShiftVersionRead', {'breaks': 'organisation.ShiftBreakCreate', 'duty_blocks': 'organisation.ShiftDutyBlockCreate'}),
+      ('leave policy', leavePolicyVersionSpec, 'leave.LeavePolicyVersion', 'leave.LeavePolicyVersionRead', const {}),
+    ];
+    for (final (label, spec, base, read, rows) in all) {
+      _writeFormMatches('$label version (create)', spec, '${base}Create');
+      _writeFormMatches('$label version (update)', spec, '${base}Update');
+      readHas(label, spec, read);
+      rowsMatch(spec, rows);
+    }
+    _writeFormMatches('attendance policy', attendancePolicyIdentitySpec, 'attendance.AttendancePolicyCreate');
+    _writeFormMatches('attendance policy (update)', attendancePolicyIdentitySpec, 'attendance.AttendancePolicyUpdate');
+    _writeFormMatches('overtime policy', overtimePolicyIdentitySpec, 'attendance.OvertimePolicyCreate');
+    _writeFormMatches('overtime policy (update)', overtimePolicyIdentitySpec, 'attendance.OvertimePolicyUpdate');
+    _writeFormMatches('regularization policy', regularizationPolicyIdentitySpec, 'attendance.RegularizationPolicyCreate');
+    _writeFormMatches('regularization policy (update)', regularizationPolicyIdentitySpec, 'attendance.RegularizationPolicyUpdate');
+    _writeFormMatches('shift', shiftIdentitySpec, 'organisation.ShiftCreate');
+    _writeFormMatches('shift (update)', shiftIdentitySpec, 'organisation.ShiftUpdate');
+    _writeFormMatches('leave policy', leavePolicyIdentitySpec, 'leave.LeavePolicyCreate');
+    _writeFormMatches('leave policy (update)', leavePolicyIdentitySpec, 'leave.LeavePolicyUpdate');
+  });
+}
+
 void writeFormTests() {
   orgFormTests();
+  versionedFormTests();
   group('employee write forms match the backend create/update schemas', () {
     _writeFormMatches('employeeSpec', employeeSpec, 'employee.EmployeeCreate', notInForm: {'custom_fields'});
     _writeFormMatches('employeeSpec (update)', employeeSpec, 'employee.EmployeeUpdate', notInForm: {'custom_fields', 'is_active'});

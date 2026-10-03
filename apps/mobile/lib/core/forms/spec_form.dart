@@ -137,9 +137,53 @@ class _SpecFormState extends State<SpecForm> {
           onChanged: _disabled(f) ? null : (v) => _set(f.key, v),
         );
       case FieldKind.select:
-        return _dropdown(f, [for (final o in f.options) (value: o, label: f.optionLabels[o] ?? o)], error);
+        return _dropdown(f, [for (final o in f.options) (value: o, label: f.optionLabels[o] ?? prettyEnum(o))], error);
       case FieldKind.choice:
         return _dropdown(f, widget.choices[f.choiceKey] ?? const [], error);
+      case FieldKind.rows:
+        final rows = (widget.values[f.key] as List?)?.cast<Map<String, dynamic>>() ?? <Map<String, dynamic>>[];
+        final scheme = Theme.of(context).colorScheme;
+        return AuthFormField(
+          label: f.label,
+          required: f.required,
+          errorText: error,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            for (var i = 0; i < rows.length; i++)
+              Container(
+                key: ObjectKey(rows[i]),
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(10)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  Row(children: [
+                    Expanded(child: Text('${f.rowNoun[0].toUpperCase()}${f.rowNoun.substring(1)} ${i + 1}', style: Theme.of(context).textTheme.titleSmall)),
+                    if (!_disabled(f)) IconButton(tooltip: 'Remove', icon: const Icon(Icons.delete_outline), onPressed: () => _set(f.key, [...rows]..removeAt(i))),
+                  ]),
+                  SpecForm(
+                    spec: f.rowSpec!,
+                    values: rows[i],
+                    errors: {
+                      for (final e in widget.errors.entries)
+                        if (e.key.startsWith('${f.key}.$i.')) e.key.substring('${f.key}.$i.'.length): e.value,
+                    },
+                    choices: widget.choices,
+                    editing: widget.editing,
+                    readOnly: _disabled(f),
+                    onChanged: widget.onChanged,
+                  ),
+                ]),
+              ),
+            if (!_disabled(f))
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: Text('Add ${f.rowNoun}'),
+                  onPressed: () => _set(f.key, [...rows, rowFromWire(f.rowSpec!, const {})]),
+                ),
+              ),
+          ]),
+        );
       case FieldKind.multiChoice:
         final selected = ((widget.values[f.key] as List?) ?? const []).map((e) => e.toString()).toSet();
         final options = widget.choices[f.choiceKey] ?? const <Choice>[];

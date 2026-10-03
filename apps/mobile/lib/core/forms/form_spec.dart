@@ -19,6 +19,9 @@ enum FieldKind {
 
   /// Several runtime options at once — stores a list of values.
   multiChoice,
+
+  /// A repeating list of sub-forms ([FieldSpec.rowSpec]) — bands, breaks, rate rows, …
+  rows,
   toggle,
   integer,
   decimal,
@@ -44,6 +47,10 @@ class FieldSpec {
     this.exactLength,
     this.readOnlyOnEdit = false,
     this.editOnly = false,
+    this.rowSpec,
+    this.rowNoun = 'row',
+    this.orderKey,
+    this.orderStart = 0,
   });
 
   /// Wire key in the JSON (e.g. `pan_number_enc`).
@@ -71,6 +78,15 @@ class FieldSpec {
 
   /// Shown only when editing an existing record (e.g. the active flag).
   final bool editOnly;
+
+  /// The sub-form of each entry of a [FieldKind.rows] field.
+  final FormSpec? rowSpec;
+  final String rowNoun;
+
+  /// For [FieldKind.rows]: a key in each row that is set to the row's position on save
+  /// (`sort_order`, `sequence`), so the user orders rows by arranging them, not by typing numbers.
+  final String? orderKey;
+  final int orderStart;
 }
 
 typedef RowValidator = Map<String, String> Function(Map<String, dynamic> values);
@@ -130,6 +146,11 @@ dynamic toFormValue(FieldSpec f, dynamic wire) {
       return wire is num ? (wire / 100).toString().replaceAll(RegExp(r'\.0$'), '') : '';
     case FieldKind.multiChoice:
       return wire is List ? [for (final v in wire) v.toString()] : <String>[];
+    case FieldKind.rows:
+      return [
+        for (final r in (wire is List ? wire : const []))
+          if (r is Map) rowFromWire(f.rowSpec!, Map<String, dynamic>.from(r)),
+      ];
     case FieldKind.hidden:
       return wire;
     default:
@@ -146,6 +167,15 @@ dynamic toWireValue(FieldSpec f, dynamic form) {
       return form;
     case FieldKind.multiChoice:
       return form is List ? [for (final v in form) v.toString()] : <String>[];
+    case FieldKind.rows:
+      final rows = form is List ? form : const [];
+      return [
+        for (var i = 0; i < rows.length; i++)
+          {
+            ...rowToPayload(f.rowSpec!, Map<String, dynamic>.from(rows[i] as Map)),
+            if (f.orderKey != null) f.orderKey!: f.orderStart + i,
+          },
+      ];
     case FieldKind.integer:
       final s = (form ?? '').toString().trim();
       return s.isEmpty ? null : num.tryParse(s)?.truncate();
@@ -192,6 +222,18 @@ Map<String, dynamic> changedOnly(Map<String, dynamic> original, Map<String, dyna
 }
 
 bool _sameWire(dynamic a, dynamic b) {
+  if (a is List && b is List && b.isNotEmpty && b.first is Map) {
+    // Rows: equal when each new row's keys match the stored row's (the stored row also carries
+    // ids and server-managed fields the form doesn't edit).
+    if (a.length != b.length) return false;
+    for (var i = 0; i < b.length; i++) {
+      if (a[i] is! Map) return false;
+      for (final e in (b[i] as Map).entries) {
+        if (!_sameWire((a[i] as Map)[e.key], e.value)) return false;
+      }
+    }
+    return true;
+  }
   if (a is List && b is List) {
     final x = a.map((e) => e.toString()).toSet();
     final y = b.map((e) => e.toString()).toSet();
@@ -210,6 +252,16 @@ Map<String, String> validateRow(FormSpec spec, Map<String, dynamic> values) {
     if (!fieldVisible(f, values)) continue;
     final raw = values[f.key];
     final text = raw is String ? raw.trim() : '';
+    if (f.kind == FieldKind.rows) {
+      final rows = (raw is List ? raw : const []).cast<Map<String, dynamic>>();
+      if (f.required && rows.isEmpty) errors[f.key] = 'Add at least one ${f.rowNoun}.';
+      for (var i = 0; i < rows.length; i++) {
+        for (final e in validateRow(f.rowSpec!, rows[i]).entries) {
+          errors['${f.key}.$i.${e.key}'] = e.value;
+        }
+      }
+      continue;
+    }
     if (f.kind == FieldKind.multiChoice) {
       if (f.required && (raw is! List || raw.isEmpty)) errors[f.key] = 'Choose at least one ${f.label.toLowerCase()}.';
       continue;
@@ -245,4 +297,12 @@ Map<String, String> validateRow(FormSpec spec, Map<String, dynamic> values) {
   }
   errors.addAll(spec.extraValidate?.call(values) ?? const {});
   return errors;
+}
+
+/// `FIRST_IN_LAST_OUT` -> `First in last out`, `ABSENT` -> `Absent`. Only touches SHOUTY_SNAKE
+/// values; anything else is shown as-is.
+String prettyEnum(String value) {
+  if (!RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(value)) return value;
+  final spaced = value.toLowerCase().replaceAll('_', ' ');
+  return '${spaced[0].toUpperCase()}${spaced.substring(1)}';
 }

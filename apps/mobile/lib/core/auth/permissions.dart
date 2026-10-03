@@ -68,3 +68,8 @@ const orgGradeManage = 'ORG.GRADE.MANAGE';
 const orgShiftManage = 'ORG.SHIFT.MANAGE';
 const orgCalendarManage = 'ORG.CALENDAR.MANAGE';
 const orgHolidayManage = 'ORG.HOLIDAY.MANAGE';
+
+// Leave (policy / type management).
+const leaveTypeManage = 'LEAVE.TYPE_MANAGE';
+const leavePolicyManage = 'LEAVE.POLICY_MANAGE';
+const leaveApplicationApprove = 'LEAVE.APPLICATION_APPROVE';
