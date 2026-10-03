@@ -8,6 +8,7 @@ import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_widgets.dart';
+import 'face_enrollment_admin_card.dart';
 import 'holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 import 'team_attendance_screen.dart' show openPunchOnBehalf;
 
@@ -15,8 +16,9 @@ import 'team_attendance_screen.dart' show openPunchOnBehalf;
 /// `apps/web/src/components/attendance/employee-attendance-panel.tsx`: one employee's attendance
 /// days over a date range, with "Calculate today" and "Record punch" for HR.
 class EmployeeAttendancePanel extends ConsumerStatefulWidget {
-  const EmployeeAttendancePanel({super.key, required this.employeeId});
+  const EmployeeAttendancePanel({super.key, required this.employeeId, this.employeeLabel = 'this employee'});
   final String employeeId;
+  final String employeeLabel;
 
   @override
   ConsumerState<EmployeeAttendancePanel> createState() => _EmployeeAttendancePanelState();
@@ -87,6 +89,7 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (permissions.contains(attendanceFaceEnrollmentManage)) FaceEnrollmentAdminCard(employeeId: widget.employeeId, employeeLabel: widget.employeeLabel),
           Row(children: [
             Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From $_from'))),
             const SizedBox(width: 8),

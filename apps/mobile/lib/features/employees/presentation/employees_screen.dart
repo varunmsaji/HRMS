@@ -191,7 +191,7 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
     // The web page's Salary and Attendance tabs, after the record sections.
     final extraTabs = <(String, Widget)>[
       if (permissions.contains(employeeViewCompensation)) ('Salary', EmployeeSalaryPanel(employeeId: e.id)),
-      if (permissions.contains(attendanceView)) ('Attendance', EmployeeAttendancePanel(employeeId: e.id)),
+      if (permissions.contains(attendanceView)) ('Attendance', EmployeeAttendancePanel(employeeId: e.id, employeeLabel: e.fullName.isEmpty ? e.employeeCode : e.fullName)),
     ];
     final actions = <Widget>[
       if (permissions.contains(employeeUpdate)) FilledButton.icon(icon: const Icon(Icons.edit_outlined), label: const Text('Edit'), onPressed: _busy ? null : _edit),

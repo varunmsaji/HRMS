@@ -626,6 +626,21 @@ class AttendanceRepository {
       .getList('/leave-projections', filters: {'employee_id': employeeId, 'date_from': dateFrom, 'date_to': dateTo}, parseItem: (d) => LeaveDayProjection.fromJson(d as Map<String, dynamic>))
       .then((e) => e.data);
 
+  // ---- HR face-enrollment admin (`/attendance/face-profiles/{employee_id}`) --------------------
+  String _face(String employeeId) => '/attendance/face-profiles/$employeeId';
+
+  Future<Map<String, dynamic>> getFaceProfileStatus(String employeeId) =>
+      _client.get('${_face(employeeId)}/enrollment', parse: (d) => d as Map<String, dynamic>);
+  Future<void> openFaceEnrollmentWindow(String employeeId) => _client.post('${_face(employeeId)}/enrollment-window', parse: (_) {});
+  Future<void> cancelFaceEnrollmentWindow(String employeeId) => _client.delete('${_face(employeeId)}/enrollment-window', parse: (_) {});
+  Future<void> approveFaceProfile(String employeeId) => _client.post('${_face(employeeId)}/approve', parse: (_) {});
+  Future<void> rejectFaceProfile(String employeeId, {String? note}) =>
+      _client.post('${_face(employeeId)}/reject', body: {'note': (note == null || note.isEmpty) ? null : note}, parse: (_) {});
+  Future<void> revokeFaceProfile(String employeeId) => _client.delete(_face(employeeId), parse: (_) {});
+
+  /// The photo under review, fetched through the API (auth + no-store) — it never has a URL of its own.
+  Future<DownloadedFile> downloadFaceReviewPhoto(String employeeId) => _client.download('${_face(employeeId)}/review-photo');
+
   Future<FaceEnrollmentStatus> getMyFaceEnrollment() => _client.get(
         '/attendance/face-enrollment/me',
         parse: (d) => FaceEnrollmentStatus.fromJson(d as Map<String, dynamic>),

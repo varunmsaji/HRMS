@@ -8,6 +8,7 @@ import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/face_enrollment_admin_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/holiday_calendars_screen.dart' show attendanceRepositoryProvider;
 import 'package:hrms_mobile/features/attendance/presentation/team_attendance_screen.dart';
 import 'package:hrms_mobile/features/payroll/presentation/employee_salary_panel.dart';
@@ -89,6 +90,7 @@ Future<_FakeAttendance> _pumpDetail(WidgetTester tester, Map<String, dynamic> da
 }
 
 void main() {
+  faceAdminTests();
   testWidgets('times are shown in the company zone, not as raw UTC', (tester) async {
     await _pumpDetail(tester, _dayJson(), const []);
     expect(find.text('Oct 1, 2026, 9:00 am IST'), findsOneWidget); // first in
@@ -276,6 +278,115 @@ void main() {
       expect(body.keys.toSet(), {'salary_structure_id', 'effective_from', 'reason'});
       expect(body['salary_structure_id'], 'ss-1');
       expect(body['reason'], 'Joined');
+    });
+  });
+}
+
+// ---- HR face-enrollment admin ----------------------------------------------------------------
+
+class _FakeFaceRepo implements AttendanceRepository {
+  _FakeFaceRepo(this.status);
+  final Map<String, dynamic> status;
+  final calls = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> getFaceProfileStatus(String employeeId) async => status;
+
+  @override
+  Future<void> openFaceEnrollmentWindow(String employeeId) async => calls.add('open');
+
+  @override
+  Future<void> approveFaceProfile(String employeeId) async => calls.add('approve');
+
+  @override
+  Future<void> rejectFaceProfile(String employeeId, {String? note}) async => calls.add('reject:${note ?? ''}');
+
+  @override
+  Future<void> revokeFaceProfile(String employeeId) async => calls.add('revoke');
+
+  @override
+  Future<void> cancelFaceEnrollmentWindow(String employeeId) async => calls.add('cancel');
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+void faceAdminTests() {
+  Future<_FakeFaceRepo> pumpFace(WidgetTester tester, Map<String, dynamic> status) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final repo = _FakeFaceRepo(status);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [attendanceRepositoryProvider.overrideWithValue(repo), fakeAuth(const [])],
+      child: const MaterialApp(home: Scaffold(body: SingleChildScrollView(child: FaceEnrollmentAdminCard(employeeId: 'emp-1', employeeLabel: 'Asha Rao')))),
+    ));
+    await tester.pumpAndSettle();
+    return repo;
+  }
+
+  group('face enrollment admin', () {
+    testWidgets('not enrolled -> open enrollment', (tester) async {
+      final repo = await pumpFace(tester, {'profile': null, 'open_window': null});
+      expect(find.text('Not enrolled'), findsOneWidget);
+      await tester.tap(find.text('Open face enrollment'));
+      await tester.pumpAndSettle();
+      expect(repo.calls, ['open']);
+    });
+
+    testWidgets('an open window can be cancelled', (tester) async {
+      final repo = await pumpFace(tester, {'profile': null, 'open_window': {'expires_at': '2026-10-02T10:00:00Z'}});
+      expect(find.text('Enrollment open'), findsOneWidget);
+      expect(find.textContaining('until Oct 2, 2026, 3:30 pm IST'), findsOneWidget);
+      await tester.tap(find.text('Cancel enrollment'));
+      await tester.pumpAndSettle();
+      expect(repo.calls, ['cancel']);
+    });
+
+    testWidgets('a pending submission can be approved', (tester) async {
+      final repo = await pumpFace(tester, {
+        'profile': {'status': 'PENDING_APPROVAL', 'enrolled_at': '2026-10-01T03:30:00Z', 'has_review_photo': false},
+        'open_window': null,
+      });
+      expect(find.text('Awaiting approval'), findsOneWidget);
+      await tester.tap(find.text('Approve'));
+      await tester.pumpAndSettle();
+      expect(repo.calls, ['approve']);
+    });
+
+    testWidgets('a pending submission can be rejected with a reason', (tester) async {
+      final repo = await pumpFace(tester, {
+        'profile': {'status': 'PENDING_APPROVAL', 'enrolled_at': '2026-10-01T03:30:00Z', 'has_review_photo': false},
+        'open_window': null,
+      });
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Photo is blurry');
+      await tester.tap(find.widgetWithText(FilledButton, 'Reject'));
+      await tester.pumpAndSettle();
+      expect(repo.calls, ['reject:Photo is blurry']);
+    });
+
+    testWidgets('an enrolled profile can be revoked after confirming', (tester) async {
+      final repo = await pumpFace(tester, {
+        'profile': {'status': 'ENROLLED', 'reviewed_at': '2026-10-01T03:30:00Z', 'reference_photo_count': 5},
+        'open_window': null,
+      });
+      expect(find.text('Enrolled'), findsOneWidget);
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Revoke'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
+      await tester.pumpAndSettle();
+      expect(repo.calls, ['revoke']);
+    });
+
+    testWidgets('a rejected profile shows the reason and offers a retry', (tester) async {
+      await pumpFace(tester, {
+        'profile': {'status': 'REJECTED', 'reviewed_at': '2026-10-01T03:30:00Z', 'review_note': 'Blurry'},
+        'open_window': null,
+      });
+      expect(find.textContaining('Reason: Blurry'), findsOneWidget);
+      expect(find.text('Open face enrollment'), findsOneWidget);
     });
   });
 }
