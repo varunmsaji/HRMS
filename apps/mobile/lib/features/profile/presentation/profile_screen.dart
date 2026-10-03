@@ -5,6 +5,7 @@ import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
 import '../../../features/shell/more_action.dart';
 import '../../auth/state/auth_controller.dart';
+import '../../employees/presentation/employees_screen.dart' show EmployeeDetailScreen;
 import '../data/employee_repository.dart';
 
 final employeeRepositoryProvider = Provider<EmployeeRepository>(
@@ -140,7 +141,16 @@ class _ProfileBody extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.folder_open_outlined),
+            label: const Text('Employment & records'),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee))),
+          ),
+        ),
+        const SizedBox(height: 12),
         _Section(
           title: 'Identity',
           fields: [

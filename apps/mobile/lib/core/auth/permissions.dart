@@ -4,3 +4,11 @@
 library;
 
 const dashboardCompanyView = 'DASHBOARD.COMPANY.VIEW';
+
+// Employee-record tabs (mirrors `apps/api/src/hrms/modules/employee/permissions.py`).
+const employeeViewCompensation = 'EMPLOYEE.VIEW_COMPENSATION';
+const employeeViewStatutory = 'EMPLOYEE.VIEW_STATUTORY';
+const employeeViewBanking = 'EMPLOYEE.VIEW_BANKING';
+const employeeViewSensitive = 'EMPLOYEE.VIEW_SENSITIVE';
+const employeeViewExperience = 'EMPLOYEE.VIEW_EXPERIENCE';
+const employeeViewNominee = 'EMPLOYEE.VIEW_NOMINEE';

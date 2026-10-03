@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/widgets/async_list_screen.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
+import '../../auth/state/auth_controller.dart';
 import '../../profile/data/employee_repository.dart';
+import '../../profile/presentation/employee_record_sections.dart';
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 
 /// "Mobile Employees Directory" — mirrors `apps/web/src/app/app/employees/`.
@@ -42,36 +44,55 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
   }
 }
 
-/// "Employee Profile (Manager View)" — the same personal-record fields as
-/// the self "My Profile" screen, for any employee in the directory.
-class EmployeeDetailScreen extends StatelessWidget {
+/// "Employee Profile (Manager View)" — Overview plus a read-only tab per
+/// employee-record section the viewer's permissions allow (web:
+/// `apps/web/src/app/app/employees/[id]/page.tsx`).
+class EmployeeDetailScreen extends ConsumerWidget {
   const EmployeeDetailScreen({super.key, required this.employee});
   final Employee employee;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: Text(employee.fullName.isEmpty ? employee.employeeCode : employee.fullName)),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: scheme.surfaceContainerLowest, borderRadius: BorderRadius.circular(12), border: Border.all(color: scheme.outlineVariant)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _row(context, 'Employee code', employee.employeeCode),
-                _row(context, 'Status', employee.status),
-                _row(context, 'Personal email', employee.personalEmail ?? 'Not configured'),
-                _row(context, 'Personal mobile', employee.personalMobile ?? 'Not configured'),
-                _row(context, 'Gender', employee.gender ?? 'Not configured'),
-                _row(context, 'Date of birth', employee.dateOfBirth ?? 'Not configured'),
-              ],
-            ),
+    final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
+    final sections = [
+      for (final s in employeeRecordSections)
+        if (s.permission == null || permissions.contains(s.permission)) s,
+    ];
+    final overview = ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: scheme.surfaceContainerLowest, borderRadius: BorderRadius.circular(12), border: Border.all(color: scheme.outlineVariant)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _row(context, 'Employee code', employee.employeeCode),
+              _row(context, 'Status', employee.status),
+              _row(context, 'Personal email', employee.personalEmail ?? 'Not configured'),
+              _row(context, 'Personal mobile', employee.personalMobile ?? 'Not configured'),
+              _row(context, 'Gender', employee.gender ?? 'Not configured'),
+              _row(context, 'Date of birth', employee.dateOfBirth ?? 'Not configured'),
+            ],
           ),
-        ],
+        ),
+      ],
+    );
+    return DefaultTabController(
+      length: sections.length + 1,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(employee.fullName.isEmpty ? employee.employeeCode : employee.fullName),
+          bottom: TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            tabs: [const Tab(text: 'Overview'), for (final s in sections) Tab(text: s.title)],
+          ),
+        ),
+        body: TabBarView(
+          children: [overview, for (final s in sections) EmployeeRecordPanel(employeeId: employee.id, section: s)],
+        ),
       ),
     );
   }
