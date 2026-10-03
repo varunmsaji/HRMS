@@ -4,4 +4,7 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Debug builds only: the emulator reaches the dev API over plain HTTP
+         (http://10.0.2.2:8000). Release builds keep cleartext blocked. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>
