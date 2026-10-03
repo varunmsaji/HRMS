@@ -217,3 +217,33 @@ final workCalendarResource = ResourceConfig(
     emptyLabel: 'No exceptions yet.',
   ),
 );
+
+// ---- weekly-off patterns ----------------------------------------------------------------------
+
+const weekdayLabels = {'0': 'Monday', '1': 'Tuesday', '2': 'Wednesday', '3': 'Thursday', '4': 'Friday', '5': 'Saturday', '6': 'Sunday'};
+
+const weeklyOffRuleSpec = FormSpec(name: 'weekly_off_rule', label: 'Rule', defaults: {'weekday': 6, 'off_fraction': '1.00'}, fields: [
+  FieldSpec('weekday', 'Weekday', kind: FieldKind.select, required: true, intValue: true, options: ['0', '1', '2', '3', '4', '5', '6'], optionLabels: weekdayLabels),
+  FieldSpec('nth_in_month', 'Which one in the month', kind: FieldKind.select, intValue: true, options: ['1', '2', '3', '4', '5', '-1'], optionLabels: {'-1': 'Last', '1': '1st', '2': '2nd', '3': '3rd', '4': '4th', '5': '5th'}, hint: 'Leave empty for every week'),
+  FieldSpec('cycle_start_date', 'Cycle start date', kind: FieldKind.date, hint: 'For alternating patterns'),
+  FieldSpec('off_fraction', 'Day off', kind: FieldKind.select, required: true, options: ['1.00', '0.50'], optionLabels: {'1.00': 'Full day', '0.50': 'Half day'}),
+  FieldSpec('week_parity', 'Week parity', kind: FieldKind.select, options: ['EVEN', 'ODD'], hint: 'For alternating patterns'),
+]);
+
+const weeklyOffPatternSpec = FormSpec(name: 'weekly_off_pattern', label: 'Weekly-off pattern', defaults: {'pattern_kind': 'FIXED_WEEKDAYS'}, fields: [
+  FieldSpec('name', 'Name', required: true),
+  FieldSpec('code', 'Code'),
+  FieldSpec('pattern_kind', 'Pattern kind', kind: FieldKind.select, required: true, options: ['FIXED_WEEKDAYS', 'NTH_WEEKDAY', 'ALTERNATE', 'CUSTOM']),
+  FieldSpec('rules', 'Rules', kind: FieldKind.rows, required: true, rowNoun: 'rule', rowSpec: weeklyOffRuleSpec),
+  _active,
+]);
+
+final weeklyOffPatternResource = ResourceConfig(
+  title: 'Weekly-Off Patterns',
+  singular: 'Weekly-off pattern',
+  path: '/weekly-off-patterns',
+  spec: weeklyOffPatternSpec,
+  rowTitle: (r) => r['name'] as String,
+  rowSubtitle: (r) => _join([r['code'], prettyEnum('${r['pattern_kind']}')]),
+  manage: orgCalendarManage,
+);

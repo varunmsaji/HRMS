@@ -51,6 +51,7 @@ class FieldSpec {
     this.rowNoun = 'row',
     this.orderKey,
     this.orderStart = 0,
+    this.intValue = false,
   });
 
   /// Wire key in the JSON (e.g. `pan_number_enc`).
@@ -87,6 +88,9 @@ class FieldSpec {
   /// (`sort_order`, `sequence`), so the user orders rows by arranging them, not by typing numbers.
   final String? orderKey;
   final int orderStart;
+
+  /// For [FieldKind.select]: the options are integers on the wire (weekday 0–6).
+  final bool intValue;
 }
 
 typedef RowValidator = Map<String, String> Function(Map<String, dynamic> values);
@@ -186,6 +190,10 @@ dynamic toWireValue(FieldSpec f, dynamic form) {
       final s = (form ?? '').toString().trim();
       final n = s.isEmpty ? null : num.tryParse(s);
       return n == null ? null : (n * 100).round();
+    case FieldKind.select:
+      final s = (form ?? '').toString().trim();
+      if (s.isEmpty) return null;
+      return f.intValue ? int.tryParse(s) : s;
     case FieldKind.pan:
     case FieldKind.upper:
       final s = (form ?? '').toString().trim().toUpperCase();

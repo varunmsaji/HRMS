@@ -35,6 +35,7 @@ Future<void> _pump(WidgetTester tester, FakeApiClient client, List<String> permi
 }
 
 void main() {
+  weeklyOffTests();
   group('list', () {
     testWidgets('shows active records and hides inactive ones until asked', (tester) async {
       await _pump(tester, _client(), const [], ResourceListScreen(config: departmentResource));
@@ -133,5 +134,62 @@ void main() {
       expect(call.body, {'is_active': true});
       expect(call.ifMatch, '9');
     });
+  });
+}
+
+// ---- weekly-off patterns (rows + integer selects) --------------------------------------------
+
+void weeklyOffTests() {
+  testWidgets('a pattern shows its rules, and edits send the whole rule list with integer weekdays', (tester) async {
+    tester.view.physicalSize = const Size(800, 5000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final row = {
+      'id': 'w1',
+      'name': 'Sat-Sun',
+      'code': 'SS',
+      'pattern_kind': 'FIXED_WEEKDAYS',
+      'is_active': true,
+      'version': 2,
+      'rules': [
+        {'id': 'r1', 'weekday': 5, 'nth_in_month': null, 'cycle_start_date': null, 'off_fraction': '1.00', 'week_parity': null},
+        {'id': 'r2', 'weekday': 6, 'nth_in_month': null, 'cycle_start_date': null, 'off_fraction': '1.00', 'week_parity': null},
+      ],
+    };
+    final client = FakeApiClient(objects: {'/weekly-off-patterns/w1': row});
+    await tester.pumpWidget(ProviderScope(
+      overrides: [apiClientProvider.overrideWithValue(client), fakeAuth([orgCalendarManage])],
+      child: MaterialApp(home: ResourceDetailScreen(config: weeklyOffPatternResource, initial: row)),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Rules (2)'), findsOneWidget);
+    expect(find.textContaining('Weekday: Saturday'), findsOneWidget);
+    expect(find.textContaining('Day off: Full day'), findsNWidgets(2));
+
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add rule'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rule 3'), findsOneWidget);
+    // change the new rule's weekday: the new rule defaults to Sunday (6); pick Friday
+    // dropdown order: pattern kind, then four per rule (weekday, which, day off, parity)
+    final weekday = find.byType(DropdownButtonFormField<String>).at(1 + 4 * 2);
+    await tester.ensureVisible(weekday);
+    await tester.pumpAndSettle();
+    await tester.tap(weekday);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Friday').last);
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -20000));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
+    await tester.pumpAndSettle();
+    final call = client.calls.single;
+    expect(call.method, 'PATCH');
+    expect(call.ifMatch, '2');
+    final rules = (call.body as Map)['rules'] as List;
+    expect(rules.length, 3);
+    expect(rules.map((r) => r['weekday']), [5, 6, 4]); // integers, in order
+    expect(rules.last['off_fraction'], '1.00');
   });
 }

@@ -16,7 +16,6 @@ import '../../features/attendance/presentation/policy_resolution_screen.dart';
 import '../../features/attendance/presentation/regularizations_screen.dart';
 import '../../features/attendance/presentation/roster_calendar_screen.dart';
 import '../../features/attendance/presentation/rosters_screen.dart';
-import '../../features/attendance/presentation/weekly_off_patterns_screen.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/auth/state/auth_state.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
@@ -123,7 +122,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/regularization-policies', builder: (context, state) => ResourceListScreen(config: regularizationPolicyResource)),
       GoRoute(path: '/app/shifts', builder: (context, state) => ResourceListScreen(config: shiftResource())),
       GoRoute(path: '/app/holiday-calendars', builder: (context, state) => ResourceListScreen(config: holidayCalendarResource)),
-      GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => const WeeklyOffPatternsScreen()),
+      GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => ResourceListScreen(config: weeklyOffPatternResource)),
       GoRoute(path: '/app/work-calendars', builder: (context, state) => ResourceListScreen(config: workCalendarResource)),
       GoRoute(path: '/app/regularizations', builder: (context, state) => const RegularizationsScreen()),
       GoRoute(path: '/app/overtime', builder: (context, state) => const OvertimeScreen()),

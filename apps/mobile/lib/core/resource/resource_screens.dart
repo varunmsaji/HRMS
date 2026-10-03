@@ -38,6 +38,18 @@ String displayValue(FieldSpec f, dynamic raw, Map<String, Map<String, String>> n
   }
 }
 
+/// One line per row of a `FieldKind.rows` value: `Label: value · Label: value`.
+List<String> rowLines(FieldSpec f, dynamic raw, Map<String, Map<String, String>> names) {
+  final rows = (raw is List ? raw : const []).whereType<Map>().toList();
+  return [
+    for (final r in rows)
+      [
+        for (final sf in f.rowSpec!.fields)
+          if (sf.kind != FieldKind.hidden && r[sf.key] != null && r[sf.key] != '') '${sf.label}: ${displayValue(sf, r[sf.key], names)}',
+      ].join(' · '),
+  ];
+}
+
 /// Mirrors the web list pages (`apps/web/src/app/app/<resource>/page.tsx`): every record, an
 /// active/inactive badge, and a create form for users who may manage the resource.
 class ResourceListScreen extends ConsumerStatefulWidget {
@@ -284,7 +296,15 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
               decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
               child: Column(children: [
                 for (final f in _c.spec.fields)
-                  if (f.kind != FieldKind.hidden && !f.editOnly)
+                  if (f.kind == FieldKind.rows)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${f.label} (${rowLines(f, _row[f.key], _names).length})', style: const TextStyle(fontWeight: FontWeight.w600)),
+                        for (final line in rowLines(f, _row[f.key], _names)) Padding(padding: const EdgeInsets.only(left: 8, top: 2), child: Text(line, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13))),
+                      ]),
+                    )
+                  else if (f.kind != FieldKind.hidden && !f.editOnly)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 5),
                       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [

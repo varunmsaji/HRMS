@@ -199,6 +199,7 @@ void orgFormTests() {
       ('holidaySpec', holidaySpec, 'Holiday'),
       ('workCalendarSpec', workCalendarSpec, 'WorkCalendar'),
       ('calendarExceptionSpec', calendarExceptionSpec, 'CalendarException'),
+      ('weeklyOffPatternSpec', weeklyOffPatternSpec, 'WeeklyOffPattern'),
     ]) {
       // `replaced_holiday_id` is an optional link the web does not offer either.
       _writeFormMatches('$name (create)', spec, 'organisation.${base}Create', notInForm: const {'replaced_holiday_id'});
@@ -217,6 +218,7 @@ void orgFormTests() {
       ('holiday', holidaySpec, 'HolidayRead'),
       ('workCalendar', workCalendarSpec, 'WorkCalendarRead'),
       ('calendarException', calendarExceptionSpec, 'CalendarExceptionRead'),
+      ('weeklyOffPattern', weeklyOffPatternSpec, 'WeeklyOffPatternRead'),
     ]) {
       test(name, () {
         final keys = (_load('organisation.$read', 'full') as Map<String, dynamic>).keys.toSet();
@@ -228,7 +230,17 @@ void orgFormTests() {
   });
 }
 
+void weeklyOffRuleTest() {
+  test('weekly-off rules match WeeklyOffRuleInput', () {
+    final backend = (_load('organisation.WeeklyOffRuleInput', 'full') as Map<String, dynamic>).keys.toSet();
+    final mine = weeklyOffRuleSpec.fields.map((f) => f.key).toSet();
+    expect(mine, backend);
+    expect(weeklyOffRuleSpec.fields.firstWhere((f) => f.key == 'weekday').intValue, isTrue);
+  });
+}
+
 void versionedFormTests() {
+  weeklyOffRuleTest();
   void rowsMatch(FormSpec spec, Map<String, String> rowSchemas, {Set<String> orderKeys = const {'sort_order', 'sequence'}}) {
     for (final e in rowSchemas.entries) {
       final field = spec.fields.firstWhere((f) => f.key == e.key);
