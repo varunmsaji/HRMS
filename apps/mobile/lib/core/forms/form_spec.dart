@@ -170,7 +170,8 @@ dynamic toWireValue(FieldSpec f, dynamic form) {
     case FieldKind.hidden:
       return form;
     case FieldKind.multiChoice:
-      return form is List ? [for (final v in form) v.toString()] : <String>[];
+      final picked = form is List ? form : const [];
+      return f.intValue ? [for (final v in picked) int.parse(v.toString())] : [for (final v in picked) v.toString()];
     case FieldKind.rows:
       final rows = form is List ? form : const [];
       return [
@@ -230,6 +231,13 @@ Map<String, dynamic> changedOnly(Map<String, dynamic> original, Map<String, dyna
 }
 
 bool _sameWire(dynamic a, dynamic b) {
+  if (a is Map && b is Map) {
+    if (a.length != b.length) return false;
+    for (final e in b.entries) {
+      if (!a.containsKey(e.key) || !_sameWire(a[e.key], e.value)) return false;
+    }
+    return true;
+  }
   if (a is List && b is List && b.isNotEmpty && b.first is Map) {
     // Rows: equal when each new row's keys match the stored row's (the stored row also carries
     // ids and server-managed fields the form doesn't edit).

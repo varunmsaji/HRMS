@@ -7,6 +7,7 @@ import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
 import 'package:hrms_mobile/features/leave/domain/leave_resources.dart';
 import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
+import 'package:hrms_mobile/features/payroll/domain/payroll_resources.dart';
 import 'package:hrms_mobile/core/auth/auth_types.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/data/policy_repository.dart';
@@ -239,7 +240,57 @@ void weeklyOffRuleTest() {
   });
 }
 
+void payrollFormTests() {
+  group('payroll configuration forms match the backend schemas', () {
+    _writeFormMatches('salaryComponentSpec (create)', salaryComponentSpec, 'payroll.SalaryComponentCreate');
+    _writeFormMatches('salaryComponentSpec (update)', salaryComponentSpec, 'payroll.SalaryComponentUpdate');
+    _writeFormMatches('salaryStructureSpec (create)', salaryStructureSpec, 'payroll.SalaryStructureCreate', notInForm: const {'lines'});
+    _writeFormMatches('salaryStructureSpec (update)', salaryStructureSpec, 'payroll.SalaryStructureUpdate');
+    test('structure lines match SalaryStructureLineInput', () {
+      final backend = (_load('payroll.SalaryStructureLineInput', 'full') as Map<String, dynamic>).keys.toSet();
+      final mine = structureLineSpec.fields.map((f) => f.key).toSet();
+      expect(mine.difference(backend), isEmpty);
+      expect(backend.difference(mine).difference(const {'display_order'}), isEmpty);
+    });
+    test('component and structure detail fields exist on the read schemas', () {
+      for (final (spec, read) in [(salaryComponentSpec, 'payroll.SalaryComponentRead'), (salaryStructureSpec, 'payroll.SalaryStructureRead')]) {
+        final keys = (_load(read, 'full') as Map<String, dynamic>).keys.toSet();
+        for (final f in spec.fields) {
+          expect(keys, contains(f.key), reason: '${spec.name} shows "${f.key}" but $read has none');
+        }
+      }
+    });
+    for (final (scheme, spec, schema) in [
+      ('PF', pfParametersSpec, 'payroll.PfParameters'),
+      ('ESI', esiParametersSpec, 'payroll.EsiParameters'),
+      ('PT', ptParametersSpec, 'payroll.PtParameters'),
+      ('LWF', lwfParametersSpec, 'payroll.LwfParameters'),
+      ('TDS', tdsParametersSpec, 'payroll.TdsParameters'),
+    ]) {
+      test('$scheme parameters match $schema', () {
+        final backend = (_load(schema, 'full') as Map<String, dynamic>).keys.toSet();
+        final mine = spec.fields.map((f) => f.key).toSet();
+        expect(mine, backend, reason: 'every parameter the backend defines, and no others');
+        final required = _requiredBy(schema);
+        final specRequired = spec.fields.where((f) => f.required).map((f) => f.key).toSet();
+        expect(required.difference(specRequired), isEmpty, reason: 'backend-required parameters the form lets you skip');
+      });
+    }
+    for (final (name, spec, schema) in [
+      ('PT slabs', ptParametersSpec.fields.first.rowSpec!, 'payroll.PtSlab'),
+      ('LWF slabs', lwfParametersSpec.fields.last.rowSpec!, 'payroll.LwfSlab'),
+      ('TDS slabs', tdsParametersSpec.fields.last.rowSpec!, 'payroll.TdsSlab'),
+    ]) {
+      test('$name match $schema', () {
+        final backend = (_load(schema, 'full') as Map<String, dynamic>).keys.toSet();
+        expect(spec.fields.map((f) => f.key).toSet(), backend);
+      });
+    }
+  });
+}
+
 void versionedFormTests() {
+  payrollFormTests();
   weeklyOffRuleTest();
   void rowsMatch(FormSpec spec, Map<String, String> rowSchemas, {Set<String> orderKeys = const {'sort_order', 'sequence'}}) {
     for (final e in rowSchemas.entries) {

@@ -10,6 +10,7 @@ import '../../../core/format.dart';
 import '../../../core/providers.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
+import 'salary_breakup_view.dart';
 
 /// Assign a salary structure — or, for a daily-wage employee, a daily rate (D5). The `rate_kind`
 /// toggle is UI-only and is dropped before the request (the backend forbids unknown fields).
@@ -123,31 +124,6 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
 
   String _structure(String? id) => id == null ? '—' : (_structureNames[id] ?? 'Salary structure');
 
-  Widget _lineRows(List<Map<String, dynamic>> lines) => Column(children: [
-        for (final l in lines)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(l['component_name'] as String),
-                Text(l['basis'].toString(), style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              ])),
-              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('${formatInr(l['monthly_minor'] as num)} / mo'),
-                Text('${formatInr(l['annual_minor'] as num)} / yr', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-              ]),
-            ]),
-          ),
-      ]);
-
-  Widget _total(String label, num monthly) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-          Text('${formatInr(monthly)} / mo · ${formatInr(monthly * 12)} / yr', style: const TextStyle(fontWeight: FontWeight.w700)),
-        ]),
-      );
-
   @override
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
@@ -167,9 +143,6 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
     }
     final b = _breakup;
     final inner = b?['breakup'] as Map<String, dynamic>?;
-    final lines = ((inner?['lines'] as List?) ?? const []).cast<Map<String, dynamic>>();
-    final earnings = lines.where((l) => l['component_type'] == 'EARNING').toList();
-    final employer = lines.where((l) => l['component_type'] == 'EMPLOYER_CONTRIBUTION').toList();
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
@@ -188,24 +161,7 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
                   : '${_structure(b['salary_structure_id'] as String?)} · PF ${b['pf_applicable'] == true ? 'applies' : 'does not apply'} · ESI ${b['esi_applicable'] == true ? 'applies' : 'does not apply'}',
               style: TextStyle(color: scheme.onSurfaceVariant),
             ),
-            if (inner != null)
-              Container(
-                margin: const EdgeInsets.only(top: 10),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  _lineRows(earnings),
-                  const Divider(),
-                  _total('Gross', inner['gross_monthly_minor'] as num),
-                  if (employer.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text('Employer contributions', style: Theme.of(context).textTheme.labelMedium),
-                    _lineRows(employer),
-                  ],
-                  const Divider(),
-                  _total('Cost to company', inner['monthly_ctc_minor'] as num),
-                ]),
-              ),
+            if (inner != null) Padding(padding: const EdgeInsets.only(top: 10), child: SalaryBreakupView(breakup: inner)),
           ],
           const SizedBox(height: 18),
           Text('Assignment history', style: Theme.of(context).textTheme.titleSmall),

@@ -31,8 +31,6 @@ import '../../features/onboarding/presentation/setup_screen.dart';
 import '../../features/onboarding/presentation/users_screen.dart';
 import '../../features/payroll/presentation/my_payslips_screen.dart';
 import '../../features/payroll/presentation/pay_runs_screen.dart';
-import '../../features/payroll/presentation/salary_components_screen.dart';
-import '../../features/payroll/presentation/salary_structures_screen.dart';
 import '../../features/payroll/presentation/statutory_rates_screen.dart';
 import '../../features/organisation/presentation/company_profile_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
@@ -41,6 +39,7 @@ import '../../features/onboarding/presentation/public_onboarding_screen.dart';
 import '../../features/attendance/domain/policy_resources.dart';
 import '../../features/leave/domain/leave_resources.dart';
 import '../../features/organisation/domain/org_resources.dart';
+import '../../features/payroll/domain/payroll_resources.dart';
 import '../resource/resource_screens.dart';
 import '../../features/shell/app_shell.dart';
 import '../../features/shell/settings_hub_screen.dart';
@@ -139,8 +138,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/statutory-leave-minimums', builder: (context, state) => const StatutoryLeaveMinimumsScreen()),
       GoRoute(path: '/app/leave-balances', builder: (context, state) => const LeaveBalancesScreen()),
       GoRoute(path: '/app/payroll/pay-runs', builder: (context, state) => const PayRunsScreen()),
-      GoRoute(path: '/app/payroll/salary-components', builder: (context, state) => const SalaryComponentsScreen()),
-      GoRoute(path: '/app/payroll/salary-structures', builder: (context, state) => const SalaryStructuresScreen()),
+      GoRoute(path: '/app/payroll/salary-components', builder: (context, state) => ResourceListScreen(config: salaryComponentResource)),
+      GoRoute(path: '/app/payroll/salary-structures', builder: (context, state) => ResourceListScreen(config: salaryStructureResource)),
       GoRoute(path: '/app/payroll/statutory-rates', builder: (context, state) => const StatutoryRatesScreen()),
       GoRoute(path: '/app/me/payslips', builder: (context, state) => const MyPayslipsScreen()),
       GoRoute(path: '/app/employees', builder: (context, state) => const EmployeesScreen()),
