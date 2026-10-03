@@ -21,3 +21,10 @@ const onboardingActivate = 'ONBOARDING.ACTIVATE';
 // Leave (mirrors `apps/api/src/hrms/modules/leave/permissions.py`).
 const leaveBalanceViewAll = 'LEAVE.BALANCE_VIEW_ALL';
 const leaveBalanceAdjust = 'LEAVE.BALANCE_ADJUST';
+
+// Payroll (mirrors `apps/api/src/hrms/modules/payroll/permissions.py`).
+const payrollRunProcess = 'PAYROLL.RUN_PROCESS';
+const payrollRunApprove = 'PAYROLL.RUN_APPROVE';
+const payrollBankAdviceDownload = 'PAYROLL.BANK_ADVICE_DOWNLOAD';
+const payrollSetupManage = 'PAYROLL.SETUP_MANAGE';
+const payrollStatutoryManage = 'PAYROLL.STATUTORY_MANAGE';

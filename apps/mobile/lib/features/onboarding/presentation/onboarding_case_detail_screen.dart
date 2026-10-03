@@ -103,7 +103,6 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
         ],
       ),
     );
-    controller.dispose();
     if (result == null) return null;
     if (result.isEmpty) {
       _toast('A rejection reason is required.');

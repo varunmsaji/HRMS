@@ -117,7 +117,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ],
       ),
     );
-    controller.dispose();
     final token = (pasted ?? '').trim().split('?').first.split('/').where((s) => s.isNotEmpty).lastOrNull;
     if (token == null || !mounted) return;
     context.go('/onboarding/$token');

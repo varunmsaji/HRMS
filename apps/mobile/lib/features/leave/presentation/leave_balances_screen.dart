@@ -184,9 +184,6 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
         ),
       ),
     );
-    amount.dispose();
-    date.dispose();
-    reason.dispose();
     if (done == true) {
       _toast(encash ? 'Encashment recorded.' : 'Adjustment recorded.');
       await _load();
