@@ -6,6 +6,7 @@ import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
 import 'package:hrms_mobile/features/attendance/domain/request_resources.dart';
+import 'package:hrms_mobile/features/attendance/domain/roster_form.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_period_detail_screen.dart' show periodActionLabels, periodBlockingReasonLabels, periodSummaryColumns;
 import 'package:hrms_mobile/features/attendance/presentation/attendance_periods_screen.dart' show attendancePeriodSpec;
 import 'package:hrms_mobile/features/leave/domain/leave_application_form.dart';
@@ -39,7 +40,6 @@ typedef _Parser = Object? Function(Map<String, dynamic>);
 final Map<String, _Parser> _models = {
   // attendance
   'organisation.ShiftRead': Shift.fromJson,
-  'attendance.ShiftRosterRead': ShiftRoster.fromJson,
   'attendance.AttendanceDayRead': AttendanceDay.fromJson,
   'organisation.PolicyAssignmentRead': PolicyAssignment.fromJson,
   'organisation.CalendarResolutionRead': CalendarResolution.fromJson,
@@ -336,7 +336,25 @@ void _writeFormMatchesRegularization() {
   });
 }
 
+void rosterContractTests() {
+  group('roster form matches the backend schemas', () {
+    test('create/update bodies use only ShiftRosterCreate/Update keys', () {
+      final create = (_load('attendance.ShiftRosterCreate', 'full') as Map<String, dynamic>).keys.toSet();
+      final update = (_load('attendance.ShiftRosterUpdate', 'full') as Map<String, dynamic>).keys.toSet();
+      final p = {'employee_id': 'e', 'roster_date': '2026-10-01', 'day_kind': 'SHIFT', 'shift_id': 's', 'reason': 'r'};
+      expect(rosterCreateBody(p).keys.toSet().difference(create), isEmpty);
+      expect(rosterPatchBody(p).keys.toSet().difference(update), isEmpty);
+      expect(create.difference(rosterCreateBody(p).keys.toSet()), isEmpty, reason: 'every create field is sent');
+    });
+    test('the read schema carries what the form needs to be edited', () {
+      final keys = (_load('attendance.ShiftRosterRead', 'full') as Map<String, dynamic>).keys.toSet();
+      expect(keys, containsAll(['employee_id', 'roster_date', 'shift_id', 'is_week_off_override', 'is_holiday_working_override', 'status', 'reason', 'version']));
+    });
+  });
+}
+
 void attendancePeriodTests() {
+  rosterContractTests();
   group('attendance periods match the backend schemas', () {
     test('open-period form matches AttendancePeriodCreate', () {
       final backend = (_load('attendance.AttendancePeriodCreate', 'full') as Map<String, dynamic>).keys.toSet();

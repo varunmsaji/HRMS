@@ -96,38 +96,6 @@ class WorkCalendar {
       );
 }
 
-class ShiftRoster {
-  ShiftRoster({
-    required this.id,
-    required this.employeeId,
-    required this.rosterDate,
-    this.shiftId,
-    required this.isWeekOffOverride,
-    required this.isHolidayWorkingOverride,
-    required this.status,
-    required this.version,
-  });
-  final String id;
-  final String employeeId;
-  final String rosterDate;
-  final String? shiftId;
-  final bool isWeekOffOverride;
-  final bool isHolidayWorkingOverride;
-  final String status;
-  final int version;
-
-  factory ShiftRoster.fromJson(Map<String, dynamic> json) => ShiftRoster(
-        id: json['id'] as String,
-        employeeId: json['employee_id'] as String,
-        rosterDate: json['roster_date'] as String,
-        shiftId: json['shift_id'] as String?,
-        isWeekOffOverride: json['is_week_off_override'] as bool,
-        isHolidayWorkingOverride: json['is_holiday_working_override'] as bool,
-        status: json['status'] as String,
-        version: json['version'] as int,
-      );
-}
-
 /// One employee's attendance for one day — mirrors `AttendanceDayRead`. Only
 /// the fields the mobile day-detail/self-overview screens show.
 class AttendanceDay {
@@ -383,23 +351,6 @@ class AttendanceRepository {
   // Regularizations
   // Overtime records
   // Shift rosters
-  Future<List<ShiftRoster>> listRosters({String? employeeId, String? dateFrom, String? dateTo}) => _client
-      .getList(
-        '/rosters',
-        filters: {
-          if (employeeId != null) 'employee_id': employeeId,
-          if (dateFrom != null) 'date_from': dateFrom,
-          if (dateTo != null) 'date_to': dateTo,
-        },
-        parseItem: (d) => ShiftRoster.fromJson(d as Map<String, dynamic>),
-      )
-      .then((e) => e.data);
-  Future<ShiftRoster> createRoster(Map<String, dynamic> body) => _client.post(
-        '/rosters',
-        body: body,
-        parse: (d) => ShiftRoster.fromJson(d as Map<String, dynamic>),
-      );
-
   // Attendance periods
   // Attendance days + punches
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) =>
