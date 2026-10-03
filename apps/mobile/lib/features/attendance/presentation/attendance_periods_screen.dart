@@ -1,11 +1,47 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
-import '../../../core/widgets/async_list_screen.dart';
-import '../../auth/presentation/widgets/auth_form_field.dart';
-import '../data/attendance_repository.dart';
+import '../../../core/auth/permissions.dart';
+import '../../../core/forms/choice_sources.dart';
+import '../../../core/forms/form_spec.dart';
+import '../../../core/forms/spec_form_screen.dart';
+import '../../../core/providers.dart';
+import '../../../core/time.dart';
+import '../../auth/state/auth_controller.dart';
+import '../../shell/more_action.dart';
+import 'attendance_period_detail_screen.dart';
 
+typedef Rec = Map<String, dynamic>;
+
+/// Opening a period: a calendar month by default (decision 18), or a custom date range. Each
+/// legal entity runs its own cycle. `custom_range` is UI-only; only `month` *or* the two dates are sent.
+Map<String, String> _validatePeriod(Map<String, dynamic> v) {
+  final errors = <String, String>{};
+  if (v['custom_range'] == true) {
+    final start = (v['period_start'] ?? '') as String;
+    final end = (v['period_end'] ?? '') as String;
+    if (start.isEmpty) errors['period_start'] = 'Choose the first day.';
+    if (end.isEmpty) errors['period_end'] = 'Choose the last day.';
+    if (start.isNotEmpty && end.isNotEmpty && end.compareTo(start) < 0) errors['period_end'] = 'The last day must not be before the first.';
+  } else if (!RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(((v['month'] ?? '') as String).trim())) {
+    errors['month'] = 'Month must look like 2026-09.';
+  }
+  return errors;
+}
+
+const attendancePeriodSpec = FormSpec(name: 'attendance_period', label: 'Attendance period', extraValidate: _validatePeriod, fields: [
+  FieldSpec('legal_entity_id', 'Legal entity', kind: FieldKind.choice, choiceKey: 'legal_entities', required: true),
+  FieldSpec('custom_range', 'Use a custom date range instead of a calendar month', kind: FieldKind.toggle),
+  FieldSpec('month', 'Month', hint: 'YYYY-MM — the whole calendar month', showWhen: '!custom_range'),
+  FieldSpec('period_start', 'First day', kind: FieldKind.date, showWhen: 'custom_range'),
+  FieldSpec('period_end', 'Last day', kind: FieldKind.date, showWhen: 'custom_range'),
+  FieldSpec('label', 'Label'),
+]);
+
+/// Attendance periods — mirrors `apps/web/src/app/app/attendance-periods/page.tsx`: each legal
+/// entity's pay-cycle windows; opening one needs `ATTENDANCE.LOCK`.
 class AttendancePeriodsScreen extends ConsumerStatefulWidget {
   const AttendancePeriodsScreen({super.key});
 
@@ -14,174 +50,132 @@ class AttendancePeriodsScreen extends ConsumerStatefulWidget {
 }
 
 class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScreen> {
-  final _listKey = GlobalKey<AsyncListScreenState<AttendancePeriod>>();
+  bool _loading = true;
+  ApiError? _error;
+  List<Rec> _periods = const [];
+  List<Choice> _entities = const [];
+  String _entity = '';
+
+  ApiClient get _client => ref.read(apiClientProvider);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final env = await _client.getList<Rec>('/attendance-periods', query: PageQuery(perPage: 100), parseItem: (d) => d as Rec);
+      var entities = const <Choice>[];
+      try {
+        entities = (await loadChoices(_client, const ['legal_entities']))['legal_entities'] ?? const [];
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _periods = env.data;
+          _entities = entities;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  String _entityName(String id) {
+    for (final c in _entities) {
+      if (c.value == id) return c.label;
+    }
+    return 'Legal entity';
+  }
 
   Future<void> _create() async {
-    final monthController = TextEditingController();
-    final legalEntityIdController = TextEditingController();
-    final created = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Open attendance period'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          AuthFormField(label: 'Legal entity ID', required: true, child: TextField(controller: legalEntityIdController)),
-          const SizedBox(height: 12),
-          AuthFormField(label: 'Month', required: true, description: 'YYYY-MM', child: TextField(controller: monthController)),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () async {
-              if (monthController.text.trim().isEmpty || legalEntityIdController.text.trim().isEmpty) return;
-              try {
-                await ref.read(attendanceRepositoryProvider).createAttendancePeriod({
-                  'legal_entity_id': legalEntityIdController.text.trim(),
-                  'month': monthController.text.trim(),
-                });
-                if (context.mounted) Navigator.of(context).pop(true);
-              } catch (error) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is ApiError ? error.message : 'Something went wrong.')));
-                }
-              }
-            },
-            child: const Text('Open'),
-          ),
-        ],
-      ),
-    );
-    if (created == true) _listKey.currentState?.reload();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AsyncListScreen<AttendancePeriod>(
-      key: _listKey,
-      title: 'Attendance Periods',
-      fetch: () => ref.read(attendanceRepositoryProvider).listAttendancePeriods(),
-      createLabel: 'Open period',
-      onCreate: _create,
-      emptyLabel: 'No attendance periods yet.',
-      itemBuilder: (context, period) => ListTile(
-        title: Text(period.label ?? '${period.periodStart} – ${period.periodEnd}'),
-        subtitle: Text(period.status),
-        trailing: const Icon(Icons.chevron_right, size: 20),
-        onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendancePeriodDetailScreen(period: period)));
-          _listKey.currentState?.reload();
+    final zone = ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
+    final saved = await openSpecForm(
+      context,
+      title: 'Open attendance period',
+      spec: attendancePeriodSpec,
+      // The default month is the *business* month, not the device's (TZ-06).
+      defaults: {'month': businessToday(zone).substring(0, 7), if (_entities.length == 1) 'legal_entity_id': _entities.first.value},
+      loadChoices: () => loadChoices(_client, const ['legal_entities']),
+      submitLabel: 'Open period',
+      onSubmit: (payload, _) async => _client.post<Object?>(
+        '/attendance-periods',
+        body: {
+          'legal_entity_id': payload['legal_entity_id'],
+          if (payload['custom_range'] == true) ...{'period_start': payload['period_start'], 'period_end': payload['period_end']} else 'month': payload['month'],
+          if (payload['label'] != null) 'label': payload['label'],
         },
+        parse: (_) => null,
       ),
     );
-  }
-}
-
-class AttendancePeriodDetailScreen extends ConsumerStatefulWidget {
-  const AttendancePeriodDetailScreen({super.key, required this.period});
-  final AttendancePeriod period;
-
-  @override
-  ConsumerState<AttendancePeriodDetailScreen> createState() => _AttendancePeriodDetailScreenState();
-}
-
-class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodDetailScreen> {
-  Map<String, dynamic>? _validation;
-  bool _busy = false;
-  String? _message;
-
-  Future<void> _validate() async {
-    setState(() => _busy = true);
-    try {
-      final result = await ref.read(attendanceRepositoryProvider).validateAttendancePeriod(widget.period.id);
-      setState(() => _validation = result);
-    } catch (error) {
-      setState(() => _message = error is ApiError ? error.message : 'Something went wrong.');
-    } finally {
-      setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _finalize() async {
-    setState(() => _busy = true);
-    try {
-      await ref.read(attendanceRepositoryProvider).finalizeAttendancePeriod(widget.period.id, ifMatch: widget.period.version.toString());
-      if (mounted) setState(() => _message = 'Period finalized.');
-    } catch (error) {
-      setState(() => _message = error is ApiError ? error.message : 'Something went wrong.');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _reopen() async {
-    final reasonController = TextEditingController();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Reopen period'),
-        content: AuthFormField(label: 'Reason', required: true, child: TextField(controller: reasonController)),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Reopen')),
-        ],
-      ),
-    );
-    if (confirmed != true || reasonController.text.trim().isEmpty) return;
-    setState(() => _busy = true);
-    try {
-      await ref.read(attendanceRepositoryProvider).reopenAttendancePeriod(
-            widget.period.id,
-            ifMatch: widget.period.version.toString(),
-            reason: reasonController.text.trim(),
-          );
-      if (mounted) setState(() => _message = 'Period reopened.');
-    } catch (error) {
-      setState(() => _message = error is ApiError ? error.message : 'Something went wrong.');
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    if (saved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Attendance period opened.')));
+      _load();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final validation = _validation;
+    final canManage = (ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(attendanceLock);
+    final visible = _periods.where((p) => _entity.isEmpty || p['legal_entity_id'] == _entity).toList()
+      ..sort((a, b) => (b['period_start'] as String).compareTo(a['period_start'] as String));
     return Scaffold(
-      appBar: AppBar(title: Text(widget.period.label ?? widget.period.periodStart)),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (_message != null) ...[InlineAlert(message: _message!), const SizedBox(height: 16)],
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: scheme.surfaceContainerLowest, borderRadius: BorderRadius.circular(12), border: Border.all(color: scheme.outlineVariant)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('${widget.period.periodStart} – ${widget.period.periodEnd}', style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(height: 4),
-                Text('Status: ${widget.period.status}', style: TextStyle(color: scheme.onSurfaceVariant)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (widget.period.status == 'OPEN') ...[
-            FilledButton.tonal(onPressed: _busy ? null : _validate, child: const Text('Validate')),
-            if (validation != null) ...[
-              const SizedBox(height: 12),
-              Text('Validation: ${validation['status']}', style: const TextStyle(fontWeight: FontWeight.w600)),
-              for (final reason in (validation['reasons'] as List? ?? []))
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('${reason['message']} (${reason['count']})'),
+      appBar: AppBar(title: const Text('Attendance Periods'), actions: const [MoreAction()]),
+      floatingActionButton: canManage ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('Open period')) : null,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(_error!.message, textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      FilledButton(onPressed: _load, child: const Text('Retry')),
+                    ]),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView(
+                    padding: const EdgeInsets.only(bottom: 88),
+                    children: [
+                      if (_entities.length > 1)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: DropdownButtonFormField<String>(
+                            value: _entity,
+                            isExpanded: true,
+                            decoration: const InputDecoration(labelText: 'Legal entity'),
+                            items: [const DropdownMenuItem(value: '', child: Text('All legal entities')), for (final e in _entities) DropdownMenuItem(value: e.value, child: Text(e.label))],
+                            onChanged: (v) => setState(() => _entity = v ?? ''),
+                          ),
+                        ),
+                      if (visible.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No attendance periods yet.'))),
+                      for (final p in visible)
+                        ListTile(
+                          title: Text(p['label'] as String? ?? '${p['period_start']} → ${p['period_end']}'),
+                          subtitle: Text('${_entityName(p['legal_entity_id'] as String)} · ${p['period_start']} → ${p['period_end']}'),
+                          trailing: Chip(
+                            label: Text(p['status'] == 'CLOSED' ? 'Closed & locked' : 'Open'),
+                            visualDensity: VisualDensity.compact,
+                            backgroundColor: (p['status'] == 'CLOSED' ? Colors.green : Colors.orange).withValues(alpha: 0.15),
+                          ),
+                          onTap: () async {
+                            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendancePeriodDetailScreen(periodId: p['id'] as String, initial: p)));
+                            _load();
+                          },
+                        ),
+                    ],
+                  ),
                 ),
-              const SizedBox(height: 12),
-              if (validation['status'] == 'READY')
-                FilledButton(onPressed: _busy ? null : _finalize, child: const Text('Finalize')),
-            ],
-          ] else if (widget.period.status == 'CLOSED')
-            OutlinedButton(onPressed: _busy ? null : _reopen, child: const Text('Reopen')),
-        ],
-      ),
     );
   }
 }

@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/api/api_client.dart';
-import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/data/policy_repository.dart';
 import 'package:hrms_mobile/features/leave/data/leave_repository.dart';
 import 'package:hrms_mobile/features/payroll/data/payroll_repository.dart';
@@ -33,19 +32,6 @@ void main() {
     expect(call.path, endsWith(pathEnd));
     expect(call.ifMatch, '7', reason: '${call.path} must send If-Match');
   }
-
-  test('attendance lifecycle writes send If-Match', () async {
-    final repo = AttendanceRepository(client);
-    final cases = <String, Future<dynamic> Function()>{
-      '/attendance-periods/r/finalize': () => repo.finalizeAttendancePeriod('r', ifMatch: '7'),
-      '/attendance-periods/r/reopen': () => repo.reopenAttendancePeriod('r', ifMatch: '7', reason: 'x'),
-    };
-    for (final e in cases.entries) {
-      client.calls.clear();
-      await _swallow(e.value);
-      expectSent(e.key);
-    }
-  });
 
   test('policy version publish sends If-Match', () async {
     await _swallow(() => PolicyRepository(client, 'attendance-policies').publishVersion('p', 'v', ifMatch: '7'));

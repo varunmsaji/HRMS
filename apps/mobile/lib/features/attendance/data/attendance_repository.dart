@@ -128,35 +128,6 @@ class ShiftRoster {
       );
 }
 
-class AttendancePeriod {
-  AttendancePeriod({
-    required this.id,
-    required this.legalEntityId,
-    required this.periodStart,
-    required this.periodEnd,
-    this.label,
-    required this.status,
-    required this.version,
-  });
-  final String id;
-  final String legalEntityId;
-  final String periodStart;
-  final String periodEnd;
-  final String? label;
-  final String status;
-  final int version;
-
-  factory AttendancePeriod.fromJson(Map<String, dynamic> json) => AttendancePeriod(
-        id: json['id'] as String,
-        legalEntityId: json['legal_entity_id'] as String,
-        periodStart: json['period_start'] as String,
-        periodEnd: json['period_end'] as String,
-        label: json['label'] as String?,
-        status: json['status'] as String,
-        version: json['version'] as int,
-      );
-}
-
 /// One employee's attendance for one day — mirrors `AttendanceDayRead`. Only
 /// the fields the mobile day-detail/self-overview screens show.
 class AttendanceDay {
@@ -430,30 +401,6 @@ class AttendanceRepository {
       );
 
   // Attendance periods
-  Future<List<AttendancePeriod>> listAttendancePeriods() => _client
-      .getList('/attendance-periods', parseItem: (d) => AttendancePeriod.fromJson(d as Map<String, dynamic>))
-      .then((e) => e.data);
-  Future<AttendancePeriod> createAttendancePeriod(Map<String, dynamic> body) => _client.post(
-        '/attendance-periods',
-        body: body,
-        parse: (d) => AttendancePeriod.fromJson(d as Map<String, dynamic>),
-      );
-  Future<Map<String, dynamic>> validateAttendancePeriod(String id) => _client.post(
-        '/attendance-periods/$id/validate',
-        parse: (d) => d as Map<String, dynamic>,
-      );
-  Future<AttendancePeriod> finalizeAttendancePeriod(String id, {required String ifMatch}) => _client.post(
-        '/attendance-periods/$id/finalize',
-        ifMatch: ifMatch,
-        parse: (d) => AttendancePeriod.fromJson(d as Map<String, dynamic>),
-      );
-  Future<AttendancePeriod> reopenAttendancePeriod(String id, {required String ifMatch, required String reason}) => _client.post(
-        '/attendance-periods/$id/reopen',
-        ifMatch: ifMatch,
-        body: {'reason': reason},
-        parse: (d) => AttendancePeriod.fromJson(d as Map<String, dynamic>),
-      );
-
   // Attendance days + punches
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) =>
       _client

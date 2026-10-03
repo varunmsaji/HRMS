@@ -212,3 +212,16 @@ List<(String, String)> displayRows(FormSpec spec, Map<String, dynamic> wire) {
   }
   return out;
 }
+
+/// HR starts an onboarding case — `OnboardingCaseCreate` (and the web `OnboardingCaseForm`). The
+/// candidate then fills in the nine sections themselves from their invite link.
+const onboardingCaseSpec = FormSpec(name: 'onboarding_case', label: 'Onboarding case', fields: [
+  FieldSpec('candidate_first_name', 'First name', required: true),
+  FieldSpec('candidate_last_name', 'Last name'),
+  FieldSpec('personal_email', 'Personal email', kind: FieldKind.email, required: true),
+  FieldSpec('personal_mobile', 'Personal mobile'),
+  FieldSpec('proposed_joining_date', 'Proposed joining date', kind: FieldKind.date, required: true),
+  FieldSpec('branch_id', 'Branch', kind: FieldKind.choice, choiceKey: 'branches'),
+  FieldSpec('department_id', 'Department', kind: FieldKind.choice, choiceKey: 'departments'),
+  FieldSpec('designation_id', 'Designation', kind: FieldKind.choice, choiceKey: 'designations'),
+]);

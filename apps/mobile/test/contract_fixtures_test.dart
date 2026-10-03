@@ -6,6 +6,8 @@ import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
 import 'package:hrms_mobile/features/attendance/domain/request_resources.dart';
+import 'package:hrms_mobile/features/attendance/presentation/attendance_period_detail_screen.dart' show periodActionLabels, periodBlockingReasonLabels, periodSummaryColumns;
+import 'package:hrms_mobile/features/attendance/presentation/attendance_periods_screen.dart' show attendancePeriodSpec;
 import 'package:hrms_mobile/features/leave/domain/leave_application_form.dart';
 import 'package:hrms_mobile/features/leave/domain/leave_resources.dart';
 import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
@@ -38,7 +40,6 @@ final Map<String, _Parser> _models = {
   // attendance
   'organisation.ShiftRead': Shift.fromJson,
   'attendance.ShiftRosterRead': ShiftRoster.fromJson,
-  'attendance.AttendancePeriodRead': AttendancePeriod.fromJson,
   'attendance.AttendanceDayRead': AttendanceDay.fromJson,
   'organisation.PolicyAssignmentRead': PolicyAssignment.fromJson,
   'organisation.CalendarResolutionRead': CalendarResolution.fromJson,
@@ -335,8 +336,34 @@ void _writeFormMatchesRegularization() {
   });
 }
 
+void attendancePeriodTests() {
+  group('attendance periods match the backend schemas', () {
+    test('open-period form matches AttendancePeriodCreate', () {
+      final backend = (_load('attendance.AttendancePeriodCreate', 'full') as Map<String, dynamic>).keys.toSet();
+      final uiOnly = {'custom_range'};
+      final mine = attendancePeriodSpec.fields.map((f) => f.key).toSet().difference(uiOnly);
+      expect(mine, backend);
+    });
+    test('summary columns exist on AttendancePeriodSummaryRead', () {
+      final keys = (_load('attendance.AttendancePeriodSummaryRead', 'full') as Map<String, dynamic>).keys.toSet();
+      for (final (key, _) in periodSummaryColumns) {
+        expect(keys, contains(key));
+      }
+    });
+    test('the blocking-reason codes and action labels cover what the backend can say', () {
+      // A label missing for a code the server sends would show the raw code — still readable, but flag it.
+      expect(periodBlockingReasonLabels.keys, containsAll(['EMPLOYEES_WITHOUT_ATTENDANCE', 'PENDING_REGULARIZATION', 'UNPUBLISHED_ROSTER']));
+      expect(periodActionLabels.keys, containsAll(['OPENED', 'VALIDATED', 'VALIDATION_FAILED', 'CLOSED', 'REOPENED']));
+    });
+  });
+}
+
 void leaveApplicationFormTests() {
+  attendancePeriodTests();
   requestConfigTests();
+  group('onboarding case form matches OnboardingCaseCreate', () {
+    _writeFormMatches('onboardingCaseSpec', onboardingCaseSpec, 'onboarding.OnboardingCaseCreate');
+  });
   group('leave application form matches LeaveApplicationCreate', () {
     _writeFormMatches('self', leaveApplicationSpec(onBehalf: false), 'leave.LeaveApplicationCreate', notInForm: const {'employee_id'});
     _writeFormMatches('on behalf', leaveApplicationSpec(onBehalf: true), 'leave.LeaveApplicationCreate');

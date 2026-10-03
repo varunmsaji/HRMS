@@ -117,7 +117,7 @@ void main() {
       await _check(path, () => client.getList<Map<String, dynamic>>(path, parseItem: (d) => d as Map<String, dynamic>));
     }
     await _check('rosters', att.listRosters);
-    await _check('attendance periods', att.listAttendancePeriods);
+    await _check('attendance periods', () => client.getList<Map<String, dynamic>>('/attendance-periods', parseItem: (d) => d as Map<String, dynamic>));
     await _check('policy assignments', att.listPolicyAssignments);
     await _check('face enrollment (me)', att.getMyFaceEnrollment);
     for (final base in ['attendance-policies', 'overtime-policies', 'regularization-policies']) {
