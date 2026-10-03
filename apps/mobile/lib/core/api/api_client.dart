@@ -257,8 +257,9 @@ class ApiClient {
     dynamic body,
     required T Function(dynamic) parse,
     bool authenticated = true,
+    String? ifMatch,
   }) =>
-      _request<T>(path, method: 'POST', body: body, authenticated: authenticated, parseData: parse);
+      _request<T>(path, method: 'POST', body: body, authenticated: authenticated, ifMatch: ifMatch, parseData: parse);
 
   /// Multipart POST. [buildForm] is called once per attempt (see `_rawRequest`).
   Future<T> postMultipart<T>(
@@ -290,8 +291,9 @@ class ApiClient {
     dynamic body,
     required T Function(dynamic) parse,
     bool authenticated = true,
+    String? ifMatch,
   }) =>
-      _request<T>(path, method: 'PUT', body: body, authenticated: authenticated, parseData: parse);
+      _request<T>(path, method: 'PUT', body: body, authenticated: authenticated, ifMatch: ifMatch, parseData: parse);
 
   Future<T> delete<T>(String path, {required T Function(dynamic) parse, String? ifMatch, bool authenticated = true}) =>
       _request<T>(path, method: 'DELETE', ifMatch: ifMatch, authenticated: authenticated, parseData: parse);

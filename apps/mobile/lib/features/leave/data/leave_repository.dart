@@ -287,16 +287,19 @@ class LeaveRepository {
   Future<LeaveApplication> approveLeaveApplication(String id, {required String ifMatch, String? comment, bool excessAsLop = false}) =>
       _client.post(
         '/leave-applications/$id/approve',
+        ifMatch: ifMatch,
         body: {if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment, 'excess_as_lop': excessAsLop},
         parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       );
   Future<LeaveApplication> rejectLeaveApplication(String id, {required String ifMatch, String? reason}) => _client.post(
         '/leave-applications/$id/reject',
+        ifMatch: ifMatch,
         body: {if (reason != null && reason.isNotEmpty) 'rejection_reason': reason},
         parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       );
   Future<LeaveApplication> cancelLeaveApplication(String id, {required String ifMatch, String? reason}) => _client.post(
         '/leave-applications/$id/cancel',
+        ifMatch: ifMatch,
         body: {if (reason != null && reason.isNotEmpty) 'reason': reason},
         parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       );

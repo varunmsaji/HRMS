@@ -151,22 +151,27 @@ class PayrollRepository {
       .then((e) => e.data);
   Future<PayRun> lockInputs(String runId, {required String ifMatch}) => _client.post(
         '/payroll/pay-runs/$runId/lock-inputs',
+        ifMatch: ifMatch,
         parse: (d) => PayRun.fromJson(d as Map<String, dynamic>),
       );
   Future<PayRun> compute(String runId, {required String ifMatch}) => _client.post(
         '/payroll/pay-runs/$runId/compute',
+        ifMatch: ifMatch,
         parse: (d) => PayRun.fromJson(d as Map<String, dynamic>),
       );
   Future<PayRun> approve(String runId, {required String ifMatch}) => _client.post(
         '/payroll/pay-runs/$runId/approve',
+        ifMatch: ifMatch,
         parse: (d) => PayRun.fromJson(d as Map<String, dynamic>),
       );
   Future<PayRun> finalise(String runId, {required String ifMatch}) => _client.post(
         '/payroll/pay-runs/$runId/finalise',
+        ifMatch: ifMatch,
         parse: (d) => PayRun.fromJson(d as Map<String, dynamic>),
       );
   Future<PayRun> markPaid(String runId, {required String ifMatch}) => _client.post(
         '/payroll/pay-runs/$runId/mark-paid',
+        ifMatch: ifMatch,
         parse: (d) => PayRun.fromJson(d as Map<String, dynamic>),
       );
 
@@ -198,6 +203,7 @@ class PayrollRepository {
       );
   Future<StatutoryRate> verifyStatutoryRate(String id, {required String ifMatch}) => _client.post(
         '/payroll/statutory-rates/$id/verify',
+        ifMatch: ifMatch,
         parse: (d) => StatutoryRate.fromJson(d as Map<String, dynamic>),
       );
 

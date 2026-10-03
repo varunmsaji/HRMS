@@ -432,16 +432,19 @@ class AttendanceRepository {
       );
   Future<RegularizationRequest> approveRegularization(String id, {required String ifMatch, String? comment}) => _client.post(
         '/regularizations/$id/approve',
+        ifMatch: ifMatch,
         body: {if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment},
         parse: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
       );
   Future<RegularizationRequest> rejectRegularization(String id, {required String ifMatch, String? reason}) => _client.post(
         '/regularizations/$id/reject',
+        ifMatch: ifMatch,
         body: {if (reason != null && reason.isNotEmpty) 'rejection_reason': reason},
         parse: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
       );
   Future<RegularizationRequest> cancelRegularization(String id, {required String ifMatch}) => _client.post(
         '/regularizations/$id/cancel',
+        ifMatch: ifMatch,
         parse: (d) => RegularizationRequest.fromJson(d as Map<String, dynamic>),
       );
 
@@ -455,11 +458,13 @@ class AttendanceRepository {
       .then((e) => e.data);
   Future<OvertimeRecord> approveOvertime(String id, {required String ifMatch, String? comment}) => _client.post(
         '/overtime/$id/approve',
+        ifMatch: ifMatch,
         body: {if (comment != null && comment.isNotEmpty) 'reviewer_comment': comment},
         parse: (d) => OvertimeRecord.fromJson(d as Map<String, dynamic>),
       );
   Future<OvertimeRecord> rejectOvertime(String id, {required String ifMatch, String? reason}) => _client.post(
         '/overtime/$id/reject',
+        ifMatch: ifMatch,
         body: {if (reason != null && reason.isNotEmpty) 'rejection_reason': reason},
         parse: (d) => OvertimeRecord.fromJson(d as Map<String, dynamic>),
       );
@@ -497,10 +502,12 @@ class AttendanceRepository {
       );
   Future<AttendancePeriod> finalizeAttendancePeriod(String id, {required String ifMatch}) => _client.post(
         '/attendance-periods/$id/finalize',
+        ifMatch: ifMatch,
         parse: (d) => AttendancePeriod.fromJson(d as Map<String, dynamic>),
       );
   Future<AttendancePeriod> reopenAttendancePeriod(String id, {required String ifMatch, required String reason}) => _client.post(
         '/attendance-periods/$id/reopen',
+        ifMatch: ifMatch,
         body: {'reason': reason},
         parse: (d) => AttendancePeriod.fromJson(d as Map<String, dynamic>),
       );

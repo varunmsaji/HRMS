@@ -84,6 +84,7 @@ class PolicyRepository {
   Future<PolicyVersion> publishVersion(String policyId, String versionId, {required String ifMatch, String? publishReason}) =>
       _client.post(
         '/$basePath/$policyId/versions/$versionId/publish',
+        ifMatch: ifMatch,
         body: {if (publishReason != null && publishReason.isNotEmpty) 'publish_reason': publishReason},
         parse: (data) => PolicyVersion.fromJson(data as Map<String, dynamic>),
       );
