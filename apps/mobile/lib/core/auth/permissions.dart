@@ -17,3 +17,7 @@ const employeeViewNominee = 'EMPLOYEE.VIEW_NOMINEE';
 const onboardingCreate = 'ONBOARDING.CREATE';
 const onboardingReview = 'ONBOARDING.REVIEW';
 const onboardingActivate = 'ONBOARDING.ACTIVATE';
+
+// Leave (mirrors `apps/api/src/hrms/modules/leave/permissions.py`).
+const leaveBalanceViewAll = 'LEAVE.BALANCE_VIEW_ALL';
+const leaveBalanceAdjust = 'LEAVE.BALANCE_ADJUST';

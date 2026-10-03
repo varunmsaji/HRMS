@@ -1,4 +1,6 @@
 import '../../../core/api/api_client.dart';
+import '../../../core/api/envelope.dart';
+import '../../../core/json.dart';
 
 class LeaveType {
   LeaveType({
@@ -66,7 +68,7 @@ class StatutoryLeaveMinimum {
         stateCode: json['state_code'] as String?,
         establishmentType: json['establishment_type'] as String?,
         leaveCategory: json['leave_category'] as String,
-        minDaysPerYear: json['min_days_per_year'] as num,
+        minDaysPerYear: parseNum(json['min_days_per_year']),
         note: json['note'] as String?,
       );
 }
@@ -87,8 +89,9 @@ class LeaveYearSetting {
 }
 
 class LeaveBalance {
-  LeaveBalance({required this.employeeId, required this.leaveTypeCode, required this.leaveTypeName, required this.balance, required this.reservedBalance});
+  LeaveBalance({required this.employeeId, required this.leaveTypeId, required this.leaveTypeCode, required this.leaveTypeName, required this.balance, required this.reservedBalance});
   final String employeeId;
+  final String leaveTypeId;
   final String leaveTypeCode;
   final String leaveTypeName;
   final num balance;
@@ -96,10 +99,41 @@ class LeaveBalance {
 
   factory LeaveBalance.fromJson(Map<String, dynamic> json) => LeaveBalance(
         employeeId: json['employee_id'] as String,
+        leaveTypeId: json['leave_type_id'] as String,
         leaveTypeCode: json['leave_type_code'] as String,
         leaveTypeName: json['leave_type_name'] as String,
-        balance: json['balance'] as num,
-        reservedBalance: json['reserved_balance'] as num,
+        balance: parseNum(json['balance']),
+        reservedBalance: parseNum(json['reserved_balance']),
+      );
+}
+
+/// `GET /leave-ledger` — one append-only ledger row (`LeaveLedgerEntryRead`).
+class LeaveLedgerEntry {
+  LeaveLedgerEntry({
+    required this.id,
+    required this.leaveTypeId,
+    required this.entryType,
+    required this.amount,
+    required this.effectiveDate,
+    this.reason,
+    required this.createdAt,
+  });
+  final String id;
+  final String leaveTypeId;
+  final String entryType;
+  final num amount;
+  final String effectiveDate;
+  final String? reason;
+  final String createdAt;
+
+  factory LeaveLedgerEntry.fromJson(Map<String, dynamic> json) => LeaveLedgerEntry(
+        id: json['id'] as String,
+        leaveTypeId: json['leave_type_id'] as String,
+        entryType: json['entry_type'] as String,
+        amount: parseNum(json['amount']),
+        effectiveDate: json['effective_date'] as String,
+        reason: json['reason'] as String?,
+        createdAt: json['created_at'] as String,
       );
 }
 
@@ -133,7 +167,7 @@ class LeaveApplication {
         leaveTypeId: json['leave_type_id'] as String,
         startDate: json['start_date'] as String,
         endDate: json['end_date'] as String,
-        totalDays: json['total_days'] as num?,
+        totalDays: parseNumOrNull(json['total_days']),
         reason: json['reason'] as String?,
         status: json['status'] as String,
         approvalStage: json['approval_stage'] as String?,
@@ -202,6 +236,41 @@ class LeaveRepository {
   Future<List<LeaveBalance>> listLeaveBalances(String employeeId) => _client
       .getList('/leave-balances', filters: {'employee_id': employeeId}, parseItem: (d) => LeaveBalance.fromJson(d as Map<String, dynamic>))
       .then((e) => e.data);
+
+  Future<ListEnvelope<LeaveLedgerEntry>> listLeaveLedger(String employeeId, {int page = 1}) => _client.getList(
+        '/leave-ledger',
+        query: PageQuery(page: page),
+        filters: {'employee_id': employeeId},
+        parseItem: (d) => LeaveLedgerEntry.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// `POST /leave-ledger/encashments` (`LeaveLedgerEncashmentCreate`) — needs `LEAVE.BALANCE_ADJUST`.
+  Future<void> encashLeave({
+    required String employeeId,
+    required String leaveTypeId,
+    required String days,
+    required String effectiveDate,
+    required String reason,
+  }) =>
+      _client.post(
+        '/leave-ledger/encashments',
+        body: {'employee_id': employeeId, 'leave_type_id': leaveTypeId, 'days': days, 'effective_date': effectiveDate, 'reason': reason},
+        parse: (_) {},
+      );
+
+  /// `POST /leave-ledger/adjustments` (`LeaveLedgerAdjustmentCreate`) — signed amount.
+  Future<void> adjustLeave({
+    required String employeeId,
+    required String leaveTypeId,
+    required String amount,
+    required String effectiveDate,
+    required String reason,
+  }) =>
+      _client.post(
+        '/leave-ledger/adjustments',
+        body: {'employee_id': employeeId, 'leave_type_id': leaveTypeId, 'amount': amount, 'effective_date': effectiveDate, 'reason': reason},
+        parse: (_) {},
+      );
 
   Future<List<LeaveApplication>> listLeaveApplications({String? employeeId}) => _client
       .getList(

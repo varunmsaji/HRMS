@@ -32,6 +32,8 @@ class PaginationMeta {
   final int totalPages;
   final String? nextCursor;
 
+  bool get hasNext => page < totalPages;
+
   factory PaginationMeta.fromJson(Map<String, dynamic> json) => PaginationMeta(
         page: json['page'] as int,
         perPage: json['per_page'] as int,
