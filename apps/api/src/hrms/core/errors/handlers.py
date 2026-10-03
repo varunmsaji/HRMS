@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DataError as SqlDataError
+from sqlalchemy.exc import DBAPIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from hrms.core.errors.base import AppError
@@ -26,6 +28,29 @@ def _error_response(
         )
     )
     return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
+
+
+#: asyncpg exception class names for "the value you sent cannot be stored" — raised client-side
+#: (`DataError`, e.g. an int beyond int64) or by Postgres (SQLSTATE class 22: numeric out of range,
+#: invalid text representation, string truncation, NUL bytes...). Always the caller's input.
+_BAD_INPUT_DRIVER_ERRORS = {
+    "DataError",
+    "InvalidTextRepresentationError",
+    "NumericValueOutOfRangeError",
+    "StringDataRightTruncationError",
+    "DatetimeFieldOverflowError",
+    "InvalidDatetimeFormatError",
+    "CharacterNotInRepertoireError",
+}
+
+
+def _is_bad_input(exc: DBAPIError) -> bool:
+    if isinstance(exc, SqlDataError):
+        return True
+    cause = getattr(exc.orig, "__cause__", None) or exc.orig
+    if type(cause).__name__ in _BAD_INPUT_DRIVER_ERRORS:
+        return True
+    return str(getattr(cause, "sqlstate", None) or "").startswith("22")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -63,6 +88,19 @@ def register_exception_handlers(app: FastAPI) -> None:
             "Request validation failed",
             details,
         )
+
+    @app.exception_handler(DBAPIError)
+    async def db_error_handler(_request: Request, exc: DBAPIError) -> JSONResponse:
+        """Safety net for the whole class "client value does not fit the column": a 422, not a
+        500. Schemas should still bound their fields; this catches whatever they miss. Any other
+        database error keeps the generic 500 envelope."""
+        if _is_bad_input(exc):
+            return _error_response(
+                422,
+                "INVALID_VALUE",
+                "A submitted value is out of range or not storable",
+            )
+        return _error_response(500, "INTERNAL_ERROR", "An unexpected error occurred")
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(

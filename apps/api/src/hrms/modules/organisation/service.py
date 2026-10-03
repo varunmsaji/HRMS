@@ -52,6 +52,7 @@ from hrms.modules.organisation.exceptions import (
     InvalidLegalEntityError,
     InvalidParentDepartmentError,
     InvalidPolicyReferenceError,
+    InvalidPolicyScopeError,
     InvalidShiftBreakError,
     InvalidShiftBreakOverlapError,
     InvalidShiftVersionCoreHoursError,
@@ -65,6 +66,7 @@ from hrms.modules.organisation.exceptions import (
     InvalidWorkCalendarError,
     InvalidWorkingDaysError,
     LegalEntityDeactivationBlockedError,
+    MasterDataInUseError,
     PolicyAssignmentOverlapError,
     PolicyAssignmentVersionRequiredError,
     PolicyKindNotSupportedError,
@@ -203,6 +205,7 @@ from hrms.modules.organisation.schemas import (
     work_calendar_to_read,
 )
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
+from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
 from hrms.shared.timezone import validate_iana_timezone
 
@@ -1307,6 +1310,22 @@ class OrganisationService:
             raise NotFoundError("Resource not found")
         return branch_to_read(branch)
 
+    async def _assert_master_not_in_use(
+        self, company_id: UUID, *, kind: str, column: str, master_id: UUID
+    ) -> None:
+        """Decision 2 — refuse to deactivate a department/designation/grade/shift that active
+        employees still depend on. `employee.service` is the only surface consulted, via the same
+        lazy import the branch timezone guard uses."""
+        from hrms.modules.employee.service import EmployeeAssignmentService
+
+        company = await self._repo.get_company(self._session, company_id=company_id)
+        as_of = business_today(company.timezone) if company is not None else date.today()
+        count = await EmployeeAssignmentService(self._session).count_active_employees_for_master(
+            company_id, column=column, master_id=master_id, as_of=as_of
+        )
+        if count > 0:
+            raise MasterDataInUseError(kind=kind, active_employee_count=count)
+
     async def update_branch(
         self,
         company_id: UUID,
@@ -1353,6 +1372,10 @@ class OrganisationService:
             )
             if active_departments > 0:
                 raise BranchDeactivationBlockedError(active_department_count=active_departments)
+            # The Employee half of FR-ORG-014: active employees still placed here block it too.
+            await self._assert_master_not_in_use(
+                company_id, kind="branch", column="branch_id", master_id=branch_id
+            )
 
         values = build_branch_update_values(patch)
         if not values:
@@ -1569,6 +1592,10 @@ class OrganisationService:
         # blockers either, unlike Branch's own explicit "blocked by active department"
         # gloss). See docs/modules/department/00_DEPARTMENT_AUDIT.md §5.3/§8.1.
         deactivating = patch.is_active is False and was_active_before is True
+        if deactivating:
+            await self._assert_master_not_in_use(
+                company_id, kind="department", column="department_id", master_id=department_id
+            )
 
         values = build_department_update_values(patch)
         if not values:
@@ -1749,6 +1776,10 @@ class OrganisationService:
         # since `next_designation_id` itself has no UI control — see
         # docs/modules/designation/00_DESIGNATION_AUDIT.md §5.3/§5.4).
         deactivating = patch.is_active is False and was_active_before is True
+        if deactivating:
+            await self._assert_master_not_in_use(
+                company_id, kind="designation", column="designation_id", master_id=designation_id
+            )
 
         values = build_designation_update_values(patch)
         if not values:
@@ -1920,6 +1951,10 @@ class OrganisationService:
         # Employee doesn't exist; no document names an active Designation referencing a
         # Grade as a blocker either — see docs/modules/grade/00_GRADE_AUDIT.md §6.3).
         deactivating = patch.is_active is False and was_active_before is True
+        if deactivating:
+            await self._assert_master_not_in_use(
+                company_id, kind="grade", column="grade_id", master_id=grade_id
+            )
 
         values = build_grade_update_values(patch)
         if not values:
@@ -2165,6 +2200,10 @@ class OrganisationService:
         # (FR-ORG-014's only named blocker — active employees — can't be checked since
         # Employee doesn't exist; see docs/modules/shift-rules/00_SHIFT_RULES_AUDIT.md §6.4).
         deactivating = patch.is_active is False and was_active_before is True
+        if deactivating:
+            await self._assert_master_not_in_use(
+                company_id, kind="shift", column="shift_id", master_id=shift_id
+            )
 
         values = build_shift_update_values(patch)
         if not values:
@@ -4129,6 +4168,36 @@ class OrganisationService:
         if found is None:
             raise InvalidPolicyReferenceError()
 
+    async def _validate_policy_scope(
+        self, company_id: UUID, scope_type: str, scope_id: UUID | None
+    ) -> None:
+        if scope_type == "COMPANY" or scope_id is None:
+            return
+        try:
+            if scope_type == "LEGAL_ENTITY":
+                await self.get_legal_entity(company_id, scope_id)
+            elif scope_type == "BRANCH":
+                await self.get_branch(company_id, scope_id)
+            elif scope_type == "DEPARTMENT":
+                await self.get_department(company_id, scope_id)
+            elif scope_type == "GRADE":
+                await self.get_grade(company_id, scope_id)
+            elif scope_type == "DESIGNATION":
+                await self.get_designation(company_id, scope_id)
+            elif scope_type == "SHIFT":
+                await self.get_shift(company_id, scope_id)
+            elif scope_type == "EMPLOYEE":
+                # Same local-import precedent as `_validate_policy_reference` above.
+                from hrms.modules.employee.repository import EmployeeRepository
+
+                employee = await EmployeeRepository().get_employee(
+                    self._session, company_id=company_id, employee_id=scope_id
+                )
+                if employee is None:
+                    raise InvalidPolicyScopeError()
+        except NotFoundError as exc:
+            raise InvalidPolicyScopeError() from exc
+
     async def create_policy_assignment(
         self,
         company_id: UUID,
@@ -4146,6 +4215,7 @@ class OrganisationService:
         await self._validate_policy_reference(
             company_id, body.policy_kind, body.policy_id, body.leave_type_id
         )
+        await self._validate_policy_scope(company_id, body.scope_type, body.scope_id)
 
         current = await self._policy_assignment_repo.get_current(
             self._session,
@@ -4202,6 +4272,10 @@ class OrganisationService:
                     "priority": body.priority,
                     "reason": body.reason,
                     "is_active": True,
+                    # Continues the chain's version counter (the closed row was bumped to
+                    # `expected_version + 1`) instead of restarting at 1 — otherwise a stale
+                    # `If-Match` that an earlier revision already consumed would match this row.
+                    "version": 1 if current is None else (expected_version or 0) + 2,
                     "created_at": now,
                     "updated_at": now,
                 },

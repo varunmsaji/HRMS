@@ -88,7 +88,7 @@ class EmployeeImportRow(BaseModel):
     reporting_manager: str | None = None
     work_location_type: WorkLocationType = "OFFICE"
     joining_date: date
-    annual_ctc_minor: int = Field(ge=0)
+    annual_ctc_minor: int = Field(gt=0)
     currency: str = Field(min_length=3, max_length=3)
 
     @field_validator(

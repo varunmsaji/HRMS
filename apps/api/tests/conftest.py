@@ -41,7 +41,14 @@ async def _reset_credential_rate_limits() -> None:
     client = redis.from_url(get_settings().redis_url, decode_responses=True)
 
     async def _clear() -> None:
-        for pattern in ("ratelimit:login:*", "ratelimit:token_refresh:*"):
+        for pattern in (
+            "ratelimit:login:*",
+            "ratelimit:token_refresh:*",
+            # Same reasoning: these buckets (10/min per IP) outlive a pytest run, so a rerun
+            # within a minute of the previous one 429s on its very first request.
+            "ratelimit:email_verification:*",
+            "ratelimit:auth:*",
+        ):
             async for key in client.scan_iter(match=pattern):
                 await client.delete(key)
 

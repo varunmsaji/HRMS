@@ -295,8 +295,9 @@ class CompensationInfoSection(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    annual_ctc_minor: int = Field(ge=0)
-    currency: str = Field(min_length=3, max_length=3, default="INR")
+    annual_ctc_minor: int = Field(gt=0)
+    # Omitted -> the company's own configured currency, filled in when the section is saved.
+    currency: str | None = Field(min_length=3, max_length=3, default=None)
 
 
 class PreviousEmploymentItem(BaseModel):

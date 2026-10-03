@@ -139,6 +139,9 @@ def service() -> EmploymentService:
     svc._compensation_repo = AsyncMock()
     svc._statutory_repo = AsyncMock()
     svc._audit = AsyncMock()
+    # Far in the past, so a test's termination date is always in the future and the immediate
+    # access-revocation branch (covered by integration tests) stays out of these unit tests.
+    svc._company_today = AsyncMock(return_value=date(2000, 1, 1))
     # Default: no current assignment/compensation/statutory row — most termination tests don't
     # exercise the E-04/E-06/E-07 closure path, mirroring how `_repo`/`_employee_repo` default to
     # unset `AsyncMock` return values that individual tests override as needed.

@@ -68,3 +68,31 @@ class UserAlreadyInCompanyError(ConflictError):
         super().__init__(
             message, details=[{"field": "email", "code": self.code, "message": message}]
         )
+
+
+class RoleRequiredError(ValidationError):
+    """`PATCH /users/{id}/roles` with an empty list — a member with no role is an active account
+    that can do nothing and shows up in no "who is an admin" view. Dropping access entirely is a
+    deactivation decision, not a side-effect of an empty array."""
+
+    code = "ROLE_REQUIRED"
+
+    def __init__(self, message: str = "A user must have at least one role") -> None:
+        super().__init__(
+            message, details=[{"field": "role_codes", "code": self.code, "message": message}]
+        )
+
+
+class AccountCreationConflictError(ConflictError):
+    """Two invites for the same not-yet-registered email were accepted at the same instant; the
+    loser hit the global unique index on `user.email`. Retrying resolves it (the account now
+    exists, so the retry takes the existing-account path)."""
+
+    code = "ACCOUNT_CREATION_CONFLICT"
+
+    def __init__(
+        self, message: str = "Account setup collided with another request — retry"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "email", "code": self.code, "message": message}]
+        )

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from hrms.core.errors.base import NotFoundError
 from hrms.modules.employee.exceptions import (
+    CompensationCurrencyMismatchError,
     CompensationDatesOverlapError,
     CompensationVersionRequiredError,
     InvalidEffectiveFromError,
@@ -103,6 +104,7 @@ def service() -> EmployeeCompensationService:
     svc._employee_repo = AsyncMock()
     svc._employment_repo = AsyncMock()
     svc._audit = AsyncMock()
+    svc._company_currency = AsyncMock(return_value="INR")
     return svc
 
 
@@ -451,3 +453,34 @@ async def test_get_compensation_as_of_does_not_require_employee_lookup(
 
     assert result is None
     service._employee_repo.get_employee.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_compensation_rejects_currency_other_than_company_currency(
+    service: EmployeeCompensationService,
+) -> None:
+    company_id = uuid4()
+    employee_id = uuid4()
+    service._employee_repo.get_employee.return_value = _employee(
+        id=employee_id, company_id=company_id
+    )
+    service._employment_repo.get_employment_as_of.return_value = _employment(
+        company_id=company_id, employee_id=employee_id
+    )
+    service._repo.get_current_compensation.return_value = None
+
+    with pytest.raises(CompensationCurrencyMismatchError):
+        await service.create_compensation(
+            company_id,
+            employee_id,
+            CompensationCreate(
+                effective_from=date(2027, 6, 1),
+                annual_ctc_minor=1_000_000,
+                currency="USD",
+                revision_type="JOINING",
+                revision_reason="Joining",
+            ),
+            expected_version=None,
+            actor_user_id=uuid4(),
+        )
+    service._repo.insert_compensation.assert_not_called()

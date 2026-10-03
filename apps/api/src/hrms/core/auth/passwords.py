@@ -6,6 +6,10 @@ from hrms.core.auth.common_passwords import is_common_password
 _hasher = PasswordHasher()
 
 PASSWORD_MIN_LENGTH = 8
+#: Upper bound on any password accepted by an endpoint. NIST 800-63B asks verifiers to permit at
+#: least 64 characters; 128 is generous, while stopping an unauthenticated caller from making the
+#: server run argon2 over an arbitrarily large body.
+PASSWORD_MAX_LENGTH = 128
 
 
 def hash_password(password: str) -> str:
@@ -29,7 +33,7 @@ def is_password_strong_enough(password: str) -> bool:
     SPRINT_3_COMPANY_FOUNDATION.md`'s registration task note); intentionally simple until a
     dedicated password policy is defined.
     """
-    if len(password) < PASSWORD_MIN_LENGTH:
+    if not PASSWORD_MIN_LENGTH <= len(password) <= PASSWORD_MAX_LENGTH:
         return False
     has_letter = any(c.isalpha() for c in password)
     has_digit = any(c.isdigit() for c in password)

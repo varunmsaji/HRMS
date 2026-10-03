@@ -69,9 +69,18 @@ class IdentityService:
 
         if not verify_password(user.password_hash, body.password):
             await self._repo.increment_failed_login(self._session, user.id)
+            # `get_session` rolls the request transaction back on any exception, which would
+            # silently discard this increment and make lockout impossible — persist it first.
+            await self._session.commit()
             raise InvalidCredentialsError("Invalid email or password")
 
         await self._repo.reset_failed_login(self._session, user.id)
+
+        # Suspended/deactivated accounts get the same answer as a wrong password — the status
+        # is not disclosed, and (like the email-verified check below) only after the password is
+        # confirmed so it cannot act as an account-existence oracle.
+        if user.status != "ACTIVE":
+            raise InvalidCredentialsError("Invalid email or password")
 
         # SEC-09 (RELEASE_HARDENING_PHASE_3A) — checked only after the password itself is
         # confirmed correct, so this never doubles as an account-existence oracle (an attacker
@@ -138,9 +147,20 @@ class IdentityService:
         if record.company_id is None or record.session_id is None:
             raise InvalidTokenError("Refresh token is invalid")
 
-        await self._repo.revoke_refresh_token(self._session, record.id, "ROTATED")
-
+        # A refresh token is only as good as the session, account and membership behind it —
+        # re-check all three, exactly as `get_current_user` does for an access token, so logout,
+        # deactivation and membership removal end the refresh chain too.
+        db_session = await self._repo.get_session_by_id(self._session, record.session_id)
+        if db_session is None or db_session.revoked_at is not None:
+            raise InvalidTokenError("Session is no longer valid")
+        user = await self._repo.get_user_by_id(self._session, record.user_id)
+        if user is None or user.status != "ACTIVE":
+            raise InvalidTokenError("User is not active")
         memberships = await self._repo.list_user_companies_for_login(self._session, record.user_id)
+        if not any(m.company_id == record.company_id for m in memberships):
+            raise InvalidTokenError("Company membership is not valid")
+
+        await self._repo.revoke_refresh_token(self._session, record.id, "ROTATED")
         summaries: list[CompanySummary] = []
         for m in memberships:
             company = await self._repo.get_company_by_id(self._session, m.company_id)
@@ -167,6 +187,7 @@ class IdentityService:
 
     async def logout(self, session_id: UUID, user_id: UUID, company_id: UUID) -> None:
         await self._repo.revoke_session(self._session, session_id)
+        await self._repo.revoke_refresh_tokens_for_session(self._session, session_id, "LOGOUT")
         await self._audit.record(
             self._session,
             company_id=company_id,

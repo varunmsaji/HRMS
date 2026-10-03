@@ -9,6 +9,7 @@ from sqlalchemy import func, literal, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from hrms.core.db.models.identity import UserCompany
 from hrms.modules.employee.models import (
     Employee,
     EmployeeAssignment,
@@ -80,6 +81,15 @@ class EmployeeRepository:
             conditions.append(Employee.id.in_(visible_employee_ids))
         stmt = select(func.count()).select_from(Employee).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
+
+    async def lock_company_seats(self, session: AsyncSession, *, company_id: UUID) -> None:
+        """Serialises every seat-consuming write (create, reactivate) for one company until the
+        surrounding transaction ends. Without it, N parallel requests all read the same
+        `count_active_employees` before any inserts, and each concludes there is room."""
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"employee-seats:{company_id}"},
+        )
 
     async def count_active_employees(self, session: AsyncSession, *, company_id: UUID) -> int:
         """Counts non-deleted, `is_active` employees — the population the `EMPLOYEE_SEATS`
@@ -359,6 +369,63 @@ class EmploymentRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_latest_terminated_employment(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> Employment | None:
+        stmt = (
+            select(Employment)
+            .where(
+                Employment.company_id == company_id,
+                Employment.employee_id == employee_id,
+                Employment.status == "TERMINATED",
+                Employment.deleted_at.is_(None),
+            )
+            .order_by(Employment.last_working_day.desc())
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_elapsed_termination_logins(
+        self, session: AsyncSession, *, company_id: UUID, as_of: date
+    ) -> list[tuple[UUID, UUID]]:
+        """`(employee_id, user_id)` for every employee whose last working day is strictly before
+        `as_of`, who has no later `ACTIVE` employment (a rehire keeps their login), and whose
+        linked login still has an `ACTIVE` membership of this company. Already-revoked accounts
+        are excluded, which is what makes the sweep idempotent."""
+        later = aliased(Employment)
+        active_again = (
+            select(later.id)
+            .where(
+                later.company_id == company_id,
+                later.employee_id == Employee.id,
+                later.status == "ACTIVE",
+                later.deleted_at.is_(None),
+            )
+            .exists()
+        )
+        stmt = (
+            select(Employee.id, Employee.user_id)
+            .join(Employment, Employment.employee_id == Employee.id)
+            .join(
+                UserCompany,
+                (UserCompany.user_id == Employee.user_id)
+                & (UserCompany.company_id == Employee.company_id),
+            )
+            .where(
+                Employee.company_id == company_id,
+                Employee.user_id.is_not(None),
+                Employee.deleted_at.is_(None),
+                Employment.company_id == company_id,
+                Employment.status == "TERMINATED",
+                Employment.deleted_at.is_(None),
+                Employment.last_working_day < as_of,
+                UserCompany.status == "ACTIVE",
+                ~active_again,
+            )
+            .distinct()
+        )
+        return [(row[0], row[1]) for row in (await session.execute(stmt)).all()]
+
 
 class EmployeeAssignmentRepository:
     """E-04 — mirrors `EmploymentRepository`'s shape. No general `update_assignment(values=...)`
@@ -394,6 +461,35 @@ class EmployeeAssignmentRepository:
             .distinct()
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_active_employees_for_master(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        column: str,
+        master_id: UUID,
+        as_of: date,
+    ) -> int:
+        """Active employees whose open or still-running (`effective_to` null or `>= as_of`)
+        assignment row references `master_id` through `column`. Closed historical rows never
+        count — only a live dependency blocks deactivating the master record."""
+        stmt = (
+            select(func.count(func.distinct(EmployeeAssignment.employee_id)))
+            .join(Employee, Employee.id == EmployeeAssignment.employee_id)
+            .where(
+                EmployeeAssignment.company_id == company_id,
+                getattr(EmployeeAssignment, column) == master_id,
+                EmployeeAssignment.deleted_at.is_(None),
+                or_(
+                    EmployeeAssignment.effective_to.is_(None),
+                    EmployeeAssignment.effective_to >= as_of,
+                ),
+                Employee.is_active.is_(True),
+                Employee.deleted_at.is_(None),
+            )
+        )
+        return int((await session.execute(stmt)).scalar_one())
 
     async def get_direct_report_ids(
         self, session: AsyncSession, *, company_id: UUID, manager_employee_id: UUID

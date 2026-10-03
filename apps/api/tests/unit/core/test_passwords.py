@@ -36,3 +36,12 @@ def test_distinctive_project_password_not_accidentally_blocklisted() -> None:
     # This project's own seeded demo password must never collide with the common-password
     # blocklist — a regression here would lock every dev/test environment out of the demo login.
     assert is_password_strong_enough("DemoPass123!")
+
+
+def test_password_length_boundaries() -> None:
+    from hrms.core.auth.passwords import PASSWORD_MAX_LENGTH
+
+    assert is_password_strong_enough("Ab3" + "x" * (PASSWORD_MAX_LENGTH - 3))
+    assert not is_password_strong_enough("Ab3" + "x" * (PASSWORD_MAX_LENGTH - 2))
+    assert is_password_strong_enough("Ab3xyz9q")  # exactly the 8-char minimum
+    assert not is_password_strong_enough("Ab3xyz9")

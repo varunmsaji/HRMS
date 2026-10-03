@@ -163,6 +163,94 @@ class IdentityRepository:
             .values(revoked_at=datetime.now(UTC))
         )
 
+    async def set_membership_status(
+        self, session: AsyncSession, *, user_id: UUID, company_id: UUID, status: str
+    ) -> None:
+        """Flips one user's membership of one company (`ACTIVE` / `INACTIVE`). Every auth and
+        RBAC read already filters on `status == 'ACTIVE'`, so this alone ends (or restores) their
+        access to that company without touching their other memberships."""
+        await session.execute(
+            update(UserCompany)
+            .where(UserCompany.user_id == user_id, UserCompany.company_id == company_id)
+            .values(status=status, updated_at=datetime.now(UTC))
+        )
+
+    async def revoke_company_sessions_for_user(
+        self, session: AsyncSession, *, user_id: UUID, company_id: UUID, reason: str
+    ) -> None:
+        """Ends this user's live sessions and refresh tokens *for one company only* (a user may
+        belong to several; deactivation in one must not log them out of the others)."""
+        now = datetime.now(UTC)
+        await session.execute(
+            update(Session)
+            .where(
+                Session.user_id == user_id,
+                Session.company_id == company_id,
+                Session.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        await session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.company_id == company_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now, revoked_reason=reason)
+        )
+
+    async def end_company_access(
+        self, session: AsyncSession, *, user_id: UUID, company_id: UUID, reason: str
+    ) -> bool:
+        """Ends one user's access to one company: flips an `ACTIVE` membership to `INACTIVE` and
+        revokes that company's sessions and refresh tokens. Idempotent — returns `False` and does
+        nothing when the membership is already not `ACTIVE`, so a repeated run (or a user who was
+        already deactivated by hand) produces no second effect."""
+        result = await session.execute(
+            update(UserCompany)
+            .where(
+                UserCompany.user_id == user_id,
+                UserCompany.company_id == company_id,
+                UserCompany.status == "ACTIVE",
+            )
+            .values(status="INACTIVE", updated_at=datetime.now(UTC))
+        )
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            return False
+        await self.revoke_company_sessions_for_user(
+            session, user_id=user_id, company_id=company_id, reason=reason
+        )
+        return True
+
+    async def restore_company_access(
+        self, session: AsyncSession, *, user_id: UUID, company_id: UUID
+    ) -> bool:
+        """Reopens one user's `INACTIVE` membership of one company (rehire). Only the status
+        flips — the row, and so the user, company and role assignments, are the same ones as
+        before. Idempotent: returns `False` when the membership is not `INACTIVE`."""
+        result = await session.execute(
+            update(UserCompany)
+            .where(
+                UserCompany.user_id == user_id,
+                UserCompany.company_id == company_id,
+                UserCompany.status == "INACTIVE",
+            )
+            .values(status="ACTIVE", updated_at=datetime.now(UTC))
+        )
+        return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    async def revoke_refresh_tokens_for_session(
+        self, session: AsyncSession, session_id: UUID, reason: str
+    ) -> None:
+        """Logout — ends the refresh chain of the one session being closed, so a stolen refresh
+        cookie cannot outlive the logout that was meant to end it."""
+        await session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.session_id == session_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC), revoked_reason=reason)
+        )
+
     async def revoke_all_sessions_for_user(
         self,
         session: AsyncSession,

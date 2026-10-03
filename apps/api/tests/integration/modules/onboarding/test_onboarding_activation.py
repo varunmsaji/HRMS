@@ -1073,3 +1073,39 @@ async def test_activate_cross_tenant_isolation(
     finally:
         await _full_teardown(company_id=company_id_a, user_id=user_id_a)
         await _full_teardown(company_id=company_id_b, user_id=user_id_b)
+
+
+async def test_onboarding_compensation_currency_is_validated_when_saved(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The company's currency is checked at section-save time, not first at activation. A
+    foreign currency is rejected outright (no conversion); an omitted one takes the company's."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        case = await _create_case(client, headers)
+        token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]))
+        url = f"/v1/public/onboarding/{token}/sections/compensation_info"
+
+        company_currency = (await client.get("/v1/companies/current", headers=headers)).json()[
+            "data"
+        ]["currency"]
+        foreign = "USD" if company_currency != "USD" else "EUR"
+
+        rejected = await client.patch(url, json={"annual_ctc_minor": 60000000, "currency": foreign})
+        assert rejected.status_code == 422, rejected.text
+        error = rejected.json()["error"]
+        assert error["code"] == "COMPENSATION_CURRENCY_MISMATCH"
+        assert company_currency in error["message"]
+        # nothing was stored
+        read = await client.get(f"/v1/public/onboarding/{token}")
+        assert read.json()["data"]["compensation_info"] == {}
+
+        accepted = await client.patch(
+            url, json={"annual_ctc_minor": 60000000, "currency": company_currency}
+        )
+        assert accepted.status_code == 200, accepted.text
+        defaulted = await client.patch(url, json={"annual_ctc_minor": 70000000})
+        assert defaulted.status_code == 200, defaulted.text
+        assert defaulted.json()["data"]["compensation_info"]["currency"] == company_currency
+    finally:
+        await _full_teardown(company_id=company_id, user_id=user_id)

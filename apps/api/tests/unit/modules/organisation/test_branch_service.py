@@ -77,6 +77,7 @@ def service() -> OrganisationService:
     svc = OrganisationService(session)
     svc._repo = AsyncMock()
     svc._audit = AsyncMock()
+    svc._assert_master_not_in_use = AsyncMock()
     return svc
 
 
@@ -196,6 +197,31 @@ async def test_deactivate_allowed_when_no_active_departments(
 
     assert result.is_active is False
     assert service._audit.record.call_args.kwargs["action"] == "BRANCH_DEACTIVATED"
+
+
+@pytest.mark.asyncio
+async def test_deactivate_blocked_while_active_employees_are_placed_in_branch(
+    service: OrganisationService,
+) -> None:
+    from hrms.modules.organisation.exceptions import MasterDataInUseError
+
+    service._assert_master_not_in_use = AsyncMock(
+        side_effect=MasterDataInUseError(kind="branch", active_employee_count=2)
+    )
+    branch = _branch(is_active=True)
+    service._repo.get_branch.return_value = branch
+    service._repo.count_active_departments_for_branch.return_value = 0
+
+    with pytest.raises(MasterDataInUseError) as exc_info:
+        await service.update_branch(
+            branch.company_id,
+            branch.id,
+            BranchUpdate(is_active=False),
+            expected_version=1,
+            actor_user_id=uuid4(),
+        )
+    assert exc_info.value.code == "MASTER_DATA_HAS_ACTIVE_EMPLOYEES"
+    service._repo.update_branch.assert_not_called()
 
 
 @pytest.mark.asyncio

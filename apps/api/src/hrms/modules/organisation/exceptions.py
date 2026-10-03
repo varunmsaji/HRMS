@@ -109,6 +109,31 @@ class BranchDeactivationBlockedError(ConflictError):
         )
 
 
+class MasterDataInUseError(ConflictError):
+    """Deactivating a branch, department, designation, grade or shift is refused while active
+    employees are still assigned to it — they must be reassigned first. Nothing is reassigned
+    automatically and no replacement is guessed."""
+
+    code = "MASTER_DATA_HAS_ACTIVE_EMPLOYEES"
+
+    def __init__(self, *, kind: str, active_employee_count: int) -> None:
+        message = (
+            f"This {kind} cannot be deactivated while active employees are assigned to it; "
+            "reassign them first"
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "is_active",
+                    "code": "MASTER_DATA_HAS_ACTIVE_EMPLOYEES",
+                    "message": message,
+                    "context": {"kind": kind, "active_employee_count": active_employee_count},
+                }
+            ],
+        )
+
+
 class InvalidLegalEntityError(ValidationError):
     """Raised when a Branch is created/updated against a `legal_entity_id` that does not
     exist, is soft-deleted, or belongs to a different tenant — the FK constraint alone
@@ -831,3 +856,16 @@ class ShiftVersionNotFoundForDateError(NotFoundError):
 
     def __init__(self, message: str = "No published shift version covers this date") -> None:
         super().__init__(message)
+
+
+class InvalidPolicyScopeError(ValidationError):
+    """`scope_id` does not reference an existing, same-tenant record of the table implied by
+    `scope_type`. `scope_id` is polymorphic (no DB foreign key), so without this check a typo —
+    or another company's id — would be stored and silently never match anyone."""
+
+    code = "INVALID_POLICY_SCOPE"
+
+    def __init__(self, message: str = "scope_id does not reference a valid record") -> None:
+        super().__init__(
+            message, details=[{"field": "scope_id", "code": self.code, "message": message}]
+        )

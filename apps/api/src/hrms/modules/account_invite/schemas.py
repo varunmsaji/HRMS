@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from hrms.core.auth.passwords import PASSWORD_MAX_LENGTH
+
 
 class AccountInviteRead(BaseModel):
     """Returned by both issue endpoints — same "raw link is only ever available here" shape as
@@ -34,7 +36,7 @@ class PublicAccountInviteRead(BaseModel):
 
 
 class AcceptInviteRequest(BaseModel):
-    password: str = Field(min_length=1)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
     first_name: str | None = Field(default=None, max_length=100)
     last_name: str | None = Field(default=None, max_length=100)
 

@@ -61,6 +61,7 @@ def service() -> OrganisationService:
     svc = OrganisationService(session)
     svc._repo = AsyncMock()
     svc._audit = AsyncMock()
+    svc._assert_master_not_in_use = AsyncMock()
     return svc
 
 

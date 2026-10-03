@@ -461,6 +461,21 @@ class OnboardingCaseService:
         if existing_review is not None and existing_review.status == "VERIFIED":
             raise OnboardingSectionAlreadyVerifiedError()
 
+        if section == "compensation_info":
+            # Compensation is recorded only in the company's configured currency (never
+            # converted), so a mismatch is rejected here rather than at activation.
+            from hrms.modules.employee.exceptions import CompensationCurrencyMismatchError
+            from hrms.modules.organisation.service import OrganisationService
+
+            profile = await OrganisationService(self._session, self._settings).get_company_profile(
+                company_id
+            )
+            data = dict(data)
+            if data.get("currency") is None:
+                data["currency"] = profile.currency
+            elif data["currency"] != profile.currency:
+                raise CompensationCurrencyMismatchError(company_currency=profile.currency)
+
         # DATA-01 (plan §2.4/§2.5) — encrypt the one sensitive key *before* the JSONB dict is
         # persisted. `case.id` (not a freshly-generated id — this is an update to an existing
         # row) is what AAD binds to; a wizard resubmission overwrites the value under the same

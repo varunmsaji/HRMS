@@ -3,12 +3,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from hrms.core.auth.passwords import PASSWORD_MAX_LENGTH
 from hrms.shared.pagination import ResponseMeta
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=1)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
     company_id: UUID | None = None
 
 
@@ -22,7 +23,7 @@ class ForgotPasswordRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    password: str = Field(min_length=1)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
 
 class VerifyEmailRequest(BaseModel):

@@ -1001,13 +1001,10 @@ async def test_shift_change_cross_tenant_shift_rejected(
         await _teardown(company_id=company_b, user_id=user_b)
 
 
-async def test_shift_change_deactivated_shift_succeeds(
+async def test_shift_change_to_deactivated_shift_is_rejected(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
-    """No document requires the referenced shift to be active — `_assert_shift_ownership`
-    reuses `get_shift` verbatim (existence + tenant-scope only), matching every sibling
-    reference field's validation depth
-    (`docs/modules/employee/13_EMPLOYEE_SHIFT_ASSIGNMENT_IMPLEMENTATION_PLAN.md` §7.4)."""
+    """Decision 1 — a new assignment may only reference an active shift."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         employee, org, _employment = await _setup_employee_with_employment(client, headers)
@@ -1029,16 +1026,17 @@ async def test_shift_change_deactivated_shift_succeeds(
             designation_id=org["designation"]["id"],
         )
 
-        changed = await _create_assignment(
-            client,
-            headers,
-            employee_id=employee["id"],
-            if_match=str(first["version"]),
-            effective_from="2028-04-01",
-            change_type="SHIFT_CHANGE",
-            shift_id=shift["id"],
+        response = await client.post(
+            f"/v1/employees/{employee['id']}/assignments",
+            headers={**headers, "If-Match": str(first["version"])},
+            json={
+                "effective_from": "2028-04-01",
+                "change_type": "SHIFT_CHANGE",
+                "shift_id": shift["id"],
+            },
         )
-        assert changed["shift_id"] == shift["id"]
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["details"][0]["code"] == "INACTIVE_SHIFT"
     finally:
         await _teardown(company_id=company_id, user_id=user_id)
 

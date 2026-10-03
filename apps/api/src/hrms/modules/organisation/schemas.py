@@ -10,8 +10,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from hrms.core.auth.passwords import PASSWORD_MAX_LENGTH
 from hrms.core.config.settings import get_settings
 from hrms.core.db.models.identity import Company
+from hrms.shared.limits import MAX_INT32, MAX_MONEY_MINOR
 from hrms.shared.timezone import validate_allowed_company_timezone, validate_iana_timezone
 
 if TYPE_CHECKING:
@@ -115,7 +117,7 @@ class CompanyRegistrationRequest(BaseModel):
     admin_first_name: str = Field(min_length=1, max_length=100)
     admin_last_name: str = Field(min_length=1, max_length=100)
     admin_email: EmailStr
-    admin_password: str = Field(min_length=1)
+    admin_password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
     @field_validator("timezone")
     @classmethod
@@ -699,7 +701,7 @@ class BranchCreate(BaseModel):
     timezone: str | None = None
     latitude: Decimal | None = Field(default=None, ge=-90, le=90)
     longitude: Decimal | None = Field(default=None, ge=-180, le=180)
-    geofence_radius_m: int | None = Field(default=None, gt=0)
+    geofence_radius_m: int | None = Field(default=None, gt=0, le=100_000)
 
     @field_validator("state_code")
     @classmethod
@@ -736,7 +738,7 @@ class BranchUpdate(BaseModel):
     timezone: str | None = None
     latitude: Decimal | None = Field(default=None, ge=-90, le=90)
     longitude: Decimal | None = Field(default=None, ge=-180, le=180)
-    geofence_radius_m: int | None = Field(default=None, gt=0)
+    geofence_radius_m: int | None = Field(default=None, gt=0, le=100_000)
     is_active: bool | None = None
 
     @field_validator("state_code")
@@ -946,12 +948,12 @@ class GradeCreate(BaseModel):
 
     code: str = Field(min_length=1, max_length=30)
     name: str = Field(min_length=1, max_length=100)
-    level: int | None = None
-    min_ctc: int | None = Field(default=None, ge=0)
-    max_ctc: int | None = Field(default=None, ge=0)
-    notice_period_days: int | None = Field(default=None, ge=0)
-    probation_days: int | None = Field(default=None, ge=0)
-    approval_limit: int | None = Field(default=None, ge=0)
+    level: int | None = Field(default=None, ge=0, le=MAX_INT32)
+    min_ctc: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
+    max_ctc: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
+    notice_period_days: int | None = Field(default=None, ge=0, le=3650)
+    probation_days: int | None = Field(default=None, ge=0, le=3650)
+    approval_limit: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
 
 
 class GradeUpdate(BaseModel):
@@ -959,12 +961,12 @@ class GradeUpdate(BaseModel):
 
     code: str | None = Field(default=None, min_length=1, max_length=30)
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    level: int | None = None
-    min_ctc: int | None = Field(default=None, ge=0)
-    max_ctc: int | None = Field(default=None, ge=0)
-    notice_period_days: int | None = Field(default=None, ge=0)
-    probation_days: int | None = Field(default=None, ge=0)
-    approval_limit: int | None = Field(default=None, ge=0)
+    level: int | None = Field(default=None, ge=0, le=MAX_INT32)
+    min_ctc: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
+    max_ctc: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
+    notice_period_days: int | None = Field(default=None, ge=0, le=3650)
+    probation_days: int | None = Field(default=None, ge=0, le=3650)
+    approval_limit: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
     is_active: bool | None = None
 
 

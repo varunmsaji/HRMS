@@ -255,16 +255,47 @@ async def test_reactivate_employee_records_distinct_audit_action(
         id=employee.id, company_id=employee.company_id, is_active=True, version=2
     )
 
-    result = await service.update_employee(
-        employee.company_id,
-        employee.id,
-        EmployeeUpdate(is_active=True),
-        expected_version=1,
-        actor_user_id=uuid4(),
-    )
+    # Reactivation takes a seat again, so it consults the plan limit like a create does.
+    with patch(
+        "hrms.modules.organisation.service.OrganisationService",
+        return_value=_mock_unlimited_seats(),
+    ):
+        result = await service.update_employee(
+            employee.company_id,
+            employee.id,
+            EmployeeUpdate(is_active=True),
+            expected_version=1,
+            actor_user_id=uuid4(),
+        )
 
     assert result.is_active is True
     assert service._audit.record.call_args.kwargs["action"] == "EMPLOYEE_REACTIVATED"
+
+
+@pytest.mark.asyncio
+async def test_reactivate_employee_is_refused_when_the_seat_limit_is_full(
+    service: EmployeeService,
+) -> None:
+    from hrms.modules.employee.exceptions import EmployeeSeatLimitExceededError
+
+    employee = _employee(is_active=False)
+    service._repo.get_employee.return_value = employee
+    service._repo.count_active_employees.return_value = 5
+    org_service = AsyncMock()
+    org_service.get_subscription_summary = AsyncMock(return_value=MagicMock(seat_limit=5))
+
+    with (
+        patch("hrms.modules.organisation.service.OrganisationService", return_value=org_service),
+        pytest.raises(EmployeeSeatLimitExceededError),
+    ):
+        await service.update_employee(
+            employee.company_id,
+            employee.id,
+            EmployeeUpdate(is_active=True),
+            expected_version=1,
+            actor_user_id=uuid4(),
+        )
+    service._repo.update_employee.assert_not_awaited()
 
 
 @pytest.mark.asyncio

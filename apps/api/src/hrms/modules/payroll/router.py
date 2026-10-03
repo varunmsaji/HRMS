@@ -95,6 +95,7 @@ from hrms.modules.payroll.service import (
     SalaryStructureService,
     StatutoryRateService,
 )
+from hrms.shared.if_match import parse_if_match
 from hrms.shared.pagination import DataEnvelope, ListEnvelope, ResponseMeta
 
 router = APIRouter(tags=["payroll"])
@@ -170,7 +171,7 @@ async def update_salary_component(
         tenant.company_id,
         component_id,
         body,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -224,7 +225,7 @@ async def update_salary_structure(
         tenant.company_id,
         structure_id,
         body,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -267,7 +268,7 @@ async def update_salary_structure_version_lines(
         structure_id,
         version_id,
         body.lines,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -293,7 +294,7 @@ async def publish_salary_structure_version(
         structure_id,
         version_id,
         body,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -429,7 +430,7 @@ async def update_payroll_settings(
     data = await service.update(
         tenant.company_id,
         body,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -485,7 +486,7 @@ async def update_pay_run(
         tenant.company_id,
         run_id,
         body,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -513,7 +514,7 @@ async def lock_pay_run_inputs(
     data = await service.lock_inputs(
         tenant.company_id,
         run_id,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -532,7 +533,7 @@ async def compute_pay_run(
     data = await service.compute(
         tenant.company_id,
         run_id,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -551,7 +552,7 @@ async def approve_pay_run(
     data = await service.approve(
         tenant.company_id,
         run_id,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -570,7 +571,7 @@ async def finalise_pay_run(
     data = await service.finalise(
         tenant.company_id,
         run_id,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -589,7 +590,7 @@ async def mark_pay_run_paid(
     data = await service.mark_paid(
         tenant.company_id,
         run_id,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -610,7 +611,7 @@ async def rollback_pay_run(
         tenant.company_id,
         run_id,
         body,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -700,7 +701,7 @@ async def update_statutory_rate(
         tenant.company_id,
         rate_id,
         body,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )
@@ -719,7 +720,7 @@ async def verify_statutory_rate(
     data = await service.verify(
         tenant.company_id,
         rate_id,
-        expected_version=int(if_match),
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         **_client(request),
     )

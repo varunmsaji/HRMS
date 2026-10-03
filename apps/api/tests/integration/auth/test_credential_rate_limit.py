@@ -82,18 +82,11 @@ async def test_different_ips_against_different_emails_are_not_cross_blocked(
 async def test_login_rate_limit_leaves_the_existing_credential_check_behaviour_unchanged(
     client: AsyncClient, seeded_db: None
 ) -> None:
-    """The rate limit (10/min) is a new, independent control — this only asserts it doesn't
-    change what `/auth/login` already did for a run of attempts under its own limit.
-
-    Pre-existing, unrelated to this batch (verified by direct DB inspection while writing this
-    test — `hrms.core.db.session.get_session` rolls back its whole transaction on any raised
-    exception, including `InvalidCredentialsError`; `IdentityRepository.increment_failed_login`
-    only `flush()`es, so that rollback silently discards the `failed_login_count` increment on
-    every failed attempt): `AccountLockedError`/423 never actually engages regardless of how
-    many failed attempts precede it. Confirmed unaffected by this diff (`core/db/session.py`,
-    `identity/service.py`, `core/db/repositories/identity.py` are untouched by Batch 1) — not
-    OPS-01/SEC-01/SEC-02/OPS-02, out of scope to fix here, and reported as a known limitation
-    rather than silently patched."""
+    """The rate limit (10/min) is an independent control from the per-account lockout (5 failed
+    passwords → 423 for 15 minutes). A run of wrong passwords under the rate limit gets a plain
+    401 until the account-lockout threshold, then 423 — the lockout counter used to be silently
+    rolled back with the failed request's transaction, so it never engaged; see
+    `IdentityService.login`."""
     responses = [
         await client.post(
             "/v1/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong-password"}
@@ -102,8 +95,10 @@ async def test_login_rate_limit_leaves_the_existing_credential_check_behaviour_u
     ]
     assert all(
         r.status_code == 401 and r.json()["error"]["code"] == "INVALID_CREDENTIALS"
-        for r in responses
+        for r in responses[:5]
     )
+    assert responses[5].status_code == 423
+    assert responses[5].json()["error"]["code"] == "ACCOUNT_LOCKED"
 
 
 async def test_login_error_does_not_reveal_whether_the_email_exists(

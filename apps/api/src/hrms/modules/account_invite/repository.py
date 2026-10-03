@@ -35,8 +35,12 @@ class AccountInviteRepository:
         await session.flush()
         return row
 
-    async def get_by_hash(self, session: AsyncSession, *, token_hash: str) -> AccountInvite | None:
+    async def get_by_hash(
+        self, session: AsyncSession, *, token_hash: str, for_update: bool = False
+    ) -> AccountInvite | None:
         stmt = select(AccountInvite).where(AccountInvite.token_hash == token_hash)
+        if for_update:
+            stmt = stmt.with_for_update()
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def revoke_live_invites_for_employee(

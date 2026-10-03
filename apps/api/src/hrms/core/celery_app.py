@@ -56,6 +56,14 @@ def create_celery_app() -> Celery:
                 "task": "attendance.run_daily_calculation",
                 "schedule": crontab(minute=30, hour=9),
             },
+            # Decision 5 — ends login access once a future-dated termination's last working
+            # day has passed. Hourly rather than once a day: the company-local day boundary
+            # differs per company timezone, and the sweep is idempotent so extra runs cost
+            # nothing. Each company's "today" comes from its own timezone, never the server's.
+            "employee-run-termination-access-sweep": {
+                "task": "employee.run_termination_access_sweep",
+                "schedule": crontab(minute=15),
+            },
             # PAY-006 — after the 09:30 calculation, so reminders reflect today's refresh.
             "attendance-run-incomplete-reminders": {
                 "task": "attendance.run_incomplete_reminders",

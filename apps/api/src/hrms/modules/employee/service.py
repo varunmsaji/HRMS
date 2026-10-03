@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
+from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.errors.base import NotFoundError
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.employee.exceptions import (
@@ -20,6 +21,7 @@ from hrms.modules.employee.exceptions import (
     AssignmentVersionRequiredError,
     BankDatesOverlapError,
     BankVersionRequiredError,
+    CompensationCurrencyMismatchError,
     CompensationDatesOverlapError,
     CompensationVersionRequiredError,
     DuplicateEmployeeCodeError,
@@ -27,6 +29,7 @@ from hrms.modules.employee.exceptions import (
     EmployeeSeatLimitExceededError,
     EmploymentDatesOverlapError,
     EmploymentNotActiveError,
+    InactiveMasterDataReferenceError,
     InvalidBranchReferenceError,
     InvalidDepartmentReferenceError,
     InvalidDesignationReferenceError,
@@ -45,6 +48,7 @@ from hrms.modules.employee.exceptions import (
     TaxRegimeSwitchNotAllowedError,
 )
 from hrms.modules.employee.repository import (
+    REPORTEE_TREE_MAX_DEPTH,
     EmployeeAssignmentRepository,
     EmployeeBankRepository,
     EmployeeCompensationRepository,
@@ -103,10 +107,20 @@ from hrms.modules.employee.schemas import (
     statutory_to_audit_dict,
     statutory_to_read,
 )
+from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
 
 if TYPE_CHECKING:
     from hrms.modules.employee.models import EmployeeBank, EmployeeDependent
+
+
+def _chained_version(expected_version: int | None) -> int:
+    """Version for a new row in an effective-dated chain (assignment / compensation / statutory /
+    bank). The row being closed is bumped to `expected_version + 1`, so the new row continues at
+    `+ 2` rather than restarting at 1: a restart would let a stale `If-Match: 1` — already consumed
+    by an earlier revision — match the *next* row, silently stacking one user's change on top of
+    another's they never saw (ABA). `None` means there was no prior row: the chain starts at 1."""
+    return 1 if expected_version is None else expected_version + 2
 
 
 class EmployeeService:
@@ -260,6 +274,9 @@ class EmployeeService:
         if summary.seat_limit is None:
             return
 
+        # Held to the end of this transaction: the next create/reactivate for this company waits
+        # here, then counts *after* this one's row is committed.
+        await self._repo.lock_company_seats(self._session, company_id=company_id)
         active_count = await self._repo.count_active_employees(self._session, company_id=company_id)
         if active_count >= summary.seat_limit:
             raise EmployeeSeatLimitExceededError(limit=summary.seat_limit)
@@ -466,6 +483,10 @@ class EmployeeService:
             return before_read
 
         deactivating = patch.is_active is False and was_active_before is True
+        reactivating = patch.is_active is True and was_active_before is False
+        if reactivating:
+            # A reactivated employee occupies a seat again — same limit as a brand-new one.
+            await self._check_seat_limit(company_id)
 
         now = datetime.now(UTC)
         updated = await self._repo.update_employee(
@@ -488,12 +509,30 @@ class EmployeeService:
                 current=employee_to_audit_dict(current_read),
             )
 
+        if updated.user_id is not None and (deactivating or reactivating):
+            # DELETE /employees/{id} is the documented "immediate access cutoff": the linked login
+            # must stop working now, not merely be flagged on the employee row.
+            identity_repo = IdentityRepository()
+            await identity_repo.set_membership_status(
+                self._session,
+                user_id=updated.user_id,
+                company_id=company_id,
+                status="INACTIVE" if deactivating else "ACTIVE",
+            )
+            if deactivating:
+                await identity_repo.revoke_company_sessions_for_user(
+                    self._session,
+                    user_id=updated.user_id,
+                    company_id=company_id,
+                    reason="EMPLOYEE_DEACTIVATED",
+                )
+
         after_read = employee_to_read(updated)
         action = (
             "EMPLOYEE_DEACTIVATED"
             if deactivating
             else "EMPLOYEE_REACTIVATED"
-            if patch.is_active is True and was_active_before is False
+            if reactivating
             else "EMPLOYEE_UPDATED"
         )
         await self._audit.record(
@@ -957,6 +996,33 @@ class EmploymentService:
             user_agent=user_agent,
         )
 
+        # Rehire — a termination ended the login's company membership (and nothing else about the
+        # account), so a new ACTIVE employment of a still-active employee reopens exactly that
+        # membership. Role assignments are untouched by termination, so they come back as they were;
+        # a deliberately deactivated employee (`is_active` False) stays locked out until HR
+        # reactivates them through the normal employee workflow.
+        if previous_employment_id is not None:
+            linked = await self._employee_repo.get_employee(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            if linked is not None and linked.user_id is not None and linked.is_active:
+                restored = await IdentityRepository().restore_company_access(
+                    self._session, user_id=linked.user_id, company_id=company_id
+                )
+                if restored:
+                    await self._audit.record(
+                        self._session,
+                        company_id=company_id,
+                        actor_user_id=actor_user_id,
+                        action="EMPLOYEE_ACCESS_RESTORED",
+                        entity_type="employee",
+                        entity_id=employee_id,
+                        before={"membership_status": "INACTIVE"},
+                        after={"membership_status": "ACTIVE", "reason": "EMPLOYEE_REHIRED"},
+                        ip=ip_address,
+                        user_agent=user_agent,
+                    )
+
         # Employee confirmation (minimal slice) — "pre-joining" ends once they actually join.
         # Guarded to only fire from `PRE_JOINING` so a rejoin/transfer never resets an
         # already-`ACTIVE` employee back into probation. Best-effort: a concurrent-update race
@@ -1342,7 +1408,99 @@ class EmploymentService:
             ip=ip_address,
             user_agent=user_agent,
         )
+
+        # Decision 5 — termination ends login access, kept separate from the HR records above
+        # (nothing is deleted or deactivated). The employee keeps access throughout their last
+        # working day (company-local); access ends from the day after. A last working day already
+        # strictly in the past cuts access now; today or a future one is left to
+        # `enforce_elapsed_terminations`.
+        if body.last_working_day < await self._company_today(company_id):
+            employee = await self._employee_repo.get_employee(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            if employee is not None and employee.user_id is not None:
+                await self._end_access(
+                    company_id,
+                    employee_id,
+                    employee.user_id,
+                    last_working_day=body.last_working_day,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
         return after_read
+
+    async def _company_today(self, company_id: UUID) -> date:
+        from hrms.modules.organisation.service import OrganisationService
+
+        profile = await OrganisationService(self._session, self._settings).get_company_profile(
+            company_id
+        )
+        return business_today(profile.timezone)
+
+    async def _end_access(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        user_id: UUID,
+        *,
+        last_working_day: date | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> bool:
+        """Revokes the login (membership + this company's sessions/refresh tokens) and records
+        one audit event — only when something actually changed, so repeats leave no trail."""
+        changed = await IdentityRepository().end_company_access(
+            self._session,
+            user_id=user_id,
+            company_id=company_id,
+            reason="EMPLOYMENT_TERMINATED",
+        )
+        if changed:
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="EMPLOYEE_ACCESS_REVOKED",
+                entity_type="employee",
+                entity_id=employee_id,
+                before={"membership_status": "ACTIVE"},
+                after={
+                    "membership_status": "INACTIVE",
+                    "reason": "EMPLOYMENT_TERMINATED",
+                    "last_working_day": last_working_day.isoformat() if last_working_day else None,
+                },
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+        return changed
+
+    async def enforce_elapsed_terminations(
+        self, company_id: UUID, *, as_of: date | None = None
+    ) -> int:
+        """Safety net for future-dated terminations: revokes login access for every employee
+        whose last working day is strictly before `as_of` (default: the company-local business
+        date). Idempotent — accounts already revoked are not selected. Returns the number of
+        accounts revoked on this run."""
+        effective = as_of if as_of is not None else await self._company_today(company_id)
+        pairs = await self._repo.list_elapsed_termination_logins(
+            self._session, company_id=company_id, as_of=effective
+        )
+        revoked = 0
+        for employee_id, user_id in pairs:
+            employment = await self._repo.get_latest_terminated_employment(
+                self._session, company_id=company_id, employee_id=employee_id
+            )
+            if await self._end_access(
+                company_id,
+                employee_id,
+                user_id,
+                last_working_day=employment.last_working_day if employment else None,
+                actor_user_id=None,
+            ):
+                revoked += 1
+        return revoked
 
     async def get_employment_as_of(
         self, company_id: UUID, employee_id: UUID, as_of: date
@@ -1432,50 +1590,60 @@ class EmployeeAssignmentService:
 
         organisation = OrganisationService(self._session, self._settings)
         try:
-            await organisation.get_branch(company_id, branch_id)
+            found = await organisation.get_branch(company_id, branch_id)
         except NotFoundError as exc:
             raise InvalidBranchReferenceError() from exc
+        if not found.is_active:
+            raise InactiveMasterDataReferenceError(field="branch_id", kind="branch")
 
     async def _assert_department_ownership(self, company_id: UUID, department_id: UUID) -> None:
         from hrms.modules.organisation.service import OrganisationService
 
         organisation = OrganisationService(self._session, self._settings)
         try:
-            await organisation.get_department(company_id, department_id)
+            found = await organisation.get_department(company_id, department_id)
         except NotFoundError as exc:
             raise InvalidDepartmentReferenceError() from exc
+        if not found.is_active:
+            raise InactiveMasterDataReferenceError(field="department_id", kind="department")
 
     async def _assert_designation_ownership(self, company_id: UUID, designation_id: UUID) -> None:
         from hrms.modules.organisation.service import OrganisationService
 
         organisation = OrganisationService(self._session, self._settings)
         try:
-            await organisation.get_designation(company_id, designation_id)
+            found = await organisation.get_designation(company_id, designation_id)
         except NotFoundError as exc:
             raise InvalidDesignationReferenceError() from exc
+        if not found.is_active:
+            raise InactiveMasterDataReferenceError(field="designation_id", kind="designation")
 
     async def _assert_grade_ownership(self, company_id: UUID, grade_id: UUID) -> None:
         from hrms.modules.organisation.service import OrganisationService
 
         organisation = OrganisationService(self._session, self._settings)
         try:
-            await organisation.get_grade(company_id, grade_id)
+            found = await organisation.get_grade(company_id, grade_id)
         except NotFoundError as exc:
             raise InvalidGradeReferenceError() from exc
+        if not found.is_active:
+            raise InactiveMasterDataReferenceError(field="grade_id", kind="grade")
 
     async def _assert_shift_ownership(self, company_id: UUID, shift_id: UUID) -> None:
         """Cross-module reference check, mirroring `_assert_grade_ownership` exactly — same
         lazy-import convention (`organisation.service` is the only surface this module may
         import from, Module Standard §2). Reuses `get_shift` verbatim: existence + tenant-scope
-        only, no `is_active` gate, consistent with every sibling reference field
-        (`docs/modules/employee/13_EMPLOYEE_SHIFT_ASSIGNMENT_IMPLEMENTATION_PLAN.md` §7.4)."""
+        only, existence + tenant-scope + active-only (Decision 1: new assignments never reference an
+        inactive record; superseding the earlier §7.4 open question)."""
         from hrms.modules.organisation.service import OrganisationService
 
         organisation = OrganisationService(self._session, self._settings)
         try:
-            await organisation.get_shift(company_id, shift_id)
+            found = await organisation.get_shift(company_id, shift_id)
         except NotFoundError as exc:
             raise InvalidShiftReferenceError() from exc
+        if not found.is_active:
+            raise InactiveMasterDataReferenceError(field="shift_id", kind="shift")
 
     async def _assert_manager_reference(
         self, company_id: UUID, employee_id: UUID, manager_id: UUID, *, field: str
@@ -1495,6 +1663,34 @@ class EmployeeAssignmentService:
             raise InvalidReportingManagerError(
                 field=field, message=f"{field} does not reference a valid employee"
             )
+        if field == "reporting_manager_id":
+            await self._assert_no_reporting_cycle(company_id, employee_id, manager_id)
+
+    async def _assert_no_reporting_cycle(
+        self, company_id: UUID, employee_id: UUID, manager_id: UUID
+    ) -> None:
+        """Walks *up* from the proposed manager through each person's current
+        `reporting_manager_id`; reaching `employee_id` means the new link would close a loop
+        (A manages B, B manages A, or any longer ring). `REPORTEES`/`REPORTEE_TREE` data scope is
+        derived from this hierarchy, so a loop would hand each member of the ring the others'
+        data. Bounded so a pre-existing malformed chain cannot spin forever."""
+        seen = {employee_id}
+        current = manager_id
+        for _ in range(REPORTEE_TREE_MAX_DEPTH):
+            if current in seen:
+                break  # an already-existing loop above the manager; not this write's doing
+            seen.add(current)
+            assignment = await self._repo.get_current_assignment(
+                self._session, company_id=company_id, employee_id=current
+            )
+            if assignment is None or assignment.reporting_manager_id is None:
+                return
+            if assignment.reporting_manager_id == employee_id:
+                raise InvalidReportingManagerError(
+                    field="reporting_manager_id",
+                    message="reporting_manager_id would create a reporting loop",
+                )
+            current = assignment.reporting_manager_id
 
     async def create_assignment(
         self,
@@ -1660,7 +1856,7 @@ class EmployeeAssignmentService:
                     "change_reason": body.change_reason,
                     "effective_from": body.effective_from,
                     "effective_to": None,
-                    "version": 1,
+                    "version": _chained_version(expected_version if current is not None else None),
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -1761,6 +1957,16 @@ class EmployeeAssignmentService:
             self._session, company_id=company_id, branch_id=branch_id
         )
 
+    async def count_active_employees_for_master(
+        self, company_id: UUID, *, column: str, master_id: UUID, as_of: date
+    ) -> int:
+        """Shared cross-module contract for `organisation.service`'s deactivation guards
+        (department/designation/grade/shift): how many active employees still depend on this
+        master record through a live assignment."""
+        return await self._repo.count_active_employees_for_master(
+            self._session, company_id=company_id, column=column, master_id=master_id, as_of=as_of
+        )
+
 
 class EmployeeCompensationService:
     """E-06 — employee compensation (pay history). One write operation, `create_compensation`,
@@ -1814,6 +2020,15 @@ class EmployeeCompensationService:
         if employee is None:
             raise NotFoundError("Resource not found")
 
+    async def _company_currency(self, company_id: UUID) -> str:
+        """The company's single configured currency — compensation is never converted."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        profile = await OrganisationService(self._session, self._settings).get_company_profile(
+            company_id
+        )
+        return profile.currency
+
     async def create_compensation(
         self,
         company_id: UUID,
@@ -1836,6 +2051,10 @@ class EmployeeCompensationService:
         )
         if covering_employment is None:
             raise NoActiveEmploymentError()
+
+        company_currency = await self._company_currency(company_id)
+        if body.currency != company_currency:
+            raise CompensationCurrencyMismatchError(company_currency=company_currency)
 
         current = await self._repo.get_current_compensation(
             self._session, company_id=company_id, employee_id=employee_id
@@ -1889,7 +2108,7 @@ class EmployeeCompensationService:
                     "revision_reason": body.revision_reason,
                     "effective_from": body.effective_from,
                     "effective_to": None,
-                    "version": 1,
+                    "version": _chained_version(expected_version if current is not None else None),
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -2122,7 +2341,7 @@ class EmployeeStatutoryService:
                     "is_director": body.is_director,
                     "is_international_worker": body.is_international_worker,
                     "revision_reason": body.revision_reason,
-                    "version": 1,
+                    "version": _chained_version(expected_version if current is not None else None),
                     "created_at": now,
                     "updated_at": now,
                 },
@@ -2381,7 +2600,7 @@ class EmployeeBankService:
                     "is_primary": True,
                     "verification_status": "PENDING",
                     "penny_drop_reference": None,
-                    "version": 1,
+                    "version": _chained_version(expected_version if current is not None else None),
                     "created_at": now,
                     "updated_at": now,
                 },

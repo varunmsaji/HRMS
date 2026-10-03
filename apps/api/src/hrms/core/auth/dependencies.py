@@ -21,10 +21,16 @@ async def get_current_user(
     if credentials is None or not credentials.credentials:
         raise UnauthorizedError("Authentication required")
     payload = decode_access_token(credentials.credentials)
-    user_id = UUID(payload["sub"])
-    company_id = UUID(payload["company_id"])
-    session_id = UUID(payload["session_id"])
-    employee_id = UUID(payload["employee_id"]) if payload.get("employee_id") else None
+    # A correctly signed token is only ever minted by `create_access_token`, so a missing or
+    # non-UUID claim means a token from an older/foreign issuer or a leaked-secret forgery — either
+    # way a 401, never an unhandled KeyError/ValueError surfacing as a 500.
+    try:
+        user_id = UUID(payload["sub"])
+        company_id = UUID(payload["company_id"])
+        session_id = UUID(payload["session_id"])
+        employee_id = UUID(payload["employee_id"]) if payload.get("employee_id") else None
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise InvalidTokenError("Access token is invalid or expired") from exc
 
     repo = IdentityRepository()
     user = await repo.get_user_by_id(session, user_id)

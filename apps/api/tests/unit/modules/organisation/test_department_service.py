@@ -72,6 +72,7 @@ def service() -> OrganisationService:
     svc = OrganisationService(session)
     svc._repo = AsyncMock()
     svc._audit = AsyncMock()
+    svc._assert_master_not_in_use = AsyncMock()
     return svc
 
 
@@ -306,3 +307,27 @@ async def test_update_department_noop_when_patch_empty(service: OrganisationServ
     assert result.name == department.name
     service._repo.update_department.assert_not_awaited()
     service._audit.record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deactivate_department_blocked_while_employees_assigned(
+    service: OrganisationService,
+) -> None:
+    from hrms.modules.organisation.exceptions import MasterDataInUseError
+
+    service._assert_master_not_in_use = AsyncMock(
+        side_effect=MasterDataInUseError(kind="department", active_employee_count=2)
+    )
+    department = _department(is_active=True)
+    service._repo.get_department.return_value = department
+
+    with pytest.raises(MasterDataInUseError) as exc_info:
+        await service.update_department(
+            department.company_id,
+            department.id,
+            DepartmentUpdate(is_active=False),
+            expected_version=1,
+            actor_user_id=uuid4(),
+        )
+    assert exc_info.value.code == "MASTER_DATA_HAS_ACTIVE_EMPLOYEES"
+    service._repo.update_department.assert_not_called()

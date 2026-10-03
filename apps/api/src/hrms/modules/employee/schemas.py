@@ -13,13 +13,24 @@ Fields deliberately excluded from `EmployeeCreate`/`EmployeeUpdate`, and why:
 - `user_id`: system-managed (login provisioning), not client-settable.
 """
 
-from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Literal
+import json
+import re
+from datetime import date, datetime, timedelta
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from hrms.core.audit.redact import SENSITIVE_FIELD_MASKS, mask_sensitive
+from hrms.shared.limits import MAX_CUSTOM_FIELDS_BYTES, MAX_MONEY_MINOR
 
 if TYPE_CHECKING:
     from hrms.modules.employee.models import (
@@ -51,7 +62,76 @@ EMPLOYEE_STATUS_VALUES = (
 )
 
 
-class EmployeeCreate(BaseModel):
+_EMAIL = TypeAdapter(EmailStr)
+_PAN_RE = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+_IFSC_RE = re.compile(r"^[A-Z]{4}0[A-Z0-9]{6}$")
+_EARLIEST_DOB = date(1900, 1, 1)
+
+#: Deliberately permissive shapes: they reject obvious garbage ("abc", "zz", "1!") without
+#: refusing legitimate international numbers, extensions or non-Indian postcodes.
+Mobile = Annotated[str, Field(max_length=20, pattern=r"^\+?[0-9][0-9 ()\-]{5,18}[0-9]$")]
+Pincode = Annotated[
+    str, Field(max_length=10, pattern=r"^[A-Za-z0-9][A-Za-z0-9 \-]{1,8}[A-Za-z0-9]$")
+]
+CountryCode = Annotated[str, Field(min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")]
+
+
+def _validate_personal_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        _EMAIL.validate_python(value)
+    except ValueError as exc:
+        raise ValueError("personal_email must be a valid email address") from exc
+    return value
+
+
+def _validate_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("must not be blank")
+    return stripped
+
+
+def _validate_dob(value: date | None) -> date | None:
+    if value is not None and not (_EARLIEST_DOB <= value <= date.today()):
+        raise ValueError("date_of_birth must be between 1900-01-01 and today")
+    return value
+
+
+def _validate_custom_fields(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is not None and len(json.dumps(value, default=str)) > MAX_CUSTOM_FIELDS_BYTES:
+        raise ValueError(f"custom_fields must serialise to at most {MAX_CUSTOM_FIELDS_BYTES} bytes")
+    return value
+
+
+class _EmployeeFieldRules(BaseModel):
+    """Format rules common to `EmployeeCreate` and `EmployeeUpdate`."""
+
+    @field_validator("first_name", check_fields=False)
+    @classmethod
+    def _first_name_not_blank(cls, v: str | None) -> str | None:
+        return _validate_name(v)
+
+    @field_validator("personal_email", check_fields=False)
+    @classmethod
+    def _email_format(cls, v: str | None) -> str | None:
+        return _validate_personal_email(v)
+
+    @field_validator("date_of_birth", check_fields=False)
+    @classmethod
+    def _dob_range(cls, v: date | None) -> date | None:
+        return _validate_dob(v)
+
+    @field_validator("custom_fields", check_fields=False)
+    @classmethod
+    def _custom_fields_size(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        return _validate_custom_fields(v)
+
+
+class EmployeeCreate(_EmployeeFieldRules):
     model_config = ConfigDict(extra="forbid")
 
     first_name: str = Field(min_length=1, max_length=100)
@@ -64,28 +144,28 @@ class EmployeeCreate(BaseModel):
     nationality: str | None = Field(default=None, max_length=80)
     father_or_husband_name: str | None = Field(default=None, max_length=150)
     personal_email: str | None = Field(default=None, max_length=255)
-    personal_mobile: str | None = Field(default=None, max_length=20)
+    personal_mobile: Mobile | None = None
     present_address_line1: str | None = Field(default=None, max_length=200)
     present_address_line2: str | None = Field(default=None, max_length=200)
     present_city: str | None = Field(default=None, max_length=100)
     present_state_code: str | None = Field(default=None, max_length=10)
-    present_pincode: str | None = Field(default=None, max_length=10)
-    present_country_code: str | None = Field(default=None, max_length=2)
+    present_pincode: Pincode | None = None
+    present_country_code: CountryCode | None = None
     permanent_address_line1: str | None = Field(default=None, max_length=200)
     permanent_address_line2: str | None = Field(default=None, max_length=200)
     permanent_city: str | None = Field(default=None, max_length=100)
     permanent_state_code: str | None = Field(default=None, max_length=10)
-    permanent_pincode: str | None = Field(default=None, max_length=10)
-    permanent_country_code: str | None = Field(default=None, max_length=2)
+    permanent_pincode: Pincode | None = None
+    permanent_country_code: CountryCode | None = None
     permanent_same_as_present: bool = True
     emergency_contact_name: str | None = Field(default=None, max_length=150)
     emergency_contact_relationship: str | None = Field(default=None, max_length=50)
-    emergency_contact_phone: str | None = Field(default=None, max_length=20)
+    emergency_contact_phone: Mobile | None = None
     photo_url: str | None = None
     custom_fields: dict[str, Any] | None = None
 
 
-class EmployeeUpdate(BaseModel):
+class EmployeeUpdate(_EmployeeFieldRules):
     model_config = ConfigDict(extra="forbid")
 
     first_name: str | None = Field(default=None, min_length=1, max_length=100)
@@ -98,23 +178,23 @@ class EmployeeUpdate(BaseModel):
     nationality: str | None = Field(default=None, max_length=80)
     father_or_husband_name: str | None = Field(default=None, max_length=150)
     personal_email: str | None = Field(default=None, max_length=255)
-    personal_mobile: str | None = Field(default=None, max_length=20)
+    personal_mobile: Mobile | None = None
     present_address_line1: str | None = Field(default=None, max_length=200)
     present_address_line2: str | None = Field(default=None, max_length=200)
     present_city: str | None = Field(default=None, max_length=100)
     present_state_code: str | None = Field(default=None, max_length=10)
-    present_pincode: str | None = Field(default=None, max_length=10)
-    present_country_code: str | None = Field(default=None, max_length=2)
+    present_pincode: Pincode | None = None
+    present_country_code: CountryCode | None = None
     permanent_address_line1: str | None = Field(default=None, max_length=200)
     permanent_address_line2: str | None = Field(default=None, max_length=200)
     permanent_city: str | None = Field(default=None, max_length=100)
     permanent_state_code: str | None = Field(default=None, max_length=10)
-    permanent_pincode: str | None = Field(default=None, max_length=10)
-    permanent_country_code: str | None = Field(default=None, max_length=2)
+    permanent_pincode: Pincode | None = None
+    permanent_country_code: CountryCode | None = None
     permanent_same_as_present: bool | None = None
     emergency_contact_name: str | None = Field(default=None, max_length=150)
     emergency_contact_relationship: str | None = Field(default=None, max_length=50)
-    emergency_contact_phone: str | None = Field(default=None, max_length=20)
+    emergency_contact_phone: Mobile | None = None
     photo_url: str | None = None
     custom_fields: dict[str, Any] | None = None
     is_active: bool | None = None
@@ -263,6 +343,14 @@ class EmploymentCreate(BaseModel):
     joining_date: date
     probation_end_date: date | None = None
     pay_basis: PayBasis = "MONTHLY"
+
+    @model_validator(mode="after")
+    def _dates_are_sane(self) -> "EmploymentCreate":
+        if not (date(1950, 1, 1) <= self.joining_date <= date.today() + timedelta(days=3650)):
+            raise ValueError("joining_date is outside the supported range")
+        if self.probation_end_date is not None and self.probation_end_date < self.joining_date:
+            raise ValueError("probation_end_date cannot be before joining_date")
+        return self
 
 
 class EmploymentUpdate(BaseModel):
@@ -466,10 +554,10 @@ class CompensationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     effective_from: date
-    annual_ctc_minor: int = Field(ge=0)
-    currency: str = Field(min_length=3, max_length=3)
+    annual_ctc_minor: int = Field(gt=0, le=MAX_MONEY_MINOR)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
     revision_type: RevisionType
-    revision_reason: str
+    revision_reason: str = Field(min_length=1, max_length=1000)
 
 
 class CompensationRead(BaseModel):
@@ -530,8 +618,8 @@ class StatutoryCreate(BaseModel):
     is_pf_applicable: bool
     pf_number: str | None = Field(default=None, max_length=30)
     pf_wage_ceiling_opt_out: bool = False
-    vpf_amount: int | None = Field(default=None, ge=0)
-    vpf_percentage: float | None = Field(default=None, ge=0)
+    vpf_amount: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
+    vpf_percentage: float | None = Field(default=None, ge=0, le=100)
     is_esi_applicable: bool
     esi_ip_number: str | None = Field(default=None, max_length=30)
     pt_state_code: str | None = Field(default=None, max_length=10)
@@ -539,7 +627,7 @@ class StatutoryCreate(BaseModel):
     tax_regime: TaxRegime
     is_director: bool = False
     is_international_worker: bool = False
-    revision_reason: str
+    revision_reason: str = Field(min_length=1, max_length=1000)
 
 
 class StatutoryRead(BaseModel):
@@ -626,6 +714,26 @@ class BankCreate(BaseModel):
     branch_name: str | None = Field(default=None, max_length=150)
     payment_mode: PaymentMode
 
+    @field_validator("ifsc")
+    @classmethod
+    def _ifsc_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().upper()
+        if not _IFSC_RE.match(v):
+            raise ValueError("ifsc must look like HDFC0001234 (4 letters, 0, 6 alphanumerics)")
+        return v
+
+    @field_validator("account_number_enc")
+    @classmethod
+    def _account_number_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not re.fullmatch(r"[A-Za-z0-9]{5,34}", v):
+            raise ValueError("account number must be 5-34 letters/digits, no spaces or symbols")
+        return v
+
 
 class BankRead(BaseModel):
     id: UUID
@@ -703,6 +811,30 @@ class EmployeeIdentityUpdate(BaseModel):
     uan_number: str | None = Field(default=None, max_length=20)
     father_or_husband_name: str | None = Field(default=None, max_length=150)
 
+    @field_validator("pan_number")
+    @classmethod
+    def _pan_format(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip().upper()
+        if not _PAN_RE.match(v):
+            raise ValueError("PAN must look like ABCDE1234F")
+        return v
+
+    @field_validator("aadhaar_number")
+    @classmethod
+    def _aadhaar_format(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"[0-9]{12}", v):
+            raise ValueError("Aadhaar number must be exactly 12 digits")
+        return v
+
+    @field_validator("uan_number")
+    @classmethod
+    def _uan_format(cls, v: str | None) -> str | None:
+        if v is not None and not re.fullmatch(r"[0-9]{12}", v):
+            raise ValueError("UAN must be exactly 12 digits")
+        return v
+
 
 class EmployeeIdentityRead(BaseModel):
     employee_id: UUID
@@ -764,7 +896,7 @@ class EmployeeExperienceCreate(BaseModel):
     designation: str | None = Field(default=None, max_length=150)
     from_date: date
     to_date: date | None = None
-    last_ctc_minor: int | None = Field(default=None, ge=0)
+    last_ctc_minor: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
     reason_for_leaving: str | None = None
     had_prior_pf_membership: bool = False
     previous_uan: str | None = Field(default=None, max_length=20)

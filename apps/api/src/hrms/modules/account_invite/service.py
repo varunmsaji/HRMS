@@ -9,6 +9,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
@@ -20,10 +21,12 @@ from hrms.core.errors.auth import AccountLockedError, InvalidCredentialsError
 from hrms.core.errors.base import NotFoundError, ValidationError
 from hrms.modules.account_invite.email_templates import build_account_invite_email
 from hrms.modules.account_invite.exceptions import (
+    AccountCreationConflictError,
     AccountInviteInvalidError,
     EmployeeAlreadyHasAccountError,
     EmployeeMissingEmailError,
     InvalidRoleCodeError,
+    RoleRequiredError,
     SelfRoleChangeNotAllowedError,
     UserAlreadyInCompanyError,
 )
@@ -255,7 +258,10 @@ class AccountInviteService:
         unconsumed (`mark_accepted` never runs) so a legitimate holder can retry. The password-
         strength check only applies to the brand-new-account path — for an existing account,
         `password` is a login credential being verified, not a new one being chosen."""
-        invite = await self._get_live_invite(raw_token)
+        # Row-locked: concurrent accepts of one token serialise here, so the loser re-reads the
+        # row after the winner commits, sees `accepted_at`, and gets the same 404 as any replay —
+        # instead of racing into the unique index on `user.email`.
+        invite = await self._get_live_invite(raw_token, lock=True)
         await set_rls_company_id(self._session, str(invite.company_id))
 
         role = await self._repo.get_role_by_code(
@@ -280,6 +286,9 @@ class AccountInviteService:
                 existing_user.password_hash, password
             ):
                 await self._identity_repo.increment_failed_login(self._session, existing_user.id)
+                # Persist before raising — `get_session` rolls back on any exception, which
+                # would otherwise discard the increment and make lockout impossible.
+                await self._session.commit()
                 raise InvalidCredentialsError("Invalid email or password")
             await self._identity_repo.reset_failed_login(self._session, existing_user.id)
 
@@ -310,26 +319,29 @@ class AccountInviteService:
                     ],
                 )
             user_id = uuid4()
-            await org_repo.insert_user(
-                self._session,
-                user_id=user_id,
-                email=invite.email,
-                password_hash=hash_password(password),
-                first_name=first_name or "",
-                last_name=last_name or "",
-                now=now,
-                # SEC-09 — accepting a token delivered to `invite.email` is itself proof of
-                # receipt, unlike self-service registration (this method's other, unverified
-                # branch is `insert_user`'s own default — see that method's docstring).
-                email_verified_at=now,
-            )
-            user_company = await org_repo.insert_user_company(
-                self._session,
-                user_id=user_id,
-                company_id=invite.company_id,
-                is_primary=True,
-                now=now,
-            )
+            try:
+                await org_repo.insert_user(
+                    self._session,
+                    user_id=user_id,
+                    email=invite.email,
+                    password_hash=hash_password(password),
+                    first_name=first_name or "",
+                    last_name=last_name or "",
+                    now=now,
+                    # SEC-09 — accepting a token delivered to `invite.email` is itself proof of
+                    # receipt, unlike self-service registration (this method's other, unverified
+                    # branch is `insert_user`'s own default — see that method's docstring).
+                    email_verified_at=now,
+                )
+                user_company = await org_repo.insert_user_company(
+                    self._session,
+                    user_id=user_id,
+                    company_id=invite.company_id,
+                    is_primary=True,
+                    now=now,
+                )
+            except IntegrityError as exc:
+                raise AccountCreationConflictError() from exc
 
         await org_repo.insert_user_role(
             self._session, user_company_id=user_company.id, role_id=role.id
@@ -381,9 +393,9 @@ class AccountInviteService:
             audit_action="ACCOUNT_INVITE_LOGIN",
         )
 
-    async def _get_live_invite(self, raw_token: str) -> AccountInvite:
+    async def _get_live_invite(self, raw_token: str, *, lock: bool = False) -> AccountInvite:
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-        invite = await self._repo.get_by_hash(self._session, token_hash=token_hash)
+        invite = await self._repo.get_by_hash(self._session, token_hash=token_hash, for_update=lock)
         if invite is None:
             raise AccountInviteInvalidError()
         now = datetime.now(UTC)
@@ -441,6 +453,11 @@ class AccountInviteService:
         for code in body.role_codes:
             if code not in ASSIGNABLE_ROLE_CODES:
                 raise InvalidRoleCodeError(code)
+        if not body.role_codes:
+            raise RoleRequiredError()
+        # `user_role` is unique on (user_company_id, role_id) — a repeated code in the request
+        # would otherwise surface as an unhandled IntegrityError (500).
+        role_codes = list(dict.fromkeys(body.role_codes))
 
         membership = await self._identity_repo.get_user_company(
             self._session, user_id=target_user_id, company_id=company_id
@@ -449,7 +466,7 @@ class AccountInviteService:
             raise NotFoundError("Resource not found")
 
         role_ids: list[UUID] = []
-        for code in body.role_codes:
+        for code in role_codes:
             role = await self._repo.get_role_by_code(
                 self._session, company_id=company_id, code=code
             )
@@ -468,9 +485,9 @@ class AccountInviteService:
             action="USER_ROLES_ASSIGNED",
             entity_type="user_company",
             entity_id=membership.id,
-            after={"role_codes": body.role_codes},
+            after={"role_codes": role_codes},
             ip=ip_address,
             user_agent=user_agent,
         )
 
-        return body.role_codes
+        return role_codes

@@ -228,6 +228,41 @@ class InvalidBranchReferenceError(ValidationError):
         )
 
 
+class InactiveMasterDataReferenceError(ValidationError):
+    """A new or effective-dated assignment names a branch/department/designation/grade/shift that
+    is no longer active. Historical assignments keep pointing at since-deactivated records and
+    stay readable — this only gates new writes."""
+
+    code = "INACTIVE_MASTER_DATA"
+
+    def __init__(self, *, field: str, kind: str) -> None:
+        message = f"{field} references an inactive {kind}; choose an active one"
+        super().__init__(
+            message,
+            details=[{"field": field, "code": f"INACTIVE_{kind.upper()}", "message": message}],
+        )
+
+
+class CompensationCurrencyMismatchError(ValidationError):
+    """Compensation is recorded in the company's single configured currency; there is no
+    conversion and no multi-currency payroll."""
+
+    code = "COMPENSATION_CURRENCY_MISMATCH"
+
+    def __init__(self, *, company_currency: str) -> None:
+        message = f"currency must match the company currency ({company_currency})"
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "currency",
+                    "code": "COMPENSATION_CURRENCY_MISMATCH",
+                    "message": message,
+                }
+            ],
+        )
+
+
 class InvalidDepartmentReferenceError(ValidationError):
     code = "INVALID_DEPARTMENT"
 
@@ -512,9 +547,9 @@ class InvalidReportingManagerError(ValidationError):
     """Covers both `reporting_manager_id` and `dotted_line_manager_id` — raised when the
     referenced id does not resolve to an existing, same-tenant, non-deleted `Employee`, or
     when it equals the assignment's own `employee_id` (an employee cannot manage themselves —
-    a direct-self-reference guard only, not full cycle detection,
-    `09_EMPLOYEE_ASSIGNMENT_IMPLEMENTATION_PLAN.md` §14.5). Also raised for
-    `reporting_manager_id` (only) when it equals the *acting user's* own `employee_id` — the
+    and, for `reporting_manager_id`, when the link would close a reporting loop
+    (`09_EMPLOYEE_ASSIGNMENT_IMPLEMENTATION_PLAN.md` §14.5 originally left this out). Also raised
+    for `reporting_manager_id` (only) when it equals the *acting user's* own `employee_id` — the
     self-elevation guard, `27_REPORTING_MANAGER_SECURITY_AUDIT.md`."""
 
     code = "INVALID_REPORTING_MANAGER"
