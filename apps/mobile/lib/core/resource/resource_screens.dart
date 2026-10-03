@@ -14,10 +14,7 @@ import 'versions_section.dart';
 
 typedef Rec = Map<String, dynamic>;
 
-List<String> _choiceKeys(FormSpec spec) => {
-      for (final f in spec.fields)
-        if ((f.kind == FieldKind.choice || f.kind == FieldKind.multiChoice) && f.choiceKey != null) f.choiceKey!,
-    }.toList();
+List<String> _choiceKeys(FormSpec spec) => choiceSourcesOf(spec);
 
 /// A record's value as text, resolving select labels and choice ids to names.
 String displayValue(FieldSpec f, dynamic raw, Map<String, Map<String, String>> names) {

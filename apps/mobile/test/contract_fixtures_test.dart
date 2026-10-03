@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/employees/domain/employee_forms.dart';
 import 'package:hrms_mobile/features/attendance/domain/policy_resources.dart';
+import 'package:hrms_mobile/features/attendance/domain/policy_assignment_form.dart';
 import 'package:hrms_mobile/features/attendance/domain/request_resources.dart';
 import 'package:hrms_mobile/features/attendance/domain/roster_form.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_period_detail_screen.dart' show periodActionLabels, periodBlockingReasonLabels, periodSummaryColumns;
@@ -41,7 +42,6 @@ final Map<String, _Parser> _models = {
   // attendance
   'organisation.ShiftRead': Shift.fromJson,
   'attendance.AttendanceDayRead': AttendanceDay.fromJson,
-  'organisation.PolicyAssignmentRead': PolicyAssignment.fromJson,
   'organisation.CalendarResolutionRead': CalendarResolution.fromJson,
   'organisation.HolidayCalendarRead': HolidayCalendar.fromJson,
   'organisation.HolidayRead': Holiday.fromJson,
@@ -393,7 +393,21 @@ void leaveConfigTests() {
   });
 }
 
+void policyAssignmentContractTests() {
+  group('policy assignment form matches PolicyAssignmentCreate', () {
+    _writeFormMatches('policyAssignmentSpec', policyAssignmentSpec, 'organisation.PolicyAssignmentCreate', notInForm: const {'priority', 'effective_to'});
+    test('every policy and scope source the form can offer is a loadable choice source', () {
+      expect(choiceSourcesOf(policyAssignmentSpec), containsAll([...policySources.values, ...scopeSources.values, 'leave_types']));
+    });
+    test('the read schema has what the list shows', () {
+      final keys = (_load('organisation.PolicyAssignmentRead', 'full') as Map<String, dynamic>).keys.toSet();
+      expect(keys, containsAll(['policy_kind', 'policy_id', 'leave_type_id', 'scope_type', 'scope_id', 'effective_from', 'effective_to', 'reason', 'version']));
+    });
+  });
+}
+
 void leaveApplicationFormTests() {
+  policyAssignmentContractTests();
   leaveConfigTests();
   attendancePeriodTests();
   requestConfigTests();

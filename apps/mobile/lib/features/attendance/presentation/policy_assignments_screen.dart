@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
-import '../../../core/widgets/async_list_screen.dart';
-import '../../auth/presentation/widgets/auth_form_field.dart';
-import '../data/attendance_repository.dart';
+import '../../../core/forms/choice_sources.dart';
+import '../../../core/forms/form_spec.dart';
+import '../../../core/forms/spec_form_screen.dart';
+import '../../../core/providers.dart';
+import '../../shell/more_action.dart';
+import '../domain/policy_assignment_form.dart';
 
-const _policyKinds = ['WORK_CALENDAR', 'WEEKLY_OFF', 'ATTENDANCE_POLICY', 'OVERTIME_POLICY', 'REGULARIZATION_POLICY'];
-const _scopeTypes = ['COMPANY', 'LEGAL_ENTITY', 'BRANCH', 'DEPARTMENT', 'GRADE', 'DESIGNATION', 'SHIFT', 'EMPLOYEE'];
+typedef Rec = Map<String, dynamic>;
 
+/// Policy assignments — mirrors `apps/web/src/app/app/policy-assignments/page.tsx`: which
+/// calendar, weekly-off pattern or policy applies to which scope, and from when. There is no edit:
+/// assigning a new one for the same kind and scope closes the open one the day before (the open
+/// assignment's version is sent as `If-Match`, which the server requires in that case).
 class PolicyAssignmentsScreen extends ConsumerStatefulWidget {
   const PolicyAssignmentsScreen({super.key});
 
@@ -17,112 +24,152 @@ class PolicyAssignmentsScreen extends ConsumerStatefulWidget {
 }
 
 class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScreen> {
-  final _listKey = GlobalKey<AsyncListScreenState<PolicyAssignment>>();
+  bool _loading = true;
+  bool _loadingMore = false;
+  ApiError? _error;
+  List<Rec> _rows = const [];
+  int _page = 1;
+  bool _hasMore = false;
+  String _kind = '';
+  Map<String, Map<String, String>> _names = const {};
 
-  Future<void> _create() async {
-    final changed = await Navigator.of(context).push<bool>(MaterialPageRoute(builder: (_) => const _PolicyAssignmentFormScreen()));
-    if (changed == true) _listKey.currentState?.reload();
-  }
+  ApiClient get _client => ref.read(apiClientProvider);
 
-  @override
-  Widget build(BuildContext context) {
-    return AsyncListScreen<PolicyAssignment>(
-      key: _listKey,
-      title: 'Policy Assignments',
-      fetch: () => ref.read(attendanceRepositoryProvider).listPolicyAssignments(),
-      createLabel: 'New assignment',
-      onCreate: _create,
-      emptyLabel: 'No policy assignments yet.',
-      itemBuilder: (context, assignment) => ListTile(
-        title: Text(assignment.policyKind.replaceAll('_', ' ')),
-        subtitle: Text('${assignment.scopeType}${assignment.scopeId != null ? ' · ${assignment.scopeId}' : ''} · from ${assignment.effectiveFrom}'),
-      ),
-    );
-  }
-}
-
-class _PolicyAssignmentFormScreen extends ConsumerStatefulWidget {
-  const _PolicyAssignmentFormScreen();
+  List<String> get _sources => choiceSourcesOf(policyAssignmentSpec)..add('leave_types');
 
   @override
-  ConsumerState<_PolicyAssignmentFormScreen> createState() => _PolicyAssignmentFormScreenState();
-}
+  void initState() {
+    super.initState();
+    _loadNames();
+    _load();
+  }
 
-class _PolicyAssignmentFormScreenState extends ConsumerState<_PolicyAssignmentFormScreen> {
-  final _policyId = TextEditingController();
-  final _scopeId = TextEditingController();
-  final _effectiveFrom = TextEditingController();
-  final _reason = TextEditingController();
-  String _policyKind = _policyKinds.first;
-  String _scopeType = 'COMPANY';
-  bool _submitting = false;
-  String? _formError;
+  Future<void> _loadNames() async {
+    try {
+      final c = await loadChoices(_client, _sources);
+      if (mounted) setState(() => _names = {for (final e in c.entries) e.key: {for (final x in e.value) x.value: x.label}});
+    } catch (_) {}
+  }
 
-  Future<void> _submit() async {
-    if (_policyId.text.trim().isEmpty || DateTime.tryParse(_effectiveFrom.text.trim()) == null) {
-      setState(() => _formError = 'Policy ID and a valid effective-from date are required.');
-      return;
-    }
+  Future<({List<Rec> rows, bool more})> _fetch(int page) async {
+    final env = await _client.getList<Rec>('/policy-assignments', query: PageQuery(page: page), filters: {if (_kind.isNotEmpty) 'policy_kind': _kind}, parseItem: (d) => d as Rec);
+    return (rows: env.data, more: env.pagination?.hasNext ?? false);
+  }
+
+  Future<void> _load() async {
     setState(() {
-      _submitting = true;
-      _formError = null;
+      _loading = true;
+      _error = null;
+      _page = 1;
     });
     try {
-      await ref.read(attendanceRepositoryProvider).createPolicyAssignment({
-        'policy_kind': _policyKind,
-        'policy_id': _policyId.text.trim(),
-        'scope_type': _scopeType,
-        if (_scopeType != 'COMPANY' && _scopeId.text.trim().isNotEmpty) 'scope_id': _scopeId.text.trim(),
-        'effective_from': _effectiveFrom.text.trim(),
-        if (_reason.text.trim().isNotEmpty) 'reason': _reason.text.trim(),
-      });
-      if (mounted) Navigator.of(context).pop(true);
-    } catch (error) {
-      setState(() => _formError = error is ApiError ? error.message : 'Something went wrong.');
+      final r = await _fetch(1);
+      if (mounted) {
+        setState(() {
+          _rows = r.rows;
+          _hasMore = r.more;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
-      if (mounted) setState(() => _submitting = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
+  Future<void> _more() async {
+    setState(() => _loadingMore = true);
+    try {
+      final r = await _fetch(_page + 1);
+      if (mounted) {
+        setState(() {
+          _rows = [..._rows, ...r.rows];
+          _page += 1;
+          _hasMore = r.more;
+        });
+      }
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  Future<void> _create() async {
+    final saved = await openSpecForm(
+      context,
+      title: 'New policy assignment',
+      spec: policyAssignmentSpec,
+      loadChoices: () => loadChoices(_client, _sources),
+      onSubmit: (payload, _) async {
+        // Replacing: an open assignment for the same kind and scope has to be closed first.
+        Rec? open;
+        for (final r in _rows) {
+          if (r['effective_to'] == null && r['policy_kind'] == payload['policy_kind'] && r['scope_type'] == payload['scope_type'] && r['scope_id'] == payload['scope_id']) open = r;
+        }
+        await _client.post<Object?>('/policy-assignments', body: payload, ifMatch: open?['version']?.toString(), parse: (_) => null);
+      },
+    );
+    if (saved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Assignment created.')));
+      _load();
+    }
+  }
+
+  String _name(String source, String? id) => id == null ? '' : (_names[source]?[id] ?? id);
+
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('New policy assignment')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (_formError != null) ...[InlineAlert(message: _formError!), const SizedBox(height: 16)],
-          AuthFormField(
-            label: 'Policy kind',
-            child: DropdownButtonFormField<String>(
-              value: _policyKind,
-              items: [for (final k in _policyKinds) DropdownMenuItem(value: k, child: Text(k.replaceAll('_', ' ')))],
-              onChanged: _submitting ? null : (v) => setState(() => _policyKind = v ?? _policyKind),
-            ),
+      appBar: AppBar(title: const Text('Policy Assignments'), actions: const [MoreAction()]),
+      floatingActionButton: FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('New assignment')),
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: DropdownButtonFormField<String>(
+            value: _kind,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Filter by policy kind'),
+            items: [const DropdownMenuItem(value: '', child: Text('All kinds')), for (final e in policyKindLabels.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+            onChanged: (v) {
+              setState(() => _kind = v ?? '');
+              _load();
+            },
           ),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Policy ID', required: true, description: 'The policy or calendar\'s ID', child: TextField(controller: _policyId, enabled: !_submitting)),
-          const SizedBox(height: 16),
-          AuthFormField(
-            label: 'Scope type',
-            child: DropdownButtonFormField<String>(
-              value: _scopeType,
-              items: [for (final s in _scopeTypes) DropdownMenuItem(value: s, child: Text(s.replaceAll('_', ' ')))],
-              onChanged: _submitting ? null : (v) => setState(() => _scopeType = v ?? _scopeType),
-            ),
-          ),
-          if (_scopeType != 'COMPANY') ...[
-            const SizedBox(height: 16),
-            AuthFormField(label: 'Scope ID', required: true, child: TextField(controller: _scopeId, enabled: !_submitting)),
-          ],
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Effective from', required: true, description: 'YYYY-MM-DD', child: TextField(controller: _effectiveFrom, enabled: !_submitting)),
-          const SizedBox(height: 16),
-          AuthFormField(label: 'Reason', description: 'Optional', child: TextField(controller: _reason, enabled: !_submitting)),
-          const SizedBox(height: 20),
-          PrimaryButton(label: 'Create', loading: _submitting, onPressed: _submit),
-        ],
-      ),
+        ),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [Text(_error!.message, textAlign: TextAlign.center), const SizedBox(height: 16), FilledButton(onPressed: _load, child: const Text('Retry'))])))
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView(
+                        padding: const EdgeInsets.only(top: 8, bottom: 88),
+                        children: [
+                          if (_rows.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No policy assignments yet.'))),
+                          for (final a in _rows)
+                            ListTile(
+                              title: Text('${policyKindLabels[a['policy_kind']] ?? a['policy_kind']} → ${scopeTypeLabels[a['scope_type']] ?? a['scope_type']}${a['scope_id'] != null ? ': ${_name(scopeSources[a['scope_type']] ?? '', a['scope_id'] as String?)}' : ''}'),
+                              subtitle: Text([
+                                _name(policySources[a['policy_kind']] ?? '', a['policy_id'] as String?),
+                                if (a['leave_type_id'] != null) _name('leave_types', a['leave_type_id'] as String?),
+                                '${a['effective_from']} – ${a['effective_to'] ?? 'open'}',
+                                if (a['reason'] != null) '${a['reason']}',
+                              ].join(' · ')),
+                              isThreeLine: true,
+                              trailing: Chip(
+                                label: Text(a['effective_to'] == null ? 'Current' : 'Ended ${a['effective_to']}'),
+                                visualDensity: VisualDensity.compact,
+                                backgroundColor: (a['effective_to'] == null ? Colors.green : scheme.onSurfaceVariant).withValues(alpha: 0.15),
+                              ),
+                            ),
+                          if (_hasMore) Center(child: TextButton(onPressed: _loadingMore ? null : _more, child: Text(_loadingMore ? 'Loading…' : 'Load more'))),
+                        ],
+                      ),
+                    ),
+        ),
+      ]),
     );
   }
 }

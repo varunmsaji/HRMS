@@ -181,41 +181,6 @@ class LeaveDayProjection {
       );
 }
 
-class PolicyAssignment {
-  PolicyAssignment({
-    required this.id,
-    required this.policyKind,
-    required this.policyId,
-    required this.scopeType,
-    this.scopeId,
-    required this.effectiveFrom,
-    this.effectiveTo,
-    required this.isActive,
-    required this.version,
-  });
-  final String id;
-  final String policyKind;
-  final String policyId;
-  final String scopeType;
-  final String? scopeId;
-  final String effectiveFrom;
-  final String? effectiveTo;
-  final bool isActive;
-  final int version;
-
-  factory PolicyAssignment.fromJson(Map<String, dynamic> json) => PolicyAssignment(
-        id: json['id'] as String,
-        policyKind: json['policy_kind'] as String,
-        policyId: json['policy_id'] as String,
-        scopeType: json['scope_type'] as String,
-        scopeId: json['scope_id'] as String?,
-        effectiveFrom: json['effective_from'] as String,
-        effectiveTo: json['effective_to'] as String?,
-        isActive: json['is_active'] as bool,
-        version: json['version'] as int,
-      );
-}
-
 class CalendarResolution {
   CalendarResolution({required this.employeeId, required this.date, required this.configIncomplete, this.workCalendarName, this.dayType});
   final String employeeId;
@@ -452,18 +417,6 @@ class AttendanceRepository {
       );
 
   // Policy assignments
-  Future<List<PolicyAssignment>> listPolicyAssignments({String? policyKind}) => _client
-      .getList(
-        '/policy-assignments',
-        filters: policyKind == null ? null : {'policy_kind': policyKind},
-        parseItem: (d) => PolicyAssignment.fromJson(d as Map<String, dynamic>),
-      )
-      .then((e) => e.data);
-  Future<PolicyAssignment> createPolicyAssignment(Map<String, dynamic> body) => _client.post(
-        '/policy-assignments',
-        body: body,
-        parse: (d) => PolicyAssignment.fromJson(d as Map<String, dynamic>),
-      );
 
   Future<CalendarResolution> resolveCalendar({required String employeeId, required String date}) => _client.get(
         '/calendar-resolution?${Uri(queryParameters: {'employee_id': employeeId, 'date': date}).query}',

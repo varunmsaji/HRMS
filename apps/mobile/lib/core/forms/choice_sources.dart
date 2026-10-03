@@ -31,6 +31,10 @@ final Map<String, _Source> _sources = {
   'holiday_calendars': _Source('/holiday-calendars', _name),
   'weekly_off_patterns': _Source('/weekly-off-patterns', _name),
   'work_calendars': _Source('/work-calendars', _name),
+  'attendance_policies': _Source('/attendance-policies', _name),
+  'overtime_policies': _Source('/overtime-policies', _name),
+  'regularization_policies': _Source('/regularization-policies', _name),
+  'leave_policies': _Source('/leave-policies', _name),
   'salary_structures': _Source('/payroll/salary-structures', _name, filter: (m) => m['is_active'] != false),
   'salary_components': _Source('/payroll/salary-components', (m) => '${m['name']} (${m['code']})', filter: (m) => m['is_active'] != false),
 };

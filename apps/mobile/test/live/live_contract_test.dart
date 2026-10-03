@@ -118,7 +118,7 @@ void main() {
     }
     await _check('rosters', () => client.getList<Map<String, dynamic>>('/rosters', parseItem: (d) => d as Map<String, dynamic>));
     await _check('attendance periods', () => client.getList<Map<String, dynamic>>('/attendance-periods', parseItem: (d) => d as Map<String, dynamic>));
-    await _check('policy assignments', att.listPolicyAssignments);
+    await _check('policy assignments', () => client.getList<Map<String, dynamic>>('/policy-assignments', parseItem: (d) => d as Map<String, dynamic>));
     await _check('face enrollment (me)', att.getMyFaceEnrollment);
     for (final base in ['attendance-policies', 'overtime-policies', 'regularization-policies']) {
       final policies = PolicyRepository(client, base);

@@ -13,18 +13,7 @@ import 'resource_screens.dart' show displayValue;
 
 typedef Rec = Map<String, dynamic>;
 
-List<String> _versionChoiceKeys(FormSpec spec) {
-  final keys = <String>{};
-  void walk(FormSpec s) {
-    for (final f in s.fields) {
-      if ((f.kind == FieldKind.choice || f.kind == FieldKind.multiChoice) && f.choiceKey != null) keys.add(f.choiceKey!);
-      if (f.rowSpec != null) walk(f.rowSpec!);
-    }
-  }
-
-  walk(spec);
-  return keys.toList();
-}
+List<String> _versionChoiceKeys(FormSpec spec) => choiceSourcesOf(spec);
 
 /// The versions of a policy/shift, with the draft workflow — mirrors the web `[id]` pages
 /// (`apps/web/src/app/app/attendance-policies/[id]/page.tsx` and siblings):

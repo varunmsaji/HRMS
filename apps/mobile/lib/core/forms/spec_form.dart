@@ -48,6 +48,10 @@ class _SpecFormState extends State<SpecForm> {
 
   void _set(String key, dynamic value) {
     widget.values[key] = value;
+    // A field whose options depend on this one is stale once this changes — clear it.
+    for (final f in widget.spec.fields) {
+      if (f.dependsOn == key) widget.values[f.key] = '';
+    }
     widget.onChanged();
   }
 
@@ -139,7 +143,8 @@ class _SpecFormState extends State<SpecForm> {
       case FieldKind.select:
         return _dropdown(f, [for (final o in f.options) (value: o, label: f.optionLabels[o] ?? prettyEnum(o))], error);
       case FieldKind.choice:
-        return _dropdown(f, widget.choices[f.choiceKey] ?? const [], error);
+        final source = f.dependsOn != null ? f.choiceMap['${widget.values[f.dependsOn] ?? ''}'] : f.choiceKey;
+        return _dropdown(f, widget.choices[source] ?? const [], error);
       case FieldKind.rows:
         final rows = (widget.values[f.key] as List?)?.cast<Map<String, dynamic>>() ?? <Map<String, dynamic>>[];
         final scheme = Theme.of(context).colorScheme;

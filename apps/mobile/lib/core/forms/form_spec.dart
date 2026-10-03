@@ -52,6 +52,8 @@ class FieldSpec {
     this.orderKey,
     this.orderStart = 0,
     this.intValue = false,
+    this.dependsOn,
+    this.choiceMap = const {},
   });
 
   /// Wire key in the JSON (e.g. `pan_number_enc`).
@@ -91,6 +93,11 @@ class FieldSpec {
 
   /// For [FieldKind.select]: the options are integers on the wire (weekday 0–6).
   final bool intValue;
+
+  /// For a [FieldKind.choice] whose options depend on another field: the options come from
+  /// `choiceMap[values[dependsOn]]` (a choice source key) instead of a fixed [choiceKey].
+  final String? dependsOn;
+  final Map<String, String> choiceMap;
 }
 
 typedef RowValidator = Map<String, String> Function(Map<String, dynamic> values);
@@ -137,6 +144,11 @@ final _timePattern = RegExp(r'^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 bool fieldVisible(FieldSpec f, Map<String, dynamic> values) {
   final cond = f.showWhen;
   if (cond == null) return true;
+  // `key=VALUE` / `key!=VALUE` compare another field's value; `key` / `!key` test a toggle.
+  final neq = cond.indexOf('!=');
+  if (neq > 0) return '${values[cond.substring(0, neq)] ?? ''}' != cond.substring(neq + 2);
+  final eq = cond.indexOf('=');
+  if (eq > 0) return '${values[cond.substring(0, eq)] ?? ''}' == cond.substring(eq + 1);
   if (cond.startsWith('!')) return values[cond.substring(1)] != true;
   return values[cond] == true;
 }
@@ -321,4 +333,22 @@ String prettyEnum(String value) {
   if (!RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(value)) return value;
   final spaced = value.toLowerCase().replaceAll('_', ' ');
   return '${spaced[0].toUpperCase()}${spaced.substring(1)}';
+}
+
+/// Every choice-source key a form needs loaded — fixed keys, the options of dependent choices,
+/// and those of nested rows.
+List<String> choiceSourcesOf(FormSpec spec) {
+  final keys = <String>{};
+  void walk(FormSpec s) {
+    for (final f in s.fields) {
+      if (f.kind == FieldKind.choice || f.kind == FieldKind.multiChoice) {
+        if (f.choiceKey != null) keys.add(f.choiceKey!);
+        keys.addAll(f.choiceMap.values);
+      }
+      if (f.rowSpec != null) walk(f.rowSpec!);
+    }
+  }
+
+  walk(spec);
+  return keys.toList();
 }
