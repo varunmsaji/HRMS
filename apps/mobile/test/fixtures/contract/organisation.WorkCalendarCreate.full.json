@@ -1,0 +1,10 @@
+{
+ "code": "x",
+ "description": "x",
+ "holiday_calendar_ids": [
+  "00000000-0000-0000-0000-000000001234"
+ ],
+ "name": "x",
+ "restricted_holidays_are_off_by_default": true,
+ "weekly_off_pattern_id": "00000000-0000-0000-0000-000000001234"
+}

@@ -1,0 +1,9 @@
+{
+ "account_holder_name": "x",
+ "account_number_enc": "x",
+ "bank_name": "x",
+ "branch_name": "x",
+ "effective_from": "2026-01-15",
+ "ifsc": "x",
+ "payment_mode": "BANK"
+}

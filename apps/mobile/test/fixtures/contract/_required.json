@@ -1,0 +1,2123 @@
+{
+ "account_invite.AcceptInviteRequest": [
+  "password"
+ ],
+ "account_invite.AccountInviteRead": [
+  "email",
+  "email_sent",
+  "expires_at",
+  "id",
+  "invite_url",
+  "role_code"
+ ],
+ "account_invite.PublicAccountInviteRead": [
+  "company_name",
+  "email",
+  "existing_account",
+  "expires_at"
+ ],
+ "account_invite.RoleAssignmentRequest": [],
+ "account_invite.UserInviteRequest": [
+  "email",
+  "role_code"
+ ],
+ "account_invite.UserSummary": [
+  "email",
+  "first_name",
+  "is_primary",
+  "last_name",
+  "role_codes",
+  "status",
+  "user_id"
+ ],
+ "attendance.AttendanceBreakRead": [
+  "attendance_day_id",
+  "break_end",
+  "break_start",
+  "id",
+  "is_excess",
+  "is_paid",
+  "minutes",
+  "shift_break_id"
+ ],
+ "attendance.AttendanceDayRead": [
+  "actual_first_in",
+  "actual_last_out",
+  "attendance_date",
+  "attendance_policy_version_id",
+  "attendance_status",
+  "auto_closed",
+  "breaks",
+  "calculated_at",
+  "calculation_version",
+  "calendar_day_type",
+  "comp_off_minutes_earned",
+  "company_id",
+  "computation_snapshot",
+  "created_at",
+  "early_departure_classification",
+  "early_departure_minutes",
+  "employee_id",
+  "engine_version",
+  "excess_break_minutes",
+  "holiday_name",
+  "holiday_on_weekly_off",
+  "id",
+  "is_core_hours_breach",
+  "is_early_out",
+  "is_late",
+  "is_locked",
+  "is_overtime",
+  "is_pending_approval",
+  "is_regularized",
+  "late_classification",
+  "late_minutes",
+  "leave_fraction",
+  "locked_at",
+  "locked_by",
+  "lop_fraction",
+  "missing_punch",
+  "on_duty",
+  "on_duty_regularization_id",
+  "ot_classification",
+  "ot_day_class",
+  "ot_minutes_approved",
+  "ot_minutes_detected",
+  "ot_pending",
+  "overtime_policy_version_id",
+  "paid_break_minutes",
+  "paid_day_fraction",
+  "regularization_policy_version_id",
+  "scheduled_end",
+  "scheduled_minutes",
+  "scheduled_start",
+  "shift_id",
+  "shift_version_id",
+  "timezone",
+  "unpaid_break_minutes",
+  "unpaid_off_fraction",
+  "updated_at",
+  "weekly_off_fraction",
+  "work_calendar_id",
+  "work_on_leave_flagged",
+  "work_on_leave_resolution",
+  "work_on_leave_resolution_reason",
+  "work_on_leave_resolved_at",
+  "work_on_leave_resolved_by",
+  "worked_minutes",
+  "worked_on_holiday",
+  "worked_on_weekly_off"
+ ],
+ "attendance.AttendancePeriodActionRead": [
+  "action",
+  "actor_user_id",
+  "comment",
+  "created_at",
+  "id"
+ ],
+ "attendance.AttendancePeriodBlockingReason": [
+  "code",
+  "count",
+  "message",
+  "sample"
+ ],
+ "attendance.AttendancePeriodCreate": [
+  "legal_entity_id"
+ ],
+ "attendance.AttendancePeriodRead": [
+  "actions",
+  "closed_at",
+  "closed_by_user_id",
+  "company_id",
+  "created_at",
+  "id",
+  "label",
+  "last_validated_at",
+  "last_validation_status",
+  "legal_entity_id",
+  "opened_at",
+  "opened_by_user_id",
+  "period_end",
+  "period_start",
+  "reopen_reason",
+  "reopened_at",
+  "reopened_by_user_id",
+  "status",
+  "updated_at",
+  "version"
+ ],
+ "attendance.AttendancePeriodReopenInput": [
+  "reason"
+ ],
+ "attendance.AttendancePeriodSummaryRead": [
+  "absent_days",
+  "comp_off_minutes_earned",
+  "employee_id",
+  "frozen",
+  "generated_at",
+  "half_days",
+  "holiday_days",
+  "incomplete_days",
+  "late_count",
+  "leave_days",
+  "lop_days",
+  "not_employed_days",
+  "on_duty_days",
+  "ot_minutes_holiday",
+  "ot_minutes_night",
+  "ot_minutes_normal",
+  "ot_minutes_weekly_off",
+  "paid_days",
+  "payable_days",
+  "present_days",
+  "unpaid_off_days",
+  "weekly_off_days",
+  "worked_minutes_total"
+ ],
+ "attendance.AttendancePeriodValidationRead": [
+  "reasons",
+  "status",
+  "validated_at"
+ ],
+ "attendance.AttendancePolicyCreate": [
+  "name"
+ ],
+ "attendance.AttendancePolicyEarlyDepartureBandInput": [
+  "classification",
+  "min_minutes"
+ ],
+ "attendance.AttendancePolicyEarlyDepartureBandRead": [
+  "classification",
+  "counts_toward_cap",
+  "id",
+  "max_minutes",
+  "min_minutes",
+  "sort_order"
+ ],
+ "attendance.AttendancePolicyHourBandInput": [
+  "min_minutes",
+  "result_status"
+ ],
+ "attendance.AttendancePolicyHourBandRead": [
+  "id",
+  "max_minutes",
+  "min_minutes",
+  "result_status",
+  "sort_order"
+ ],
+ "attendance.AttendancePolicyLateBandInput": [
+  "classification",
+  "min_minutes"
+ ],
+ "attendance.AttendancePolicyLateBandRead": [
+  "classification",
+  "counts_toward_cap",
+  "id",
+  "max_minutes",
+  "min_minutes",
+  "sort_order"
+ ],
+ "attendance.AttendancePolicyRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "name",
+  "updated_at",
+  "version"
+ ],
+ "attendance.AttendancePolicyUpdate": [],
+ "attendance.AttendancePolicyVersionCreate": [],
+ "attendance.AttendancePolicyVersionPublishRequest": [],
+ "attendance.AttendancePolicyVersionRead": [
+  "auto_close_after_minutes",
+  "auto_close_uses_shift_end",
+  "company_id",
+  "core_hours_breach_behaviour",
+  "created_at",
+  "duplicate_punch_window_seconds",
+  "early_departure_bands",
+  "early_departure_requires_approval",
+  "early_out_uses_core_end",
+  "effective_from",
+  "effective_to",
+  "excess_break_behaviour",
+  "excess_break_count_window",
+  "excess_break_days_to_half_day_count",
+  "grace_in_minutes",
+  "grace_out_minutes",
+  "half_day_boundary_minutes",
+  "half_day_split",
+  "hour_bands",
+  "id",
+  "incomplete_at_lock_behaviour",
+  "late_bands",
+  "late_count_window",
+  "lates_to_half_day_count",
+  "missing_punch_behaviour",
+  "missing_shift_behaviour",
+  "multi_punch_mode",
+  "on_duty_requires_punch",
+  "policy_id",
+  "publish_reason",
+  "published_at",
+  "published_by",
+  "punch_rounding",
+  "rounding_minutes",
+  "split_shift_allow_hours_compensation",
+  "split_shift_block_mandatory",
+  "split_shift_missed_block_behaviour",
+  "status",
+  "updated_at",
+  "version",
+  "wfh_requires_punch",
+  "wfh_uses_shift_hours",
+  "work_on_leave_behaviour"
+ ],
+ "attendance.AttendancePolicyVersionUpdate": [],
+ "attendance.AttendanceRangeCalculateInput": [
+  "date_from",
+  "date_to"
+ ],
+ "attendance.AttendanceRangeCalculateQueued": [
+  "date_from",
+  "date_to",
+  "employee_ids",
+  "task_id"
+ ],
+ "attendance.FaceEnrollmentStatusRead": [
+  "open_window",
+  "profile"
+ ],
+ "attendance.FaceEnrollmentWindowRead": [
+  "employee_id",
+  "expires_at",
+  "id",
+  "opened_at",
+  "opened_by_user_id",
+  "status"
+ ],
+ "attendance.FaceProfileRead": [
+  "consent_recorded_at",
+  "employee_id",
+  "enrolled_at",
+  "enrolled_by_user_id",
+  "has_review_photo",
+  "id",
+  "provider",
+  "reference_photo_count",
+  "review_note",
+  "reviewed_at",
+  "reviewed_by_user_id",
+  "revoked_at",
+  "revoked_by_user_id",
+  "status"
+ ],
+ "attendance.FaceProfileRejectInput": [],
+ "attendance.FacePunchRead": [
+  "liveness_score",
+  "punch",
+  "similarity"
+ ],
+ "attendance.LeaveDayProjectionRead": [
+  "attendance_date",
+  "cancelled_at",
+  "cancelled_reason",
+  "company_id",
+  "created_at",
+  "employee_id",
+  "fraction",
+  "half",
+  "id",
+  "is_paid",
+  "leave_application_id",
+  "leave_type_code",
+  "leave_type_id",
+  "source_version",
+  "status",
+  "synced_at",
+  "updated_at",
+  "version"
+ ],
+ "attendance.LeaveProjectionCancelInput": [
+  "reason"
+ ],
+ "attendance.LeaveProjectionSync": [
+  "attendance_date",
+  "employee_id",
+  "fraction",
+  "is_paid",
+  "leave_application_id"
+ ],
+ "attendance.OvertimeActionRead": [
+  "action",
+  "actor_employee_id",
+  "actor_user_id",
+  "comment",
+  "created_at",
+  "id",
+  "stage"
+ ],
+ "attendance.OvertimePolicyCreate": [
+  "name"
+ ],
+ "attendance.OvertimePolicyRateRowInput": [
+  "classification_code",
+  "day_class"
+ ],
+ "attendance.OvertimePolicyRateRowRead": [
+  "classification_code",
+  "day_class",
+  "id",
+  "multiplier_decimal",
+  "sort_order"
+ ],
+ "attendance.OvertimePolicyRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "name",
+  "updated_at",
+  "version"
+ ],
+ "attendance.OvertimePolicyUpdate": [],
+ "attendance.OvertimePolicyVersionCreate": [],
+ "attendance.OvertimePolicyVersionPublishRequest": [],
+ "attendance.OvertimePolicyVersionRead": [
+  "approval_chain",
+  "comp_off_day_length_minutes",
+  "comp_off_expiry_days",
+  "comp_off_instead_of_pay",
+  "company_id",
+  "created_at",
+  "daily_cap_minutes",
+  "effective_from",
+  "effective_to",
+  "eligibility",
+  "id",
+  "min_ot_minutes",
+  "monthly_cap_minutes",
+  "night_ot_mode",
+  "night_window_end",
+  "night_window_start",
+  "policy_id",
+  "publish_reason",
+  "published_at",
+  "published_by",
+  "rate_rows",
+  "requires_post_approval",
+  "requires_pre_approval",
+  "rounding_minutes",
+  "rounding_mode",
+  "status",
+  "updated_at",
+  "version",
+  "weekly_cap_minutes"
+ ],
+ "attendance.OvertimePolicyVersionUpdate": [],
+ "attendance.OvertimeRecordRead": [
+  "actions",
+  "approval_chain",
+  "approval_stage",
+  "attendance_date",
+  "attendance_day_id",
+  "classification_code",
+  "comp_off_expiry_date",
+  "comp_off_minutes",
+  "company_id",
+  "configured_multiplier",
+  "created_at",
+  "day_class",
+  "employee_id",
+  "id",
+  "minutes_approved",
+  "minutes_detected",
+  "overtime_policy_version_id",
+  "rejection_reason",
+  "resolved_approver_manager_id",
+  "reviewed_at",
+  "reviewed_by_user_id",
+  "reviewer_comment",
+  "status",
+  "updated_at",
+  "version"
+ ],
+ "attendance.OvertimeReviewInput": [],
+ "attendance.PolicyResolutionRead": [
+  "config_incomplete",
+  "date",
+  "employee_id",
+  "policy_kind"
+ ],
+ "attendance.PunchCreateOnBehalf": [
+  "direction",
+  "employee_id",
+  "punch_time",
+  "reference"
+ ],
+ "attendance.PunchCreateSelf": [
+  "direction"
+ ],
+ "attendance.PunchRead": [
+  "company_id",
+  "created_at",
+  "direction",
+  "employee_id",
+  "id",
+  "idempotency_key",
+  "punch_time",
+  "recorded_by_user_id",
+  "reference",
+  "source"
+ ],
+ "attendance.RegularizationActionRead": [
+  "action",
+  "actor_employee_id",
+  "actor_user_id",
+  "comment",
+  "created_at",
+  "id",
+  "stage"
+ ],
+ "attendance.RegularizationPolicyAllowedTypeInput": [
+  "regularization_type"
+ ],
+ "attendance.RegularizationPolicyAllowedTypeRead": [
+  "id",
+  "regularization_type",
+  "sort_order"
+ ],
+ "attendance.RegularizationPolicyCreate": [
+  "name"
+ ],
+ "attendance.RegularizationPolicyRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "name",
+  "updated_at",
+  "version"
+ ],
+ "attendance.RegularizationPolicyUpdate": [],
+ "attendance.RegularizationPolicyVersionCreate": [],
+ "attendance.RegularizationPolicyVersionPublishRequest": [],
+ "attendance.RegularizationPolicyVersionRead": [
+  "allow_employee_request",
+  "allow_hr_request",
+  "allow_manager_request",
+  "allowed_types",
+  "approval_chain",
+  "attachment_required",
+  "auto_approve_within_minutes",
+  "blocked_when_locked",
+  "company_id",
+  "created_at",
+  "effective_from",
+  "effective_to",
+  "id",
+  "max_backdated_days",
+  "max_requests_per_month",
+  "policy_id",
+  "publish_reason",
+  "published_at",
+  "published_by",
+  "reason_required",
+  "status",
+  "updated_at",
+  "version"
+ ],
+ "attendance.RegularizationPolicyVersionUpdate": [],
+ "attendance.RegularizationRequestCreate": [
+  "attendance_date",
+  "request_type"
+ ],
+ "attendance.RegularizationRequestRead": [
+  "actions",
+  "applied_at",
+  "approval_chain",
+  "approval_stage",
+  "attachment_reference",
+  "attendance_date",
+  "attendance_day_id",
+  "cancelled_at",
+  "cancelled_by_user_id",
+  "company_id",
+  "created_at",
+  "employee_id",
+  "id",
+  "reason",
+  "regularization_policy_version_id",
+  "rejection_reason",
+  "request_type",
+  "requested_punches",
+  "requested_shift_id",
+  "resolved_approver_manager_id",
+  "reviewed_at",
+  "reviewed_by_user_id",
+  "reviewer_comment",
+  "status",
+  "submitted_at",
+  "submitted_by_user_id",
+  "updated_at",
+  "version"
+ ],
+ "attendance.RegularizationRequestedPunchInput": [
+  "direction",
+  "requested_time"
+ ],
+ "attendance.RegularizationRequestedPunchRead": [
+  "direction",
+  "id",
+  "requested_time",
+  "sort_order"
+ ],
+ "attendance.RegularizationReviewInput": [],
+ "attendance.ShiftRosterBulkCreate": [
+  "employee_id",
+  "entries"
+ ],
+ "attendance.ShiftRosterBulkCreateItem": [
+  "roster_date"
+ ],
+ "attendance.ShiftRosterCreate": [
+  "employee_id",
+  "roster_date"
+ ],
+ "attendance.ShiftRosterRead": [
+  "company_id",
+  "created_at",
+  "employee_id",
+  "id",
+  "is_holiday_working_override",
+  "is_week_off_override",
+  "reason",
+  "roster_date",
+  "shift_id",
+  "status",
+  "updated_at",
+  "version"
+ ],
+ "attendance.ShiftRosterUpdate": [],
+ "attendance.WorkOnLeaveKeepLeaveInput": [
+  "reason"
+ ],
+ "employee.AssignmentCreate": [
+  "change_type",
+  "effective_from"
+ ],
+ "employee.AssignmentRead": [
+  "branch_id",
+  "change_reason",
+  "change_type",
+  "company_id",
+  "cost_centre_id",
+  "created_at",
+  "department_id",
+  "designation_id",
+  "dotted_line_manager_id",
+  "effective_from",
+  "effective_to",
+  "employee_id",
+  "grade_id",
+  "id",
+  "reporting_manager_id",
+  "shift_id",
+  "updated_at",
+  "version",
+  "work_location_type"
+ ],
+ "employee.BankCreate": [
+  "effective_from",
+  "payment_mode"
+ ],
+ "employee.BankRead": [
+  "account_holder_name",
+  "account_number_enc",
+  "bank_name",
+  "branch_name",
+  "company_id",
+  "created_at",
+  "effective_from",
+  "effective_to",
+  "employee_id",
+  "id",
+  "ifsc",
+  "is_primary",
+  "payment_mode",
+  "penny_drop_reference",
+  "updated_at",
+  "verification_status",
+  "version"
+ ],
+ "employee.CompensationCreate": [
+  "annual_ctc_minor",
+  "currency",
+  "effective_from",
+  "revision_reason",
+  "revision_type"
+ ],
+ "employee.CompensationRead": [
+  "annual_ctc_minor",
+  "company_id",
+  "created_at",
+  "currency",
+  "effective_from",
+  "effective_to",
+  "employee_id",
+  "id",
+  "revision_reason",
+  "revision_type",
+  "updated_at",
+  "version"
+ ],
+ "employee.EmployeeConfirmInput": [],
+ "employee.EmployeeCreate": [
+  "first_name"
+ ],
+ "employee.EmployeeDependentCreate": [
+  "full_name",
+  "relationship"
+ ],
+ "employee.EmployeeDependentRead": [
+  "aadhaar_number_enc",
+  "company_id",
+  "created_at",
+  "date_of_birth",
+  "document_id",
+  "employee_id",
+  "full_name",
+  "gender",
+  "gratuity_nominee_share_percentage",
+  "guardian_name",
+  "guardian_relationship",
+  "id",
+  "is_esi_dependent",
+  "is_gratuity_nominee",
+  "is_minor",
+  "is_pf_nominee",
+  "pf_nominee_share_percentage",
+  "relationship",
+  "updated_at",
+  "version"
+ ],
+ "employee.EmployeeEducationCreate": [
+  "qualification"
+ ],
+ "employee.EmployeeEducationRead": [
+  "company_id",
+  "created_at",
+  "document_id",
+  "employee_id",
+  "id",
+  "institution_name",
+  "qualification",
+  "updated_at",
+  "version",
+  "year_of_passing"
+ ],
+ "employee.EmployeeExperienceCreate": [
+  "company_name",
+  "from_date"
+ ],
+ "employee.EmployeeExperienceRead": [
+  "company_id",
+  "company_name",
+  "created_at",
+  "designation",
+  "document_id",
+  "employee_id",
+  "from_date",
+  "had_prior_pf_membership",
+  "id",
+  "last_ctc_minor",
+  "previous_esi_ip_number",
+  "previous_pf_account_number",
+  "previous_uan",
+  "reason_for_leaving",
+  "to_date",
+  "updated_at",
+  "version"
+ ],
+ "employee.EmployeeIdentityRead": [
+  "aadhaar_number",
+  "employee_id",
+  "father_or_husband_name",
+  "pan_number",
+  "uan_number",
+  "version"
+ ],
+ "employee.EmployeeIdentityUpdate": [],
+ "employee.EmployeeRead": [
+  "blood_group",
+  "company_id",
+  "created_at",
+  "custom_fields",
+  "date_of_birth",
+  "display_name",
+  "emergency_contact_name",
+  "emergency_contact_phone",
+  "emergency_contact_relationship",
+  "employee_code",
+  "father_or_husband_name",
+  "first_name",
+  "gender",
+  "id",
+  "is_active",
+  "last_name",
+  "marital_status",
+  "middle_name",
+  "nationality",
+  "permanent_address_line1",
+  "permanent_address_line2",
+  "permanent_city",
+  "permanent_country_code",
+  "permanent_pincode",
+  "permanent_same_as_present",
+  "permanent_state_code",
+  "personal_email",
+  "personal_mobile",
+  "photo_url",
+  "present_address_line1",
+  "present_address_line2",
+  "present_city",
+  "present_country_code",
+  "present_pincode",
+  "present_state_code",
+  "status",
+  "updated_at",
+  "version"
+ ],
+ "employee.EmployeeUpdate": [],
+ "employee.EmploymentCreate": [
+  "joining_date",
+  "legal_entity_id"
+ ],
+ "employee.EmploymentRead": [
+  "company_id",
+  "created_at",
+  "employee_id",
+  "id",
+  "joining_date",
+  "last_working_day",
+  "legal_entity_id",
+  "pay_basis",
+  "previous_employment_id",
+  "probation_end_date",
+  "status",
+  "updated_at",
+  "version"
+ ],
+ "employee.EmploymentTerminate": [
+  "last_working_day"
+ ],
+ "employee.EmploymentUpdate": [],
+ "employee.StatutoryCreate": [
+  "effective_from",
+  "is_esi_applicable",
+  "is_lwf_applicable",
+  "is_pf_applicable",
+  "revision_reason",
+  "tax_regime"
+ ],
+ "employee.StatutoryRead": [
+  "company_id",
+  "created_at",
+  "effective_from",
+  "effective_to",
+  "employee_id",
+  "esi_ip_number",
+  "id",
+  "is_director",
+  "is_esi_applicable",
+  "is_international_worker",
+  "is_lwf_applicable",
+  "is_pf_applicable",
+  "pf_number",
+  "pf_wage_ceiling_opt_out",
+  "pt_state_code",
+  "revision_reason",
+  "tax_regime",
+  "updated_at",
+  "version",
+  "vpf_amount",
+  "vpf_percentage"
+ ],
+ "employee_import.EmployeeImportBatchRead": [
+  "company_id",
+  "completed_at",
+  "created_at",
+  "error_count",
+  "id",
+  "original_filename",
+  "processed_rows",
+  "started_at",
+  "status",
+  "success_count",
+  "total_rows",
+  "updated_at"
+ ],
+ "employee_import.EmployeeImportRow": [
+  "annual_ctc_minor",
+  "branch",
+  "currency",
+  "department",
+  "designation",
+  "first_name",
+  "joining_date",
+  "legal_entity"
+ ],
+ "employee_import.EmployeeImportRowErrorRead": [
+  "error_code",
+  "error_message",
+  "id",
+  "raw_row",
+  "row_number"
+ ],
+ "identity.CompanyDetail": [
+  "id",
+  "name",
+  "status"
+ ],
+ "identity.CompanySummary": [
+  "id",
+  "is_primary",
+  "name"
+ ],
+ "identity.ForgotPasswordRequest": [
+  "email"
+ ],
+ "identity.LoginRequest": [
+  "email",
+  "password"
+ ],
+ "identity.MeResponseData": [
+  "user"
+ ],
+ "identity.PublicTokenResponseData": [
+  "access_token",
+  "company_id",
+  "expires_in_minutes"
+ ],
+ "identity.RefreshRequest": [],
+ "identity.ResendVerificationRequest": [
+  "email"
+ ],
+ "identity.ResetPasswordRequest": [
+  "password",
+  "token"
+ ],
+ "identity.TokenResponseData": [
+  "access_token",
+  "company_id",
+  "expires_in_minutes",
+  "refresh_token"
+ ],
+ "identity.UserProfile": [
+  "company_id",
+  "company_timezone",
+  "email",
+  "employee_id",
+  "id",
+  "permissions"
+ ],
+ "identity.VerifyEmailRequest": [
+  "token"
+ ],
+ "leave.LeaveApplicationActionRead": [
+  "action",
+  "actor_employee_id",
+  "actor_user_id",
+  "comment",
+  "created_at",
+  "id",
+  "stage"
+ ],
+ "leave.LeaveApplicationCancelInput": [],
+ "leave.LeaveApplicationCreate": [
+  "end_date",
+  "leave_type_id",
+  "start_date"
+ ],
+ "leave.LeaveApplicationDayRead": [
+  "calendar_date",
+  "fraction",
+  "half",
+  "id",
+  "is_lop",
+  "is_sandwich_generated",
+  "leave_day_projection_id"
+ ],
+ "leave.LeaveApplicationRead": [
+  "actions",
+  "approval_chain",
+  "approval_stage",
+  "attachment_reference",
+  "cancellation_reason",
+  "cancelled_at",
+  "cancelled_by_user_id",
+  "company_id",
+  "created_at",
+  "days",
+  "employee_id",
+  "end_date",
+  "expected_delivery_date",
+  "id",
+  "leave_policy_version_id",
+  "leave_type_id",
+  "lop_days",
+  "reason",
+  "rejection_reason",
+  "resolved_approver_manager_id",
+  "resolved_department_head_id",
+  "reviewed_at",
+  "reviewed_by_user_id",
+  "reviewer_comment",
+  "start_date",
+  "status",
+  "submitted_at",
+  "submitted_by_user_id",
+  "total_days",
+  "updated_at",
+  "version"
+ ],
+ "leave.LeaveApplicationReviewInput": [],
+ "leave.LeaveBalanceRead": [
+  "balance",
+  "employee_id",
+  "leave_type_code",
+  "leave_type_id",
+  "leave_type_name",
+  "reserved_balance"
+ ],
+ "leave.LeaveCombinationRuleCreate": [
+  "allowed",
+  "leave_type_id_a",
+  "leave_type_id_b"
+ ],
+ "leave.LeaveCombinationRuleRead": [
+  "allowed",
+  "company_id",
+  "created_at",
+  "created_by_user_id",
+  "id",
+  "leave_type_id_a",
+  "leave_type_id_b",
+  "reason",
+  "updated_at"
+ ],
+ "leave.LeaveLedgerAdjustmentCreate": [
+  "amount",
+  "effective_date",
+  "employee_id",
+  "leave_type_id",
+  "reason"
+ ],
+ "leave.LeaveLedgerEncashmentCreate": [
+  "days",
+  "effective_date",
+  "employee_id",
+  "leave_type_id",
+  "reason"
+ ],
+ "leave.LeaveLedgerEntryRead": [
+  "amount",
+  "company_id",
+  "created_at",
+  "created_by_user_id",
+  "effective_date",
+  "employee_id",
+  "entry_type",
+  "id",
+  "leave_type_id",
+  "reason",
+  "reference_id"
+ ],
+ "leave.LeavePolicyCreate": [
+  "leave_type_id",
+  "name"
+ ],
+ "leave.LeavePolicyRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "leave_type_id",
+  "name",
+  "updated_at",
+  "version"
+ ],
+ "leave.LeavePolicyUpdate": [],
+ "leave.LeavePolicyVersionCreate": [],
+ "leave.LeavePolicyVersionPublishRequest": [],
+ "leave.LeavePolicyVersionRead": [
+  "accrual_frequency",
+  "accrual_rate_per_cycle",
+  "accrue_during_probation",
+  "allow_employee_request",
+  "allow_hr_request_on_behalf",
+  "allow_manager_request_on_behalf",
+  "allow_negative_balance",
+  "allowed_during_probation",
+  "approval_chain",
+  "attachment_required",
+  "company_id",
+  "created_at",
+  "effective_from",
+  "effective_to",
+  "encashment_allowed",
+  "encashment_calculation_basis",
+  "encashment_frequency",
+  "half_day_allowed",
+  "id",
+  "max_backdated_days",
+  "max_carry_forward_days",
+  "max_encashment_days",
+  "max_requests_per_month",
+  "min_balance_after_encashment",
+  "negative_balance_floor",
+  "policy_id",
+  "post_delivery_days",
+  "pre_delivery_days",
+  "publish_reason",
+  "published_at",
+  "published_by",
+  "reason_required",
+  "reserve_balance_on_submission",
+  "sandwich_rule_enabled",
+  "status",
+  "updated_at",
+  "version",
+  "year_end_action"
+ ],
+ "leave.LeavePolicyVersionUpdate": [],
+ "leave.LeaveTypeCreate": [
+  "code",
+  "name"
+ ],
+ "leave.LeaveTypeRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "is_comp_off",
+  "is_paid_default",
+  "name",
+  "requires_balance",
+  "statutory_category",
+  "updated_at",
+  "version"
+ ],
+ "leave.LeaveTypeUpdate": [],
+ "leave.LeaveYearSettingRead": [
+  "company_id",
+  "created_at",
+  "id",
+  "leave_year_type",
+  "start_day",
+  "start_month",
+  "updated_at",
+  "version"
+ ],
+ "leave.LeaveYearSettingUpsert": [
+  "leave_year_type"
+ ],
+ "leave.StatutoryLeaveMinimumCreate": [
+  "leave_category",
+  "min_days_per_year"
+ ],
+ "leave.StatutoryLeaveMinimumRead": [
+  "company_id",
+  "created_at",
+  "created_by_user_id",
+  "establishment_type",
+  "id",
+  "leave_category",
+  "min_days_per_year",
+  "note",
+  "state_code",
+  "updated_at"
+ ],
+ "onboarding.AddressInfoSection": [],
+ "onboarding.BankInfoSection": [
+  "payment_mode"
+ ],
+ "onboarding.CompensationInfoSection": [
+  "annual_ctc_minor"
+ ],
+ "onboarding.EducationInfoSection": [],
+ "onboarding.EducationItem": [
+  "qualification"
+ ],
+ "onboarding.EmergencyContactSection": [
+  "contact_name",
+  "phone"
+ ],
+ "onboarding.NomineeInfoSection": [],
+ "onboarding.NomineeItem": [
+  "full_name",
+  "relationship"
+ ],
+ "onboarding.OnboardingCaseCreate": [
+  "candidate_first_name",
+  "personal_email",
+  "proposed_joining_date"
+ ],
+ "onboarding.OnboardingCaseDetailRead": [
+  "address_info",
+  "bank_info",
+  "branch_id",
+  "candidate_first_name",
+  "candidate_last_name",
+  "company_id",
+  "compensation_info",
+  "created_at",
+  "created_by_user_id",
+  "department_id",
+  "designation_id",
+  "education_info",
+  "emergency_contact",
+  "employee_id",
+  "id",
+  "legal_entity_id",
+  "nominee_info",
+  "personal_email",
+  "personal_info",
+  "personal_mobile",
+  "previous_employment_info",
+  "proposed_joining_date",
+  "section_reviews",
+  "status",
+  "statutory_info",
+  "updated_at",
+  "version"
+ ],
+ "onboarding.OnboardingCaseRead": [
+  "branch_id",
+  "candidate_first_name",
+  "candidate_last_name",
+  "company_id",
+  "created_at",
+  "created_by_user_id",
+  "department_id",
+  "designation_id",
+  "employee_id",
+  "id",
+  "legal_entity_id",
+  "personal_email",
+  "personal_mobile",
+  "proposed_joining_date",
+  "status",
+  "updated_at",
+  "version"
+ ],
+ "onboarding.OnboardingDocumentRead": [
+  "content_type",
+  "document_type",
+  "id",
+  "original_filename",
+  "rejection_reason",
+  "size_bytes",
+  "status",
+  "uploaded_at"
+ ],
+ "onboarding.OnboardingDocumentReviewRequest": [
+  "status"
+ ],
+ "onboarding.OnboardingDocumentWithUrlRead": [
+  "content_type",
+  "document_type",
+  "download_url",
+  "id",
+  "original_filename",
+  "rejection_reason",
+  "size_bytes",
+  "status",
+  "uploaded_at"
+ ],
+ "onboarding.OnboardingInviteRead": [
+  "case",
+  "email_sent",
+  "invite_url"
+ ],
+ "onboarding.OnboardingSectionReviewRead": [
+  "rejection_reason",
+  "section",
+  "status"
+ ],
+ "onboarding.OnboardingSectionReviewRequest": [
+  "status"
+ ],
+ "onboarding.PersonalInfoSection": [
+  "first_name"
+ ],
+ "onboarding.PreviousEmploymentItem": [
+  "company_name",
+  "from_date"
+ ],
+ "onboarding.PreviousEmploymentSection": [],
+ "onboarding.PublicOnboardingCaseRead": [
+  "address_info",
+  "bank_info",
+  "candidate_first_name",
+  "candidate_last_name",
+  "compensation_info",
+  "education_info",
+  "emergency_contact",
+  "nominee_info",
+  "personal_info",
+  "previous_employment_info",
+  "proposed_joining_date",
+  "section_reviews",
+  "status",
+  "statutory_info",
+  "writable"
+ ],
+ "onboarding.StatutoryInfoSection": [
+  "is_esi_applicable",
+  "is_lwf_applicable",
+  "is_pf_applicable",
+  "tax_regime"
+ ],
+ "organisation.AddressSchema": [],
+ "organisation.BranchCreate": [
+  "legal_entity_id",
+  "name"
+ ],
+ "organisation.BranchRead": [
+  "address_line1",
+  "address_line2",
+  "city",
+  "code",
+  "company_id",
+  "created_at",
+  "geofence_radius_m",
+  "id",
+  "is_active",
+  "latitude",
+  "legal_entity_id",
+  "longitude",
+  "name",
+  "pincode",
+  "state_code",
+  "timezone",
+  "updated_at",
+  "version"
+ ],
+ "organisation.BranchUpdate": [],
+ "organisation.BrandingSchema": [],
+ "organisation.BusinessHoursSchema": [
+  "end_time",
+  "start_time"
+ ],
+ "organisation.CalendarExceptionCreate": [
+  "exception_date",
+  "exception_type"
+ ],
+ "organisation.CalendarExceptionRead": [
+  "company_id",
+  "created_at",
+  "exception_date",
+  "exception_type",
+  "id",
+  "is_active",
+  "is_paid",
+  "name",
+  "reason",
+  "updated_at",
+  "version",
+  "work_calendar_id"
+ ],
+ "organisation.CalendarExceptionUpdate": [],
+ "organisation.CalendarResolutionRead": [
+  "config_incomplete",
+  "date",
+  "employee_id"
+ ],
+ "organisation.CompanyDashboardSummary": [
+  "branch_count",
+  "department_count",
+  "employee_count",
+  "setup_progress",
+  "subscription"
+ ],
+ "organisation.CompanyProfileRead": [
+  "address",
+  "branding",
+  "business_hours",
+  "company_size",
+  "contact",
+  "country_code",
+  "currency",
+  "fiscal_year",
+  "id",
+  "industry_code",
+  "legal_name",
+  "locale",
+  "name",
+  "onboarded_at",
+  "registration_number",
+  "status",
+  "subdomain",
+  "timezone",
+  "trial_ends_at",
+  "version",
+  "working_days"
+ ],
+ "organisation.CompanyProfileUpdate": [],
+ "organisation.CompanyRegistrationRequest": [
+  "admin_email",
+  "admin_first_name",
+  "admin_last_name",
+  "admin_password",
+  "name"
+ ],
+ "organisation.CompanySetupProgressSummary": [
+  "completed_at",
+  "current_step",
+  "started_at",
+  "status",
+  "steps"
+ ],
+ "organisation.ContactInfoSchema": [],
+ "organisation.DashboardSetupProgress": [
+  "status",
+  "steps_completed",
+  "steps_total"
+ ],
+ "organisation.DashboardSubscription": [
+  "plan_code",
+  "status",
+  "trial_ends_at"
+ ],
+ "organisation.DayTypeRead": [
+  "date",
+  "day_type"
+ ],
+ "organisation.DepartmentCreate": [
+  "name"
+ ],
+ "organisation.DepartmentRead": [
+  "branch_id",
+  "code",
+  "company_id",
+  "created_at",
+  "head_employee_id",
+  "id",
+  "is_active",
+  "name",
+  "parent_id",
+  "updated_at",
+  "version"
+ ],
+ "organisation.DepartmentUpdate": [],
+ "organisation.DesignationCreate": [
+  "title"
+ ],
+ "organisation.DesignationRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "department_id",
+  "grade_id",
+  "id",
+  "is_active",
+  "title",
+  "updated_at",
+  "version"
+ ],
+ "organisation.DesignationUpdate": [],
+ "organisation.FeatureFlagView": [
+  "code",
+  "is_enabled",
+  "source"
+ ],
+ "organisation.FiscalYearSchema": [
+  "start_month"
+ ],
+ "organisation.GradeCreate": [
+  "code",
+  "name"
+ ],
+ "organisation.GradeRead": [
+  "approval_limit",
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "level",
+  "max_ctc",
+  "min_ctc",
+  "name",
+  "notice_period_days",
+  "probation_days",
+  "updated_at",
+  "version"
+ ],
+ "organisation.GradeUpdate": [],
+ "organisation.HolidayCalendarCreate": [
+  "name"
+ ],
+ "organisation.HolidayCalendarRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "kind",
+  "name",
+  "state_code",
+  "updated_at",
+  "valid_from",
+  "valid_to",
+  "version"
+ ],
+ "organisation.HolidayCalendarUpdate": [],
+ "organisation.HolidayCreate": [
+  "date",
+  "name"
+ ],
+ "organisation.HolidayRead": [
+  "calendar_id",
+  "company_id",
+  "created_at",
+  "date",
+  "holiday_type",
+  "id",
+  "is_active",
+  "is_optional",
+  "is_paid",
+  "is_working",
+  "name",
+  "region_note",
+  "replaced_holiday_id",
+  "updated_at",
+  "version"
+ ],
+ "organisation.HolidayUpdate": [],
+ "organisation.LegalEntityCreate": [
+  "name"
+ ],
+ "organisation.LegalEntityRead": [
+  "cin",
+  "company_id",
+  "created_at",
+  "esi_code",
+  "gstin",
+  "id",
+  "is_active",
+  "lwf_reg",
+  "name",
+  "pan",
+  "pf_code",
+  "registered_address",
+  "signatory_designation",
+  "signatory_name",
+  "signature_image_url",
+  "tan",
+  "updated_at",
+  "version"
+ ],
+ "organisation.LegalEntityUpdate": [],
+ "organisation.LocaleSchema": [
+  "date_format",
+  "language_code"
+ ],
+ "organisation.PlanSummary": [
+  "code",
+  "name"
+ ],
+ "organisation.PolicyAssignmentCreate": [
+  "effective_from",
+  "policy_id",
+  "policy_kind",
+  "scope_type"
+ ],
+ "organisation.PolicyAssignmentRead": [
+  "company_id",
+  "created_at",
+  "effective_from",
+  "effective_to",
+  "id",
+  "is_active",
+  "leave_type_id",
+  "policy_id",
+  "policy_kind",
+  "priority",
+  "reason",
+  "scope_id",
+  "scope_type",
+  "updated_at",
+  "version"
+ ],
+ "organisation.RegistrationConfigRead": [
+  "allowed_company_timezones"
+ ],
+ "organisation.SetupStepSummary": [
+  "code",
+  "is_complete",
+  "label"
+ ],
+ "organisation.ShiftBreakCreate": [
+  "break_kind",
+  "name"
+ ],
+ "organisation.ShiftBreakRead": [
+  "allows_split",
+  "break_kind",
+  "crosses_midnight",
+  "end_time",
+  "id",
+  "is_mandatory",
+  "is_paid",
+  "max_minutes",
+  "min_minutes",
+  "name",
+  "scheduled_minutes",
+  "shift_version_id",
+  "sort_order",
+  "start_time",
+  "window_end",
+  "window_start"
+ ],
+ "organisation.ShiftCreate": [
+  "name"
+ ],
+ "organisation.ShiftDutyBlockCreate": [
+  "end_time",
+  "sequence",
+  "start_time"
+ ],
+ "organisation.ShiftDutyBlockRead": [
+  "crosses_midnight",
+  "end_time",
+  "id",
+  "sequence",
+  "shift_version_id",
+  "start_time"
+ ],
+ "organisation.ShiftRead": [
+  "break_minutes_paid",
+  "break_minutes_unpaid",
+  "code",
+  "company_id",
+  "created_at",
+  "end_time",
+  "grace_in_minutes",
+  "grace_out_minutes",
+  "half_day_threshold_hours",
+  "id",
+  "is_active",
+  "is_cross_midnight",
+  "is_night_shift",
+  "is_ot_eligible",
+  "min_hours_full_day",
+  "name",
+  "start_time",
+  "updated_at",
+  "version"
+ ],
+ "organisation.ShiftUpdate": [],
+ "organisation.ShiftVersionCreate": [],
+ "organisation.ShiftVersionPublishRequest": [],
+ "organisation.ShiftVersionRead": [
+  "breaks",
+  "company_id",
+  "core_end",
+  "core_start",
+  "created_at",
+  "duty_blocks",
+  "effective_from",
+  "effective_to",
+  "end_time",
+  "id",
+  "is_cross_midnight",
+  "is_night_shift",
+  "is_ot_eligible",
+  "max_scheduled_minutes",
+  "min_scheduled_minutes",
+  "operates_on_holiday",
+  "operates_on_weekly_off",
+  "publish_reason",
+  "published_at",
+  "published_by",
+  "required_minutes",
+  "scheduled_minutes",
+  "shift_id",
+  "shift_type",
+  "start_time",
+  "status",
+  "timezone",
+  "updated_at",
+  "version",
+  "weekly_off_pattern_id",
+  "window_end",
+  "window_start"
+ ],
+ "organisation.ShiftVersionUpdate": [],
+ "organisation.SubscriptionSummary": [
+  "current_period_end",
+  "current_period_start",
+  "features",
+  "plan",
+  "seat_limit",
+  "status",
+  "trial_ends_at"
+ ],
+ "organisation.ThemeSchema": [],
+ "organisation.WeeklyOffPatternCreate": [
+  "name",
+  "pattern_kind"
+ ],
+ "organisation.WeeklyOffPatternRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "id",
+  "is_active",
+  "name",
+  "pattern_kind",
+  "rules",
+  "updated_at",
+  "version"
+ ],
+ "organisation.WeeklyOffPatternUpdate": [],
+ "organisation.WeeklyOffRuleInput": [
+  "weekday"
+ ],
+ "organisation.WeeklyOffRuleRead": [
+  "cycle_start_date",
+  "id",
+  "nth_in_month",
+  "off_fraction",
+  "week_parity",
+  "weekday"
+ ],
+ "organisation.WorkCalendarCreate": [
+  "name"
+ ],
+ "organisation.WorkCalendarRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "description",
+  "holiday_calendar_ids",
+  "id",
+  "is_active",
+  "name",
+  "restricted_holidays_are_off_by_default",
+  "updated_at",
+  "version",
+  "weekly_off_pattern_id"
+ ],
+ "organisation.WorkCalendarUpdate": [],
+ "organisation.WorkingDaySchema": [
+  "day",
+  "is_working"
+ ],
+ "payroll.EmployeeSalaryBreakupRead": [
+  "as_of",
+  "breakup",
+  "daily_rate_minor",
+  "employee_id",
+  "esi_applicable",
+  "pay_basis",
+  "pf_applicable",
+  "salary_structure_id",
+  "salary_structure_version_id"
+ ],
+ "payroll.EmployeeSalaryBulkAssign": [
+  "effective_from",
+  "salary_structure_id"
+ ],
+ "payroll.EmployeeSalaryBulkResult": [
+  "assigned",
+  "skipped"
+ ],
+ "payroll.EmployeeSalaryBulkSkip": [
+  "employee_id",
+  "reason"
+ ],
+ "payroll.EmployeeSalaryCreate": [
+  "effective_from",
+  "reason"
+ ],
+ "payroll.EmployeeSalaryRead": [
+  "company_id",
+  "created_at",
+  "daily_rate_minor",
+  "effective_from",
+  "effective_to",
+  "employee_id",
+  "id",
+  "reason",
+  "salary_structure_id",
+  "updated_at",
+  "version"
+ ],
+ "payroll.EsiParameters": [
+  "employee_exempt_daily_wage_minor",
+  "employee_percent",
+  "employer_percent",
+  "wage_ceiling_minor"
+ ],
+ "payroll.LwfParameters": [
+  "months",
+  "slabs"
+ ],
+ "payroll.LwfSlab": [
+  "employee_minor",
+  "employer_minor",
+  "min_minor"
+ ],
+ "payroll.PayAdjustmentCreate": [
+  "employee_id",
+  "paid_days_delta",
+  "reason",
+  "source_pay_run_id"
+ ],
+ "payroll.PayAdjustmentRead": [
+  "applied_pay_run_id",
+  "created_at",
+  "created_by_user_id",
+  "employee_id",
+  "id",
+  "legal_entity_id",
+  "month",
+  "paid_days_delta",
+  "reason",
+  "source_pay_run_id",
+  "status",
+  "version"
+ ],
+ "payroll.PayRunCreate": [
+  "legal_entity_id",
+  "month"
+ ],
+ "payroll.PayRunEmployeeDetailRead": [
+  "deductions_minor",
+  "employee_code",
+  "employee_id",
+  "employee_name",
+  "employer_contributions_minor",
+  "gross_minor",
+  "has_error",
+  "id",
+  "is_computed",
+  "issues",
+  "lines",
+  "lop_days",
+  "net_minor",
+  "paid_days",
+  "pay_basis",
+  "payable_days",
+  "previous_net_minor",
+  "rounding_minor",
+  "snapshot",
+  "variance_acknowledged_at",
+  "variance_acknowledged_by_user_id",
+  "variance_flagged",
+  "variance_percent",
+  "variance_reason"
+ ],
+ "payroll.PayRunEmployeeRead": [
+  "deductions_minor",
+  "employee_code",
+  "employee_id",
+  "employee_name",
+  "employer_contributions_minor",
+  "gross_minor",
+  "has_error",
+  "id",
+  "is_computed",
+  "issues",
+  "lop_days",
+  "net_minor",
+  "paid_days",
+  "pay_basis",
+  "payable_days",
+  "previous_net_minor",
+  "rounding_minor",
+  "variance_acknowledged_at",
+  "variance_acknowledged_by_user_id",
+  "variance_flagged",
+  "variance_percent",
+  "variance_reason"
+ ],
+ "payroll.PayRunIssueRead": [
+  "code",
+  "message",
+  "severity"
+ ],
+ "payroll.PayRunLineRead": [
+  "amount_minor",
+  "component_code",
+  "component_name",
+  "display_order",
+  "full_monthly_minor",
+  "line_type",
+  "trace"
+ ],
+ "payroll.PayRunRead": [
+  "approved_at",
+  "approved_by_user_id",
+  "attendance_period_id",
+  "company_id",
+  "computed_at",
+  "computed_by_user_id",
+  "created_at",
+  "created_by_user_id",
+  "days_in_month",
+  "deductions_minor",
+  "employee_count",
+  "employer_contributions_minor",
+  "error_count",
+  "finalised_at",
+  "finalised_by_user_id",
+  "gross_minor",
+  "id",
+  "inputs_locked_at",
+  "inputs_locked_by_user_id",
+  "last_rollback_reason",
+  "legal_entity_id",
+  "month",
+  "net_minor",
+  "paid_at",
+  "paid_by_user_id",
+  "pay_date",
+  "period_end",
+  "period_start",
+  "previous_pay_run_id",
+  "status",
+  "updated_at",
+  "variance_flag_count",
+  "variance_open_count",
+  "variance_threshold_percent",
+  "version",
+  "warning_count"
+ ],
+ "payroll.PayRunRollback": [
+  "reason",
+  "to_status"
+ ],
+ "payroll.PayRunUpdate": [
+  "pay_date"
+ ],
+ "payroll.PayRunVarianceAcknowledge": [
+  "reason"
+ ],
+ "payroll.PayrollSettingRead": [
+  "company_id",
+  "variance_threshold_percent",
+  "version"
+ ],
+ "payroll.PayrollSettingUpdate": [
+  "variance_threshold_percent"
+ ],
+ "payroll.PayslipLeaveBalanceRead": [
+  "balance",
+  "code",
+  "name"
+ ],
+ "payroll.PayslipLineRead": [
+  "amount_minor",
+  "component_code",
+  "component_name",
+  "full_monthly_minor"
+ ],
+ "payroll.PayslipRead": [
+  "account_last4",
+  "bank_name",
+  "company_name",
+  "date_of_joining",
+  "days_in_month",
+  "deductions",
+  "deductions_minor",
+  "department",
+  "designation",
+  "earnings",
+  "employee_code",
+  "employee_id",
+  "employee_name",
+  "employer_contributions",
+  "esi_ip_number",
+  "gross_minor",
+  "is_final",
+  "leave_balances",
+  "legal_entity_address",
+  "legal_entity_name",
+  "legal_entity_pan",
+  "legal_entity_tan",
+  "lop_days",
+  "month",
+  "net_in_words",
+  "net_minor",
+  "paid_days",
+  "pan_masked",
+  "pay_date",
+  "pay_run_id",
+  "payment_mode",
+  "period_end",
+  "period_start",
+  "status",
+  "uan_number"
+ ],
+ "payroll.PayslipSummaryRead": [
+  "legal_entity_id",
+  "month",
+  "net_minor",
+  "pay_date",
+  "pay_run_id",
+  "status"
+ ],
+ "payroll.PfParameters": [
+  "admin_percent",
+  "edli_percent",
+  "employee_percent",
+  "employer_percent",
+  "eps_age_limit",
+  "eps_percent",
+  "wage_ceiling_minor"
+ ],
+ "payroll.PtParameters": [],
+ "payroll.PtSlab": [
+  "amount_minor",
+  "min_minor"
+ ],
+ "payroll.SalaryBreakupLineRead": [
+  "annual_minor",
+  "basis",
+  "component_code",
+  "component_name",
+  "component_type",
+  "monthly_minor"
+ ],
+ "payroll.SalaryBreakupPreviewInput": [
+  "annual_ctc_minor"
+ ],
+ "payroll.SalaryBreakupRead": [
+  "annual_ctc_minor",
+  "employer_contributions_monthly_minor",
+  "gross_monthly_minor",
+  "lines",
+  "monthly_ctc_minor"
+ ],
+ "payroll.SalaryComponentCreate": [
+  "code",
+  "component_type",
+  "name"
+ ],
+ "payroll.SalaryComponentRead": [
+  "code",
+  "company_id",
+  "component_type",
+  "created_at",
+  "display_order",
+  "id",
+  "is_active",
+  "is_esi_wage",
+  "is_pf_wage",
+  "is_prorated",
+  "is_system",
+  "is_taxable",
+  "name",
+  "show_on_payslip",
+  "updated_at",
+  "version"
+ ],
+ "payroll.SalaryComponentUpdate": [],
+ "payroll.SalaryStructureCreate": [
+  "code",
+  "name"
+ ],
+ "payroll.SalaryStructureLineInput": [
+  "calculation_type",
+  "salary_component_id"
+ ],
+ "payroll.SalaryStructureLineRead": [
+  "amount_monthly_minor",
+  "applies_when",
+  "base_salary_component_id",
+  "calculation_type",
+  "component_code",
+  "component_name",
+  "component_type",
+  "display_order",
+  "id",
+  "max_monthly_minor",
+  "percentage",
+  "salary_component_id"
+ ],
+ "payroll.SalaryStructureRead": [
+  "code",
+  "company_id",
+  "created_at",
+  "description",
+  "id",
+  "is_active",
+  "name",
+  "updated_at",
+  "version",
+  "versions"
+ ],
+ "payroll.SalaryStructureUpdate": [],
+ "payroll.SalaryStructureVersionCreate": [],
+ "payroll.SalaryStructureVersionLinesUpdate": [
+  "lines"
+ ],
+ "payroll.SalaryStructureVersionPublish": [
+  "effective_from"
+ ],
+ "payroll.SalaryStructureVersionRead": [
+  "effective_from",
+  "effective_to",
+  "id",
+  "lines",
+  "published_at",
+  "salary_structure_id",
+  "status",
+  "version",
+  "version_number"
+ ],
+ "payroll.StatutoryRateCreate": [
+  "effective_from",
+  "parameters",
+  "scheme"
+ ],
+ "payroll.StatutoryRateRead": [
+  "company_id",
+  "created_at",
+  "effective_from",
+  "effective_to",
+  "id",
+  "is_seeded",
+  "notes",
+  "parameters",
+  "scheme",
+  "state_code",
+  "updated_at",
+  "verified",
+  "verified_at",
+  "verified_by_user_id",
+  "version"
+ ],
+ "payroll.StatutoryRateUpdate": [],
+ "payroll.TdsParameters": [
+  "cess_percent",
+  "rebate_taxable_income_limit_minor",
+  "slabs",
+  "standard_deduction_minor",
+  "surcharge_warning_income_minor"
+ ],
+ "payroll.TdsSlab": [
+  "min_minor",
+  "percent"
+ ]
+}

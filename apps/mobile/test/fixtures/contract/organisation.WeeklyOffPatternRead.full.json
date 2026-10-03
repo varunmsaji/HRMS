@@ -1,0 +1,21 @@
+{
+ "code": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "name": "x",
+ "pattern_kind": "x",
+ "rules": [
+  {
+   "cycle_start_date": "2026-01-15",
+   "id": "00000000-0000-0000-0000-000000001234",
+   "nth_in_month": 1,
+   "off_fraction": "1.50",
+   "week_parity": "x",
+   "weekday": 1
+  }
+ ],
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

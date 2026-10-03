@@ -1,0 +1,23 @@
+{
+ "annual_ctc_minor": 1,
+ "blood_group": null,
+ "branch": "x",
+ "currency": "x",
+ "date_of_birth": null,
+ "department": "x",
+ "designation": "x",
+ "employee_code": null,
+ "first_name": "x",
+ "gender": null,
+ "grade": null,
+ "joining_date": "2026-01-15",
+ "last_name": null,
+ "legal_entity": "x",
+ "marital_status": null,
+ "middle_name": null,
+ "nationality": null,
+ "personal_email": null,
+ "personal_mobile": null,
+ "reporting_manager": null,
+ "work_location_type": "OFFICE"
+}

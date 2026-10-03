@@ -1,0 +1,174 @@
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+import 'app_colors.dart';
+
+/// Corner radii from the Stitch "Staff Spectrum HRMS" design system (`ROUND_FOUR`
+/// token set: `sm` 2px … `xl` 12px), applied to buttons/inputs/cards below.
+class AppRadii {
+  const AppRadii._();
+
+  static const sm = 2.0;
+  static const md = 6.0;
+  static const lg = 8.0;
+  static const xl = 12.0;
+  static const full = 999.0;
+}
+
+/// Builds the light/dark [ThemeData] from the Stitch "technobeala" design
+/// system tokens — the same palette as `apps/web/src/app/globals.css` §9/10,
+/// so the mobile app reads as the same product (see `AppStatusColors`'s own
+/// doc comment). `colorScheme` values below are copied from the Stitch
+/// project's resolved `namedColors`, not re-derived, so a future design pass
+/// updates both here and on the Stitch project together rather than drifting.
+class AppTheme {
+  const AppTheme._();
+
+  static const _lightScheme = ColorScheme(
+    brightness: Brightness.light,
+    primary: Color(0xFF004AC6),
+    onPrimary: Color(0xFFFFFFFF),
+    primaryContainer: Color(0xFF2563EB),
+    onPrimaryContainer: Color(0xFFEEEFFF),
+    secondary: Color(0xFF505F76),
+    onSecondary: Color(0xFFFFFFFF),
+    secondaryContainer: Color(0xFFD0E1FB),
+    onSecondaryContainer: Color(0xFF54647A),
+    tertiary: Color(0xFF0EA5E9),
+    onTertiary: Color(0xFFFFFFFF),
+    tertiaryContainer: Color(0xFFBC4800),
+    onTertiaryContainer: Color(0xFFFFEDE6),
+    error: Color(0xFFEF4444),
+    onError: Color(0xFFFFFFFF),
+    errorContainer: Color(0xFFFFDAD6),
+    onErrorContainer: Color(0xFF93000A),
+    surface: Color(0xFFFAF8FF),
+    onSurface: Color(0xFF191B23),
+    onSurfaceVariant: Color(0xFF434655),
+    outline: Color(0xFFCBD5E1),
+    outlineVariant: Color(0xFFC3C6D7),
+    inverseSurface: Color(0xFF2E3039),
+    onInverseSurface: Color(0xFFF0F0FB),
+    inversePrimary: Color(0xFFB4C5FF),
+    surfaceTint: Color(0xFF0053DB),
+    surfaceContainerLowest: Color(0xFFFFFFFF),
+    surfaceContainerLow: Color(0xFFF3F3FE),
+    surfaceContainer: Color(0xFFEDEDF9),
+    surfaceContainerHigh: Color(0xFFE7E7F3),
+    surfaceContainerHighest: Color(0xFFE1E2ED),
+  );
+
+  static const _darkScheme = ColorScheme(
+    brightness: Brightness.dark,
+    primary: Color(0xFFB4C5FF),
+    onPrimary: Color(0xFF00174B),
+    primaryContainer: Color(0xFF003EA8),
+    onPrimaryContainer: Color(0xFFDBE1FF),
+    secondary: Color(0xFFB7C8E1),
+    onSecondary: Color(0xFF0B1C30),
+    secondaryContainer: Color(0xFF38485D),
+    onSecondaryContainer: Color(0xFFD3E4FE),
+    tertiary: Color(0xFFFFB596),
+    onTertiary: Color(0xFF360F00),
+    tertiaryContainer: Color(0xFF7D2D00),
+    onTertiaryContainer: Color(0xFFFFDBCD),
+    error: Color(0xFFF87171),
+    onError: Color(0xFF450A0A),
+    errorContainer: Color(0xFF93000A),
+    onErrorContainer: Color(0xFFFFDAD6),
+    surface: Color(0xFF191B23),
+    onSurface: Color(0xFFE1E2ED),
+    onSurfaceVariant: Color(0xFFC3C6D7),
+    outline: Color(0xFF8D909F),
+    outlineVariant: Color(0xFF434655),
+    inverseSurface: Color(0xFFE1E2ED),
+    onInverseSurface: Color(0xFF2E3039),
+    inversePrimary: Color(0xFF004AC6),
+    surfaceTint: Color(0xFFB4C5FF),
+    surfaceContainerLowest: Color(0xFF11131A),
+    surfaceContainerLow: Color(0xFF191B23),
+    surfaceContainer: Color(0xFF1D1F28),
+    surfaceContainerHigh: Color(0xFF282A33),
+    surfaceContainerHighest: Color(0xFF33353E),
+  );
+
+  static TextTheme _textTheme(ColorScheme scheme) {
+    final base = GoogleFonts.interTextTheme();
+    TextStyle style(double size, double height, FontWeight weight, double tracking) =>
+        base.bodyMedium!.copyWith(
+          fontSize: size,
+          height: height / size,
+          fontWeight: weight,
+          letterSpacing: tracking * size,
+          color: scheme.onSurface,
+        );
+    return TextTheme(
+      headlineLarge: style(24, 32, FontWeight.w600, -0.02),
+      headlineMedium: style(20, 28, FontWeight.w600, -0.015),
+      headlineSmall: style(16, 24, FontWeight.w600, -0.01),
+      bodyLarge: style(14, 20, FontWeight.w400, 0),
+      bodyMedium: style(13, 18, FontWeight.w400, 0),
+      bodySmall: style(12, 16, FontWeight.w400, 0),
+      labelMedium: style(12, 16, FontWeight.w500, 0.01),
+      labelSmall: style(11, 14, FontWeight.w600, 0.02),
+    );
+  }
+
+  static ThemeData _build(ColorScheme scheme) {
+    final textTheme = _textTheme(scheme);
+    final inputRadius = BorderRadius.circular(AppRadii.md);
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: scheme.surface,
+      textTheme: textTheme,
+      extensions: [scheme.brightness == Brightness.light ? AppStatusColors.light : AppStatusColors.dark],
+      appBarTheme: AppBarTheme(
+        backgroundColor: scheme.surface,
+        foregroundColor: scheme.onSurface,
+        elevation: 0,
+        titleTextStyle: textTheme.headlineMedium,
+      ),
+      cardTheme: CardThemeData(
+        color: scheme.surfaceContainerLowest,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.xl),
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: scheme.surfaceContainerLowest,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        border: OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide(color: scheme.outline)),
+        enabledBorder: OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide(color: scheme.outline)),
+        focusedBorder:
+            OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide(color: scheme.primary, width: 1.5)),
+        errorBorder: OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide(color: scheme.error)),
+        focusedErrorBorder:
+            OutlineInputBorder(borderRadius: inputRadius, borderSide: BorderSide(color: scheme.error, width: 1.5)),
+        labelStyle: textTheme.bodyLarge,
+        hintStyle: textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          disabledBackgroundColor: scheme.primary.withValues(alpha: 0.4),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadii.md)),
+          textStyle: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: scheme.primary, textStyle: textTheme.bodyLarge),
+      ),
+      dividerTheme: DividerThemeData(color: scheme.outlineVariant, space: 1),
+    );
+  }
+
+  static ThemeData get light => _build(_lightScheme);
+  static ThemeData get dark => _build(_darkScheme);
+}

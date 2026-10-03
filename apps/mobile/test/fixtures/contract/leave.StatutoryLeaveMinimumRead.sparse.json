@@ -1,0 +1,12 @@
+{
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "created_by_user_id": null,
+ "establishment_type": null,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "leave_category": "x",
+ "min_days_per_year": "1.50",
+ "note": null,
+ "state_code": null,
+ "updated_at": "2026-01-15T10:00:00Z"
+}

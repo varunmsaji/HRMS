@@ -1,0 +1,14 @@
+{
+ "cess_percent": "1.50",
+ "rebate_taxable_income_limit_minor": 1,
+ "regime": "x",
+ "slabs": [
+  {
+   "max_minor": null,
+   "min_minor": 1,
+   "percent": "1.50"
+  }
+ ],
+ "standard_deduction_minor": 1,
+ "surcharge_warning_income_minor": 1
+}

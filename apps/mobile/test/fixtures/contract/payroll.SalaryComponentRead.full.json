@@ -1,0 +1,18 @@
+{
+ "code": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "component_type": "x",
+ "created_at": "2026-01-15T10:00:00Z",
+ "display_order": 1,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "is_esi_wage": true,
+ "is_pf_wage": true,
+ "is_prorated": true,
+ "is_system": true,
+ "is_taxable": true,
+ "name": "x",
+ "show_on_payslip": true,
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

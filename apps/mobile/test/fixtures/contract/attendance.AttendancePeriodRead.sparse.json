@@ -1,0 +1,30 @@
+{
+ "actions": [
+  {
+   "action": "x",
+   "actor_user_id": null,
+   "comment": null,
+   "created_at": "2026-01-15T10:00:00Z",
+   "id": "00000000-0000-0000-0000-000000001234"
+  }
+ ],
+ "closed_at": null,
+ "closed_by_user_id": null,
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "label": null,
+ "last_validated_at": null,
+ "last_validation_status": null,
+ "legal_entity_id": "00000000-0000-0000-0000-000000001234",
+ "opened_at": "2026-01-15T10:00:00Z",
+ "opened_by_user_id": null,
+ "period_end": "2026-01-15",
+ "period_start": "2026-01-15",
+ "reopen_reason": null,
+ "reopened_at": null,
+ "reopened_by_user_id": null,
+ "status": "x",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

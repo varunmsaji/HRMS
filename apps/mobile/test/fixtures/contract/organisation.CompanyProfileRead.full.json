@@ -1,0 +1,54 @@
+{
+ "address": {
+  "city": "x",
+  "country_code": "x",
+  "line1": "x",
+  "line2": "x",
+  "postal_code": "x",
+  "state": "x"
+ },
+ "branding": {
+  "logo_url": "x",
+  "theme": {
+   "primary_color": null
+  }
+ },
+ "business_hours": {
+  "end_time": "x",
+  "start_time": "x"
+ },
+ "company_size": "x",
+ "contact": {
+  "email": "a@example.com",
+  "phone": "x",
+  "website": "x"
+ },
+ "country_code": "x",
+ "currency": "x",
+ "fiscal_year": {
+  "start_month": 1
+ },
+ "id": "00000000-0000-0000-0000-000000001234",
+ "industry_code": "x",
+ "legal_name": "x",
+ "locale": {
+  "date_format": "x",
+  "language_code": "x"
+ },
+ "name": "x",
+ "onboarded_at": "2026-01-15T10:00:00Z",
+ "primary_legal_entity": null,
+ "registration_number": "x",
+ "status": "x",
+ "subdomain": "x",
+ "timezone": "x",
+ "trial_ends_at": "2026-01-15T10:00:00Z",
+ "version": 1,
+ "working_days": [
+  {
+   "day": "x",
+   "is_alternate": true,
+   "is_working": true
+  }
+ ]
+}

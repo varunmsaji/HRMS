@@ -1,0 +1,14 @@
+{
+ "attachment_reference": null,
+ "attendance_date": "2026-01-15",
+ "employee_id": null,
+ "reason": null,
+ "request_type": "x",
+ "requested_punches": [
+  {
+   "direction": "x",
+   "requested_time": "2026-01-15T10:00:00Z"
+  }
+ ],
+ "requested_shift_id": null
+}

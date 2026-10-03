@@ -1,0 +1,11 @@
+{
+ "as_of": "2026-01-15",
+ "breakup": null,
+ "daily_rate_minor": null,
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "esi_applicable": true,
+ "pay_basis": "x",
+ "pf_applicable": true,
+ "salary_structure_id": null,
+ "salary_structure_version_id": null
+}

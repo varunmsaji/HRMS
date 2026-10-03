@@ -1,0 +1,3 @@
+tags:
+  live:
+    # Needs a running backend; skipped unless HRMS_LIVE_API is set (see test/live).

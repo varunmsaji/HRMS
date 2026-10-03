@@ -1,0 +1,37 @@
+{
+ "address_info": {},
+ "bank_info": {},
+ "branch_id": null,
+ "candidate_first_name": "x",
+ "candidate_last_name": null,
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "compensation_info": {},
+ "created_at": "2026-01-15T10:00:00Z",
+ "created_by_user_id": "00000000-0000-0000-0000-000000001234",
+ "department_id": null,
+ "designation_id": null,
+ "education_info": {},
+ "emergency_contact": {},
+ "employee_id": null,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "legal_entity_id": null,
+ "nominee_info": {},
+ "personal_email": "x",
+ "personal_info": {},
+ "personal_mobile": null,
+ "previous_employment_info": {},
+ "proposed_joining_date": "2026-01-15",
+ "section_reviews": [
+  {
+   "rejection_reason": null,
+   "section": "x",
+   "status": "x"
+  }
+ ],
+ "status": "x",
+ "statutory_info": {},
+ "token_expires_at": null,
+ "token_status": null,
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

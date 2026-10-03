@@ -1,0 +1,26 @@
+{
+ "as_of": "2026-01-15",
+ "breakup": {
+  "annual_ctc_minor": 1,
+  "employer_contributions_monthly_minor": 1,
+  "gross_monthly_minor": 1,
+  "lines": [
+   {
+    "annual_minor": null,
+    "basis": null,
+    "component_code": null,
+    "component_name": null,
+    "component_type": null,
+    "monthly_minor": null
+   }
+  ],
+  "monthly_ctc_minor": 1
+ },
+ "daily_rate_minor": 1,
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "esi_applicable": true,
+ "pay_basis": "x",
+ "pf_applicable": true,
+ "salary_structure_id": "00000000-0000-0000-0000-000000001234",
+ "salary_structure_version_id": "00000000-0000-0000-0000-000000001234"
+}

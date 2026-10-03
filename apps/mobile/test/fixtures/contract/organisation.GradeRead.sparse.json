@@ -1,0 +1,16 @@
+{
+ "approval_limit": null,
+ "code": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "level": null,
+ "max_ctc": null,
+ "min_ctc": null,
+ "name": "x",
+ "notice_period_days": null,
+ "probation_days": null,
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

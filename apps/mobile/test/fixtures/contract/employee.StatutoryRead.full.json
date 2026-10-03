@@ -1,0 +1,23 @@
+{
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "effective_from": "2026-01-15",
+ "effective_to": "2026-01-15",
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "esi_ip_number": "x",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_director": true,
+ "is_esi_applicable": true,
+ "is_international_worker": true,
+ "is_lwf_applicable": true,
+ "is_pf_applicable": true,
+ "pf_number": "x",
+ "pf_wage_ceiling_opt_out": true,
+ "pt_state_code": "x",
+ "revision_reason": "x",
+ "tax_regime": "x",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1,
+ "vpf_amount": 1,
+ "vpf_percentage": 1.5
+}

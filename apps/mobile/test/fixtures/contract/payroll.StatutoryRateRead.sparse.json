@@ -1,0 +1,17 @@
+{
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "effective_from": "2026-01-15",
+ "effective_to": null,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_seeded": true,
+ "notes": null,
+ "parameters": {},
+ "scheme": "x",
+ "state_code": null,
+ "updated_at": "2026-01-15T10:00:00Z",
+ "verified": true,
+ "verified_at": null,
+ "verified_by_user_id": null,
+ "version": 1
+}

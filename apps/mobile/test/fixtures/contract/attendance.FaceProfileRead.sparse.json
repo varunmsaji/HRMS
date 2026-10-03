@@ -1,0 +1,16 @@
+{
+ "consent_recorded_at": "2026-01-15T10:00:00Z",
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "enrolled_at": "2026-01-15T10:00:00Z",
+ "enrolled_by_user_id": null,
+ "has_review_photo": true,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "provider": "x",
+ "reference_photo_count": 1,
+ "review_note": null,
+ "reviewed_at": null,
+ "reviewed_by_user_id": null,
+ "revoked_at": null,
+ "revoked_by_user_id": null,
+ "status": "x"
+}

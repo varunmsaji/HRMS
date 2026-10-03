@@ -1,0 +1,14 @@
+{
+ "code": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "is_comp_off": true,
+ "is_paid_default": true,
+ "name": "x",
+ "requires_balance": true,
+ "statutory_category": null,
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

@@ -1,0 +1,20 @@
+{
+ "cin": null,
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "esi_code": null,
+ "gstin": null,
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "lwf_reg": null,
+ "name": "x",
+ "pan": null,
+ "pf_code": null,
+ "registered_address": null,
+ "signatory_designation": null,
+ "signatory_name": null,
+ "signature_image_url": null,
+ "tan": null,
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

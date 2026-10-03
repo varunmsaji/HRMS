@@ -1,0 +1,23 @@
+{
+ "break_minutes_paid": 1,
+ "break_minutes_unpaid": 1,
+ "code": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "current_version_id": "00000000-0000-0000-0000-000000001234",
+ "draft_version_id": "00000000-0000-0000-0000-000000001234",
+ "end_time": "x",
+ "grace_in_minutes": 1,
+ "grace_out_minutes": 1,
+ "half_day_threshold_hours": "1.50",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_active": true,
+ "is_cross_midnight": true,
+ "is_night_shift": true,
+ "is_ot_eligible": true,
+ "min_hours_full_day": "1.50",
+ "name": "x",
+ "start_time": "x",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

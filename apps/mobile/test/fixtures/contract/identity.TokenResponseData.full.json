@@ -1,0 +1,14 @@
+{
+ "access_token": "x",
+ "companies": [
+  {
+   "id": "00000000-0000-0000-0000-000000001234",
+   "is_primary": true,
+   "name": "x"
+  }
+ ],
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "expires_in_minutes": 1,
+ "refresh_token": "x",
+ "token_type": "x"
+}

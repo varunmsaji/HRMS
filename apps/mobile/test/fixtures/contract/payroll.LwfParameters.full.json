@@ -1,0 +1,13 @@
+{
+ "months": [
+  1
+ ],
+ "slabs": [
+  {
+   "employee_minor": 1,
+   "employer_minor": 1,
+   "max_minor": 1,
+   "min_minor": 1
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "lines": [
+  {
+   "amount_monthly_minor": null,
+   "applies_when": "x",
+   "base_salary_component_id": null,
+   "calculation_type": "x",
+   "display_order": 1,
+   "max_monthly_minor": null,
+   "percentage": null,
+   "salary_component_id": "00000000-0000-0000-0000-000000001234"
+  }
+ ]
+}

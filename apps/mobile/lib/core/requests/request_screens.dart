@@ -1,0 +1,451 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../api/api_client.dart';
+import '../api/api_error.dart';
+import '../forms/choice_sources.dart';
+import '../forms/form_spec.dart';
+import '../forms/spec_form_screen.dart';
+import '../providers.dart';
+import '../time.dart';
+import '../../features/auth/presentation/widgets/auth_form_field.dart';
+import '../../features/auth/state/auth_controller.dart';
+import '../../features/shell/more_action.dart';
+import 'request_config.dart';
+
+Color _statusColor(BuildContext context, String status) => switch (status) {
+      'APPROVED' || 'AUTO_APPROVED' => Colors.green,
+      'REJECTED' => Colors.red,
+      'CANCELLED' => Theme.of(context).colorScheme.onSurfaceVariant,
+      _ => Colors.orange,
+    };
+
+class RequestStatusChip extends StatelessWidget {
+  const RequestStatusChip({super.key, required this.status, this.labels = const {}});
+  final String status;
+  final Map<String, String> labels;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _statusColor(context, status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
+      child: Text(labels[status] ?? prettyEnum(status), style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+/// A "Mine / Team" list with date, status and extra filters — mirrors the web list pages
+/// (`regularizations/page.tsx`, `overtime/page.tsx`). Both views are the same permission-scoped
+/// read; the server only returns what the caller may see. Defaults to the last 30 business days.
+class RequestListScreen extends ConsumerStatefulWidget {
+  const RequestListScreen({super.key, required this.config});
+  final RequestConfig config;
+
+  @override
+  ConsumerState<RequestListScreen> createState() => _RequestListScreenState();
+}
+
+class _RequestListScreenState extends ConsumerState<RequestListScreen> {
+  late bool _team;
+  late String _from;
+  late String _to;
+  String _status = '';
+  String _employee = '';
+  final _extra = <String, String>{};
+  bool _loading = true;
+  ApiError? _error;
+  List<Rec> _rows = const [];
+  List<Choice> _employees = const [];
+
+  RequestConfig get _c => widget.config;
+  List<String> get _perms => ref.read(authControllerProvider).user?.permissions ?? const <String>[];
+  String get _zone => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
+
+  @override
+  void initState() {
+    super.initState();
+    _team = _perms.contains(_c.approvePermission);
+    _from = businessDayOffset(_zone, -30);
+    _to = businessToday(_zone);
+    _loadEmployees();
+    _load();
+  }
+
+  Future<void> _loadEmployees() async {
+    if (!_perms.contains(_c.approvePermission) && !(_c.onBehalfPermission != null && _perms.contains(_c.onBehalfPermission))) return;
+    try {
+      final c = await loadChoices(ref.read(apiClientProvider), const ['employees']);
+      if (mounted) setState(() => _employees = c['employees'] ?? const []);
+    } catch (_) {}
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final myEmployeeId = ref.read(authControllerProvider).user?.employeeId;
+    try {
+      final env = await ref.read(apiClientProvider).getList<Rec>(
+        _c.path,
+        query: PageQuery(perPage: 100),
+        filters: {
+          'date_from': _from,
+          'date_to': _to,
+          if (_status.isNotEmpty) _c.statusParam: _status,
+          for (final e in _extra.entries)
+            if (e.value.isNotEmpty) e.key: e.value,
+          if (!_team && myEmployeeId != null) 'employee_id': myEmployeeId,
+          if (_team && _employee.isNotEmpty) 'employee_id': _employee,
+        },
+        parseItem: (d) => d as Rec,
+      );
+      if (mounted) setState(() => _rows = env.data);
+    } catch (e) {
+      if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _create() async {
+    final onBehalf = _team;
+    final client = ref.read(apiClientProvider);
+    final zone = _zone;
+    final keys = [if (onBehalf) 'employees', ..._c.createChoiceKeys];
+    final saved = await openSpecForm(
+      context,
+      title: onBehalf ? '${_c.singular} on behalf' : _c.singular,
+      spec: _c.createSpec!(onBehalf),
+      loadChoices: keys.isEmpty ? null : () => loadChoices(client, keys),
+      onSubmit: (payload, _) async => client.post<Object?>(_c.path, body: _c.buildCreateBody!(payload, zone), parse: (_) => null),
+    );
+    if (saved && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${_c.singular} submitted.')));
+      _load();
+    }
+  }
+
+  Future<void> _pick(bool from) async {
+    final picked = await showDatePicker(context: context, initialDate: DateTime.tryParse(from ? _from : _to) ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
+    if (picked == null) return;
+    final iso = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    setState(() => from ? _from = iso : _to = iso);
+    _load();
+  }
+
+  String _employeeName(String id) {
+    for (final c in _employees) {
+      if (c.value == id) return c.label;
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final perms = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
+    final canApprove = perms.contains(_c.approvePermission);
+    final onBehalf = _c.onBehalfPermission != null && perms.contains(_c.onBehalfPermission);
+    final canCreate = _c.createSpec != null && (_team ? onBehalf : (_c.submitPermission == null || perms.contains(_c.submitPermission)));
+    return Scaffold(
+      appBar: AppBar(title: Text(_c.title), actions: const [MoreAction()]),
+      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: Text(_team ? '${_c.singular} on behalf' : _c.singular)) : null,
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Column(children: [
+            if (canApprove || onBehalf)
+              SegmentedButton<bool>(
+                segments: const [ButtonSegment(value: false, label: Text('Mine')), ButtonSegment(value: true, label: Text('Team'))],
+                selected: {_team},
+                onSelectionChanged: (s) {
+                  setState(() => _team = s.first);
+                  _load();
+                },
+              ),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From $_from'))),
+              const SizedBox(width: 8),
+              Expanded(child: OutlinedButton(onPressed: () => _pick(false), child: Text('To $_to'))),
+            ]),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _status,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Status', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+              items: [const DropdownMenuItem(value: '', child: Text('All statuses')), for (final s in _c.statuses) DropdownMenuItem(value: s, child: Text(_c.statusLabels[s] ?? prettyEnum(s)))],
+              onChanged: (v) {
+                setState(() => _status = v ?? '');
+                _load();
+              },
+            ),
+            for (final f in _c.filters) ...[
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _extra[f.param] ?? '',
+                isExpanded: true,
+                decoration: InputDecoration(labelText: f.label, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                items: [DropdownMenuItem(value: '', child: Text('All')), for (final o in f.options) DropdownMenuItem(value: o.$1, child: Text(o.$2))],
+                onChanged: (v) {
+                  setState(() => _extra[f.param] = v ?? '');
+                  _load();
+                },
+              ),
+            ],
+            if (_team && _employees.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _employee,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Employee', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+                items: [const DropdownMenuItem(value: '', child: Text('All employees')), for (final e in _employees) DropdownMenuItem(value: e.value, child: Text(e.label))],
+                onChanged: (v) {
+                  setState(() => _employee = v ?? '');
+                  _load();
+                },
+              ),
+            ],
+          ]),
+        ),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Text(_error!.message, textAlign: TextAlign.center),
+                          const SizedBox(height: 16),
+                          FilledButton(onPressed: _load, child: const Text('Retry')),
+                        ]),
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView(
+                        padding: const EdgeInsets.only(top: 8, bottom: 88),
+                        children: [
+                          if (_rows.isEmpty) Padding(padding: const EdgeInsets.all(32), child: Center(child: Text('No ${_c.title.toLowerCase()} match these filters.'))),
+                          for (final r in _rows)
+                            ListTile(
+                              title: Text(_c.rowTitle(r, _team ? _employeeName(r['employee_id'] as String) : '')),
+                              subtitle: _c.rowSubtitle?.call(r) == null ? null : Text(_c.rowSubtitle!(r)!),
+                              trailing: RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels),
+                              onTap: () async {
+                                await Navigator.of(context).push(MaterialPageRoute(builder: (_) => RequestDetailScreen(config: _c, requestId: r['id'] as String, initial: r)));
+                                _load();
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+        ),
+      ]),
+    );
+  }
+}
+
+/// One request: its sections, and — with the right permission and state — review (approve /
+/// reject with a comment) and cancel. Mirrors the web `[id]` pages.
+class RequestDetailScreen extends ConsumerStatefulWidget {
+  const RequestDetailScreen({super.key, required this.config, required this.requestId, this.initial});
+  final RequestConfig config;
+  final String requestId;
+  final Rec? initial;
+
+  @override
+  ConsumerState<RequestDetailScreen> createState() => _RequestDetailScreenState();
+}
+
+class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
+  Rec? _row;
+  ApiError? _error;
+  bool _loading = true;
+  bool _busy = false;
+
+  RequestConfig get _c => widget.config;
+  ApiClient get _client => ref.read(apiClientProvider);
+  String get _url => '${_c.path}/${widget.requestId}';
+
+  @override
+  void initState() {
+    super.initState();
+    _row = widget.initial;
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final r = await _client.get<Rec>(_url, parse: (d) => d as Rec);
+      if (mounted) setState(() => _row = r);
+    } catch (e) {
+      if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+
+  Future<void> _review(Rec r, {required bool approve}) async {
+    final comment = TextEditingController();
+    final rejection = TextEditingController();
+    String? formError;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: Text('${approve ? 'Approve' : 'Reject'} ${_c.singular.toLowerCase()}'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              AuthFormField(label: 'Comment', description: 'Optional, visible to the employee.', child: TextField(controller: comment)),
+              if (!approve) ...[const SizedBox(height: 12), AuthFormField(label: 'Rejection reason', child: TextField(controller: rejection))],
+              if (formError != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(formError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              style: approve ? null : FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+              onPressed: () async {
+                try {
+                  final updated = await _client.post<Rec>(
+                    '$_url/${approve ? 'approve' : 'reject'}',
+                    body: {
+                      if (comment.text.trim().isNotEmpty) 'reviewer_comment': comment.text.trim(),
+                      if (!approve && rejection.text.trim().isNotEmpty) 'rejection_reason': rejection.text.trim(),
+                    },
+                    ifMatch: r['version'].toString(),
+                    parse: (d) => d as Rec,
+                  );
+                  if (mounted) setState(() => _row = updated);
+                  if (ctx.mounted) Navigator.of(ctx).pop(true);
+                } on ApiError catch (e) {
+                  setLocal(() => formError = e.status == 403
+                      ? (e.code == _c.selfApprovalCode
+                          ? 'You cannot approve or reject your own ${_c.singular.toLowerCase()}.'
+                          : e.code == _c.approverMismatchCode
+                              ? "You are not the resolved approver for this ${_c.singular.toLowerCase()}'s current stage."
+                              : e.message)
+                      : e.status == 409
+                          ? 'This ${_c.singular.toLowerCase()} has already moved on (decided or cancelled by someone else). Refresh to see its current state.'
+                          : e.message);
+                } catch (_) {
+                  setLocal(() => formError = 'Something went wrong.');
+                }
+              },
+              child: Text(approve ? 'Approve' : 'Reject'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok == true && mounted) {
+      _toast(approve ? '${_c.singular} approved.' : '${_c.singular} rejected.');
+      _load();
+    }
+  }
+
+  Future<void> _cancel(Rec r) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('${_c.cancelLabel}?'),
+        content: const Text('The request is withdrawn.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Keep it')),
+          FilledButton(style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error), onPressed: () => Navigator.of(ctx).pop(true), child: Text(_c.cancelLabel)),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    setState(() => _busy = true);
+    try {
+      final updated = await _client.post<Rec>('$_url/cancel', body: const {}, ifMatch: r['version'].toString(), parse: (d) => d as Rec);
+      if (mounted) setState(() => _row = updated);
+      _toast('Request cancelled.');
+      _load();
+    } catch (e) {
+      _toast(e is ApiError ? e.message : 'Something went wrong.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = ref.watch(authControllerProvider).user;
+    final perms = user?.permissions ?? const <String>[];
+    final tz = user?.companyTimezone ?? 'Asia/Kolkata';
+    final r = _row;
+    final scheme = Theme.of(context).colorScheme;
+    Widget body;
+    if (r == null && _loading) {
+      body = const Center(child: CircularProgressIndicator());
+    } else if (r == null) {
+      body = Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(_error?.status == 404 ? "This ${_c.singular.toLowerCase()} was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            FilledButton(onPressed: _load, child: const Text('Retry')),
+          ]),
+        ),
+      );
+    } else {
+      final isOwn = user?.employeeId != null && r['employee_id'] == user!.employeeId;
+      final canReview = perms.contains(_c.approvePermission) && _c.isPending(r) && !isOwn;
+      final canCancel = user != null && (_c.canCancel?.call(r, user) ?? false);
+      body = RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Align(alignment: Alignment.centerLeft, child: RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels)),
+            if (canReview || canCancel)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Wrap(spacing: 8, runSpacing: 8, children: [
+                  if (canReview) FilledButton(onPressed: _busy ? null : () => _review(r, approve: true), child: const Text('Approve')),
+                  if (canReview) OutlinedButton(onPressed: _busy ? null : () => _review(r, approve: false), child: const Text('Reject')),
+                  if (canCancel) OutlinedButton(onPressed: _busy ? null : () => _cancel(r), child: Text(_c.cancelLabel)),
+                ]),
+              ),
+            for (final s in _c.sections(r, tz))
+              Container(
+                margin: const EdgeInsets.only(top: 14),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(s.title, style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  for (final (k, v) in s.rows)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Expanded(flex: 4, child: Text(k, style: TextStyle(color: scheme.onSurfaceVariant))),
+                        Expanded(flex: 5, child: Text(v, textAlign: TextAlign.end)),
+                      ]),
+                    ),
+                  for (final l in s.lines) Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Text(l)),
+                ]),
+              ),
+          ],
+        ),
+      );
+    }
+    return Scaffold(appBar: AppBar(title: Text(_c.singular)), body: body);
+  }
+}
+
+/// `formatDateTime` for an optional ISO string.
+String when(String? iso, String zone) => formatDateTime(iso, zone);

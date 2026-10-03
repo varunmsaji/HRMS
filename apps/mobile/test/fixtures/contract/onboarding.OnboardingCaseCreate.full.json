@@ -1,0 +1,10 @@
+{
+ "branch_id": "00000000-0000-0000-0000-000000001234",
+ "candidate_first_name": "x",
+ "candidate_last_name": "x",
+ "department_id": "00000000-0000-0000-0000-000000001234",
+ "designation_id": "00000000-0000-0000-0000-000000001234",
+ "personal_email": "a@example.com",
+ "personal_mobile": "x",
+ "proposed_joining_date": "2026-01-15"
+}

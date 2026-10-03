@@ -1,0 +1,15 @@
+{
+ "address_line1": null,
+ "address_line2": null,
+ "city": null,
+ "country_code": null,
+ "permanent_address_line1": null,
+ "permanent_address_line2": null,
+ "permanent_city": null,
+ "permanent_country_code": null,
+ "permanent_pincode": null,
+ "permanent_same_as_present": true,
+ "permanent_state_code": null,
+ "pincode": null,
+ "state_code": null
+}

@@ -1,0 +1,6 @@
+{
+ "is_holiday_working_override": true,
+ "is_week_off_override": true,
+ "reason": "x",
+ "shift_id": "00000000-0000-0000-0000-000000001234"
+}

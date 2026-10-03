@@ -1,0 +1,19 @@
+{
+ "current_period_end": "x",
+ "current_period_start": "x",
+ "features": [
+  {
+   "code": "x",
+   "is_enabled": true,
+   "limit_value": 1,
+   "source": "x"
+  }
+ ],
+ "plan": {
+  "code": "x",
+  "name": "x"
+ },
+ "seat_limit": 1,
+ "status": "x",
+ "trial_ends_at": "2026-01-15T10:00:00Z"
+}

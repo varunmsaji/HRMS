@@ -1,0 +1,20 @@
+{
+ "attendance_date": "2026-01-15",
+ "cancelled_at": "2026-01-15T10:00:00Z",
+ "cancelled_reason": "x",
+ "company_id": "00000000-0000-0000-0000-000000001234",
+ "created_at": "2026-01-15T10:00:00Z",
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "fraction": "x",
+ "half": "x",
+ "id": "00000000-0000-0000-0000-000000001234",
+ "is_paid": true,
+ "leave_application_id": "00000000-0000-0000-0000-000000001234",
+ "leave_type_code": "x",
+ "leave_type_id": "00000000-0000-0000-0000-000000001234",
+ "source_version": 1,
+ "status": "x",
+ "synced_at": "2026-01-15T10:00:00Z",
+ "updated_at": "2026-01-15T10:00:00Z",
+ "version": 1
+}

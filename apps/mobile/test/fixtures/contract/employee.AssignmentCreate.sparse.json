@@ -1,0 +1,14 @@
+{
+ "branch_id": null,
+ "change_reason": null,
+ "change_type": "INITIAL",
+ "cost_centre_id": null,
+ "department_id": null,
+ "designation_id": null,
+ "dotted_line_manager_id": null,
+ "effective_from": "2026-01-15",
+ "grade_id": null,
+ "reporting_manager_id": null,
+ "shift_id": null,
+ "work_location_type": null
+}

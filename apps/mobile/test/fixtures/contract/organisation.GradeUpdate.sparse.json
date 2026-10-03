@@ -1,0 +1,11 @@
+{
+ "approval_limit": null,
+ "code": null,
+ "is_active": null,
+ "level": null,
+ "max_ctc": null,
+ "min_ctc": null,
+ "name": null,
+ "notice_period_days": null,
+ "probation_days": null
+}

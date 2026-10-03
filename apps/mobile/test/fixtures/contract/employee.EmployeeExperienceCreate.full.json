@@ -1,0 +1,13 @@
+{
+ "company_name": "x",
+ "designation": "x",
+ "document_id": "00000000-0000-0000-0000-000000001234",
+ "from_date": "2026-01-15",
+ "had_prior_pf_membership": true,
+ "last_ctc_minor": 1,
+ "previous_esi_ip_number": "x",
+ "previous_pf_account_number": "x",
+ "previous_uan": "x",
+ "reason_for_leaving": "x",
+ "to_date": "2026-01-15"
+}
