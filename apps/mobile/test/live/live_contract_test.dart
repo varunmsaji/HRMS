@@ -41,9 +41,9 @@ Future<T?> _check<T>(String name, Future<T> Function() call) async {
   } on ApiError catch (e) {
     // The call reached the server and got a well-formed envelope back. A 4xx (no subscription
     // row, account has no linked employee, missing permission) is about the demo data, not the
-    // contract. 5xx and 422 (we sent something the server rejected) still fail.
+    // contract. 401 (auth broke), 5xx and 422 (we sent something the server rejected) still fail.
     final noEmployee = e.message.contains('no linked employee');
-    if (noEmployee || (e.status >= 400 && e.status < 500 && e.status != 422)) {
+    if (noEmployee || e.status == 403 || e.status == 404 || e.status == 409) {
       _dataDependent.add('$name -> ${e.status} ${e.message}');
     } else {
       _failures.add('$name -> ${e.status} ${e.code} ${e.message}');
