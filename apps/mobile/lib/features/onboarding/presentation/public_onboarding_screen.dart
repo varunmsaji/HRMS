@@ -5,8 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
 import '../data/public_onboarding_repository.dart';
+import '../../../core/forms/form_spec.dart';
+import '../../../core/forms/spec_form.dart';
 import '../domain/onboarding_form_spec.dart';
-import 'onboarding_record_form.dart';
 
 final publicOnboardingRepositoryProvider = Provider<PublicOnboardingRepository>(
   (ref) => PublicOnboardingRepository(ref.watch(apiClientProvider)),
@@ -244,7 +245,7 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
     return _reviewBody();
   }
 
-  Widget _sectionStep(OnboardingSectionSpec spec, PublicOnboardingCase c) {
+  Widget _sectionStep(FormSpec spec, PublicOnboardingCase c) {
     final review = c.reviewFor(spec.name);
     final locked = review?.status == 'VERIFIED';
     final rows = _rows[spec.name]!;
@@ -282,7 +283,7 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
                         ),
                     ],
                   ),
-                OnboardingRecordForm(
+                SpecForm(
                   key: ValueKey('${spec.name}-${rows[i].id}'),
                   spec: spec,
                   values: rows[i].values,
@@ -305,7 +306,7 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
     );
   }
 
-  String _summary(OnboardingSectionSpec spec) {
+  String _summary(FormSpec spec) {
     final rows = _rows[spec.name]!;
     if (spec.repeatable) return rows.isEmpty ? 'None added' : '${rows.length} ${spec.itemNoun}${rows.length == 1 ? '' : 's'}';
     final filled = rowToPayload(spec, rows.first.values).values.where((v) => v != null && v != false && v != '').length;

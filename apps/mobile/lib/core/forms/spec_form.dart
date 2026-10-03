@@ -1,0 +1,196 @@
+import 'package:flutter/material.dart';
+
+import '../../features/auth/presentation/widgets/auth_form_field.dart';
+import 'form_spec.dart';
+
+/// Renders a [FormSpec] (or one row of a repeatable one), reading from and writing into the shared
+/// mutable [values] map. [choices] supplies the runtime options for [FieldKind.choice] fields;
+/// [editing] disables create-only fields.
+class SpecForm extends StatefulWidget {
+  const SpecForm({
+    super.key,
+    required this.spec,
+    required this.values,
+    required this.errors,
+    required this.onChanged,
+    this.readOnly = false,
+    this.editing = false,
+    this.choices = const {},
+  });
+
+  final FormSpec spec;
+  final Map<String, dynamic> values;
+  final Map<String, String> errors;
+  final VoidCallback onChanged;
+  final bool readOnly;
+  final bool editing;
+  final Map<String, List<Choice>> choices;
+
+  @override
+  State<SpecForm> createState() => _SpecFormState();
+}
+
+class _SpecFormState extends State<SpecForm> {
+  final _controllers = <String, TextEditingController>{};
+
+  TextEditingController _controller(FieldSpec f) => _controllers.putIfAbsent(
+        f.key,
+        () => TextEditingController(text: (widget.values[f.key] ?? '').toString()),
+      );
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _set(String key, dynamic value) {
+    widget.values[key] = value;
+    widget.onChanged();
+  }
+
+  bool _disabled(FieldSpec f) => widget.readOnly || (widget.editing && f.readOnlyOnEdit);
+
+  Future<void> _pickDate(FieldSpec f) async {
+    final current = DateTime.tryParse((widget.values[f.key] ?? '').toString());
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current ?? DateTime.now(),
+      firstDate: DateTime(1900),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) return;
+    final iso = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    _controller(f).text = iso;
+    _set(f.key, iso);
+  }
+
+  Future<void> _pickTime(FieldSpec f) async {
+    final parts = (widget.values[f.key] ?? '').toString().split(':');
+    final initial = parts.length >= 2 ? TimeOfDay(hour: int.tryParse(parts[0]) ?? 9, minute: int.tryParse(parts[1]) ?? 0) : const TimeOfDay(hour: 9, minute: 0);
+    final picked = await showTimePicker(context: context, initialTime: initial);
+    if (picked == null) return;
+    final value = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+    _controller(f).text = value;
+    _set(f.key, value);
+  }
+
+  TextInputType _keyboard(FieldKind t) {
+    switch (t) {
+      case FieldKind.integer:
+      case FieldKind.aadhaar:
+        return TextInputType.number;
+      case FieldKind.decimal:
+      case FieldKind.money:
+        return const TextInputType.numberWithOptions(decimal: true, signed: true);
+      case FieldKind.email:
+        return TextInputType.emailAddress;
+      case FieldKind.multiline:
+        return TextInputType.multiline;
+      default:
+        return TextInputType.text;
+    }
+  }
+
+  Widget _dropdown(FieldSpec f, List<Choice> options, String? error) {
+    final current = (widget.values[f.key] ?? '').toString();
+    final items = [...options];
+    if (current.isNotEmpty && !items.any((o) => o.value == current)) items.add((value: current, label: current));
+    return AuthFormField(
+      label: f.label,
+      required: f.required,
+      errorText: error,
+      child: DropdownButtonFormField<String>(
+        value: current.isEmpty ? null : current,
+        isExpanded: true,
+        items: [
+          if (!f.required) const DropdownMenuItem(value: '', child: Text('—')),
+          for (final o in items) DropdownMenuItem(value: o.value, child: Text(o.label)),
+        ],
+        onChanged: _disabled(f) ? null : (v) => _set(f.key, v ?? ''),
+        decoration: const InputDecoration(hintText: 'Select'),
+      ),
+    );
+  }
+
+  Widget _input(FieldSpec f) {
+    final error = widget.errors[f.key];
+    switch (f.kind) {
+      case FieldKind.toggle:
+        return SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(f.label),
+          value: widget.values[f.key] == true,
+          onChanged: _disabled(f) ? null : (v) => _set(f.key, v),
+        );
+      case FieldKind.select:
+        return _dropdown(f, [for (final o in f.options) (value: o, label: f.optionLabels[o] ?? o)], error);
+      case FieldKind.choice:
+        return _dropdown(f, widget.choices[f.choiceKey] ?? const [], error);
+      case FieldKind.date:
+        return AuthFormField(
+          label: f.label,
+          required: f.required,
+          errorText: error,
+          child: TextField(
+            controller: _controller(f),
+            readOnly: true,
+            onTap: _disabled(f) ? null : () => _pickDate(f),
+            decoration: InputDecoration(
+              hintText: 'YYYY-MM-DD',
+              suffixIcon: (!f.required && !_disabled(f) && (widget.values[f.key] ?? '').toString().isNotEmpty)
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, size: 18),
+                      onPressed: () {
+                        _controller(f).clear();
+                        _set(f.key, '');
+                      },
+                    )
+                  : const Icon(Icons.calendar_today_outlined, size: 18),
+            ),
+          ),
+        );
+      case FieldKind.time:
+        return AuthFormField(
+          label: f.label,
+          required: f.required,
+          errorText: error,
+          child: TextField(
+            controller: _controller(f),
+            readOnly: true,
+            onTap: _disabled(f) ? null : () => _pickTime(f),
+            decoration: const InputDecoration(hintText: 'HH:MM', suffixIcon: Icon(Icons.schedule, size: 18)),
+          ),
+        );
+      default:
+        return AuthFormField(
+          label: f.label,
+          required: f.required,
+          errorText: error,
+          description: f.hint,
+          child: TextField(
+            controller: _controller(f),
+            enabled: !_disabled(f),
+            keyboardType: _keyboard(f.kind),
+            minLines: f.kind == FieldKind.multiline ? 3 : 1,
+            maxLines: f.kind == FieldKind.multiline ? 6 : 1,
+            textCapitalization: (f.kind == FieldKind.pan || f.kind == FieldKind.upper) ? TextCapitalization.characters : TextCapitalization.none,
+            onChanged: (v) => _set(f.key, v),
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = widget.spec.fields.where((f) => f.kind != FieldKind.hidden && fieldVisible(f, widget.values));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final f in visible) ...[_input(f), const SizedBox(height: 14)],
+      ],
+    );
+  }
+}

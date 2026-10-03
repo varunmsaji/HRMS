@@ -1,7 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/forms/form_spec.dart';
 import 'package:hrms_mobile/features/onboarding/domain/onboarding_form_spec.dart';
 
-OnboardingSectionSpec _spec(String name) => onboardingSections.firstWhere((s) => s.name == name);
+FormSpec _spec(String name) => onboardingSections.firstWhere((s) => s.name == name);
 
 void main() {
   test('covers the same nine sections as the web wizard, in order', () {

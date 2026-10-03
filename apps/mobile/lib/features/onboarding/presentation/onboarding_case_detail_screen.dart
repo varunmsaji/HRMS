@@ -11,6 +11,7 @@ import '../../employees/presentation/employees_screen.dart' show EmployeeDetailS
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/onboarding_repository.dart';
 import '../data/public_onboarding_repository.dart' show OnboardingDocument;
+import '../../../core/forms/form_spec.dart';
 import '../domain/onboarding_form_spec.dart';
 import 'onboarding_cases_screen.dart' show onboardingRepositoryProvider;
 
@@ -182,7 +183,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
         ]),
       );
 
-  Widget _sectionBody(OnboardingSectionSpec spec, Map<String, dynamic> wire) {
+  Widget _sectionBody(FormSpec spec, Map<String, dynamic> wire) {
     if (spec.repeatable) {
       final items = (wire['items'] as List?) ?? const [];
       if (items.isEmpty) return const Text('None added.');
