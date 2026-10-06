@@ -2,10 +2,17 @@
 
 from datetime import date
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Annotated, Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from hrms.modules.leave.year import LEAVE_YEAR_TYPES
 
@@ -42,6 +49,10 @@ _LEDGER_ENTRY_TYPES = (
     "COMP_OFF_CREDIT",
 )
 _HALF_DAY_VALUES = ("FIRST_HALF", "SECOND_HALF")
+
+#: Decision 15 - the longest span, in calendar days, one leave application may cover. Enforced at
+#: the schema so an oversized range is refused before any per-day calendar or period work runs.
+MAX_LEAVE_REQUEST_DAYS = 90
 
 
 def _format_timestamp(value: Any) -> str | None:
@@ -226,6 +237,7 @@ class LeavePolicyVersionCreate(BaseModel):
     post_delivery_days: int | None = Field(default=None, ge=0)
     allowed_during_probation: bool = True
     accrue_during_probation: bool = True
+    max_consecutive_days: int = Field(default=30, ge=1, le=MAX_LEAVE_REQUEST_DAYS)
     max_encashment_days: Decimal | None = Field(default=None, ge=0)
     min_balance_after_encashment: Decimal | None = Field(default=None, ge=0)
     encashment_frequency: str | None = Field(default=None, max_length=20)
@@ -276,6 +288,7 @@ class LeavePolicyVersionUpdate(BaseModel):
     post_delivery_days: int | None = Field(default=None, ge=0)
     allowed_during_probation: bool | None = None
     accrue_during_probation: bool | None = None
+    max_consecutive_days: int | None = Field(default=None, ge=1, le=MAX_LEAVE_REQUEST_DAYS)
     max_encashment_days: Decimal | None = Field(default=None, ge=0)
     min_balance_after_encashment: Decimal | None = Field(default=None, ge=0)
     encashment_frequency: str | None = Field(default=None, max_length=20)
@@ -339,6 +352,7 @@ class LeavePolicyVersionRead(BaseModel):
     post_delivery_days: int | None
     allowed_during_probation: bool
     accrue_during_probation: bool
+    max_consecutive_days: int
     max_encashment_days: Decimal | None
     min_balance_after_encashment: Decimal | None
     encashment_frequency: str | None
@@ -382,6 +396,7 @@ def leave_policy_version_to_read(row: "LeavePolicyVersion") -> LeavePolicyVersio
         post_delivery_days=row.post_delivery_days,
         allowed_during_probation=row.allowed_during_probation,
         accrue_during_probation=row.accrue_during_probation,
+        max_consecutive_days=row.max_consecutive_days,
         max_encashment_days=row.max_encashment_days,
         min_balance_after_encashment=row.min_balance_after_encashment,
         encashment_frequency=row.encashment_frequency,
@@ -418,7 +433,15 @@ class LeaveLedgerAdjustmentCreate(BaseModel):
 
     employee_id: UUID
     leave_type_id: UUID
-    amount: Decimal = Field(description="Signed — positive credits, negative debits.")
+    # LM-07 - `leave_ledger.amount` is NUMERIC(6, 2): bound the input to what the column stores so
+    # an oversized or over-precise value is a field-level 422, not a database error.
+    amount: Decimal = Field(
+        description="Signed — positive credits, negative debits.",
+        max_digits=6,
+        decimal_places=2,
+        gt=Decimal("-10000"),
+        lt=Decimal("10000"),
+    )
     effective_date: date
     reason: str = Field(min_length=1, max_length=2000)
 
@@ -441,7 +464,7 @@ class LeaveLedgerEncashmentCreate(BaseModel):
 
     employee_id: UUID
     leave_type_id: UUID
-    days: Decimal = Field(gt=0)
+    days: Decimal = Field(gt=0, lt=Decimal("10000"), max_digits=6, decimal_places=2)
     effective_date: date
     reason: str = Field(min_length=1, max_length=2000)
 
@@ -476,8 +499,17 @@ def leave_ledger_entry_to_read(row: "LeaveLedgerEntry") -> LeaveLedgerEntryRead:
     )
 
 
+#: Decision 19 - a ledger entry's free-text `reason` stays on the ledger row (the business record,
+#: reachable by `ledger_entry id`) and is not duplicated into the audit log.
+_LEDGER_AUDIT_EXCLUDED = ("reason",)
+
+
 def leave_ledger_entry_to_audit_dict(read: LeaveLedgerEntryRead) -> dict[str, Any]:
-    return read.model_dump(mode="json")
+    return {
+        key: value
+        for key, value in read.model_dump(mode="json").items()
+        if key not in _LEDGER_AUDIT_EXCLUDED
+    }
 
 
 class LeaveBalanceRead(BaseModel):
@@ -533,6 +565,10 @@ class LeaveApplicationCreate(BaseModel):
     def validate_date_range(self) -> Self:
         if self.end_date < self.start_date:
             raise ValueError("end_date must not be before start_date")
+        if (self.end_date - self.start_date).days + 1 > MAX_LEAVE_REQUEST_DAYS:
+            raise ValueError(
+                f"A leave application cannot span more than {MAX_LEAVE_REQUEST_DAYS} calendar days"
+            )
         if self.half_day is not None and self.start_date != self.end_date:
             raise ValueError("half_day is only valid for a single-day application")
         return self
@@ -550,6 +586,15 @@ class LeaveApplicationReviewInput(BaseModel):
     # the uncovered days become unpaid (LOP) leave. Without it such an approval is refused with
     # `LEAVE_APPLICATION_BALANCE_SHORTFALL`, whose details state the shortfall.
     excess_as_lop: bool = False
+
+
+class LeaveApplicationReassignInput(BaseModel):
+    """Decision 13 - HR hands a stuck approval stage to another approver. `reason` is mandatory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    new_approver_employee_id: UUID
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 class LeaveApplicationCancelInput(BaseModel):
@@ -688,8 +733,39 @@ def leave_application_to_read(
     )
 
 
+#: Decision 19 - what an application contributes to the immutable audit log: structure only. The
+#: free-text fields (`reason`, `attachment_reference`, `expected_delivery_date`, the reviewer's
+#: comment, the rejection and cancellation reasons) can carry medical or personal detail and could
+#: never be erased once written, so they stay on the application itself and are NOT copied here.
+#: An explicit allow-list: a field added to `LeaveApplicationRead` later is excluded until someone
+#: decides it belongs.
+LEAVE_APPLICATION_AUDIT_FIELDS: tuple[str, ...] = (
+    "id",
+    "employee_id",
+    "leave_type_id",
+    "leave_policy_version_id",
+    "start_date",
+    "end_date",
+    "total_days",
+    "lop_days",
+    "status",
+    "approval_chain",
+    "approval_stage",
+    "resolved_approver_manager_id",
+    "resolved_department_head_id",
+    "submitted_by_user_id",
+    "submitted_at",
+    "reviewed_by_user_id",
+    "reviewed_at",
+    "cancelled_at",
+    "cancelled_by_user_id",
+    "version",
+)
+
+
 def leave_application_to_audit_dict(read: LeaveApplicationRead) -> dict[str, Any]:
-    return read.model_dump(mode="json")
+    full = read.model_dump(mode="json")
+    return {field: full[field] for field in LEAVE_APPLICATION_AUDIT_FIELDS}
 
 
 # ---------------------------------------------------------------------------

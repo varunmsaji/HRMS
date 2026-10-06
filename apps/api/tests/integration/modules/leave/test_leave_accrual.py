@@ -138,6 +138,7 @@ async def _teardown(*, company_id: UUID) -> None:
         await set_rls_company_id(session, str(company_id))
         for table in (
             "leave_ledger",
+            "leave_year_end_run",
             "policy_assignment",
             "leave_policy_version",
             "leave_policy",

@@ -2,7 +2,7 @@
 mirroring `organisation/repository.py`'s own convention exactly."""
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Sequence
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, literal, or_, select, text, update
@@ -296,6 +296,36 @@ class EmploymentRepository:
             .limit(1)
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_latest_employments(
+        self, session: AsyncSession, *, company_id: UUID, employee_ids: Sequence[UUID]
+    ) -> dict[UUID, Employment]:
+        """Bulk form of `get_latest_employment` — one row per `employee_id` in `employee_ids`
+        (the spell with the latest `joining_date`; ties broken by `id`), in a single query.
+        Because `employment_no_overlap` guarantees spells for one employee never overlap, the
+        latest-starting spell is the only one that could possibly cover "today" or any later
+        date — an older spell necessarily ended (or was superseded) before this one began.
+
+        Added for F-1 remediation (`docs/audits/ATTENDANCE_DASHBOARD_F1_REMEDIATION_REPORT.md`):
+        `EmployeeService.list_employees` uses this to enrich `GET /employees`'s bulk response
+        with employment boundaries, so a caller (the Attendance dashboard) can tell "currently
+        employed, just hasn't punched in yet" from "no longer employed" without an N+1 fetch of
+        `GET /employees/{id}/employments` per employee. Employees with no employment row at all
+        (e.g. still `PRE_JOINING`) are simply absent from the returned mapping."""
+        if not employee_ids:
+            return {}
+        stmt = (
+            select(Employment)
+            .distinct(Employment.employee_id)
+            .where(
+                Employment.company_id == company_id,
+                Employment.employee_id.in_(employee_ids),
+                Employment.deleted_at.is_(None),
+            )
+            .order_by(Employment.employee_id, Employment.joining_date.desc(), Employment.id.desc())
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+        return {row.employee_id: row for row in rows}
 
     async def list_employments(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID

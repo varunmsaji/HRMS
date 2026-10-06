@@ -42,6 +42,7 @@ from hrms.modules.account_invite.schemas import (
 from hrms.modules.identity.schemas import CompanySummary, TokenResponseData
 from hrms.modules.identity.service import IdentityService
 from hrms.modules.onboarding.email_sender import get_email_sender
+from hrms.shared.pagination import PageParams
 
 #: Matches onboarding's own `DEFAULT_TOKEN_TTL_DAYS` — no stated reason for a different window.
 DEFAULT_INVITE_TTL_DAYS = 7
@@ -407,14 +408,29 @@ class AccountInviteService:
             raise AccountInviteInvalidError()
         return invite
 
-    async def list_users(self, company_id: UUID) -> list[UserSummary]:
-        """`GET /users` — backs the minimal Settings > Users screen (Phase 4). Deliberately
-        N+1 (one role-lookup query per membership) rather than a join — this is a small,
-        unpaginated, admin-only list, and the join would need a `GROUP BY`/`array_agg` for no
-        real benefit at this scale."""
-        rows = await self._repo.list_user_companies_for_company(
-            self._session, company_id=company_id
-        )
+    async def list_users(
+        self, company_id: UUID, *, page: PageParams | None = None
+    ) -> tuple[list[UserSummary], int]:
+        """`GET /users` — backs the minimal Settings > Users screen (Phase 4). Deliberately N+1
+        (one role-lookup query per membership) rather than a join — pagination (FINDING-03)
+        bounds this to at most one page's worth of extra queries; a join would need a
+        `GROUP BY`/`array_agg` for no real benefit at this scale.
+
+        `page=None` returns every membership, unpaginated, with `total` equal to that same
+        count — the exact shape this method had before FINDING-03. `GET /users` always passes
+        `page`."""
+        if page is None:
+            rows = await self._repo.list_user_companies_for_company(
+                self._session, company_id=company_id
+            )
+            total = len(rows)
+        else:
+            rows = await self._repo.list_user_companies_for_company(
+                self._session, company_id=company_id, limit=page.limit, offset=page.offset
+            )
+            total = await self._repo.count_user_companies_for_company(
+                self._session, company_id=company_id
+            )
         summaries = []
         for user_company, user in rows:
             role_codes = await self._repo.list_role_codes_for_user_company(
@@ -431,7 +447,7 @@ class AccountInviteService:
                     role_codes=sorted(role_codes),
                 )
             )
-        return summaries
+        return summaries, total
 
     async def assign_roles(
         self,

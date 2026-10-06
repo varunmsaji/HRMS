@@ -2129,27 +2129,32 @@ _LEAVE_PROJECTION_HALVES = ("FIRST", "SECOND")
 
 
 class LeaveProjectionSync(BaseModel):
-    """Publishes (or republishes, as a correction) one approved leave day projection —
-    architecture §21's `LeaveDayProjection` read model. Fail-closed per Phase 2: `fraction` and
-    `half` are typed/validated here, not left as free-form numbers; the cross-row "active
-    fractions for this employee-date must not exceed 1.00" check happens in the service layer,
-    where the other active rows are visible."""
+    """Publishes (or republishes) one approved leave day projection — architecture §21's
+    `LeaveDayProjection` read model.
+
+    LM-14: the body only *identifies* the day (`employee_id` + `leave_application_id` +
+    `attendance_date`). Leave type, fraction, half and paid/unpaid are always taken from the
+    APPROVED `LeaveApplicationDay` in the Leave module; the optional fields below are accepted
+    for backward compatibility and IGNORED, so a caller can never contradict the approved leave.
+    The cross-row "active fractions for this employee-date must not exceed 1.00" check still
+    happens in the service layer, on the authoritative fraction."""
 
     model_config = ConfigDict(extra="forbid")
 
     employee_id: UUID
     attendance_date: date
     leave_application_id: UUID
+    # Deprecated, ignored (see class docstring).
     leave_type_id: UUID | None = None
     leave_type_code: str | None = Field(default=None, max_length=30)
-    fraction: str
+    fraction: str | None = None
     half: str | None = None
-    is_paid: bool
+    is_paid: bool | None = None
 
     @field_validator("fraction")
     @classmethod
-    def validate_fraction(cls, value: str) -> str:
-        if value not in _LEAVE_PROJECTION_FRACTIONS:
+    def validate_fraction(cls, value: str | None) -> str | None:
+        if value is not None and value not in _LEAVE_PROJECTION_FRACTIONS:
             raise ValueError(f"fraction must be one of {_LEAVE_PROJECTION_FRACTIONS}")
         return value
 

@@ -18,42 +18,42 @@ from hrms.modules.leave.service import (
 
 
 def get_leave_type_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> LeaveTypeService:
     return LeaveTypeService(session)
 
 
 def get_leave_combination_rule_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> LeaveCombinationRuleService:
     return LeaveCombinationRuleService(session)
 
 
 def get_leave_policy_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> LeavePolicyService:
     return LeavePolicyService(session)
 
 
 def get_leave_ledger_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> LeaveLedgerService:
     return LeaveLedgerService(session)
 
 
 def get_leave_application_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> LeaveApplicationService:
     return LeaveApplicationService(session)
 
 
 def get_leave_year_setting_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> LeaveYearSettingService:
     return LeaveYearSettingService(session)
 
 
 def get_statutory_leave_minimum_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> StatutoryLeaveMinimumService:
     return StatutoryLeaveMinimumService(session)

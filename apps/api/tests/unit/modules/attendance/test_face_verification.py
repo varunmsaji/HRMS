@@ -65,9 +65,7 @@ def test_disabled_by_default() -> None:
 
 
 def test_facepp_selected_when_configured() -> None:
-    assert isinstance(
-        get_face_verification_provider(_settings()), FaceppFaceVerificationProvider
-    )
+    assert isinstance(get_face_verification_provider(_settings()), FaceppFaceVerificationProvider)
 
 
 def test_facepp_without_credentials_rejected() -> None:
@@ -256,9 +254,7 @@ async def test_delete_sends_faceset_token() -> None:
 
 
 async def test_delete_already_gone_is_success() -> None:
-    provider = _provider(
-        _respond({"error_message": "INVALID_FACESET_TOKEN"}, status=400)
-    )
+    provider = _provider(_respond({"error_message": "INVALID_FACESET_TOKEN"}, status=400))
     await provider.delete_person(person_id=_PERSON)
 
 

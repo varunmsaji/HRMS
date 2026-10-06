@@ -8,7 +8,7 @@ shape applied here for the first time).
 """
 
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -40,7 +40,19 @@ async def _create_employee(
 ) -> dict[str, Any]:
     response = await client.post("/v1/employees", headers=headers, json={"first_name": first_name})
     assert response.status_code == 201, response.text
-    return dict(response.json()["data"])
+    employee = dict(response.json()["data"])
+    # Manual adjustments must be dated inside an employment spell (D5), so the employee is joined.
+    entity = await client.post(
+        "/v1/legal-entities", headers=headers, json={"name": f"Ledger LE {uuid4().hex[:8]}"}
+    )
+    assert entity.status_code == 201, entity.text
+    employment = await client.post(
+        f"/v1/employees/{employee['id']}/employments",
+        headers=headers,
+        json={"legal_entity_id": entity.json()["data"]["id"], "joining_date": "2025-01-01"},
+    )
+    assert employment.status_code == 201, employment.text
+    return employee
 
 
 async def _create_leave_type(
@@ -58,7 +70,14 @@ async def _teardown(*, company_id: UUID) -> None:
     factory = get_session_factory()
     async with factory() as session:
         await set_rls_company_id(session, str(company_id))
-        for table in ("leave_ledger", "leave_type", "employee", "number_series"):
+        for table in (
+            "leave_ledger",
+            "leave_type",
+            "employment",
+            "employee",
+            "legal_entity",
+            "number_series",
+        ):
             await session.execute(
                 text(f"DELETE FROM {table} WHERE company_id = :cid"), {"cid": str(company_id)}
             )

@@ -309,6 +309,8 @@ async def test_registration_success_full_row_graph(
                 "LEAVE.APPLICATION_APPROVE",
                 # Decision 10 (PAYROLL_BUSINESS_DECISIONS.md) — HR cancels approved leave.
                 "LEAVE.APPLICATION_CANCEL_APPROVED",
+                # Decision 13 - HR reassigns a stuck approval stage.
+                "LEAVE.APPLICATION_REASSIGN",
                 # Added by LD-16/LD-20/LD-22 (leave combination rules, leave year setting,
                 # statutory compliance floor) — not new to this session's own work.
                 "LEAVE.COMBINATION_RULE_MANAGE",
@@ -645,6 +647,8 @@ async def test_registration_seeds_branch_manager_role(
             "ATTENDANCE.REGULARIZATION_APPROVE": "BRANCH",
             "ATTENDANCE.OVERTIME_APPROVE": "BRANCH",
             "LEAVE.APPLICATION_APPROVE": "BRANCH",
+            # Leave decision 12 - a manager sees their branch's leave applications and balances.
+            "LEAVE.BALANCE_VIEW_ALL": "BRANCH",
         }
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -667,6 +671,8 @@ async def test_registration_seeds_reporting_manager_approval_grants(
             "ATTENDANCE.REGULARIZATION_APPROVE": "REPORTEE_TREE",
             "ATTENDANCE.OVERTIME_APPROVE": "REPORTEE_TREE",
             "LEAVE.APPLICATION_APPROVE": "REPORTEE_TREE",
+            # Leave decision 12 - a manager sees their reportees' leave applications and balances.
+            "LEAVE.BALANCE_VIEW_ALL": "REPORTEE_TREE",
         }
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -688,6 +694,20 @@ async def test_registration_seeds_hr_admin_approval_grants(
         assert grants["ATTENDANCE.OVERTIME_APPROVE"] == "COMPANY"
         assert grants["LEAVE.APPLICATION_APPROVE"] == "COMPANY"
         assert grants["LEAVE.APPLICATION_CANCEL_APPROVED"] == "COMPANY"
+        # Leave decisions 12/13 - normal company-level Leave administration, no type/policy
+        # management.
+        assert grants["LEAVE.BALANCE_VIEW_ALL"] == "COMPANY"
+        assert grants["LEAVE.BALANCE_ADJUST"] == "COMPANY"
+        assert grants["LEAVE.APPLICATION_SUBMIT_ON_BEHALF"] == "COMPANY"
+        assert grants["LEAVE.APPLICATION_REASSIGN"] == "COMPANY"
+        for admin_only in (
+            "LEAVE.TYPE_MANAGE",
+            "LEAVE.POLICY_MANAGE",
+            "LEAVE.YEAR_SETTING_MANAGE",
+            "LEAVE.COMBINATION_RULE_MANAGE",
+            "LEAVE.STATUTORY_MINIMUM_MANAGE",
+        ):
+            assert admin_only not in grants
         assert grants["PAYROLL.SETUP_MANAGE"] == "COMPANY"
         assert grants["PAYROLL.RUN_VIEW"] == "COMPANY"
         assert grants["PAYROLL.RUN_PROCESS"] == "COMPANY"
@@ -696,6 +716,13 @@ async def test_registration_seeds_hr_admin_approval_grants(
         # Payroll 5.4 — every employee reads their own payslips.
         employee_grants = await _role_grants(company_id, "EMPLOYEE")
         assert employee_grants["PAYROLL.PAYSLIP_VIEW_OWN"] == "SELF"
+        # Leave decision 12 - an employee submits their own leave and sees their own balances.
+        assert employee_grants["LEAVE.APPLICATION_SUBMIT"] == "SELF"
+        assert employee_grants["LEAVE.BALANCE_VIEW"] == "SELF"
+        assert not {code for code in employee_grants if code.startswith("LEAVE.")} - {
+            "LEAVE.APPLICATION_SUBMIT",
+            "LEAVE.BALANCE_VIEW",
+        }
         # D9 — approving a pay run stays with COMPANY_ADMIN.
         assert "PAYROLL.RUN_APPROVE" not in grants
     finally:

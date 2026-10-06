@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { OnboardingCaseForm } from "@/components/onboarding/onboarding-case-form";
 import { OnboardingStatusBadge } from "@/components/onboarding/onboarding-status-badge";
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -53,6 +55,8 @@ export default function OnboardingPage() {
   const { can } = usePermissions();
   const router = useRouter();
   const [cases, setCases] = useState<OnboardingCase[] | null>(null);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [page, setPage] = useState(1);
   const [refs, setRefs] = useState<ReferenceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -64,20 +68,23 @@ export default function OnboardingPage() {
   const [formErrors, setFormErrors] = useState<OnboardingCaseFormErrors>({});
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (targetPage: number) => {
     setLoading(true);
     setError(null);
     try {
-      const [data, branches, departments, designations] = await Promise.all([
-        apiClient.get<OnboardingCase[]>("/onboarding-cases"),
+      // GET /v1/onboarding-cases is paginated (FINDING-03) — server-side, bounded page size.
+      const [{ data, pagination: meta }, branches, departments, designations] = await Promise.all([
+        apiClient.getList<OnboardingCase>("/onboarding-cases", { page: targetPage }),
         apiClient.get<Branch[]>("/branches").catch(() => []),
         apiClient.get<Department[]>("/departments").catch(() => []),
         apiClient.get<Designation[]>("/designations").catch(() => []),
       ]);
       setCases(data);
+      setPagination(meta);
       setRefs({ branches, departments, designations });
     } catch (err) {
       setCases(null);
+      setPagination(null);
       setError(
         err instanceof ApiError
           ? err
@@ -89,8 +96,8 @@ export default function OnboardingPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(page);
+  }, [load, page]);
 
   function openCreate() {
     setFormValues(EMPTY_ONBOARDING_CASE_FORM_VALUES);
@@ -173,7 +180,7 @@ export default function OnboardingPage() {
                   ? "You do not have permission to view onboarding cases."
                   : error.message
               }
-              onRetry={() => void load()}
+              onRetry={() => void load(page)}
             />
           ) : null}
 
@@ -230,6 +237,9 @@ export default function OnboardingPage() {
                 </tbody>
               </table>
             </div>
+          ) : null}
+          {pagination ? (
+            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
           ) : null}
         </CardContent>
       </Card>

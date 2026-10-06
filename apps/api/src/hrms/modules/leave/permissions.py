@@ -24,6 +24,9 @@ LEAVE_APPLICATION_APPROVE = "LEAVE.APPLICATION_APPROVE"
 # application at any time, including after it has started (reason mandatory then). Without it,
 # only the employee themself may cancel their own approved leave, and only before it starts.
 LEAVE_APPLICATION_CANCEL_APPROVED = "LEAVE.APPLICATION_CANCEL_APPROVED"
+# Decision 13 - HR hands a stuck approval stage (approver no longer active or eligible) to another
+# eligible approver. COMPANY scope; never held by an ordinary employee or manager.
+LEAVE_APPLICATION_REASSIGN = "LEAVE.APPLICATION_REASSIGN"
 
 # L5.5 — client spec §7 (LEAVE_DECISION_LOG.md LD-16). COMPANY-scoped config, same `.MANAGE`
 # convention as LEAVE_TYPE_MANAGE/LEAVE_POLICY_MANAGE above.
@@ -55,6 +58,11 @@ LEAVE_PERMISSIONS: list[tuple[str, str, str]] = [
         LEAVE_APPLICATION_CANCEL_APPROVED,
         "LEAVE",
         "Cancel an approved leave application, including after it has started",
+    ),
+    (
+        LEAVE_APPLICATION_REASSIGN,
+        "LEAVE",
+        "Reassign a leave application's current approval stage to another approver",
     ),
     (LEAVE_COMBINATION_RULE_MANAGE, "LEAVE", "Manage leave combination (exclusivity) rules"),
     (LEAVE_YEAR_SETTING_MANAGE, "LEAVE", "Manage the company's leave year configuration"),

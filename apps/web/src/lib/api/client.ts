@@ -54,6 +54,13 @@ function requestId(): string {
     : `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+/** A fresh `Idempotency-Key` value. Keep one per user intent and resend it when retrying after a
+ * network failure, so the server runs the mutation once (leave adjustments, encashments, leave
+ * applications require it). Use a new one once the request has been answered. */
+export function newIdempotencyKey(): string {
+  return requestId();
+}
+
 async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> {
   const authenticated = options.authenticated !== false;
   const session = authenticated ? loadSession() : null;

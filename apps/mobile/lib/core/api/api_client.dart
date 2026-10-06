@@ -62,6 +62,11 @@ class ApiClient {
     return _instance!;
   }
 
+  /// A fresh `Idempotency-Key` value. Pass the same one when retrying a request after a network
+  /// failure so the server runs the mutation once; use a new one for a new request.
+  static String newIdempotencyKey() =>
+      'idem_${DateTime.now().microsecondsSinceEpoch}_${Random.secure().nextInt(1 << 32).toRadixString(16)}_${Random.secure().nextInt(1 << 32).toRadixString(16)}';
+
   String _requestId() =>
       'req_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1 << 32).toRadixString(16)}';
 
@@ -258,8 +263,9 @@ class ApiClient {
     required T Function(dynamic) parse,
     bool authenticated = true,
     String? ifMatch,
+    Map<String, String>? headers,
   }) =>
-      _request<T>(path, method: 'POST', body: body, authenticated: authenticated, ifMatch: ifMatch, parseData: parse);
+      _request<T>(path, method: 'POST', body: body, authenticated: authenticated, ifMatch: ifMatch, headers: headers, parseData: parse);
 
   /// Multipart POST. [buildForm] is called once per attempt (see `_rawRequest`).
   Future<T> postMultipart<T>(

@@ -18,7 +18,16 @@ trailing window re-runs `calculate()` for today and the two days before it (idem
 construction — `calculate()` is full-row replacement, WD-10) so a missed Beat firing
 (`OPS-006` — no leader election, duplicate or dropped firings are possible by design), a
 multi-day outage, or a late-approved regularization is absorbed by the next run without a second
-manual step."""
+manual step.
+
+**Transaction scope.** The sweep calculates each employee-date in its own transaction
+(`_calculate_employee_dates`), committing before the next. `calculate()` takes a `FOR UPDATE` row
+lock that is held until commit, so a company-wide transaction would keep every already-processed
+employee's `attendance_day` row locked until the whole run finished, queueing their morning punches
+behind it (measured: a punch waited the full hold). One row's lock is held for one calculation
+instead. `calculate()` also bounds its lock and statement waits (`core/db/timeouts.py`), so a
+blocked step fails cleanly and the sweep moves on.
+"""
 
 import asyncio
 from datetime import date, timedelta
@@ -29,6 +38,7 @@ from sqlalchemy import select
 from hrms.core.celery_app import celery_app
 from hrms.core.db.models.identity import Company
 from hrms.core.db.session import session_scope
+from hrms.core.db.timeouts import is_wait_timeout
 from hrms.core.observability.logging import get_logger
 from hrms.modules.attendance.exceptions import (
     AttendanceDayLockedError,
@@ -49,53 +59,94 @@ async def _list_active_company_ids() -> list[UUID]:
         return list((await session.execute(stmt)).scalars().all())
 
 
-async def _calculate_company_async(company_id: UUID) -> int:
+async def _calculate_employee_dates(
+    company_id: UUID,
+    employee_id: UUID,
+    target_dates: list[date],
+    *,
+    actor_user_id: UUID | None,
+) -> dict[str, int]:
+    """Calculates `target_dates` for ONE employee, each date in its OWN short transaction that is
+    committed before the next starts. Shared by the nightly sweep and the range backfill, so both
+    have the same transaction scope.
+
+    `calculate()` takes a `FOR UPDATE` row lock that is held until commit. Holding it across a whole
+    company starves everyone's punches (the original defect); holding it across even one employee's
+    several dates is still wider than needed - a concurrent punch for that employee calculating a
+    different date can then form a lock cycle with this transaction (observed as a deadlock). One
+    transaction per employee-date holds exactly one row's locks, in the same order every caller
+    uses, so no cycle is possible and a failure rolls back only that date.
+
+    Outcomes are counted, never raised: `skipped_locked` (a finalized period/locked day, expected),
+    `timed_out` (a lock or statement timeout - the date is left for the next run), `failed` (any
+    other error). A failure on one date leaves the employee's other dates, and every other
+    employee, unaffected."""
     from hrms.modules.attendance.service import AttendanceDayService
+
+    counts = {"calculated": 0, "skipped_locked": 0, "timed_out": 0, "failed": 0}
+    for target_date in sorted(target_dates):
+        try:
+            async with session_scope(company_id=str(company_id)) as session:
+                await AttendanceDayService(session).calculate(
+                    company_id, employee_id, target_date, actor_user_id=actor_user_id
+                )
+            counts["calculated"] += 1
+        except (AttendanceDayLockedError, AttendancePeriodClosedError):
+            # Expected, not a failure - a finalized period or a locked day is exactly
+            # the state the sweep must never touch.
+            counts["skipped_locked"] += 1
+        except Exception as exc:  # noqa: BLE001 - best-effort per employee-date
+            timed_out = is_wait_timeout(exc)
+            counts["timed_out" if timed_out else "failed"] += 1
+            _logger.warning(
+                "attendance_scheduled_calculate_timed_out"
+                if timed_out
+                else "attendance_scheduled_calculate_failed",
+                company_id=str(company_id),
+                employee_id=str(employee_id),
+                attendance_date=target_date.isoformat(),
+                error=f"{type(exc).__name__}: {str(exc)[:600]}",
+            )
+    return counts
+
+
+async def _calculate_company_async(company_id: UUID) -> int:
     from hrms.modules.employee.repository import EmployeeRepository
     from hrms.modules.organisation.service import OrganisationService
 
+    # A short read-only transaction for the company's timezone and roster; the calculations below
+    # each run (and commit) in their own per-employee transaction.
     async with session_scope(company_id=str(company_id)) as session:
         company = await OrganisationService(session).get_company_profile(company_id)
-        # `business_today(company.timezone)`, not `datetime.now(UTC).date()` — see the module
+        # `business_today(company.timezone)`, not `datetime.now(UTC).date()` - see the module
         # docstring's 09:30 IST reasoning. Even though this specific schedule happens to sit
         # above the skew boundary today, the derivation must stay explicit so a future schedule
         # change cannot silently reintroduce `SR-05` at this call site.
         today = business_today(company.timezone)
-        trailing_dates = [today - timedelta(days=offset) for offset in range(TRAILING_DAYS)]
+        employee_ids = [
+            employee.id
+            for employee in await EmployeeRepository().list_employees(
+                session, company_id=company_id
+            )
+            if employee.is_active
+        ]
+    trailing_dates = [today - timedelta(days=offset) for offset in range(TRAILING_DAYS)]
 
-        employees = await EmployeeRepository().list_employees(session, company_id=company_id)
-        service = AttendanceDayService(session)
-        calculated = 0
-        for employee in employees:
-            if not employee.is_active:
-                continue
-            for target_date in trailing_dates:
-                try:
-                    # Own `SAVEPOINT` per employee-date — this task shares one session across
-                    # every employee in the company (the same per-company-session shape
-                    # `leave/tasks.py` uses), so one employee's failure must not poison the
-                    # transaction for every employee after it in the loop. Mirrors
-                    # `PunchService._try_immediate_calculate`'s own reasoning exactly.
-                    async with session.begin_nested():
-                        await service.calculate(
-                            company_id,
-                            employee.id,
-                            target_date,
-                            actor_user_id=None,
-                        )
-                    calculated += 1
-                except (AttendanceDayLockedError, AttendancePeriodClosedError):
-                    # Expected, not a failure — a finalized period or a locked day is exactly
-                    # the state this sweep must never touch.
-                    continue
-                except Exception:  # noqa: BLE001 - best-effort per employee-date, see docstring
-                    _logger.warning(
-                        "attendance_scheduled_calculate_failed",
-                        company_id=str(company_id),
-                        employee_id=str(employee.id),
-                        attendance_date=target_date.isoformat(),
-                    )
-        return calculated
+    totals = {"calculated": 0, "skipped_locked": 0, "timed_out": 0, "failed": 0}
+    for employee_id in employee_ids:
+        counts = await _calculate_employee_dates(
+            company_id, employee_id, trailing_dates, actor_user_id=None
+        )
+        for key, value in counts.items():
+            totals[key] += value
+    if totals["failed"] or totals["timed_out"]:
+        _logger.warning(
+            "attendance_scheduled_calculate_incomplete",
+            company_id=str(company_id),
+            employees=len(employee_ids),
+            **totals,
+        )
+    return totals["calculated"]
 
 
 @celery_app.task(name="attendance.calculate_company")  # type: ignore[untyped-decorator]
@@ -143,11 +194,9 @@ async def _calculate_range_async(
     `AttendancePeriodService`'s EMPLOYEES_WITHOUT_ATTENDANCE gate requires, and no
     NOT_JOINED/EXITED rows outside employment.
 
-    One transaction per employee (not one for the whole company, unlike the 3-day nightly
-    sweep): a month for a large company is tens of thousands of employee-dates, and a failure
-    late in the run must not roll back everything computed before it. Within an employee, each
-    date still gets its own `SAVEPOINT`, exactly as `_calculate_company_async` does."""
-    from hrms.modules.attendance.service import AttendanceDayService
+    One transaction per employee-date (`_calculate_employee_dates`, shared with the sweep): a
+    month for a large company is tens of thousands of employee-dates, and a failure late in the
+    run must not roll back everything computed before it."""
     from hrms.modules.employee.service import EmploymentService
 
     async with session_scope(company_id=str(company_id)) as session:
@@ -172,25 +221,12 @@ async def _calculate_range_async(
         "failed": 0,
     }
     for employee_id, target_dates in dates_by_employee.items():
-        async with session_scope(company_id=str(company_id)) as session:
-            service = AttendanceDayService(session)
-            for target_date in sorted(target_dates):
-                try:
-                    async with session.begin_nested():
-                        await service.calculate(
-                            company_id, employee_id, target_date, actor_user_id=actor_user_id
-                        )
-                    counts["calculated"] += 1
-                except (AttendanceDayLockedError, AttendancePeriodClosedError):
-                    counts["skipped_locked"] += 1
-                except Exception:  # noqa: BLE001 - best-effort per employee-date, like the sweep
-                    counts["failed"] += 1
-                    _logger.warning(
-                        "attendance_range_calculate_failed",
-                        company_id=str(company_id),
-                        employee_id=str(employee_id),
-                        attendance_date=target_date.isoformat(),
-                    )
+        outcome = await _calculate_employee_dates(
+            company_id, employee_id, list(target_dates), actor_user_id=actor_user_id
+        )
+        counts["calculated"] += outcome["calculated"]
+        counts["skipped_locked"] += outcome["skipped_locked"]
+        counts["failed"] += outcome["failed"] + outcome["timed_out"]
     _logger.info(
         "attendance_range_calculate_finished",
         company_id=str(company_id),

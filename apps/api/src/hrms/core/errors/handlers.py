@@ -7,9 +7,13 @@ from sqlalchemy.exc import DataError as SqlDataError
 from sqlalchemy.exc import DBAPIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from hrms.core.db.timeouts import is_wait_timeout
 from hrms.core.errors.base import AppError
 from hrms.core.errors.envelope import ErrorBody, ErrorDetail, ErrorEnvelope
-from hrms.core.tenancy.context import current_request_id
+from hrms.core.observability.logging import get_logger
+from hrms.core.tenancy.context import current_request_id, current_tenant
+
+_logger = get_logger(__name__)
 
 
 def _error_response(
@@ -94,6 +98,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         """Safety net for the whole class "client value does not fit the column": a 422, not a
         500. Schemas should still bound their fields; this catches whatever they miss. Any other
         database error keeps the generic 500 envelope."""
+        if is_wait_timeout(exc):
+            # A lock or statement timeout: the work was rolled back cleanly and is safe to retry.
+            response = _error_response(
+                503,
+                "DATABASE_BUSY",
+                "The system is busy right now. Please try again in a moment.",
+            )
+            response.headers["Retry-After"] = "2"
+            return response
         if _is_bad_input(exc):
             return _error_response(
                 422,
@@ -111,11 +124,29 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(
-        _request: Request,
+        request: Request,
         exc: Exception,
     ) -> JSONResponse:
-        # Sentry hook lands here in a later sprint (Document 13 §3).
-        _ = exc
+        # FINDING-01 — every unhandled exception must leave a server-side trace before the
+        # client-facing envelope is built; a Sentry/error-tracker hook can be layered on top of
+        # this log call later (Document 13 §3) without changing the response contract.
+        try:
+            tenant = current_tenant()
+            company_id: str | None = str(tenant.company_id)
+            user_id: str | None = str(tenant.user_id) if tenant.user_id else None
+        except RuntimeError:
+            company_id = None
+            user_id = None
+        _logger.exception(
+            "unhandled_exception",
+            request_id=current_request_id() or "unknown",
+            http_method=request.method,
+            http_path=request.url.path,
+            company_id=company_id,
+            user_id=user_id,
+            exception_type=type(exc).__name__,
+            exception_message=str(exc),
+        )
         return _error_response(500, "INTERNAL_ERROR", "An unexpected error occurred")
 
 

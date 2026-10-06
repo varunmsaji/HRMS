@@ -1,3 +1,4 @@
+from hrms.core.db.models.idempotency import IdempotencyKey
 from hrms.core.db.models.identity import (
     Company,
     Permission,
@@ -12,6 +13,7 @@ from hrms.core.db.models.identity import (
 
 __all__ = [
     "Company",
+    "IdempotencyKey",
     "Permission",
     "RefreshToken",
     "Role",

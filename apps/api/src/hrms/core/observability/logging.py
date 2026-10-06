@@ -15,6 +15,9 @@ def configure_logging() -> None:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            # FINDING-01 — renders `exc_info` (set by `.exception()`/`exc_info=True`) into a
+            # formatted traceback string; without this the JSON line only carries a boolean flag.
+            structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),

@@ -182,6 +182,40 @@ class Settings(BaseSettings):
     # the front capture to prove all angles are the same person.
     face_enrollment_angle_min_similarity: float = Field(default=0.80, ge=0.0, le=1.0)
 
+    # Bounded waits for attendance calculation (`core/db/timeouts.py`). A lock timeout stops a
+    # request or sweep step queuing indefinitely behind another transaction's row lock; a
+    # statement timeout stops one runaway SQL statement. They are separate knobs because they guard
+    # different failures. Applied per calculation with SET LOCAL, never as a global DB setting.
+    #
+    # - A punch's immediate calculation is best-effort (the punch is already a stored fact and the
+    #   scheduled sweep repairs the day), so it gives up quickly instead of delaying the response.
+    # - Interactive and scheduled calculations wait longer for a lock but are still bounded.
+    attendance_punch_calc_lock_timeout_ms: int = Field(default=1000, ge=100)
+    attendance_lock_timeout_ms: int = Field(default=5000, ge=100)
+    attendance_statement_timeout_ms: int = Field(default=30000, ge=1000)
+
+    # Monthly leave accrual is scheduled DAILY but only acts during the first N company-local days
+    # of a month. A missed day-1 firing (Beat down, worker crash) is then repaired by the next
+    # day's run instead of silently losing a month; the cycle keys make every extra run a no-op.
+    # Kept short so a retroactively assigned policy cannot back-credit the previous month late in
+    # the month, and so a manual balance correction made for a missed run is not credited twice.
+    leave_accrual_run_window_days: int = Field(default=5, ge=1, le=28)
+
+    # Year-end processing (lapse / carry-forward cap / encashment / yearly accrual) is scheduled
+    # DAILY and, like monthly accrual, repairs a missed firing: on any of the first N company-local
+    # days of a leave year it handles every employee whose leave-year start fell in that window and
+    # who has not been processed yet (`leave_year_end_run` marks the ones that were). Beyond the
+    # window a missed year start is NOT repaired automatically - it needs an operator run.
+    leave_year_end_catchup_days: int = Field(default=5, ge=1, le=28)
+
+    # How long a leave request or sweep waits for a leave advisory lock (per-employee date lock,
+    # per-balance lock) before giving up with a retryable "busy" error instead of queuing
+    # indefinitely behind another transaction (`core/db/timeouts.py`).
+    leave_lock_wait_ms: int = Field(default=5000, ge=100)
+    # How long a request carrying an `Idempotency-Key` waits for an in-flight request with the same
+    # key to finish (then replays its result) before failing with a retryable "busy" error.
+    idempotency_wait_ms: int = Field(default=10000, ge=100)
+
     web_app_base_url: str = "http://localhost:3000"
 
     # PAY-006 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decision 16) — employees with

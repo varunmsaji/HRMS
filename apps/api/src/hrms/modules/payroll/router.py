@@ -23,9 +23,17 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
+from hrms.core.db.session import get_session
+from hrms.core.idempotency import (
+    mark_replay,
+    request_fingerprint_fields,
+    require_idempotency_key,
+    run_idempotent,
+)
 from hrms.core.rbac.dependencies import require_permission
 from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
@@ -806,14 +814,30 @@ async def list_pay_adjustments(
 async def create_pay_adjustment(
     body: PayAdjustmentCreate,
     request: Request,
+    response: Response,
     tenant: _Tenant,
     _scope: _RunProcess,
     service: _Adjustments,
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
 ) -> DataEnvelope[PayAdjustmentRead]:
-    data = await service.create(
-        tenant.company_id, body, actor_user_id=tenant.user_id, **_client(request)
+    """Requires an `Idempotency-Key` (PAY-B04): a retry with the same key and body replays the
+    original correction instead of recording a second one. A correction is a delta, so two
+    corrections that look identical but carry different keys are two distinct corrections."""
+    result = await run_idempotent(
+        session,
+        company_id=tenant.company_id,
+        operation="payroll.adjustment.create",
+        key=idempotency_key,
+        fingerprint_fields=request_fingerprint_fields(body, tenant.user_id),
+        response_model=PayAdjustmentRead,
+        status_code=status.HTTP_201_CREATED,
+        execute=lambda: service.create(
+            tenant.company_id, body, actor_user_id=tenant.user_id, **_client(request)
+        ),
     )
-    return DataEnvelope(data=data, meta=_meta())
+    mark_replay(response, result.replayed, result.status_code)
+    return DataEnvelope(data=result.data, meta=_meta())
 
 
 @router.delete("/payroll/adjustments/{adjustment_id}", status_code=status.HTTP_204_NO_CONTENT)

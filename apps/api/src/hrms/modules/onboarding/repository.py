@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.onboarding.models import (
@@ -34,17 +34,50 @@ class OnboardingCaseRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def list_cases(
-        self, session: AsyncSession, *, company_id: UUID, status: str | None = None
-    ) -> list[OnboardingCase]:
-        conditions = [
+    def _list_conditions(self, *, company_id: UUID, status: str | None) -> list[Any]:
+        """Shared WHERE predicates for `list_cases`/`count_cases` (FINDING-03) — kept identical
+        between the two so pagination and the `total` it reports always agree."""
+        conditions: list[Any] = [
             OnboardingCase.company_id == company_id,
             OnboardingCase.deleted_at.is_(None),
         ]
         if status is not None:
             conditions.append(OnboardingCase.status == status)
-        stmt = select(OnboardingCase).where(*conditions).order_by(OnboardingCase.created_at.desc())
+        return conditions
+
+    async def list_cases(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[OnboardingCase]:
+        """`limit=None` (the default) returns every case unpaginated — preserves the exact
+        pre-FINDING-03 behavior for any non-HTTP caller. `GET /onboarding-cases` always passes an
+        explicit `limit`/`offset`, applied at the SQL layer, never by slicing a fully-materialized
+        Python list. `id` is a stable secondary key — `created_at` alone can tie for cases created
+        in the same request burst (e.g. a bulk import), which would make page boundaries
+        non-deterministic."""
+        conditions = self._list_conditions(company_id=company_id, status=status)
+        stmt = (
+            select(OnboardingCase)
+            .where(*conditions)
+            .order_by(OnboardingCase.created_at.desc(), OnboardingCase.id.desc())
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return list((await session.execute(stmt)).scalars().all())
+
+    async def count_cases(
+        self, session: AsyncSession, *, company_id: UUID, status: str | None = None
+    ) -> int:
+        """Same predicates as `list_cases`, no `ORDER BY`/`LIMIT` — the paired COUNT query for
+        `GET /onboarding-cases`'s `pagination.total` (FINDING-03)."""
+        conditions = self._list_conditions(company_id=company_id, status=status)
+        stmt = select(func.count()).select_from(OnboardingCase).where(*conditions)
+        return int((await session.execute(stmt)).scalar_one())
 
     async def get_active_case_by_email(
         self, session: AsyncSession, *, company_id: UUID, personal_email: str

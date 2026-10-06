@@ -10,6 +10,10 @@ every W6/W7/W8 test file already established. Real Postgres, real RLS, real HTTP
 app, not `TestClient`.
 """
 
+import base64
+import json
+from datetime import date
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -49,9 +53,111 @@ async def _cleanup_leave_projection(*, company_id: UUID) -> None:
     factory = get_session_factory()
     async with factory() as session:
         await set_rls_company_id(session, str(company_id))
+        for table in (
+            "leave_day_projection",
+            "leave_application_day",
+            "leave_application",
+            "leave_policy_version",
+            "leave_policy",
+            "leave_type",
+        ):
+            await session.execute(
+                text(f"DELETE FROM {table} WHERE company_id = :cid"), {"cid": str(company_id)}
+            )
+        await session.commit()
+
+
+def _company_of(headers: dict[str, str]) -> UUID:
+    """The tenant a bearer token belongs to (its `company_id` claim)."""
+    payload = headers["Authorization"].split(" ", 1)[1].split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    return UUID(claims["company_id"])
+
+
+async def _seed_leave_application(
+    *,
+    company_id: UUID,
+    employee_id: str,
+    days: list[tuple[str, str, str | None, bool]],
+    status: str = "APPROVED",
+    is_paid_default: bool = True,
+) -> str:
+    """Insert a real leave application (+ its policy chain and day rows) straight into the
+    Leave tables, in `status`. `days` is `(date, fraction, half, is_lop)` with `half` in Leave's
+    own FIRST_HALF/SECOND_HALF vocabulary. LM-14: this is what a projection must be backed by."""
+    factory = get_session_factory()
+    params = {
+        "cid": str(company_id),
+        "eid": employee_id,
+        "type_id": str(uuid4()),
+        "policy_id": str(uuid4()),
+        "version_id": str(uuid4()),
+        "app_id": str(uuid4()),
+        "code": f"LM{uuid4().hex[:8]}",
+        "paid": is_paid_default,
+        "status": status,
+        "start": date.fromisoformat(min(d[0] for d in days)),
+        "end": date.fromisoformat(max(d[0] for d in days)),
+        "total": sum((Decimal(d[1]) for d in days), Decimal("0")),
+    }
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
         await session.execute(
-            text("DELETE FROM leave_day_projection WHERE company_id = :cid"),
-            {"cid": str(company_id)},
+            text(
+                "INSERT INTO leave_type (id, company_id, code, name, is_paid_default) "
+                "VALUES (:type_id, :cid, :code, 'LM-14 leave', :paid)"
+            ),
+            params,
+        )
+        await session.execute(
+            text(
+                "INSERT INTO leave_policy (id, company_id, name, leave_type_id) "
+                "VALUES (:policy_id, :cid, 'LM-14 policy', :type_id)"
+            ),
+            params,
+        )
+        await session.execute(
+            text(
+                "INSERT INTO leave_policy_version (id, company_id, policy_id, status, "
+                "effective_from) VALUES (:version_id, :cid, :policy_id, 'PUBLISHED', '2026-01-01')"
+            ),
+            params,
+        )
+        await session.execute(
+            text(
+                "INSERT INTO leave_application (id, company_id, employee_id, leave_type_id, "
+                "leave_policy_version_id, start_date, end_date, total_days, status, "
+                "approval_chain, submitted_at) VALUES (:app_id, :cid, :eid, :type_id, "
+                ":version_id, :start, :end, :total, :status, 'MANAGER', now())"
+            ),
+            params,
+        )
+        for on, fraction, half, is_lop in days:
+            await session.execute(
+                text(
+                    "INSERT INTO leave_application_day (id, company_id, leave_application_id, "
+                    "calendar_date, fraction, half, is_lop) VALUES (gen_random_uuid(), :cid, "
+                    ":app_id, :on, :fraction, :half, :is_lop)"
+                ),
+                {
+                    **params,
+                    "on": date.fromisoformat(on),
+                    "fraction": Decimal(fraction),
+                    "half": half,
+                    "is_lop": is_lop,
+                },
+            )
+        await session.commit()
+    return str(params["app_id"])
+
+
+async def _set_application_status(*, company_id: UUID, application_id: str, status: str) -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        await session.execute(
+            text("UPDATE leave_application SET status = :s WHERE id = :a"),
+            {"s": status, "a": application_id},
         )
         await session.commit()
 
@@ -66,17 +172,34 @@ async def _sync(
     half: str | None = None,
     day: str = _DAY,
     leave_application_id: str | None = None,
+    send_values: bool = False,
     **extra: Any,
 ) -> dict[str, Any]:
+    """POST a projection sync. Unless `leave_application_id` is given, first seeds an APPROVED
+    application whose day carries `fraction`/`half`/`is_paid` (the authoritative values). The body
+    sends identifiers only, unless `send_values` (then it also sends fraction/half/is_paid, which
+    the service must ignore)."""
+    if leave_application_id is None:
+        leave_application_id = await _seed_leave_application(
+            company_id=_company_of(headers),
+            employee_id=employee_id,
+            days=[
+                (
+                    day,
+                    fraction,
+                    {"FIRST": "FIRST_HALF", "SECOND": "SECOND_HALF"}.get(half or ""),
+                    not is_paid,
+                )
+            ],
+        )
     body: dict[str, Any] = {
         "employee_id": employee_id,
         "attendance_date": day,
-        "leave_application_id": leave_application_id or str(uuid4()),
-        "fraction": fraction,
-        "half": half,
-        "is_paid": is_paid,
+        "leave_application_id": leave_application_id,
         **extra,
     }
+    if send_values:
+        body.update({"fraction": fraction, "half": half, "is_paid": is_paid})
     response = await client.post("/v1/leave-projections", headers=headers, json=body)
     return response
 
@@ -228,10 +351,16 @@ async def test_invalid_fraction_rejected(client: AsyncClient, seeded_plan_catalo
     try:
         wired = await _build_wired_employee(client, headers)
         response = await _sync(
-            client, headers, employee_id=wired["employee"]["id"], fraction="0.75", half="FIRST"
+            client,
+            headers,
+            employee_id=wired["employee"]["id"],
+            fraction="0.75",
+            half="FIRST",
+            send_values=True,
         )
         assert response.status_code == 422, response.text
     finally:
+        await _cleanup_leave_projection(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
 
@@ -243,10 +372,16 @@ async def test_half_required_for_half_day_fraction(
     try:
         wired = await _build_wired_employee(client, headers)
         response = await _sync(
-            client, headers, employee_id=wired["employee"]["id"], fraction="0.50", half=None
+            client,
+            headers,
+            employee_id=wired["employee"]["id"],
+            fraction="0.50",
+            half=None,
+            send_values=True,
         )
         assert response.status_code == 422, response.text
     finally:
+        await _cleanup_leave_projection(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
 
@@ -275,7 +410,9 @@ async def test_forged_employee_id_rejected(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        response = await _sync(client, headers, employee_id=str(uuid4()))
+        response = await _sync(
+            client, headers, employee_id=str(uuid4()), leave_application_id=str(uuid4())
+        )
         assert response.status_code == 404, response.text
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -297,7 +434,12 @@ async def test_cross_tenant_projection_returns_404(
 
         # Also: an employee_id that is real, but belongs to the *other* tenant, is rejected the
         # same way a forged/nonexistent id is (404, never 403 or a cross-tenant write).
-        cross_tenant_sync = await _sync(client, headers_b, employee_id=wired["employee"]["id"])
+        cross_tenant_sync = await _sync(
+            client,
+            headers_b,
+            employee_id=wired["employee"]["id"],
+            leave_application_id=str(uuid4()),
+        )
         assert cross_tenant_sync.status_code == 404, cross_tenant_sync.text
     finally:
         await _cleanup_leave_projection(company_id=company_a)
@@ -615,26 +757,28 @@ async def test_resync_same_leave_application_id_updates_in_place(
     try:
         wired = await _build_wired_employee(client, headers)
         employee_id = wired["employee"]["id"]
-        application_id = str(uuid4())
-
-        await _sync(
-            client,
-            headers,
+        application_id = await _seed_leave_application(
+            company_id=company_id,
             employee_id=employee_id,
-            fraction="1.00",
-            is_paid=True,
-            leave_application_id=application_id,
+            days=[(_DAY, "1.00", None, False)],
         )
+
+        await _sync(client, headers, employee_id=employee_id, leave_application_id=application_id)
         day = await _get_day(client, headers, employee_id=employee_id)
         assert day["paid_day_fraction"] == "1.00"
 
+        # The approved day is corrected to loss of pay; resyncing the same application picks up
+        # the authoritative change and updates the one projection row in place.
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await session.execute(
+                text("UPDATE leave_application_day SET is_lop = true WHERE company_id = :c"),
+                {"c": str(company_id)},
+            )
+            await session.commit()
         resynced = await _sync(
-            client,
-            headers,
-            employee_id=employee_id,
-            fraction="1.00",
-            is_paid=False,
-            leave_application_id=application_id,
+            client, headers, employee_id=employee_id, leave_application_id=application_id
         )
         assert resynced.status_code == 201, resynced.text
 
@@ -792,6 +936,7 @@ async def test_sync_without_permission_rejected(
         response = await _sync(client, scoped_headers, employee_id=wired["employee"]["id"])
         assert response.status_code == 403, response.text
     finally:
+        await _cleanup_leave_projection(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
         await _cleanup_scoped_users()

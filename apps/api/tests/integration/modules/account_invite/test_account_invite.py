@@ -196,6 +196,10 @@ async def test_invite_employee_accept_and_login_success(
                 "EMPLOYEE.VIEW_EXPERIENCE",
                 "EMPLOYEE.VIEW_NOMINEE",
                 "PAYROLL.PAYSLIP_VIEW_OWN",
+                # Leave decision 12 - the default employee role submits own leave and sees own
+                # balances.
+                "LEAVE.APPLICATION_SUBMIT",
+                "LEAVE.BALANCE_VIEW",
             }
             assert refreshed["id"] == employee["id"]
     finally:

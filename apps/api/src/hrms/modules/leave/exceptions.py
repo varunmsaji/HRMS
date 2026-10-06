@@ -59,6 +59,25 @@ class LeaveTypeCompOffAlreadyExistsError(ConflictError):
         )
 
 
+class LeaveTypeInUseError(ConflictError):
+    """Decision 11 — `requires_balance`, `is_comp_off` and `is_paid_default` define what a leave
+    type's applications and ledger entries *mean*; once any exist they must keep that meaning, so
+    the change is refused instead of silently reinterpreting history."""
+
+    code = "LEAVE_TYPE_IN_USE"
+
+    def __init__(self, fields: list[str]) -> None:
+        message = (
+            "This leave type has already been used, so "
+            + ", ".join(fields)
+            + " can no longer be changed. Create a new leave type instead."
+        )
+        super().__init__(
+            message,
+            details=[{"field": field, "code": self.code, "message": message} for field in fields],
+        )
+
+
 class LeavePolicyDraftAlreadyExistsError(ConflictError):
     code = "LEAVE_POLICY_DRAFT_ALREADY_EXISTS"
 
@@ -236,6 +255,24 @@ class LeaveApplicationLimitExceededError(ValidationError):
         )
 
 
+class LeaveApplicationOverlapError(ConflictError):
+    """The employee already has active (submitted or approved) leave on one of these dates and
+    the days would add up to more than one. The same invariant `LeaveProjectionService.sync`
+    enforces at approval, checked at submission so the second request is refused up front."""
+
+    code = "LEAVE_APPLICATION_OVERLAP"
+
+    def __init__(
+        self,
+        message: str = (
+            "You already have leave submitted or approved for one or more of these dates"
+        ),
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "start_date", "code": self.code, "message": message}]
+        )
+
+
 class LeaveApplicationReasonRequiredError(ValidationError):
     code = "LEAVE_APPLICATION_REASON_REQUIRED"
 
@@ -272,6 +309,30 @@ class LeaveApplicationDateRangeInvalidError(ValidationError):
     def __init__(self, message: str) -> None:
         super().__init__(
             message, details=[{"field": "end_date", "code": self.code, "message": message}]
+        )
+
+
+class LeaveApplicationMaxConsecutiveExceededError(ValidationError):
+    """Decision 15 - the applicable policy version caps a single application's calendar span
+    (`max_consecutive_days`, default 30)."""
+
+    code = "LEAVE_APPLICATION_MAX_CONSECUTIVE_EXCEEDED"
+
+    def __init__(self, *, limit: int, requested: int) -> None:
+        message = (
+            f"This leave policy allows at most {limit} consecutive days in one application "
+            f"({requested} requested)"
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "end_date",
+                    "code": self.code,
+                    "message": message,
+                    "context": {"limit": limit, "requested": requested},
+                }
+            ],
         )
 
 
@@ -352,6 +413,62 @@ class LeaveApplicationPeriodClosedError(ConflictError):
             details=[
                 {
                     "field": "start_date",
+                    "code": self.code,
+                    "message": message,
+                    "context": {
+                        "period_start": period_start.isoformat(),
+                        "period_end": period_end.isoformat(),
+                    },
+                }
+            ],
+        )
+
+
+class LeaveLedgerPeriodClosedError(ConflictError):
+    """Decision 14 - a manual adjustment or encashment may not directly modify a closed
+    attendance period; a correction after closure is a new entry dated in an open period."""
+
+    code = "LEAVE_LEDGER_PERIOD_CLOSED"
+
+    def __init__(self, *, period_start: date, period_end: date) -> None:
+        message = (
+            f"The attendance period {period_start} to {period_end} is closed, so the balance "
+            "cannot be changed with an effective date inside it. Date the correction in an open "
+            "period instead."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "effective_date",
+                    "code": self.code,
+                    "message": message,
+                    "context": {
+                        "period_start": period_start.isoformat(),
+                        "period_end": period_end.isoformat(),
+                    },
+                }
+            ],
+        )
+
+
+class LeaveLedgerPayrollFinalisedError(ConflictError):
+    """Decision 14 - the period's payroll is finalised; issued payroll history is never rewritten
+    by a balance change dated inside it."""
+
+    code = "LEAVE_LEDGER_PAYROLL_FINALISED"
+
+    def __init__(self, *, period_start: date, period_end: date) -> None:
+        message = (
+            f"Payroll for {period_start} to {period_end} is already finalised, so the balance "
+            "cannot be changed with an effective date inside it. Date the correction in an open "
+            "period instead."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "effective_date",
                     "code": self.code,
                     "message": message,
                     "context": {
@@ -537,3 +654,89 @@ class LeavePolicyBelowStatutoryMinimumError(ValidationError):
             message,
             details=[{"field": "accrual_rate_per_cycle", "code": self.code, "message": message}],
         )
+
+
+class LeaveApproverStillEligibleError(ConflictError):
+    """Decision 13 - a stage is reassigned only when its current approver can no longer act."""
+
+    code = "LEAVE_APPROVER_STILL_ELIGIBLE"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "The current approver is still eligible to act on this stage, so it cannot be "
+            "reassigned"
+        )
+
+
+class LeaveApproverReassignNotApplicableError(ConflictError):
+    """Decision 13 - only a pending MANAGER or HOD stage names a specific person; the HR stage is
+    open to any company-wide approver and a finished application has no stage at all."""
+
+    code = "LEAVE_APPROVER_REASSIGN_NOT_APPLICABLE"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Only a pending application waiting at the MANAGER or HOD stage can be reassigned"
+        )
+
+
+class LeaveReassignApproverNotEligibleError(ValidationError):
+    """Decision 13 - the proposed approver must satisfy the stage's own eligibility rules."""
+
+    code = "LEAVE_REASSIGN_APPROVER_NOT_ELIGIBLE"
+
+    def __init__(self, reason: str) -> None:
+        message = "The proposed approver cannot approve this application"
+        super().__init__(
+            message,
+            details=[{"field": "new_approver_employee_id", "code": reason, "message": message}],
+        )
+
+
+def _outside_employment_message(status: str, offending: date | None) -> str:
+    when = f" ({offending.isoformat()})" if offending is not None else ""
+    return {
+        "NO_EMPLOYMENT": "The employee has no employment record covering these dates",
+        "PRE_JOINING": f"These dates start before the employee's joining date{when}",
+        "AFTER_LAST_WORKING_DAY": f"These dates run past the employee's last working day{when}",
+        "REHIRE_GAP": f"These dates fall in a gap between two employments{when}",
+        "CROSS_EMPLOYMENT_SPELL": (
+            f"These dates span two separate employments{when}; split them into one request each"
+        ),
+    }.get(status, "These dates are outside the employee's employment")
+
+
+def _outside_employment_details(
+    field: str, code: str, status: str, offending: date | None
+) -> list[dict[str, Any]]:
+    message = _outside_employment_message(status, offending)
+    context: dict[str, str] = {"reason": status}
+    if offending is not None:
+        context["offending_date"] = offending.isoformat()
+    return [{"field": field, "code": code, "message": message, "context": context}]
+
+
+class LeaveDateOutsideEmploymentError(ValidationError):
+    """D0-D3/D5 - a new leave application, manual adjustment or encashment whose date(s) are not
+    covered by ONE employment spell of the employee. `reason` is one of NO_EMPLOYMENT,
+    PRE_JOINING, AFTER_LAST_WORKING_DAY, REHIRE_GAP, CROSS_EMPLOYMENT_SPELL."""
+
+    code = "LEAVE_DATE_OUTSIDE_EMPLOYMENT"
+
+    def __init__(
+        self, *, reason: str, offending_date: date | None, field: str = "start_date"
+    ) -> None:
+        details = _outside_employment_details(field, self.code, reason, offending_date)
+        super().__init__(details[0]["message"], details=details)
+
+
+class LeaveApprovalOutsideEmploymentError(ConflictError):
+    """D3/LM-15 - the application was valid when submitted but employment has changed since, so
+    approving it would book leave outside employment. Nothing is debited or approved; the
+    application stays as it is (HR rejects or cancels it)."""
+
+    code = "LEAVE_APPROVAL_OUTSIDE_EMPLOYMENT"
+
+    def __init__(self, *, reason: str, offending_date: date | None) -> None:
+        details = _outside_employment_details("start_date", self.code, reason, offending_date)
+        super().__init__(details[0]["message"], details=details)

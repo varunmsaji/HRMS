@@ -13,6 +13,8 @@ the five system components, and — only while the company has no structure at a
 published structures, `STANDARD` (HRA 40 % of Basic) and `STANDARD_METRO` (HRA 50 %)."""
 
 import calendar
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -23,9 +25,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
+from hrms.core.db.locks import (
+    lock_attendance_period_close,
+    lock_pay_adjustment,
+    lock_payroll_finalise,
+)
 from hrms.core.errors.base import NotFoundError
 from hrms.core.rbac.types import DataScope
 from hrms.modules.payroll.breakup import (
+    ARREARS_PREFIX,
     Breakup,
     BreakupError,
     StructureLine,
@@ -33,7 +41,6 @@ from hrms.modules.payroll.breakup import (
     validate_structure,
 )
 from hrms.modules.payroll.engine import (
-    ARREARS_PREFIX,
     ERROR,
     WARNING,
     Issue,
@@ -49,6 +56,7 @@ from hrms.modules.payroll.exceptions import (
     PayRunAttendanceChangedError,
     PayRunBlockedError,
     PayRunEmployeeNotFoundError,
+    PayRunInputsChangedError,
     PayRunInputsUnavailableError,
     PayRunInvalidTransitionError,
     PayRunLegalEntityInvalidError,
@@ -1610,6 +1618,81 @@ class PayRunService:
         if state != ("CLOSED", run.attendance_period_version):
             raise PayRunAttendanceChangedError()
 
+    async def _assert_inputs_unchanged(self, run: PayRun) -> None:
+        """PD-4 — approval and finalisation are refused when anything the locked snapshot was
+        built from has changed since. The snapshot is rebuilt from live data exactly as
+        `lock_inputs` built it and compared with the stored one, so the check covers every input
+        that reaches the engine — employment and pay basis, CTC, statutory profile, salary
+        assignment, structure version, component flags, bank reference, statutory rates, the
+        attendance summary and the set of employees — and cannot drift out of step with it.
+
+        Two parts of the snapshot are deliberately not compared (`_fingerprint`): `arrears`, which
+        has its own check at finalisation (`PayRunArrearsStaleError`) and carries a day
+        correction recorded later to the next run, and the year-to-date TDS totals, which follow
+        from finalised runs rather than from an edited input. Nothing is mutated here; the run
+        stays as it was and must be rolled back to draft and locked again."""
+        from hrms.modules.attendance.service import AttendancePeriodService
+
+        inputs = await AttendancePeriodService(self._session).closed_period_for_month(
+            run.company_id, run.legal_entity_id, run.period_start, run.period_end
+        )
+        if inputs is None:
+            raise PayRunAttendanceChangedError()
+        stored = {
+            e.employee_id: e
+            for e in await self._repo.list_employees(
+                self._session, company_id=run.company_id, run_id=run.id
+            )
+        }
+        live = {
+            row["employee_id"]: row
+            for row in await self._build_snapshots(
+                run, inputs, datetime.now(UTC), with_arrears=False
+            )
+        }
+        changes: list[dict[str, Any]] = []
+        for employee_id in sorted(set(stored) | set(live), key=str):
+            before = stored[employee_id].snapshot if employee_id in stored else None
+            after = live[employee_id]["snapshot"] if employee_id in live else None
+            if before is None or after is None:
+                code = (
+                    stored[employee_id].employee_code
+                    if employee_id in stored
+                    else live[employee_id]["employee_code"]
+                )
+                changes.append({
+                    "employee_id": str(employee_id),
+                    "employee_code": code,
+                    "sections": ["EMPLOYEE_ADDED" if before is None else "EMPLOYEE_REMOVED"],
+                })  # fmt: skip
+                continue
+            was, now = self._fingerprint(before), self._fingerprint(after)
+            sections = sorted(
+                key for key in was.keys() | now.keys() if was.get(key) != now.get(key)
+            )
+            if sections:
+                changes.append({
+                    "employee_id": str(employee_id),
+                    "employee_code": stored[employee_id].employee_code,
+                    "sections": sections,
+                })  # fmt: skip
+        if changes:
+            raise PayRunInputsChangedError(changes)
+
+    @staticmethod
+    def _fingerprint(snapshot: dict[str, Any]) -> dict[str, str]:
+        """One digest per snapshot section; see `_assert_inputs_unchanged` for what is left out."""
+        sections = {k: v for k, v in snapshot.items() if k != "arrears"}
+        tax = sections.get("income_tax")
+        if isinstance(tax, dict):
+            sections["income_tax"] = {k: v for k, v in tax.items() if not k.startswith("ytd_")}
+        return {
+            key: hashlib.sha256(
+                json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+            ).hexdigest()
+            for key, value in sections.items()
+        }
+
     # -- create / edit / delete ------------------------------------------------------
 
     async def create(
@@ -2256,7 +2339,12 @@ class PayRunService:
         return items
 
     async def _build_snapshots(
-        self, run: PayRun, inputs: "PayrollPeriodInputs", now: datetime
+        self,
+        run: PayRun,
+        inputs: "PayrollPeriodInputs",
+        now: datetime,
+        *,
+        with_arrears: bool = True,
     ) -> list[dict[str, Any]]:
         from hrms.modules.employee.service import EmployeeService, EmploymentService
         from hrms.modules.leave.service import LeaveLedgerService
@@ -2350,7 +2438,9 @@ class PayRunService:
                     run.period_end,
                     run.period_month,
                 ),
-                "arrears": await self._arrears_for(run, employee_id, components),
+                "arrears": (
+                    await self._arrears_for(run, employee_id, components) if with_arrears else []
+                ),
                 "issues": issues,
             }
             valid = [s for s in segments if s["valid"]]
@@ -2573,6 +2663,17 @@ class PayRunService:
             self._session, company_id=company_id, run_id=run_id, rows=line_rows
         )
         # Phase 5.5 — which month and earlier run each arrears amount belongs to.
+        arrear_parts = [
+            (line, part)
+            for line in line_rows
+            if line["component_code"].startswith(ARREARS_PREFIX)
+            for part in line["trace"]["parts"]
+        ]
+        paid_before = await self._arrear_repo.payment_counts(
+            self._session,
+            company_id=company_id,
+            source_run_ids=sorted({UUID(part["pay_run_id"]) for _, part in arrear_parts}, key=str),
+        )
         await self._arrear_repo.replace_for_run(
             self._session,
             company_id=company_id,
@@ -2588,11 +2689,13 @@ class PayRunService:
                     "component_code": part["component_code"],
                     "line_type": line["line_type"],
                     "amount_minor": part["amount_minor"],
+                    "payment_number": 1
+                    + paid_before.get(
+                        (line["employee_id"], UUID(part["pay_run_id"]), part["component_code"]), 0
+                    ),
                     "created_at": now,
                 }
-                for line in line_rows
-                if line["component_code"].startswith(ARREARS_PREFIX)
-                for part in line["trace"]["parts"]
+                for line, part in arrear_parts
             ],
         )
         after = pay_run_to_read(updated)
@@ -2696,6 +2799,7 @@ class PayRunService:
         if reasons:
             raise PayRunBlockedError("This pay run cannot be approved yet", reasons=reasons)
         await self._assert_attendance_unchanged(run)
+        await self._assert_inputs_unchanged(run)
         before = pay_run_to_read(run)
         updated = await self._transition(
             run,
@@ -2734,6 +2838,15 @@ class PayRunService:
         (decision 15) — later corrections are arrears (Phase 5.5)."""
         run = await self._get_row(company_id, run_id)
         self._require_status(run, "APPROVED")
+        # PAY-A01 / PAY-A03 — lock order is payroll-finalise, then attendance-period-close
+        # (shared); see `core/db/locks.py`. The first makes finalisations of one legal entity
+        # take turns, so the arrears read below includes what a run that finalised first paid.
+        # The second keeps the attendance period from being reopened until this run commits.
+        # Everything is re-read after the locks: what was read before them may be stale.
+        await lock_payroll_finalise(self._session, company_id, run.legal_entity_id)
+        await lock_attendance_period_close(self._session, company_id, exclusive=False)
+        await self._session.refresh(run)
+        self._require_status(run, "APPROVED")
         await self._assert_attendance_unchanged(run)
         before = pay_run_to_read(run)
         # Phase 5.4 — freeze each payslip's header facts and leave balances while the run can
@@ -2752,6 +2865,9 @@ class PayRunService:
                 if await self._paid_for(prior, employee.employee_id) != item["paid"]:
                     raise PayRunArrearsStaleError()
                 adjustment_ids.extend(UUID(a) for a in item.get("adjustment_ids", []))
+        # PD-4 — the snapshot is still what the inputs say now. Checked after the arrears so a
+        # run overtaken by another's arrears payment reports that, not a generic change.
+        await self._assert_inputs_unchanged(run)
         applied = await self._adjustment_repo.mark_applied(
             self._session,
             company_id=company_id,
@@ -2761,6 +2877,12 @@ class PayRunService:
         )
         if applied != len(adjustment_ids):
             raise PayRunArrearsStaleError()
+        try:
+            await self._arrear_repo.mark_applied(
+                self._session, company_id=company_id, run_id=run_id, now=now
+            )
+        except IntegrityError as exc:  # the database guard: this payment was already made
+            raise PayRunArrearsStaleError() from exc
         for employee in employees:
             await self._repo.update_employee(
                 self._session,
@@ -3567,6 +3689,11 @@ class PayAdjustmentService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> PayAdjustmentRead:
+        # Each correction is bounded by the sum of the earlier ones (PAY-B04): without this two
+        # concurrent corrections could each pass the check and together exceed the payable days.
+        await lock_pay_adjustment(
+            self._session, company_id, body.source_pay_run_id, body.employee_id
+        )
         run = await self._runs.get(
             self._session, company_id=company_id, run_id=body.source_pay_run_id
         )

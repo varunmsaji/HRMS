@@ -12,7 +12,9 @@ from hrms.core.rbac.service import RbacService
 from hrms.core.rbac.types import DataScope
 
 
-def get_rbac_service(session: Annotated[AsyncSession, Depends(get_session)]) -> RbacService:
+def get_rbac_service(
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+) -> RbacService:
     return RbacService(session)
 
 

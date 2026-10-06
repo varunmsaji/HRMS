@@ -13,7 +13,7 @@ from hrms.core.tenancy.context import TenantContext, set_tenant
 
 async def get_tenant_context(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     x_company_id: Annotated[str | None, Header(alias="X-Company-Id")] = None,
 ) -> TenantContext:
     if x_company_id is not None and x_company_id != str(user.company_id):

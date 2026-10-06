@@ -9,6 +9,6 @@ from hrms.modules.identity.service import IdentityService
 
 
 def get_identity_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> IdentityService:
     return IdentityService(session, get_settings())

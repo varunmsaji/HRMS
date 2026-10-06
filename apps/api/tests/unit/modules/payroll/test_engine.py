@@ -3,6 +3,8 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from hrms.modules.payroll.engine import (
     ArrearsInput,
     EmployeeInput,
@@ -387,3 +389,191 @@ def test_arrears_recover_an_overpayment_and_a_removed_component() -> None:
     assert amounts["ARR_BASIC"] == -100_000
     assert amounts["ARR_HRA"] == -500_000
     assert result.net_minor == 3_000_000 - 600_000
+
+
+# ---------------------------------------------------------------------------------------------
+# PAY-B02 — paid days can never exceed the days the employee was employed
+# ---------------------------------------------------------------------------------------------
+
+_B02_LINES = _lines(2_000_000, 800_000, 1_200_000)
+
+
+def _joiner() -> Segment:  # employed 11–30 Sep: 20 days
+    return _segment(date(2026, 9, 11), date(2026, 9, 30), _B02_LINES)
+
+
+def _leaver() -> Segment:  # employed 1–10 Sep: 10 days
+    return _segment(date(2026, 9, 1), date(2026, 9, 10), _B02_LINES)
+
+
+def test_b02_full_month_paid_equals_employed_is_accepted() -> None:
+    result = compute_employee(_input((_september(_B02_LINES),), "30"))
+    assert not result.has_error
+    assert _amounts(result)["BASIC"] == 2_000_000
+
+
+def test_b02_paid_below_employed_is_accepted_and_prorated() -> None:
+    result = compute_employee(_input((_september(_B02_LINES),), "27.5"))
+    assert not result.has_error
+    assert _amounts(result)["BASIC"] == round(2_000_000 * 27.5 / 30)
+
+
+def test_b02_mid_month_joiner_boundaries() -> None:
+    ok = compute_employee(_input((_joiner(),), "20"))
+    assert not ok.has_error
+    assert _amounts(ok)["BASIC"] == round(2_000_000 * 20 / 30)
+
+    over = compute_employee(_input((_joiner(),), "20.5"))
+    assert _codes(over) == {"PAID_DAYS_EXCEED_EMPLOYED"}
+    assert over.has_error and over.lines == [] and over.net_minor == 0
+
+
+def test_b02_leaver_boundaries() -> None:
+    assert not compute_employee(_input((_leaver(),), "10")).has_error
+    over = compute_employee(_input((_leaver(),), "30"))  # the whole month, for 10 employed days
+    assert _codes(over) == {"PAID_DAYS_EXCEED_EMPLOYED"}
+    assert over.lines == []
+
+
+def test_b02_split_employment_in_one_entity_sums_its_segments() -> None:
+    segments = (
+        _segment(date(2026, 9, 1), date(2026, 9, 10), _B02_LINES),
+        _segment(date(2026, 9, 21), date(2026, 9, 30), _B02_LINES),
+    )  # 20 employed days
+    assert not compute_employee(_input(segments, "20")).has_error
+    assert "PAID_DAYS_EXCEED_EMPLOYED" in _codes(compute_employee(_input(segments, "21")))
+
+
+def test_b02_paid_above_the_month_is_refused_whatever_the_segments_say() -> None:
+    inflated = Segment(
+        date_from=date(2026, 9, 1), date_to=date(2026, 9, 30), employed_days=45,
+        pay_basis="MONTHLY", valid=True, lines=_B02_LINES,
+    )  # fmt: skip
+    result = compute_employee(_input((inflated,), "31"))
+    assert _codes(result) == {"PAID_DAYS_EXCEED_EMPLOYED"}
+
+
+def test_b02_zero_paid_days_is_valid_and_pays_nothing() -> None:
+    result = compute_employee(_input((_september(_B02_LINES),), "0"))
+    assert not result.has_error
+    assert all(line.amount_minor == 0 for line in result.lines)
+
+
+def test_b02_zero_employed_days_with_paid_days_is_refused_and_without_is_empty() -> None:
+    assert _codes(compute_employee(_input((), "3"))) == {"NOT_EMPLOYED"}
+    empty = compute_employee(_input((), "0"))
+    assert not empty.has_error and empty.lines == []
+
+
+def test_b02_negative_paid_days_is_refused() -> None:
+    result = compute_employee(_input((_september(_B02_LINES),), "-1"))
+    assert _codes(result) == {"PAID_DAYS_INVALID"}
+    assert result.lines == []
+
+
+def test_b02_paid_above_the_summarys_payable_days_is_refused() -> None:
+    inputs = _input((_september(_B02_LINES),), "30", payable_days=Decimal("28"))
+    result = compute_employee(inputs)
+    assert _codes(result) == {"PAID_DAYS_EXCEED_PAYABLE"}
+    assert result.lines == []
+    # ...and a summary whose payable days cover it is fine.
+    assert not compute_employee(
+        _input((_september(_B02_LINES),), "28", payable_days=Decimal("28"))
+    ).has_error
+
+
+def test_b02_arrears_recomputed_with_too_many_paid_days_fail_the_run() -> None:
+    bad_month = _input((_joiner(),), "25")  # an arrears month corrected beyond the days employed
+    current = _input(
+        (_september(_B02_LINES),),
+        "30",
+        arrears=(ArrearsInput("2026-08", "run-1", ("DAYS_CORRECTED",), bad_month, {}),),
+    )
+    result = compute_employee(current)
+    assert "ARREARS_FAILED" in _codes(result)
+    assert result.has_error
+
+
+def test_b02_snapshot_round_trip_carries_payable_days() -> None:
+    snapshot = {
+        "summary": {"paid_days": "20", "payable_days": "19"},
+        "segments": [
+            {"from": "2026-09-11", "to": "2026-09-30", "employed_days": 20,
+             "pay_basis": "MONTHLY", "valid": True, "lines": []}
+        ],
+    }  # fmt: skip
+    inputs = employee_input_from_snapshot(snapshot, 30)
+    assert inputs.payable_days == Decimal("19")
+    assert _codes(compute_employee(inputs)) == {"PAID_DAYS_EXCEED_PAYABLE"}
+
+
+# ---------------------------------------------------------------------------------------------
+# PAY-B03 — a configured component is either calculated or refused, never dropped or merged
+# ---------------------------------------------------------------------------------------------
+
+
+def _extra_line(code: str, amount: int, line_type: str = "EARNING") -> SegmentLine:
+    return SegmentLine(code, code.title(), line_type, amount, True, 40)
+
+
+def test_b03_every_structure_component_is_calculated_into_the_output() -> None:
+    lines = (
+        *_lines(2_000_000, 800_000, 1_200_000),
+        _extra_line("CONVEYANCE", 300_000),
+        _extra_line("GRATUITY_PROVISION", 50_000, "EMPLOYER_CONTRIBUTION"),
+    )
+    result = compute_employee(_input((_september(lines),), "30"))
+    assert not result.has_error
+    assert {"BASIC", "HRA", "SPECIAL_ALLOWANCE", "CONVEYANCE", "GRATUITY_PROVISION"} <= set(
+        _amounts(result)
+    )
+    assert _amounts(result)["CONVEYANCE"] == 300_000
+    assert result.gross_minor == 2_000_000 + 800_000 + 1_200_000 + 300_000
+    assert result.employer_contributions_minor == 50_000
+
+
+@pytest.mark.parametrize("code", ["OVERTIME", "LEAVE_ENCASHMENT", "DAILY_WAGES", "PT", "ARR_BASIC"])
+def test_b03_reserved_code_in_a_locked_snapshot_blocks_instead_of_colliding(code: str) -> None:
+    lines = (*_lines(2_000_000, 800_000, 1_200_000), _extra_line(code, 100_000))
+    # With overtime present the old engine overwrote the structure line with the OT line.
+    result = compute_employee(
+        _input(
+            (_september(lines),),
+            "30",
+            overtime=(OvertimeInput("NORMAL", Decimal("2"), 120),),
+        )
+    )
+    assert _codes(result) == {"COMPONENT_CODE_RESERVED"}
+    assert result.has_error and result.lines == []
+
+
+def test_b03_employer_pf_and_esi_structure_lines_remain_supported() -> None:
+    lines = (
+        *_lines(2_000_000, 800_000, 1_200_000),
+        _extra_line("EMPLOYER_PF", 180_000, "EMPLOYER_CONTRIBUTION"),
+        _extra_line("EMPLOYER_ESI", 10_000, "EMPLOYER_CONTRIBUTION"),
+    )
+    result = compute_employee(_input((_september(lines),), "30"))
+    assert "COMPONENT_CODE_RESERVED" not in _codes(result)
+
+
+def test_b03_arrears_lines_whose_truncated_codes_collide_are_refused() -> None:
+    long_a, long_b = "A" * 30, "A" * 29 + "B"  # identical for their first 26 characters
+    month = _input(
+        (_segment(date(2026, 8, 1), date(2026, 8, 31), (
+            *_lines(2_000_000, 800_000, 1_200_000),
+            _extra_line(long_a, 100_000), _extra_line(long_b, 100_000),
+        )),),
+        "31",
+    )  # fmt: skip
+    month = EmployeeInput(**{**month.__dict__, "days_in_month": 31})
+    paid = {
+        long_a: PaidLine(0, "EARNING", "A", 40),
+        long_b: PaidLine(0, "EARNING", "B", 40),
+    }
+    current = _input(
+        (_september(_lines(2_000_000, 800_000, 1_200_000)),),
+        "30",
+        arrears=(ArrearsInput("2026-08", "run-1", ("SALARY_CHANGED",), month, paid),),
+    )
+    assert "ARREARS_CODE_COLLISION" in _codes(compute_employee(current))

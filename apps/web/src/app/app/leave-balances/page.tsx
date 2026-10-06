@@ -1,7 +1,7 @@
 "use client";
 
 import { Wallet } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { apiClient } from "@/lib/api/client";
+import { apiClient, newIdempotencyKey } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/attendance/format";
@@ -81,6 +81,8 @@ export default function LeaveBalancesPage() {
   );
   const [encashmentError, setEncashmentError] = useState<string | null>(null);
   const [encashmentSaving, setEncashmentSaving] = useState(false);
+  // Kept across a retry after a network failure so the server encashes once; dropped once answered.
+  const encashmentKey = useRef<string | null>(null);
 
   const targetEmployeeId = view === "MINE" ? user?.employee_id ?? "" : selectedEmployeeId;
 
@@ -161,17 +163,26 @@ export default function LeaveBalancesPage() {
     setEncashmentSaving(true);
     setEncashmentError(null);
     try {
-      await apiClient.post("/leave-ledger/encashments", {
-        employee_id: targetEmployeeId,
-        leave_type_id: encashingType.leave_type_id,
-        days: encashmentValues.days.trim(),
-        effective_date: encashmentValues.effectiveDate,
-        reason: encashmentValues.reason.trim() || "Encashment",
-      });
+      encashmentKey.current ??= newIdempotencyKey();
+      await apiClient.post(
+        "/leave-ledger/encashments",
+        {
+          employee_id: targetEmployeeId,
+          leave_type_id: encashingType.leave_type_id,
+          days: encashmentValues.days.trim(),
+          effective_date: encashmentValues.effectiveDate,
+          reason: encashmentValues.reason.trim() || "Encashment",
+        },
+        { headers: { "Idempotency-Key": encashmentKey.current } },
+      );
+      encashmentKey.current = null;
       setEncashingType(null);
       toast({ title: "Encashment recorded", variant: "success" });
       await load(ledgerPage);
     } catch (err) {
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        encashmentKey.current = null; // answered (and rolled back): an edited retry is new
+      }
       setEncashmentError(describeApiError(err));
     } finally {
       setEncashmentSaving(false);

@@ -5,14 +5,11 @@ const nextConfig = {
   // traced production dependencies, not the full `node_modules`) so the production Docker image
   // can be a slim multi-stage build (apps/web/Dockerfile) instead of shipping the whole workspace.
   output: "standalone",
-  eslint: {
-    // DevOps Phase A — `.eslintrc.json` (new) is the first ESLint config this app has ever had;
-    // without this flag, `next build` folds ESLint into the build step and the pre-existing,
-    // as-yet-untriaged lint backlog (7 violations across 6 files, none touched by Phase A) would
-    // turn "the production build broke" into the wrong story for a lint finding. CI runs ESLint
-    // as its own separate, explicitly non-blocking step instead — see docs/devops/CI.md.
-    ignoreDuringBuilds: true,
-  },
+  // FINDING-02 (Next 16 upgrade) — `next build` no longer folds ESLint into the build step at
+  // all (the `eslint` config key itself was removed, not just this flag), so the DevOps Phase A
+  // `ignoreDuringBuilds` escape hatch that used to live here is now a no-op Next warns about on
+  // every build. CI's separate, explicitly non-blocking ESLint step (docs/devops/CI.md) is
+  // unaffected — it never went through this key.
 };
 
 export default nextConfig;

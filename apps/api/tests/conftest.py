@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import pytest
 import redis.asyncio as redis
@@ -63,8 +64,30 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+#: Endpoints that require an `Idempotency-Key` (LM-03). The shared `client` supplies a fresh key per
+#: call when a test did not pass one, so the many tests that just *use* these endpoints stay about
+#: their own subject. Tests of the idempotency contract itself pass explicit keys, or use a plain
+#: `httpx.AsyncClient` to exercise the missing-header path.
+_IDEMPOTENT_PATHS = (
+    "/v1/leave-ledger/adjustments",
+    "/v1/leave-ledger/encashments",
+    "/v1/leave-applications",
+    "/v1/payroll/adjustments",
+)
+
+
+class _AutoIdempotencyClient(AsyncClient):
+    async def request(self, method, url, **kwargs):  # type: ignore[no-untyped-def]
+        if method.upper() == "POST" and str(url).split("?")[0] in _IDEMPOTENT_PATHS:
+            headers = dict(kwargs.get("headers") or {})
+            if not any(name.lower() == "idempotency-key" for name in headers):
+                headers["Idempotency-Key"] = f"auto-{uuid.uuid4()}"
+            kwargs["headers"] = headers
+        return await super().request(method, url, **kwargs)
+
+
 @pytest.fixture
 async def client() -> AsyncClient:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with _AutoIdempotencyClient(transport=transport, base_url="http://test") as ac:
         yield ac

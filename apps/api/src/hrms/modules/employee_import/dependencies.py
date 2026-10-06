@@ -11,6 +11,6 @@ from hrms.modules.employee_import.service import EmployeeImportService
 
 
 def get_employee_import_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeImportService:
     return EmployeeImportService(session, get_settings())

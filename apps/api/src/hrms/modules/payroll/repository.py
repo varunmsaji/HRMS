@@ -886,6 +886,50 @@ class PayRunArrearRepository:
     ) -> None:
         await self.replace_for_run(session, company_id=company_id, run_id=run_id, rows=[])
 
+    async def payment_counts(
+        self, session: AsyncSession, *, company_id: UUID, source_run_ids: list[UUID]
+    ) -> dict[tuple[UUID, UUID, str], int]:
+        """Arrears payments already finalised per (employee, source run, component) — a run being
+        computed numbers its own payments one higher."""
+        if not source_run_ids:
+            return {}
+        stmt = (
+            select(
+                PayRunArrear.employee_id,
+                PayRunArrear.source_pay_run_id,
+                PayRunArrear.component_code,
+                func.count(),
+            )
+            .where(
+                PayRunArrear.company_id == company_id,
+                PayRunArrear.source_pay_run_id.in_(source_run_ids),
+                PayRunArrear.applied_at.is_not(None),
+            )
+            .group_by(
+                PayRunArrear.employee_id,
+                PayRunArrear.source_pay_run_id,
+                PayRunArrear.component_code,
+            )
+        )
+        return {(e, s, c): int(n) for e, s, c, n in (await session.execute(stmt)).all()}
+
+    async def mark_applied(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID, now: datetime
+    ) -> int:
+        """PAY-A03 — stamps the run's arrears as paid. If another run already stamped the same
+        payment number for the same (employee, source run, component), the unique index raises
+        `IntegrityError`: this run read arrears that have since been paid."""
+        result = await session.execute(
+            update(PayRunArrear)
+            .where(
+                PayRunArrear.company_id == company_id,
+                PayRunArrear.pay_run_id == run_id,
+                PayRunArrear.applied_at.is_(None),
+            )
+            .values(applied_at=now)
+        )
+        return int(getattr(result, "rowcount", 0))
+
     async def paid_for_month(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, for_month: date
     ) -> dict[str, int]:

@@ -11,6 +11,6 @@ from hrms.modules.organisation.service import OrganisationService
 
 
 def get_organisation_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OrganisationService:
     return OrganisationService(session, get_settings())

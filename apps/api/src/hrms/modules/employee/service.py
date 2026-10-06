@@ -12,9 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
+from hrms.core.db.locks import lock_employee_leave_dates
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.errors.base import NotFoundError
 from hrms.core.rbac.types import DataScope, DataScopeLevel
+from hrms.modules.employee.coverage import EmploymentCoverage, evaluate_employment_coverage
 from hrms.modules.employee.exceptions import (
     AssignmentDatesOverlapError,
     AssignmentFieldsRequiredError,
@@ -27,6 +29,7 @@ from hrms.modules.employee.exceptions import (
     DuplicateEmployeeCodeError,
     EmployeeNotOnProbationError,
     EmployeeSeatLimitExceededError,
+    EmploymentChangeConflictsWithLeaveError,
     EmploymentDatesOverlapError,
     EmploymentNotActiveError,
     InactiveMasterDataReferenceError,
@@ -129,6 +132,7 @@ class EmployeeService:
         self._settings = settings or get_settings()
         self._repo = EmployeeRepository()
         self._assignment_repo = EmployeeAssignmentRepository()
+        self._employment_repo = EmploymentRepository()
         self._audit = AuditService()
         self._crypto = PiiCryptoService(self._settings)
 
@@ -206,6 +210,15 @@ class EmployeeService:
             self._session, company_id=company_id, user_id=user_id
         )
         return employee.id if employee is not None else None
+
+    async def get_user_id_for_employee(self, company_id: UUID, employee_id: UUID) -> UUID | None:
+        """The login `User` linked to an employee, or `None` when the employee has no account
+        (the inverse of `resolve_employee_id_for_user`). Internal, unscoped cross-module fact:
+        Leave uses it to check that a proposed approver can actually act on an application."""
+        employee = await self._repo.get_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return employee.user_id if employee is not None else None
 
     async def get_uan_number(self, company_id: UUID, employee_id: UUID) -> str | None:
         """Payroll 5.3 — the UAN a PF-applicable employee is reported under. Internal, unscoped
@@ -394,7 +407,14 @@ class EmployeeService:
             employees = await self._repo.list_employees(
                 self._session, company_id=company_id, visible_employee_ids=visible_ids
             )
-            reads = [employee_to_read(employee) for employee in employees]
+            employments = await self._employment_repo.list_latest_employments(
+                self._session,
+                company_id=company_id,
+                employee_ids=[employee.id for employee in employees],
+            )
+            reads = [
+                employee_to_read(employee, employments.get(employee.id)) for employee in employees
+            ]
             return reads, len(reads)
 
         # Sequential, not `asyncio.gather` — a single `AsyncSession` cannot run two statements
@@ -409,7 +429,17 @@ class EmployeeService:
         total = await self._repo.count_employees(
             self._session, company_id=company_id, visible_employee_ids=visible_ids
         )
-        return [employee_to_read(employee) for employee in employees], total
+        # F-1 remediation: one extra bulk query (never N+1) so `GET /employees`'s page of rows
+        # carries each employee's current employment boundaries — see `EmployeeRead.
+        # employment_joining_date`/`employment_last_working_day` and `list_latest_employments`.
+        employments = await self._employment_repo.list_latest_employments(
+            self._session,
+            company_id=company_id,
+            employee_ids=[employee.id for employee in employees],
+        )
+        return [
+            employee_to_read(employee, employments.get(employee.id)) for employee in employees
+        ], total
 
     async def get_employee(
         self,
@@ -1219,6 +1249,10 @@ class EmploymentService:
         await self._assert_employee_visible(
             company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
         )
+        # LM-15 - take the employee's leave-dates lock before reading anything, so an approval or
+        # submission in flight finishes (and its leave is visible below) first, and a later one
+        # waits and then validates against the new last working day.
+        await lock_employee_leave_dates(self._session, company_id, employee_id)
         employment = await self._repo.get_employment(
             self._session,
             company_id=company_id,
@@ -1231,6 +1265,7 @@ class EmploymentService:
             raise EmploymentNotActiveError("This employment is already terminated")
         if body.last_working_day < employment.joining_date:
             raise InvalidLastWorkingDayError()
+        await self._assert_no_leave_after(company_id, employee_id, body.last_working_day)
 
         before_read = employment_to_read(employment)
         now = datetime.now(UTC)
@@ -1430,6 +1465,19 @@ class EmploymentService:
                 )
         return after_read
 
+    async def _assert_no_leave_after(
+        self, company_id: UUID, employee_id: UUID, last_working_day: date
+    ) -> None:
+        """Submitted or approved leave with a date after the proposed last working day would be
+        stranded outside employment: refuse the change (409), never auto-cancel."""
+        from hrms.modules.leave.service import LeaveApplicationService
+
+        conflicts = await LeaveApplicationService(self._session).list_active_leave_after(
+            company_id, employee_id, last_working_day
+        )
+        if conflicts:
+            raise EmploymentChangeConflictsWithLeaveError(conflicts=conflicts)
+
     async def _company_today(self, company_id: UUID) -> date:
         from hrms.modules.organisation.service import OrganisationService
 
@@ -1516,6 +1564,26 @@ class EmploymentService:
             self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
         )
         return employment_to_read(employment) if employment is not None else None
+
+    async def check_employment_coverage(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        start_date: date,
+        end_date: date | None = None,
+    ) -> EmploymentCoverage:
+        """THE canonical "is this date range inside one employment spell?" check (see
+        `employee/coverage.py`). Every Leave, Attendance-projection and termination caller goes
+        through here. Callers that must not race an employment change take the employee's
+        `leave-dates` lock (`core/db/locks.py`) first."""
+        employments = await self._repo.list_employments(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return evaluate_employment_coverage(
+            [(e.id, e.joining_date, e.last_working_day) for e in employments],
+            start_date,
+            end_date,
+        )
 
     async def get_latest_employment_on_or_before(
         self, company_id: UUID, employee_id: UUID, as_of: date

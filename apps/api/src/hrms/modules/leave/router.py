@@ -17,11 +17,19 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
+from hrms.core.db.session import get_session
 from hrms.core.errors.base import PermissionDeniedError, ValidationError
+from hrms.core.idempotency import (
+    mark_replay,
+    request_fingerprint_fields,
+    require_idempotency_key,
+    run_idempotent,
+)
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
 from hrms.core.rbac.types import DataScope, DataScopeLevel
@@ -40,6 +48,7 @@ from hrms.modules.leave.dependencies import (
 from hrms.modules.leave.permissions import (
     LEAVE_APPLICATION_APPROVE,
     LEAVE_APPLICATION_CANCEL_APPROVED,
+    LEAVE_APPLICATION_REASSIGN,
     LEAVE_APPLICATION_SUBMIT,
     LEAVE_APPLICATION_SUBMIT_ON_BEHALF,
     LEAVE_BALANCE_ADJUST,
@@ -55,6 +64,7 @@ from hrms.modules.leave.schemas import (
     LeaveApplicationCancelInput,
     LeaveApplicationCreate,
     LeaveApplicationRead,
+    LeaveApplicationReassignInput,
     LeaveApplicationReviewInput,
     LeaveBalanceRead,
     LeaveCombinationRuleCreate,
@@ -106,10 +116,24 @@ router = APIRouter(tags=["leave"])
 @router.get("/leave-types", status_code=status.HTTP_200_OK)
 async def list_leave_types(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(LEAVE_TYPE_MANAGE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
     service: Annotated[LeaveTypeService, Depends(get_leave_type_service)],
 ) -> ListEnvelope[LeaveTypeRead]:
+    """LM-05 / decision 12 - the apply workflow needs the company's leave types, so a submitter
+    reads the *active* ones without holding `LEAVE.TYPE_MANAGE` (which also grants writes).
+    A type manager still sees every type, inactive included."""
+    codes = await rbac.get_permission_codes(user.user_id, user.company_id)
+    can_manage = LEAVE_TYPE_MANAGE in codes
+    if not can_manage and not (
+        {LEAVE_APPLICATION_SUBMIT, LEAVE_APPLICATION_SUBMIT_ON_BEHALF} & codes
+    ):
+        raise PermissionDeniedError(
+            f"Permission {LEAVE_TYPE_MANAGE} is required", code="PERMISSION_DENIED"
+        )
     data = await service.list(tenant.company_id)
+    if not can_manage:
+        data = [leave_type for leave_type in data if leave_type.is_active]
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -470,41 +494,70 @@ async def _combined_balance_scope(user: AuthenticatedUser, rbac: RbacService) ->
 async def create_leave_ledger_adjustment(
     body: LeaveLedgerAdjustmentCreate,
     request: Request,
+    response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
     service: Annotated[LeaveLedgerService, Depends(get_leave_ledger_service)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
 ) -> DataEnvelope[LeaveLedgerEntryRead]:
-    data = await service.create_adjustment(
-        tenant.company_id,
-        body.employee_id,
-        body,
-        actor_user_id=tenant.user_id,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("User-Agent"),
+    """Requires an `Idempotency-Key` (LM-03): a retry with the same key and body replays the
+    original entry instead of writing a second one."""
+    result = await run_idempotent(
+        session,
+        company_id=tenant.company_id,
+        operation="leave.ledger.adjustment",
+        key=idempotency_key,
+        fingerprint_fields=request_fingerprint_fields(body, tenant.user_id),
+        response_model=LeaveLedgerEntryRead,
+        status_code=status.HTTP_201_CREATED,
+        execute=lambda: service.create_adjustment(
+            tenant.company_id,
+            body.employee_id,
+            body,
+            actor_user_id=tenant.user_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        ),
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    mark_replay(response, result.replayed, result.status_code)
+    return DataEnvelope(data=result.data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/leave-ledger/encashments", status_code=status.HTTP_201_CREATED)
 async def create_leave_ledger_encashment(
     body: LeaveLedgerEncashmentCreate,
     request: Request,
+    response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
     service: Annotated[LeaveLedgerService, Depends(get_leave_ledger_service)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
 ) -> DataEnvelope[LeaveLedgerEntryRead]:
     """Client spec §12 (LD-19) — same `LEAVE.BALANCE_ADJUST` HR-admin gate as
     `create_leave_ledger_adjustment` above, but validated against the applicable policy's
-    encashment config rather than writing unconditionally."""
-    data = await service.create_encashment(
-        tenant.company_id,
-        body.employee_id,
-        body,
-        actor_user_id=tenant.user_id,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("User-Agent"),
+    encashment config rather than writing unconditionally. Requires an `Idempotency-Key`
+    (LM-03), so a retried request never encashes twice."""
+    result = await run_idempotent(
+        session,
+        company_id=tenant.company_id,
+        operation="leave.ledger.encashment",
+        key=idempotency_key,
+        fingerprint_fields=request_fingerprint_fields(body, tenant.user_id),
+        response_model=LeaveLedgerEntryRead,
+        status_code=status.HTTP_201_CREATED,
+        execute=lambda: service.create_encashment(
+            tenant.company_id,
+            body.employee_id,
+            body,
+            actor_user_id=tenant.user_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        ),
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    mark_replay(response, result.replayed, result.status_code)
+    return DataEnvelope(data=result.data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/leave-ledger", status_code=status.HTTP_200_OK)
@@ -563,15 +616,19 @@ async def get_leave_balances(
 async def create_leave_application(
     body: LeaveApplicationCreate,
     request: Request,
+    response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     rbac: Annotated[RbacService, Depends(get_rbac_service)],
     service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
 ) -> DataEnvelope[LeaveApplicationRead]:
-    """Self-submit (`LEAVE.APPLICATION_SUBMIT`, SELF) when `employee_id` is omitted or matches
-    the caller's own; on-behalf (`LEAVE.APPLICATION_SUBMIT_ON_BEHALF`, COMPANY) when it names
-    someone else — mirrors `create_regularization_request`'s exact shape, since the gating
-    permission here also depends on the request body."""
+    """Requires an `Idempotency-Key` (LM-03). Self-submit (`LEAVE.APPLICATION_SUBMIT`, SELF) when
+    `employee_id` is omitted or matches the caller's own; on-behalf
+    (`LEAVE.APPLICATION_SUBMIT_ON_BEHALF`, COMPANY) when it names someone else — mirrors
+    `create_regularization_request`'s exact shape, since the gating permission here also depends
+    on the request body."""
     target_employee_id = body.employee_id or user.employee_id
     if target_employee_id is None:
         raise ValidationError("employee_id is required — the caller has no linked employee record")
@@ -586,18 +643,30 @@ async def create_leave_application(
             f"Permission {required_permission} is required", code="PERMISSION_DENIED"
         )
 
-    data = await service.submit(
-        tenant.company_id,
-        target_employee_id,
-        body,
-        scope=scope,
-        caller_employee_id=user.employee_id,
-        on_behalf=on_behalf,
-        actor_user_id=tenant.user_id,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("User-Agent"),
+    result = await run_idempotent(
+        session,
+        company_id=tenant.company_id,
+        operation="leave.application.submit",
+        key=idempotency_key,
+        fingerprint_fields=request_fingerprint_fields(
+            body, tenant.user_id, target_employee_id=str(target_employee_id)
+        ),
+        response_model=LeaveApplicationRead,
+        status_code=status.HTTP_201_CREATED,
+        execute=lambda: service.submit(
+            tenant.company_id,
+            target_employee_id,
+            body,
+            scope=scope,
+            caller_employee_id=user.employee_id,
+            on_behalf=on_behalf,
+            actor_user_id=tenant.user_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        ),
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    mark_replay(response, result.replayed, result.status_code)
+    return DataEnvelope(data=result.data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/leave-applications", status_code=status.HTTP_200_OK)
@@ -739,6 +808,34 @@ async def reject_leave_application(
         body,
         scope=scope,
         caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        expected_version=parse_if_match(if_match),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/leave-applications/{application_id}/reassign-approver", status_code=status.HTTP_200_OK
+)
+async def reassign_leave_application_approver(
+    application_id: UUID,
+    body: LeaveApplicationReassignInput,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_APPLICATION_REASSIGN))],
+    service: Annotated[LeaveApplicationService, Depends(get_leave_application_service)],
+) -> DataEnvelope[LeaveApplicationRead]:
+    """Decision 13 - HR reassigns a stuck MANAGER/HOD stage to another eligible approver. The
+    service enforces the company-wide scope, the stuck-approver and new-approver eligibility
+    rules, the mandatory reason and the `If-Match` version."""
+    data = await service.reassign_approver(
+        tenant.company_id,
+        application_id,
+        body,
+        scope=scope,
         actor_user_id=tenant.user_id,
         expected_version=parse_if_match(if_match),
         ip_address=request.client.host if request.client else None,

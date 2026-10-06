@@ -6,12 +6,15 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import CursorResult, delete, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hrms.core.config.settings import get_settings
+from hrms.core.db.locks import lock_employee_leave_dates
+from hrms.core.db.timeouts import bounded_lock_wait
 from hrms.modules.leave.models import (
     LeaveApplication,
     LeaveApplicationAction,
@@ -21,9 +24,18 @@ from hrms.modules.leave.models import (
     LeavePolicy,
     LeavePolicyVersion,
     LeaveType,
+    LeaveYearEndRun,
     LeaveYearSetting,
     StatutoryLeaveMinimum,
 )
+
+
+async def _advisory_lock(session: AsyncSession, key: str) -> None:
+    """A transaction-scoped advisory lock with a bounded wait (`leave_lock_wait_ms`). Timing out is
+    a clean, retryable failure (lock_not_available), never an indefinite hang behind a long
+    transaction."""
+    async with bounded_lock_wait(session, lock_timeout_ms=get_settings().leave_lock_wait_ms):
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
 
 
 class LeaveTypeRepository:
@@ -50,6 +62,22 @@ class LeaveTypeRepository:
             .order_by(LeaveType.name)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def is_used(
+        self, session: AsyncSession, *, company_id: UUID, leave_type_id: UUID
+    ) -> bool:
+        """Decision 11 — a leave type is "used" once any application or any ledger entry refers to
+        it. Cheap existence probes on the indexed `(company_id, ..., leave_type_id)` columns."""
+        application = select(LeaveApplication.id).where(
+            LeaveApplication.company_id == company_id,
+            LeaveApplication.leave_type_id == leave_type_id,
+        )
+        ledger = select(LeaveLedgerEntry.id).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.leave_type_id == leave_type_id,
+        )
+        stmt = select(application.exists() | ledger.exists())
+        return bool((await session.execute(stmt)).scalar_one())
 
     async def get_comp_off_type(
         self, session: AsyncSession, *, company_id: UUID
@@ -351,7 +379,7 @@ class LeaveLedgerRepository:
         the race is two transactions each *inserting* a debit, and row locks cannot block an
         insert of a row neither has seen."""
         key = f"leave-balance:{company_id}:{employee_id}:{leave_type_id}"
-        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
+        await _advisory_lock(session, key)
 
     async def get_balance(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, leave_type_id: UUID
@@ -448,6 +476,26 @@ class LeaveLedgerRepository:
             LeaveLedgerEntry.reference_id == reference_id,
         )
         return (await session.execute(stmt)).scalar_one_or_none() is not None
+
+    async def sum_for_reference(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        entry_type: str,
+        reference_id: UUID,
+    ) -> Decimal:
+        """Signed total of this employee's entries of one type that point at `reference_id`
+        (LM-04). The cancel-reversal asks the ledger what an application actually debited instead
+        of re-deriving it from leave-type flags that may have changed since approval."""
+        stmt = select(func.coalesce(func.sum(LeaveLedgerEntry.amount), 0)).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.employee_id == employee_id,
+            LeaveLedgerEntry.entry_type == entry_type,
+            LeaveLedgerEntry.reference_id == reference_id,
+        )
+        return Decimal((await session.execute(stmt)).scalar_one())
 
     async def list_credits_for_expiry(
         self, session: AsyncSession, *, company_id: UUID, leave_type_id: UUID
@@ -597,6 +645,49 @@ class LeaveApplicationRepository:
         rows = (await session.execute(stmt)).all()
         return {r[0]: r[1] for r in rows}
 
+    async def lock_employee_leave_dates(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> None:
+        """Serialises every "does this employee already have leave on these dates?" check followed
+        by a write (submission, approval's projection sync) for ONE employee until the
+        transaction ends. A transaction-scoped advisory lock, like `lock_balance`: the race is two
+        transactions each inserting a day the other has not committed yet, which row locks cannot
+        order. Per employee, not per leave type - two different types can overlap on the same
+        date, which a per-type lock would not serialise."""
+        await lock_employee_leave_dates(session, company_id, employee_id)
+
+    async def sum_active_fraction_by_date(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID,
+        start_date: date,
+        end_date: date,
+    ) -> dict[date, Decimal]:
+        """Leave already booked per calendar date in `[start_date, end_date]` by this employee's
+        active (`SUBMITTED` or `APPROVED`) applications of ONE leave type. Cross-type overlap is
+        governed by the combination rules (LD-16) and, for approved leave, the per-date total in
+        `LeaveProjectionService.sync`."""
+        stmt = (
+            select(LeaveApplicationDay.calendar_date, func.sum(LeaveApplicationDay.fraction))
+            .join(
+                LeaveApplication,
+                LeaveApplication.id == LeaveApplicationDay.leave_application_id,
+            )
+            .where(
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.employee_id == employee_id,
+                LeaveApplication.leave_type_id == leave_type_id,
+                LeaveApplication.status.in_(("SUBMITTED", "APPROVED")),
+                LeaveApplicationDay.calendar_date >= start_date,
+                LeaveApplicationDay.calendar_date <= end_date,
+            )
+            .group_by(LeaveApplicationDay.calendar_date)
+        )
+        return {row[0]: Decimal(row[1]) for row in (await session.execute(stmt)).all()}
+
     async def list_active_overlapping_other_types(
         self,
         session: AsyncSession,
@@ -622,6 +713,23 @@ class LeaveApplicationRepository:
                 LeaveApplication.end_date >= start_date,
             )
             .distinct()
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_active_ending_after(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, after_date: date
+    ) -> list[LeaveApplication]:
+        """Active (`SUBMITTED` or `APPROVED`) applications with any date after `after_date`: the
+        leave a new last working day of `after_date` would leave outside employment (LM-15)."""
+        stmt = (
+            select(LeaveApplication)
+            .where(
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.employee_id == employee_id,
+                LeaveApplication.status.in_(("SUBMITTED", "APPROVED")),
+                LeaveApplication.end_date > after_date,
+            )
+            .order_by(LeaveApplication.start_date)
         )
         return list((await session.execute(stmt)).scalars().all())
 
@@ -773,6 +881,21 @@ class LeaveApplicationDayRepository:
             .order_by(LeaveApplicationDay.calendar_date)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def get_for_date(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        leave_application_id: UUID,
+        calendar_date: date,
+    ) -> LeaveApplicationDay | None:
+        stmt = select(LeaveApplicationDay).where(
+            LeaveApplicationDay.company_id == company_id,
+            LeaveApplicationDay.leave_application_id == leave_application_id,
+            LeaveApplicationDay.calendar_date == calendar_date,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_applications(
         self, session: AsyncSession, *, company_id: UUID, leave_application_ids: list[UUID]
@@ -953,6 +1076,14 @@ class LeaveYearSettingRepository:
         await session.flush()
         return row
 
+    async def insert_default_if_absent(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> None:
+        """The lazily-created default row. Two first readers (concurrent year-end catch-up runs, or
+        a run and a settings GET) used to race a unique violation on `company_id`; the loser now
+        waits for the winner and does nothing."""
+        await session.execute(pg_insert(LeaveYearSetting).values(**data).on_conflict_do_nothing())
+
     async def update(
         self,
         session: AsyncSession,
@@ -1026,3 +1157,46 @@ class StatutoryLeaveMinimumRepository:
             StatutoryLeaveMinimum.leave_category == leave_category,
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+
+class LeaveYearEndRunRepository:
+    async def claim(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, year_start: date
+    ) -> bool:
+        """Records that this employee's year-end for `year_start` is being processed. Returns
+        whether THIS call claimed it. A concurrent claim for the same key waits for the other
+        transaction and then loses (`ON CONFLICT DO NOTHING`), so two catch-up runs never both
+        process an employee; a claim whose transaction rolls back is never recorded."""
+        stmt = (
+            pg_insert(LeaveYearEndRun)
+            .values(
+                id=uuid4(), company_id=company_id, employee_id=employee_id, year_start=year_start
+            )
+            .on_conflict_do_nothing()
+            .returning(LeaveYearEndRun.id)
+        )
+        return (await session.execute(stmt)).first() is not None
+
+    async def has_prior_year_end_entries(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, year_start: date
+    ) -> bool:
+        """Year-end rows written before the marker table existed: a lapse, a year-end encashment
+        or a yearly accrual dated exactly `year_start`. Treated as "already processed" so the first
+        catch-up window after deployment cannot re-evaluate a year that old code finished."""
+        stmt = (
+            select(LeaveLedgerEntry.id)
+            .where(
+                LeaveLedgerEntry.company_id == company_id,
+                LeaveLedgerEntry.employee_id == employee_id,
+                LeaveLedgerEntry.effective_date == year_start,
+                or_(
+                    LeaveLedgerEntry.entry_type == "CARRY_FORWARD",
+                    (LeaveLedgerEntry.entry_type == "ENCASHMENT")
+                    & LeaveLedgerEntry.reference_id.is_not(None),
+                    (LeaveLedgerEntry.entry_type == "ACCRUAL")
+                    & LeaveLedgerEntry.reason.like("Yearly accrual for leave year starting%"),
+                ),
+            )
+            .limit(1)
+        )
+        return (await session.execute(stmt)).first() is not None

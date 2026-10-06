@@ -17,6 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from hrms.core.audit.service import AuditService
+from hrms.core.config.settings import get_settings
+from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave_dates
+from hrms.core.db.timeouts import bounded_waits, is_wait_timeout
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
 from hrms.core.observability.logging import get_logger
 from hrms.core.rbac.types import DataScope, DataScopeLevel
@@ -33,11 +36,16 @@ from hrms.modules.attendance.exceptions import (
     AttendanceRangeInFutureError,
     AttendanceSummaryReconciliationError,
     DuplicatePunchIdempotencyKeyError,
+    EmployeeTerminatedError,
     FuturePunchTimeError,
     InvalidPolicyBandError,
     InvalidPolicyRateRowError,
     InvalidRegularizationAllowedTypeError,
+    LeaveProjectionApplicationNotApprovedError,
+    LeaveProjectionApplicationNotFoundError,
+    LeaveProjectionDateNotInApplicationError,
     LeaveProjectionNotFoundError,
+    LeaveProjectionOutsideEmploymentError,
     LeaveProjectionOverlapError,
     OvertimeApproverMismatchError,
     OvertimeInvalidTransitionError,
@@ -1939,6 +1947,17 @@ class AttendanceService:
         period locks leave for those dates too. Decision 14 — only a period of the legal entity
         owning each of the employee's dates counts. Returns the first such `CLOSED` period's
         bounds, or `None` when every date is open."""
+        found = await self.closed_period_details_overlapping(
+            company_id, employee_id, date_from, date_to
+        )
+        return (found[1], found[2]) if found is not None else None
+
+    async def closed_period_details_overlapping(
+        self, company_id: UUID, employee_id: UUID, date_from: date, date_to: date
+    ) -> tuple[UUID, date, date] | None:
+        """Same lookup as `closed_period_overlapping`, but also returns the period's id
+        (`(period_id, period_start, period_end)`) so a caller can ask Payroll whether a run over
+        that period is already finalised (Leave decision 14)."""
         closed = await AttendancePeriodRepository().list_closed_overlapping(
             self._session, company_id=company_id, date_from=date_from, date_to=date_to
         )
@@ -1951,7 +1970,7 @@ class AttendanceService:
             while day <= last:
                 owner = _owning_legal_entity(spans, day)
                 if owner is None or owner == period.legal_entity_id:
-                    return (period.period_start, period.period_end)
+                    return (period.id, period.period_start, period.period_end)
                 day += timedelta(days=1)
         return None
 
@@ -2070,6 +2089,43 @@ async def _ensure_date_open(
     (`_is_date_closed`); pass `employee_id=None` only for a genuinely company-wide change."""
     if await _is_date_closed(session, company_id, target_date, employee_id=employee_id):
         raise AttendancePeriodClosedError()
+
+
+async def _ensure_not_after_last_working_day(
+    session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
+) -> None:
+    """A punch cannot land after the employee's last working day. The comparison is on the
+    company-local calendar date of the instant (the same business-date basis the rest of the punch
+    path uses), never the server's or the UTC date: with a last working day of the 15th, a punch at
+    23:59 local on the 15th is accepted and one at 00:00 local on the 16th is not."""
+    from hrms.modules.organisation.service import OrganisationService
+
+    company = await OrganisationService(session).get_company_profile(company_id)
+    local_date = punch_time.astimezone(resolve_zoneinfo(company.timezone)).date()
+    await _ensure_date_within_employment(session, company_id, employee_id, local_date)
+
+
+async def _ensure_date_within_employment(
+    session: AsyncSession, company_id: UUID, employee_id: UUID, local_date: date
+) -> None:
+    """Rejects a company-local date that falls after the employee's last working day.
+
+    The governing episode is the latest one that had started by that date. A date in a rehire gap
+    therefore resolves to the earlier, terminated episode and is rejected, while a date inside the
+    new episode resolves to it and is accepted. An employee with no employment record at all is
+    left to the existing rules (the calculation engine classifies that as `NOT_JOINED`)."""
+    from hrms.modules.employee.service import EmploymentService
+
+    governing = await EmploymentService(session).get_latest_employment_on_or_before(
+        company_id, employee_id, local_date
+    )
+    if (
+        governing is not None
+        and governing.status == "TERMINATED"
+        and governing.last_working_day is not None
+        and local_date > governing.last_working_day
+    ):
+        raise EmployeeTerminatedError(governing.last_working_day)
 
 
 async def _ensure_punch_date_open(
@@ -2560,6 +2616,7 @@ class PunchService:
         # regardless: `AttendanceDayService.calculate()` refuses a locked day outright, so a
         # stray punch here is at worst an inert, orphaned row (WD-11 — additive, never mutates
         # facts), never a silent rewrite.
+        await _ensure_not_after_last_working_day(self._session, company_id, employee_id, punch_time)
         await _ensure_punch_date_open(self._session, company_id, employee_id, punch_time)
         punch_id = uuid4()
         data = {
@@ -2651,10 +2708,16 @@ class PunchService:
                     actor_user_id=actor_user_id,
                     ip_address=ip_address,
                     user_agent=user_agent,
+                    lock_timeout_ms=get_settings().attendance_punch_calc_lock_timeout_ms,
                 )
-        except Exception:  # noqa: BLE001 - best-effort by design; see docstring
+        except Exception as exc:  # noqa: BLE001 - best-effort by design; see docstring
+            # A lock/statement timeout is logged under its own event so a sweep holding the row
+            # (or a stuck transaction) shows up distinctly; the punch itself is already stored and
+            # the scheduled sweep recalculates the day.
             _logger.warning(
-                "attendance_immediate_calculate_failed",
+                "attendance_immediate_calculate_timed_out"
+                if is_wait_timeout(exc)
+                else "attendance_immediate_calculate_failed",
                 company_id=str(company_id),
                 employee_id=str(employee_id),
                 punch_time=punch_time.isoformat(),
@@ -2798,6 +2861,41 @@ class AttendanceDayService:
         return results
 
     async def calculate(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        target_date: date | None,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+        lock_timeout_ms: int | None = None,
+    ) -> AttendanceDayRead:
+        """Runs `_calculate` with bounded lock and statement waits (`core/db/timeouts.py`): a
+        calculation queued behind another transaction's row lock, or running unexpectedly long,
+        fails with a database timeout (rolled back cleanly) instead of waiting indefinitely.
+        `lock_timeout_ms` lets a best-effort caller (the punch's immediate calculation) give up
+        sooner than the configured default."""
+        settings = get_settings()
+        async with bounded_waits(
+            self._session,
+            lock_timeout_ms=(
+                lock_timeout_ms
+                if lock_timeout_ms is not None
+                else settings.attendance_lock_timeout_ms
+            ),
+            statement_timeout_ms=settings.attendance_statement_timeout_ms,
+        ):
+            return await self._calculate(
+                company_id,
+                employee_id,
+                target_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+    async def _calculate(
         self,
         company_id: UUID,
         employee_id: UUID,
@@ -4112,6 +4210,25 @@ class RegularizationRequestService:
         if body.attendance_date > today and body.request_type != "EARLY_DEPARTURE_APPROVAL":
             raise ValidationError("attendance_date cannot be in the future")
 
+        # The request may only correct the attendance of its own employment period: the date must
+        # not fall after the last working day (or in a rehire gap), and every requested punch must
+        # sit on the attendance date or the day either side of it (an overnight shift's IN/OUT
+        # straddle midnight) and not in the future. Without this, an approved request could write
+        # facts onto any other date, including ones outside the employee's employment.
+        await _ensure_date_within_employment(
+            self._session, company_id, employee_id, body.attendance_date
+        )
+        company_zone = resolve_zoneinfo(company.timezone)
+        for requested in body.requested_punches or []:
+            requested_local = requested.requested_time.astimezone(company_zone).date()
+            if abs((requested_local - body.attendance_date).days) > 1:
+                raise ValidationError(
+                    "requested punch times must fall on the attendance date or the day "
+                    "immediately before or after it"
+                )
+            if requested.requested_time > datetime.now(UTC):
+                raise ValidationError("requested punch times cannot be in the future")
+
         resolution = await self._resolution.resolve(
             company_id,
             "REGULARIZATION_POLICY",
@@ -4715,6 +4832,9 @@ class RegularizationRequestService:
             self._session, company_id=company_id, request_id=row.id
         )
         for requested in requested_punches:
+            await _ensure_not_after_last_working_day(
+                self._session, company_id, row.employee_id, requested.requested_time
+            )
             punch_row = await self._punch_repo.insert(
                 self._session,
                 data={
@@ -5987,6 +6107,10 @@ class AttendancePeriodService:
         concurrent finalize aborts cheaply, before locking anything, and the whole request is
         one transaction, so any failure after the version-guarded write rolls that write back
         too (no partial finalization)."""
+        # Leave approvals and reversals change attendance days; wait for the ones in flight and
+        # make later ones wait for this finalisation (`core/db/locks.py`), so the summary frozen
+        # below is built from days no leave change can alter underneath it.
+        await lock_attendance_period_close(self._session, company_id, exclusive=True)
         period = await self._get_or_404(company_id, period_id)
         if period.status != "OPEN":
             raise AttendancePeriodInvalidTransitionError("Only an OPEN period can be finalized")
@@ -6098,6 +6222,10 @@ class AttendancePeriodService:
         re-finalizing regenerates a
         fresh frozen `AttendancePeriodSummary` snapshot (`AttendancePeriodSummaryRepository.
         replace_for_period` is a full delete/recreate, never a stale leftover)."""
+        # Exclusive against payroll finalisation (`core/db/locks.py`): a run cannot finalise on
+        # this period while it reopens, and the finalised-run check below reads what such a run
+        # committed. Taken before the period is read so both reads are fresh.
+        await lock_attendance_period_close(self._session, company_id, exclusive=True)
         period = await self._get_or_404(company_id, period_id)
         if period.status != "CLOSED":
             raise AttendancePeriodInvalidTransitionError("Only a CLOSED period can be reopened")
@@ -6152,6 +6280,17 @@ class AttendancePeriodService:
         return read
 
 
+@dataclass(frozen=True)
+class _BackingLeaveDay:
+    """LM-14 - the authoritative values a leave projection is derived from."""
+
+    leave_type_id: UUID
+    leave_type_code: str | None
+    fraction: Decimal
+    half: str | None
+    is_paid: bool
+
+
 class LeaveProjectionService:
     """W9 — the Leave -> Attendance projection adapter (architecture §21, decision log WD-31).
     `sync`/`cancel` are the two mutating operations a future Leave module (or, until it exists,
@@ -6181,6 +6320,24 @@ class LeaveProjectionService:
         await _ensure_employee_visible(
             self._session, company_id, body.employee_id, scope, caller_employee_id
         )
+        # D3 / LM-14 - leave is only ever projected onto a date inside an employment spell. The
+        # leave-dates lock (the first lock in the Leave ordering; reentrant when the caller is a
+        # leave approval that already holds it) keeps a termination from moving the last working
+        # day between this check and the write.
+        from hrms.modules.employee.service import EmploymentService
+
+        await lock_employee_leave_dates(self._session, company_id, body.employee_id)
+        # LM-14 - a projection is only ever the shadow of a real APPROVED leave application. The
+        # application, its day row and every projected value come from Leave's own tables; the
+        # request body names *which* day, never *what* it is.
+        backing = await self._resolve_backing_leave_day(company_id, body)
+        coverage = await EmploymentService(self._session).check_employment_coverage(
+            company_id, body.employee_id, body.attendance_date
+        )
+        if not coverage.is_valid:
+            raise LeaveProjectionOutsideEmploymentError(
+                reason=coverage.status.value, offending_date=body.attendance_date
+            )
         # §21 — "Leave module must consult AttendanceLock (service). Default refuse." A closed
         # period refuses the publish outright, before any row is written or recomputed.
         await _ensure_date_open(
@@ -6205,7 +6362,7 @@ class LeaveProjectionService:
             if existing is None or p.id != existing.id
         ]
         already_active = sum((Decimal(str(p.fraction)) for p in other_active), Decimal("0.00"))
-        if already_active + Decimal(body.fraction) > Decimal("1.00"):
+        if already_active + backing.fraction > Decimal("1.00"):
             raise LeaveProjectionOverlapError()
 
         now = datetime.now(UTC)
@@ -6220,11 +6377,11 @@ class LeaveProjectionService:
                     "employee_id": body.employee_id,
                     "attendance_date": body.attendance_date,
                     "leave_application_id": body.leave_application_id,
-                    "leave_type_id": body.leave_type_id,
-                    "leave_type_code": body.leave_type_code,
-                    "fraction": Decimal(body.fraction),
-                    "half": body.half,
-                    "is_paid": body.is_paid,
+                    "leave_type_id": backing.leave_type_id,
+                    "leave_type_code": backing.leave_type_code,
+                    "fraction": backing.fraction,
+                    "half": backing.half,
+                    "is_paid": backing.is_paid,
                     "status": "APPROVED",
                     "source_version": 1,
                     "synced_at": now,
@@ -6246,11 +6403,11 @@ class LeaveProjectionService:
                 company_id=company_id,
                 projection_id=existing.id,
                 values={
-                    "leave_type_id": body.leave_type_id,
-                    "leave_type_code": body.leave_type_code,
-                    "fraction": Decimal(body.fraction),
-                    "half": body.half,
-                    "is_paid": body.is_paid,
+                    "leave_type_id": backing.leave_type_id,
+                    "leave_type_code": backing.leave_type_code,
+                    "fraction": backing.fraction,
+                    "half": backing.half,
+                    "is_paid": backing.is_paid,
                     "status": "APPROVED",
                     "source_version": existing.source_version + 1,
                     "synced_at": now,
@@ -6289,6 +6446,48 @@ class LeaveProjectionService:
             user_agent=user_agent,
         )
         return read
+
+    async def _resolve_backing_leave_day(
+        self, company_id: UUID, body: LeaveProjectionSync
+    ) -> "_BackingLeaveDay":
+        """LM-14 - resolve the authoritative leave facts for one projection. Looked up by
+        application id + company, then checked against the employee, so a foreign company's or
+        another employee's application is indistinguishable from a missing one."""
+        from hrms.modules.leave.repository import (
+            LeaveApplicationDayRepository,
+            LeaveApplicationRepository,
+            LeaveTypeRepository,
+        )
+
+        application = await LeaveApplicationRepository().get(
+            self._session, company_id=company_id, application_id=body.leave_application_id
+        )
+        if application is None or application.employee_id != body.employee_id:
+            raise LeaveProjectionApplicationNotFoundError()
+        if application.status != "APPROVED":
+            raise LeaveProjectionApplicationNotApprovedError(status=application.status)
+        day = await LeaveApplicationDayRepository().get_for_date(
+            self._session,
+            company_id=company_id,
+            leave_application_id=application.id,
+            calendar_date=body.attendance_date,
+        )
+        if day is None:
+            raise LeaveProjectionDateNotInApplicationError(offending_date=body.attendance_date)
+        leave_type = await LeaveTypeRepository().get(
+            self._session, company_id=company_id, leave_type_id=application.leave_type_id
+        )
+        half_to_projection_half = {"FIRST_HALF": "FIRST", "SECOND_HALF": "SECOND"}
+        return _BackingLeaveDay(
+            leave_type_id=application.leave_type_id,
+            leave_type_code=leave_type.code if leave_type is not None else None,
+            fraction=Decimal(day.fraction).quantize(Decimal("0.01")),
+            half=half_to_projection_half.get(day.half) if day.half else None,
+            # Mirrors what approval has always projected: the type's paid default, unless this
+            # day was approved as loss of pay.
+            is_paid=(leave_type.is_paid_default if leave_type is not None else True)
+            and not day.is_lop,
+        )
 
     async def cancel(
         self,

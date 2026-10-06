@@ -7,6 +7,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 
 interface UserSummary {
@@ -53,6 +55,8 @@ export default function UsersPage() {
   const canManageUsers = can("SETTINGS.USER.MANAGE");
 
   const [users, setUsers] = useState<UserSummary[] | null>(null);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -66,14 +70,19 @@ export default function UsersPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (targetPage: number) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiClient.get<UserSummary[]>("/users");
+      // GET /v1/users is paginated (FINDING-03) — server-side, bounded page size.
+      const { data, pagination: meta } = await apiClient.getList<UserSummary>("/users", {
+        page: targetPage,
+      });
       setUsers(data);
+      setPagination(meta);
     } catch (err) {
       setUsers(null);
+      setPagination(null);
       setError(
         err instanceof ApiError
           ? err
@@ -85,8 +94,8 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(page);
+  }, [load, page]);
 
   function openRoleDialog(user: UserSummary) {
     setRoleDialogUser(user);
@@ -102,7 +111,7 @@ export default function UsersPage() {
       });
       toast({ title: "Roles updated", variant: "success" });
       setRoleDialogUser(null);
-      void load();
+      void load(page);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         toast({ title: err.message, variant: "danger" });
@@ -170,7 +179,7 @@ export default function UsersPage() {
       {error && !loading ? (
         <Card>
           <CardContent className="pt-6">
-            <ErrorState message={error.message} onRetry={() => void load()} />
+            <ErrorState message={error.message} onRetry={() => void load(page)} />
           </CardContent>
         </Card>
       ) : null}
@@ -210,6 +219,9 @@ export default function UsersPage() {
               </div>
             ))}
           </CardContent>
+          {pagination ? (
+            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
+          ) : null}
         </Card>
       ) : null}
 

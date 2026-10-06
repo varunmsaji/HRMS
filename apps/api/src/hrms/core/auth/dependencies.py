@@ -16,7 +16,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AuthenticatedUser:
     if credentials is None or not credentials.credentials:
         raise UnauthorizedError("Authentication required")
@@ -55,7 +55,7 @@ async def get_current_user(
 
 async def get_optional_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AuthenticatedUser | None:
     if credentials is None or not credentials.credentials:
         return None

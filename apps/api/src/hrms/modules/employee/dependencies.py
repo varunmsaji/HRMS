@@ -21,54 +21,54 @@ from hrms.modules.employee.service import (
 
 
 def get_employee_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeService:
     return EmployeeService(session, get_settings())
 
 
 def get_employment_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmploymentService:
     return EmploymentService(session, get_settings())
 
 
 def get_employee_assignment_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeAssignmentService:
     return EmployeeAssignmentService(session, get_settings())
 
 
 def get_employee_compensation_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeCompensationService:
     return EmployeeCompensationService(session, get_settings())
 
 
 def get_employee_statutory_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeStatutoryService:
     return EmployeeStatutoryService(session, get_settings())
 
 
 def get_employee_bank_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeBankService:
     return EmployeeBankService(session, get_settings())
 
 
 def get_employee_experience_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeExperienceService:
     return EmployeeExperienceService(session, get_settings())
 
 
 def get_employee_education_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeEducationService:
     return EmployeeEducationService(session, get_settings())
 
 
 def get_employee_dependent_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeDependentService:
     return EmployeeDependentService(session, get_settings())

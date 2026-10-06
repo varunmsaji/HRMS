@@ -6,10 +6,13 @@ from decimal import Decimal
 import pytest
 
 from hrms.modules.payroll.breakup import (
+    RUN_LINE_CODES,
     BreakupError,
     StructureLine,
     compute_breakup,
     monthly_from_annual,
+    reserved_component_code_reason,
+    validate_structure,
 )
 
 
@@ -212,3 +215,56 @@ def test_fixed_amounts_larger_than_ctc_rejected() -> None:
 def test_invalid_structures_rejected(lines: list[StructureLine], message: str) -> None:
     with pytest.raises(BreakupError, match=message):
         compute_breakup(lines, annual_ctc_minor=12_000_000, pf_applicable=True, esi_applicable=True)
+
+
+# ---------------------------------------------------------------------------------------------
+# PAY-B03 — reserved component codes
+# ---------------------------------------------------------------------------------------------
+
+
+def _with_extra(code: str, component_type: str = "EARNING") -> list[StructureLine]:
+    return [
+        *_standard(),
+        StructureLine(
+            code, "Extra", component_type, "FIXED", amount_monthly_minor=100_000, display_order=40
+        ),
+    ]
+
+
+@pytest.mark.parametrize("code", sorted(RUN_LINE_CODES) + ["ARR_BASIC", "ARR_"])
+def test_reserved_codes_cannot_be_structure_lines(code: str) -> None:
+    with pytest.raises(BreakupError, match="reserved"):
+        validate_structure(_with_extra(code))
+
+
+@pytest.mark.parametrize("code", ["CONVEYANCE", "BONUS", "ARREAR", "TDS", "OVERTIME_ALLOWANCE"])
+def test_ordinary_codes_remain_valid_even_when_similar(code: str) -> None:
+    validate_structure(_with_extra(code))
+
+
+def test_the_supported_structure_codes_are_not_reserved() -> None:
+    for code in ("BASIC", "HRA", "SPECIAL_ALLOWANCE", "EMPLOYER_PF", "EMPLOYER_ESI"):
+        assert reserved_component_code_reason(code) is None
+    validate_structure(_standard())
+
+
+def test_duplicate_code_in_one_structure_is_still_rejected() -> None:
+    with pytest.raises(BreakupError, match="only once"):
+        validate_structure([*_standard(), *_standard()[:1]])
+
+
+def test_reserved_set_covers_every_code_the_run_emits() -> None:
+    """The statutory and TDS modules are the source of the run's own line codes; a code added
+    there without being reserved would let a component collide with it."""
+    import re
+    from pathlib import Path
+
+    import hrms.modules.payroll.income_tax as income_tax
+    import hrms.modules.payroll.statutory as statutory
+
+    emitted: set[str] = set()
+    for module in (statutory, income_tax):
+        source = Path(module.__file__).read_text()
+        emitted |= set(re.findall(r'(?:_line|TdsLine)\(\s*"([A-Z_]+)"', source))
+    assert emitted, "scan found no line codes — the pattern no longer matches the source"
+    assert emitted <= RUN_LINE_CODES, emitted - RUN_LINE_CODES

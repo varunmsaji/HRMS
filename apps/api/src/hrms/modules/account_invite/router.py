@@ -22,7 +22,13 @@ from hrms.modules.account_invite.service import AccountInviteService
 from hrms.modules.employee.permissions import EMPLOYEE_INVITE
 from hrms.modules.identity.permissions import SETTINGS_ROLE_MANAGE, SETTINGS_USER_MANAGE
 from hrms.modules.identity.schemas import build_meta
-from hrms.shared.pagination import DataEnvelope, ListEnvelope
+from hrms.shared.pagination import (
+    DataEnvelope,
+    ListEnvelope,
+    PageParams,
+    build_pagination_meta,
+    pagination_params,
+)
 
 router = APIRouter(tags=["account-invite"])
 
@@ -50,9 +56,14 @@ async def list_users(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[DataScope, Depends(require_permission(SETTINGS_USER_MANAGE))],
     service: Annotated[AccountInviteService, Depends(get_account_invite_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
 ) -> ListEnvelope[UserSummary]:
-    data = await service.list_users(tenant.company_id)
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    data, total = await service.list_users(tenant.company_id, page=page)
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.post("/users/invite", status_code=status.HTTP_201_CREATED)

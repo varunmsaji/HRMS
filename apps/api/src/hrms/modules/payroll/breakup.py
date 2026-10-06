@@ -33,6 +33,19 @@ COMPONENT_TYPES = ("EARNING", "DEDUCTION", "EMPLOYER_CONTRIBUTION")
 # Which lines apply to an employee (a PF line is skipped for someone not PF-applicable).
 APPLIES_WHEN = ("ALWAYS", "PF_APPLICABLE", "ESI_APPLICABLE")
 
+#: Codes a pay run itself writes (PAY-B03): earnings it derives from attendance/encashment, the
+#: statutory deductions and contributions of `statutory.py`, TDS (`income_tax.py`) and the
+#: rounding line. A salary component may not use one — in a run it would silently collide with
+#: (be overwritten by, or overwrite) the computed line. `EMPLOYER_PF` / `EMPLOYER_ESI` are NOT here:
+#: they are supported structure lines that split CTC and are replaced by the statutory computation.
+RUN_LINE_CODES = frozenset({
+    "OVERTIME", "LEAVE_ENCASHMENT", "DAILY_WAGES", "ROUNDING",
+    "PF_EMPLOYEE", "VPF", "EPF_EMPLOYER", "EPS_EMPLOYER", "PF_EDLI", "PF_ADMIN",
+    "ESI_EMPLOYEE", "ESI_EMPLOYER", "PT", "LWF_EMPLOYEE", "LWF_EMPLOYER", "TDS_EMPLOYEE",
+})  # fmt: skip
+#: Arrears lines are `ARR_<component code>`; a component starting with this would collide.
+ARREARS_PREFIX = "ARR_"
+
 _HUNDRED = Decimal(100)
 _RUPEE = 100  # paise
 
@@ -89,6 +102,15 @@ def monthly_from_annual(annual_minor: int) -> int:
     return int((Decimal(annual_minor) / 12).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
+def reserved_component_code_reason(code: str) -> str | None:
+    """Why `code` cannot be a salary component code, or `None` if it can."""
+    if code in RUN_LINE_CODES:
+        return f"{code} is reserved: a pay run computes a line with that code itself"
+    if code.startswith(ARREARS_PREFIX):
+        return f"Codes starting with {ARREARS_PREFIX} are reserved for arrears lines"
+    return None
+
+
 def validate_structure(lines: list[StructureLine]) -> None:
     """Configuration rules, checked at publish and before every breakup:
 
@@ -103,6 +125,10 @@ def validate_structure(lines: list[StructureLine]) -> None:
     if not lines:
         raise BreakupError("A salary structure needs at least one line")
     codes = [line.component_code for line in lines]
+    for code in codes:
+        reason = reserved_component_code_reason(code)
+        if reason is not None:
+            raise BreakupError(reason)
     if len(codes) != len(set(codes)):
         raise BreakupError("A component may appear only once in a structure")
     balancing = [line for line in lines if line.calculation_type == "BALANCING"]

@@ -249,6 +249,20 @@ class EmployeeRead(BaseModel):
     version: int
     created_at: str
     updated_at: str
+    # F-1 remediation (docs/audits/ATTENDANCE_DASHBOARD_F1_REMEDIATION_REPORT.md) — the employee's
+    # *current/most-recent* `Employment` spell boundaries, surfaced here so a bulk caller (the
+    # Attendance dashboard's employee directory) can tell "currently employed" from "no record
+    # yet" without an N+1 fetch per employee. Deliberately **not** full employment data (pay
+    # basis, legal entity, etc. stay on `EmploymentRead` only, via `GET /employees/{id}/
+    # employments`) — just the two date boundaries `joining_date <= date <= (last_working_day or
+    # infinity)` already used everywhere else in the codebase (e.g.
+    # `attendance/service.py::_is_employed_on`) to decide employment coverage for a date.
+    # `None` when the employee has no employment row yet (e.g. still `PRE_JOINING`), or when the
+    # caller path doesn't compute it (only `GET /employees` — the bulk list — populates these;
+    # `GET /employees/{id}` and all write-path responses leave them `None`, unchanged from before
+    # this field existed).
+    employment_joining_date: date | None = None
+    employment_last_working_day: date | None = None
 
 
 def _format_timestamp(value: datetime | None) -> str | None:
@@ -257,7 +271,7 @@ def _format_timestamp(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z")
 
 
-def employee_to_read(employee: "Employee") -> EmployeeRead:
+def employee_to_read(employee: "Employee", employment: "Employment | None" = None) -> EmployeeRead:
     return EmployeeRead(
         id=employee.id,
         company_id=employee.company_id,
@@ -297,6 +311,8 @@ def employee_to_read(employee: "Employee") -> EmployeeRead:
         version=employee.version,
         created_at=_format_timestamp(employee.created_at) or "",
         updated_at=_format_timestamp(employee.updated_at) or "",
+        employment_joining_date=employment.joining_date if employment else None,
+        employment_last_working_day=employment.last_working_day if employment else None,
     )
 
 

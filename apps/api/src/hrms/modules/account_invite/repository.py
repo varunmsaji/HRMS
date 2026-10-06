@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import Role, User, UserCompany, UserRole
@@ -16,18 +16,40 @@ from hrms.modules.account_invite.models import AccountInvite
 
 class AccountInviteRepository:
     async def list_user_companies_for_company(
-        self, session: AsyncSession, *, company_id: UUID
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[tuple[UserCompany, User]]:
         """Backs `GET /users` — every `UserCompany` membership for this tenant, joined to its
-        `User` row. Small, unpaginated result set (one row per person with access to this
-        company), same "smallest useful" posture as the rest of this module."""
+        `User` row. `limit=None` (the default) returns every row unpaginated — preserves the
+        exact pre-FINDING-03 behavior for any non-HTTP caller. `GET /users` always passes an
+        explicit `limit`/`offset`, applied at the SQL layer. `id` is a stable secondary key —
+        `created_at` alone can tie for memberships created in the same request burst (e.g. a
+        bulk invite), which would make page boundaries non-deterministic."""
         stmt = (
             select(UserCompany, User)
             .join(User, User.id == UserCompany.user_id)
             .where(UserCompany.company_id == company_id)
-            .order_by(UserCompany.created_at)
+            .order_by(UserCompany.created_at, UserCompany.id)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit).offset(offset)
         return [(row.UserCompany, row.User) for row in (await session.execute(stmt)).all()]
+
+    async def count_user_companies_for_company(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> int:
+        """Same predicate as `list_user_companies_for_company`, no `ORDER BY`/`LIMIT` — the
+        paired COUNT query for `GET /users`'s `pagination.total` (FINDING-03)."""
+        stmt = (
+            select(func.count())
+            .select_from(UserCompany)
+            .where(UserCompany.company_id == company_id)
+        )
+        return int((await session.execute(stmt)).scalar_one())
 
     async def insert_invite(self, session: AsyncSession, *, data: dict[str, Any]) -> AccountInvite:
         row = AccountInvite(**data)

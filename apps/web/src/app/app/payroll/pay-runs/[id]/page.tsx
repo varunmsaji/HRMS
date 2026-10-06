@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { apiClient } from "@/lib/api/client";
+import { apiClient, newIdempotencyKey } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LegalEntity } from "@/lib/legal-entity/types";
@@ -97,6 +97,9 @@ export default function PayRunDetailPage() {
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [corrections, setCorrections] = useState<PayAdjustment[]>([]);
   const [correctEmployee, setCorrectEmployee] = useState<PayRunEmployee | null>(null);
+  // One key per user intent: kept across a network-failure retry so the correction is recorded
+  // once, dropped as soon as the server has answered (PAY-B04).
+  const correctionKey = useRef<string | null>(null);
   const [correctDelta, setCorrectDelta] = useState("");
   const [correctReason, setCorrectReason] = useState("");
 
@@ -226,16 +229,25 @@ export default function PayRunDetailPage() {
     setBusy(true);
     setDialogError(null);
     try {
-      await apiClient.post<PayAdjustment>("/payroll/adjustments", {
-        source_pay_run_id: run.id,
-        employee_id: correctEmployee.employee_id,
-        paid_days_delta: correctDelta.trim(),
-        reason: correctReason.trim(),
-      });
+      correctionKey.current ??= newIdempotencyKey();
+      await apiClient.post<PayAdjustment>(
+        "/payroll/adjustments",
+        {
+          source_pay_run_id: run.id,
+          employee_id: correctEmployee.employee_id,
+          paid_days_delta: correctDelta.trim(),
+          reason: correctReason.trim(),
+        },
+        { headers: { "Idempotency-Key": correctionKey.current } },
+      );
+      correctionKey.current = null;
       setCorrectEmployee(null);
       toast({ title: "Correction recorded", description: "It is paid in the next pay run.", variant: "success" });
       await load();
     } catch (err) {
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        correctionKey.current = null; // answered (and rolled back): an edited retry is a new request
+      }
       setDialogError(describeApiError(err));
     } finally {
       setBusy(false);
@@ -565,6 +577,7 @@ export default function PayRunDetailPage() {
                               className="text-sm font-medium text-primary hover:underline"
                               onClick={() => {
                                 setCorrectEmployee(employee);
+                                correctionKey.current = null;
                                 setCorrectDelta("");
                                 setCorrectReason("");
                                 setDialogError(null);

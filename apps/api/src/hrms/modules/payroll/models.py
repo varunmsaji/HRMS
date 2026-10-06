@@ -398,6 +398,13 @@ class PayRunArrear(Base):
     component_code: Mapped[str] = mapped_column(String(30))
     line_type: Mapped[str] = mapped_column(String(25))
     amount_minor: Mapped[int] = mapped_column(BigInteger)
+    #: Which payment of arrears against this (employee, source run, component) this is — 1 for
+    #: the first, 2 for the next — as of when the run computed it. Together with `applied_at` it
+    #: backs the partial unique index `pay_run_arrear_applied_uq` (migration 20261012090000): two
+    #: runs prepared on the same state claim the same number and only one can be finalised.
+    payment_number: Mapped[int] = mapped_column(Integer)
+    #: Stamped when the run is finalised.
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

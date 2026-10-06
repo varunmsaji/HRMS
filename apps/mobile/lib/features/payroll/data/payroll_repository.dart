@@ -470,9 +470,12 @@ class PayrollRepository {
   Future<List<PayAdjustment>> listAdjustments({required String sourcePayRunId}) => _client
       .getList('/payroll/adjustments', filters: {'source_pay_run_id': sourcePayRunId}, parseItem: (d) => PayAdjustment.fromJson(d as Map<String, dynamic>))
       .then((e) => e.data);
-  Future<PayAdjustment> createAdjustment({required String sourcePayRunId, required String employeeId, required String paidDaysDelta, required String reason}) =>
+  /// Requires an `Idempotency-Key`; pass the same [idempotencyKey] when retrying after a network
+  /// failure so the correction is recorded once.
+  Future<PayAdjustment> createAdjustment({required String sourcePayRunId, required String employeeId, required String paidDaysDelta, required String reason, String? idempotencyKey}) =>
       _client.post(
         '/payroll/adjustments',
+        headers: {'Idempotency-Key': idempotencyKey ?? ApiClient.newIdempotencyKey()},
         body: {'source_pay_run_id': sourcePayRunId, 'employee_id': employeeId, 'paid_days_delta': paidDaysDelta, 'reason': reason},
         parse: (d) => PayAdjustment.fromJson(d as Map<String, dynamic>),
       );

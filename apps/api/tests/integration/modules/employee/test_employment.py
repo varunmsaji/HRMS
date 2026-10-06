@@ -2057,3 +2057,131 @@ async def test_terminate_employment_does_not_affect_other_tenant_assignment_or_c
     finally:
         await _teardown_with_assignment_and_compensation(company_id=company_a, user_id=user_a)
         await _teardown_with_assignment_and_compensation(company_id=company_b, user_id=user_b)
+
+
+# --- F-1 remediation: `GET /employees` carries current-employment boundaries -----------------
+#
+# docs/audits/ATTENDANCE_DASHBOARD_F1_REMEDIATION_REPORT.md — the Attendance dashboard's
+# "Total employees"/"Not checked in" KPIs need to tell "currently employed, no punch yet" apart
+# from "no longer employed" without an N+1 fetch of this employee's `/employments`. These fields
+# are additive on `EmployeeRead` and populated only by the bulk `GET /employees` list.
+
+
+async def test_list_employees_carries_no_employment_dates_before_hire(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """An employee created but never given an `Employment` row (still `PRE_JOINING`) has no
+    employment dates to report — `None`, not a fabricated value."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        await _create_employee(client, headers, first_name="Pending")
+
+        response = await client.get("/v1/employees", headers=headers)
+        assert response.status_code == 200
+        rows = response.json()["data"]
+        assert len(rows) == 1
+        assert rows[0]["employment_joining_date"] is None
+        assert rows[0]["employment_last_working_day"] is None
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_list_employees_carries_current_employment_dates(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Once hired, `GET /employees` reports that employee's `joining_date`/`last_working_day`
+    (open-ended — `last_working_day: null` — while still employed)."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, legal_entity = await _setup_employee_and_entity(client, headers)
+        await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2027-06-01",
+        )
+
+        response = await client.get("/v1/employees", headers=headers)
+        assert response.status_code == 200
+        row = next(r for r in response.json()["data"] if r["id"] == employee["id"])
+        assert row["employment_joining_date"] == "2027-06-01"
+        assert row["employment_last_working_day"] is None
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_list_employees_carries_last_working_day_after_termination(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """After termination, `GET /employees` reports the `last_working_day` HR set — this is the
+    exact signal F-1's fix uses to stop counting a departed employee as "not checked in today"
+    (the employee's own `status`/`is_active` are NOT updated by termination — see D-1 — so this
+    employment-level field is the only reliable source)."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, legal_entity = await _setup_employee_and_entity(client, headers)
+        employment = await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2027-06-01",
+        )
+        terminate = await client.post(
+            f"/v1/employees/{employee['id']}/employments/{employment['id']}/terminate",
+            headers={**headers, "If-Match": str(employment["version"])},
+            json={"last_working_day": "2027-09-20"},
+        )
+        assert terminate.status_code == 200
+
+        response = await client.get("/v1/employees", headers=headers)
+        assert response.status_code == 200
+        row = next(r for r in response.json()["data"] if r["id"] == employee["id"])
+        assert row["employment_joining_date"] == "2027-06-01"
+        assert row["employment_last_working_day"] == "2027-09-20"
+        # D-1, unchanged by this fix: the employee's own lifecycle fields do NOT reflect the
+        # termination — this is exactly why the dashboard must consult `Employment`, not
+        # `Employee.status`/`is_active`, to know someone has left.
+        assert row["status"] != "TERMINATED"
+        assert row["is_active"] is True
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_list_employees_carries_latest_spell_after_rehire(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A rehire inserts a new `Employment` row rather than mutating the old one (E-03's own
+    design). `GET /employees` must report the new (latest-`joining_date`) spell's dates, not the
+    original, already-ended one — otherwise a rehired employee would look terminated again."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee, legal_entity = await _setup_employee_and_entity(client, headers)
+        first_employment = await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2026-01-01",
+        )
+        await client.post(
+            f"/v1/employees/{employee['id']}/employments/{first_employment['id']}/terminate",
+            headers={**headers, "If-Match": str(first_employment["version"])},
+            json={"last_working_day": "2026-06-30"},
+        )
+        await _create_employment(
+            client,
+            headers,
+            employee_id=employee["id"],
+            legal_entity_id=legal_entity["id"],
+            joining_date="2027-01-01",
+        )
+
+        response = await client.get("/v1/employees", headers=headers)
+        assert response.status_code == 200
+        row = next(r for r in response.json()["data"] if r["id"] == employee["id"])
+        assert row["employment_joining_date"] == "2027-01-01"
+        assert row["employment_last_working_day"] is None
+    finally:
+        await _teardown(company_id=company_id, user_id=user_id)

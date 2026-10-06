@@ -46,6 +46,7 @@ document. Changing a decision here requires a new dated sign-off entry in the ch
 | PD-1 | Inert policy settings (ATT-001…004, ATT-005, PAY-011) | **Build** night-OT window (ATT-005) and negative-balance switch (PAY-011) — they affect money and decisions 8/9 depend on them. **Hide from UI** until built: punch rounding (ATT-001), auto-close (ATT-002), half-day split (ATT-003), excess-break behaviour (ATT-004), and the other zero-reference fields (ATT-006) | Implement ATT-005 & PAY-011; remove the other fields from the policy forms (keep DB columns); update `ATTENDANCE_V1_CONFIGURATION_CATALOG.md` to match |
 | PD-2 | May Payroll read an unclosed period? | **No — enforced in code.** Payroll refuses any period whose status is not `CLOSED` | Guard in the Payroll run service; test for it |
 | PD-3 | Separate leave period close? | **No.** Closing the attendance period locks leave for those dates too | Extend existing lock guards so leave apply/approve/cancel for a closed date is refused |
+| PD-4 | A payroll input changes after `INPUTS_LOCKED`, before finalisation (PAY-A02) | **Block** approval and finalisation (`409 PAY_RUN_INPUTS_CHANGED`); the run is left as it is and must be rolled back to draft and locked again. **Never** converted silently into next-month arrears — arrears are for changes to an already-finalised month | `PayRunService._assert_inputs_unchanged`: rebuilds the snapshot from live data and compares it, per section, with the locked one. Also fixes PAY-A01 (finalise holds the attendance period-close lock shared; reopen takes it exclusive) and PAY-A03 (finalisation serialised per legal entity + `pay_run_arrear_applied_uq`). Lock order in `core/db/locks.py` |
 
 ---
 
@@ -167,3 +168,5 @@ Follow-ups found during step 3 (not yet done):
 |---|---|---|
 | 2026-09-23 | Initial sign-off of all 18 business decisions and 3 product decisions | varun |
 | 2026-09-24 | Payroll module decisions D1–D11 ([`00_PAYROLL_IMPLEMENTATION_PLAN.md`](../modules/payroll/00_PAYROLL_IMPLEMENTATION_PLAN.md)) all signed off: D1–D6 (2026-09-23), D8–D9 decided/confirmed, D7/D10/D11 confirmed as built | varun |
+| 2026-10-04 | PD-4 recorded; PAY-A01, PAY-A02, PAY-A03 fixed (migration `20261012090000`) | varun |
+| 2026-10-04 | PAY-B01 (session commit before the response: `Depends(get_session, scope="function")`), B02 (engine refuses paid days > employed days / payable days), B03 (reserved component codes), B04 (`Idempotency-Key` required on `POST /payroll/adjustments` + `pay-adjustment` lock), B05 (DB triggers make FINALISED/PAID payroll immutable for the runtime role; migration `20261013090000`), B13 (tests for those) fixed — no business rule changed | varun |

@@ -494,3 +494,57 @@ at the "the app still boots" level.
 - The two leftover `RlsProbe *` synthetic companies in the dev database (from the prior audit's own
   empirical RLS probe) are still present — harmless synthetic data, not touched by this plan;
   removable manually whenever convenient.
+
+## 23. Addendum (2026-10-05) — FINDING-04: `account_invite` and `onboarding_token`
+
+§3's no-RLS table list above was written when the schema had 32 tables (19 with RLS) and predates
+both `account_invite` (added for employee/user login provisioning) and `onboarding_token` (added
+with the onboarding module) entirely. `PRE_PAYROLL_PRODUCTION_READINESS_FINAL_AUDIT.md`
+(`FINDING-04`) flagged this as an undocumented gap — not because either table is unprotected, but
+because nothing in this document's exception list had ever been extended to say so in one place.
+
+**Security decision: B — RLS intentionally not required**, for the same reason already given here
+for `refresh_token`/`session`: a public, unauthenticated caller resolving a secure link (an invite
+accept, an onboarding candidate's wizard) has no tenant context yet, so no `app.company_id` GUC
+exists for a policy to evaluate against. Both tables are looked up **only by their `token_hash`** —
+a `UNIQUE`, SHA-256-derived column no tenant-scoped predicate could narrow further — and this is
+recorded in-code, not just here: `AccountInvite`'s and `OnboardingToken`'s own model docstrings
+(`hrms/modules/account_invite/models.py`, `hrms/modules/onboarding/models.py`) and
+`OnboardingTokenRepository`'s class docstring state the same reasoning, and `onboarding_token`
+already carries a corrective migration (`20260906090000_onboarding_o2`) that explicitly *removed*
+a `tenant_isolation` policy an earlier migration had mistakenly given it, for exactly this reason.
+
+What makes this safe rather than merely unenforced:
+
+1. **The lookup key is global and unguessable.** `token_hash` is unique across the whole table, not
+   per-company — a cross-tenant row can never be returned by a hash a caller doesn't hold, with or
+   without RLS, the same property `refresh_token` already relies on.
+2. **`company_id` on these rows is server-written only**, never client input (`AccountInvite`'s
+   `issue_for_employee`/`issue_for_user`, `OnboardingTokenService.send_invite` — both set it from
+   the authenticated issuer's own `TenantContext`, never from the request body).
+3. **Every authenticated query path still filters by `company_id` explicitly in the repository**
+   (`account_invite/repository.py`'s `list_user_companies_for_company`,
+   `revoke_live_invites_for_employee`/`revoke_live_invites_for_email`; `onboarding/repository.py`'s
+   `OnboardingCaseRepository` methods)
+   — confirmed by the cross-tenant regression tests below, which is the same "application-level
+   filtering, independently verified" standard this document already applied to every RLS-backed
+   table's own proof.
+4. **A resolved token only ever unlocks a second, RLS-protected lookup** — accepting an
+   `account_invite` or completing an `onboarding_token`'s case still resolves `employee`/
+   `onboarding_case` by the row's own `company_id`, and those tables do carry RLS (`employee`
+   already in §3's list; `onboarding_case` added with the onboarding module, same posture). A
+   forged or tampered `company_id` on the invite/token row itself is not reachable from any client
+   input (point 2), so there is nothing for RLS to additionally guard here that application code
+   and the unguessable hash don't already guard.
+
+**Required regression test, added** (mirrors `tests/security/test_rls_runtime_role.py`'s own
+cross-tenant pattern): `tests/security/test_account_invite_onboarding_token_isolation.py` proves,
+for both tables, that (a) a token hash issued under company A is never resolved under any other
+company's context, (b) `GET /v1/users` and `GET /v1/onboarding-cases` under company B never return
+a row created for company A, and (c) directly varying the request's `X-Company-Id` cannot make a
+company-B-scoped caller read or list a company-A invite/token/onboarding-case.
+
+No schema or code change was made for this finding — `refresh_token`/`session`/`account_invite`/
+`onboarding_token` now share one explicit, cross-referenced exception list, and the previously
+undocumented half of it (`account_invite`, `onboarding_token`) has the same written reasoning the
+documented half already had.

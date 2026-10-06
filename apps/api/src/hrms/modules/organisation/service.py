@@ -470,6 +470,12 @@ class OrganisationService:
         from hrms.modules.leave.permissions import (
             LEAVE_APPLICATION_APPROVE,
             LEAVE_APPLICATION_CANCEL_APPROVED,
+            LEAVE_APPLICATION_REASSIGN,
+            LEAVE_APPLICATION_SUBMIT,
+            LEAVE_APPLICATION_SUBMIT_ON_BEHALF,
+            LEAVE_BALANCE_ADJUST,
+            LEAVE_BALANCE_VIEW,
+            LEAVE_BALANCE_VIEW_ALL,
             LEAVE_PERMISSIONS,
         )
 
@@ -632,6 +638,13 @@ class OrganisationService:
             attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_CANCEL_APPROVED],
+            # Decision 12 - normal company-level Leave administration: see every application and
+            # balance, correct or encash a balance, act for an employee, and unstick an approval
+            # (decision 13). Leave-type and policy management stay with COMPANY_ADMIN.
+            leave_permission_by_code[LEAVE_BALANCE_VIEW_ALL],
+            leave_permission_by_code[LEAVE_BALANCE_ADJUST],
+            leave_permission_by_code[LEAVE_APPLICATION_SUBMIT_ON_BEHALF],
+            leave_permission_by_code[LEAVE_APPLICATION_REASSIGN],
             *(p for p in payroll_permission_rows if p.code in PAYROLL_HR_ADMIN_PERMISSIONS),
         ):
             await self._repo.insert_role_permission(
@@ -670,6 +683,8 @@ class OrganisationService:
             attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
             attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
+            # Decision 12 - a manager sees their reportees' leave applications and balances.
+            leave_permission_by_code[LEAVE_BALANCE_VIEW_ALL],
         ):
             await self._repo.insert_role_permission(
                 self._session,
@@ -724,6 +739,7 @@ class OrganisationService:
             attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
             attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
+            leave_permission_by_code[LEAVE_BALANCE_VIEW_ALL],
         ):
             await self._repo.insert_role_permission(
                 self._session,
@@ -758,6 +774,15 @@ class OrganisationService:
                 self._session,
                 role_id=employee_role.id,
                 permission_id=employee_permission_by_code[code].id,
+                data_scope=DataScopeLevel.SELF,
+            )
+        # Decision 12 - an employee submits their own leave and sees their own balances and
+        # history (cancel/withdraw rides on the submit grant). Nothing administrative.
+        for leave_code in (LEAVE_APPLICATION_SUBMIT, LEAVE_BALANCE_VIEW):
+            await self._repo.insert_role_permission(
+                self._session,
+                role_id=employee_role.id,
+                permission_id=leave_permission_by_code[leave_code].id,
                 data_scope=DataScopeLevel.SELF,
             )
         # Payroll 5.4 — every employee reads their own finalised payslips.

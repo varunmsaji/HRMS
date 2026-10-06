@@ -581,3 +581,29 @@ class NomineePercentageExceededError(ValidationError):
             message,
             details=[{"field": field, "code": "NOMINEE_PERCENTAGE_EXCEEDED", "message": message}],
         )
+
+
+class EmploymentChangeConflictsWithLeaveError(ConflictError):
+    """Raised when a change to an employment boundary (today: terminating with a last working
+    day) would leave submitted or approved leave outside employment. The change is refused and
+    nothing is auto-cancelled: HR cancels or rejects the listed leave first, then retries. The
+    context carries ids, dates and status only, never free text."""
+
+    code = "EMPLOYMENT_CHANGE_CONFLICTS_WITH_LEAVE"
+
+    def __init__(self, *, conflicts: list[dict[str, str]]) -> None:
+        message = (
+            "This change would leave submitted or approved leave outside the employment. "
+            "Cancel or reject that leave first."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "last_working_day",
+                    "code": self.code,
+                    "message": message,
+                    "context": {"leave_applications": conflicts},
+                }
+            ],
+        )

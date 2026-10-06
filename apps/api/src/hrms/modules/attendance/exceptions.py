@@ -5,6 +5,7 @@ one identity+version+publish shape (mirrors `organisation.exceptions`'s `ShiftVe
 generalised here instead of tripled — the three families differ only in which typed rule
 children they carry, not in the versioning state machine)."""
 
+from datetime import date
 from typing import Any
 
 from hrms.core.errors.base import (
@@ -698,6 +699,35 @@ class FuturePunchTimeError(ValidationError):
         )
 
 
+class EmployeeTerminatedError(ValidationError):
+    """A punch (any source) whose company-local date is after the employee's last working day.
+    The last working day itself is still a working day; the day after is not. Rejected at
+    creation rather than left for the calculation engine to classify as `EXITED`."""
+
+    code = "EMPLOYEE_TERMINATED"
+
+    def __init__(
+        self,
+        last_working_day: date,
+        message: str | None = None,
+    ) -> None:
+        message = message or (
+            "Attendance cannot be recorded after the employee's last working day "
+            f"({last_working_day.isoformat()})"
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "punch_time",
+                    "code": "EMPLOYEE_TERMINATED",
+                    "message": message,
+                    "context": {"last_working_day": last_working_day.isoformat()},
+                }
+            ],
+        )
+
+
 class PunchTimeBeforeEmploymentError(ValidationError):
     """Execution gate §8.2's "employment-start floor" — a data-integrity bound, not a policy
     choice, which is why it needed no client decision. Before this, `1900-01-01Z` was accepted
@@ -939,4 +969,65 @@ class FacePunchAttemptsExceededError(AppError):
         super().__init__(
             f"Too many failed face attempts. Try again in {window_minutes} minutes or ask HR "
             "to record your punch."
+        )
+
+
+class LeaveProjectionOutsideEmploymentError(ValidationError):
+    """D3 / LM-14 - a leave day cannot be projected onto a date the employee has no employment
+    covering (before joining, after the last working day, in a rehire gap, or with no employment
+    row). Closes the direct `POST /leave-projections` path as well as the approval path, so
+    neither can publish leave the Leave module would have refused."""
+
+    code = "LEAVE_PROJECTION_OUTSIDE_EMPLOYMENT"
+
+    def __init__(self, *, reason: str, offending_date: date) -> None:
+        message = f"Leave cannot be projected onto {offending_date.isoformat()}: {reason}"
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "attendance_date",
+                    "code": self.code,
+                    "message": message,
+                    "context": {"reason": reason},
+                }
+            ],
+        )
+
+
+class LeaveProjectionApplicationNotFoundError(NotFoundError):
+    """LM-14 - the leave application a projection names does not exist for this company and
+    employee. One error for "no such id", "another company's id" and "another employee's id", so
+    the response never reveals whether a foreign application exists."""
+
+    code = "LEAVE_PROJECTION_APPLICATION_NOT_FOUND"
+
+    def __init__(self, message: str = "Leave application not found for this employee") -> None:
+        super().__init__(message)
+
+
+class LeaveProjectionApplicationNotApprovedError(ConflictError):
+    """LM-14 - only an `APPROVED` leave application can back a projection; a submitted, rejected
+    or cancelled one must never create or revive an active projection."""
+
+    code = "LEAVE_PROJECTION_APPLICATION_NOT_APPROVED"
+
+    def __init__(self, *, status: str) -> None:
+        message = f"Leave application is {status}, not APPROVED, so it cannot be projected"
+        super().__init__(
+            message,
+            details=[{"field": "leave_application_id", "code": self.code, "message": message}],
+        )
+
+
+class LeaveProjectionDateNotInApplicationError(ValidationError):
+    """LM-14 - the application has no `LeaveApplicationDay` for the requested date."""
+
+    code = "LEAVE_PROJECTION_DATE_NOT_IN_APPLICATION"
+
+    def __init__(self, *, offending_date: date) -> None:
+        message = f"Leave application does not cover {offending_date.isoformat()}"
+        super().__init__(
+            message,
+            details=[{"field": "attendance_date", "code": self.code, "message": message}],
         )

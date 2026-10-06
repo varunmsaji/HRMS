@@ -37,6 +37,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from hrms.modules.payroll.breakup import ARREARS_PREFIX, reserved_component_code_reason
 from hrms.modules.payroll.income_tax import compute_tds
 from hrms.modules.payroll.statutory import compute_statutory
 
@@ -56,7 +57,6 @@ _ARREARS_IGNORED_ISSUES = frozenset(
     {"BANK_MISSING", "BANK_ACCOUNT_MISSING", "NEGATIVE_NET", "ZERO_NET", "UAN_MISSING",
      "ESI_IP_MISSING", "ESI_ABOVE_CEILING", "PT_RATE_MISSING", "BASIC_MISSING"}
 )  # fmt: skip
-ARREARS_PREFIX = "ARR_"
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,9 @@ class EmployeeInput:
     paid_days: Decimal | None  # None: a summary frozen before PAY-002 — refused
     has_summary: bool
     segments: tuple[Segment, ...]
+    # The summary's own `payable_days` (employed days in the attendance period); `None` when the
+    # summary predates it. Only used to bound `paid_days` (PAY-B02).
+    payable_days: Decimal | None = None
     overtime: tuple[OvertimeInput, ...] = ()
     encashments: tuple[EncashmentInput, ...] = ()
     bank: dict[str, Any] | None = None
@@ -204,6 +207,28 @@ class _Accumulator:
     is_esi_wage: bool = False
 
 
+def _paid_days_issue(inputs: EmployeeInput, total_employed: int) -> Issue | None:
+    paid = inputs.paid_days
+    assert paid is not None
+    if paid < 0:
+        return Issue("PAID_DAYS_INVALID", ERROR, f"Paid days ({_num(paid)}) cannot be negative")
+    ceiling = min(total_employed, inputs.days_in_month)
+    if paid > ceiling:
+        return Issue(
+            "PAID_DAYS_EXCEED_EMPLOYED", ERROR,
+            f"Paid days ({_num(paid)}) exceed the {ceiling} day(s) the employee was employed in "
+            "this legal entity during the month — the attendance summary and the employment "
+            "records disagree; fix the source and lock the inputs again",
+        )  # fmt: skip
+    if inputs.payable_days is not None and paid > inputs.payable_days:
+        return Issue(
+            "PAID_DAYS_EXCEED_PAYABLE", ERROR,
+            f"Paid days ({_num(paid)}) exceed the summary's payable days "
+            f"({_num(inputs.payable_days)}) — the attendance summary is inconsistent",
+        )  # fmt: skip
+    return None
+
+
 def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
     issues = list(inputs.snapshot_issues)
     days = Decimal(inputs.days_in_month)
@@ -219,13 +244,41 @@ def compute_employee(inputs: EmployeeInput) -> EmployeeResult:
         return EmployeeResult(issues=issues)
 
     total_employed = sum(s.employed_days for s in inputs.segments)
+
     if total_employed == 0:
-        if inputs.paid_days > 0:
+        if inputs.paid_days != 0:
             issues.append(Issue(
                 "NOT_EMPLOYED", ERROR,
                 "The attendance summary has paid days but the employee has no employment in "
                 "this legal entity during the month",
             ))  # fmt: skip
+        return EmployeeResult(issues=issues)
+
+    # PAY-B02: paid days can never exceed the days the employee was employed in this legal entity
+    # (`total_employed`, never more than the month), nor the summary's own payable days — the
+    # attendance invariant is `paid + lop + unpaid_off = payable`. Salary is prorated as
+    # amount × paid ÷ days_in_month, so a bigger figure would silently overpay. Refuse instead.
+    # (zero employed days with paid days is the NOT_EMPLOYED case above)
+    bound_issue = _paid_days_issue(inputs, total_employed)
+    if bound_issue is not None:
+        issues.append(bound_issue)
+        return EmployeeResult(issues=issues)
+
+    # PAY-B03: a structure line may never share its code with a line the run computes itself —
+    # the two would overwrite each other and one of them would vanish from the payslip.
+    clashes = sorted({
+        line.component_code
+        for segment in inputs.segments
+        for line in segment.lines
+        if reserved_component_code_reason(line.component_code) is not None
+    })  # fmt: skip
+    if clashes:
+        issues.append(Issue(
+            "COMPONENT_CODE_RESERVED", ERROR,
+            f"Salary component code(s) {', '.join(clashes)} clash with lines the pay run computes "
+            "itself — rename the component(s), publish the structure again and lock the inputs "
+            "again",
+        ))  # fmt: skip
         return EmployeeResult(issues=issues)
 
     accumulators: dict[str, _Accumulator] = {}
@@ -509,8 +562,17 @@ def _arrears(items: tuple[ArrearsInput, ...]) -> tuple[list[ComputedLine], list[
             key = (ARREARS_PREFIX + code)[:30]
             entry = lines.setdefault(key, {
                 "name": f"{ref.component_name} arrears", "type": ref.line_type,
-                "order": 300 + ref.display_order, "amount": 0, "parts": [],
+                "order": 300 + ref.display_order, "amount": 0, "parts": [], "source": code,
             })  # fmt: skip
+            if entry["source"] != code:
+                # Two long component codes that share their first 26 characters would be merged
+                # into one arrears line; refuse rather than pay one under the other's name.
+                issues.append(Issue(
+                    "ARREARS_CODE_COLLISION", ERROR,
+                    f"Arrears for components {entry['source']} and {code} would share the line "
+                    f"{key} — rename one of the components",
+                ))  # fmt: skip
+                continue
             entry["amount"] += difference
             entry["parts"].append({
                 "month": item.month, "pay_run_id": item.pay_run_id, "component_code": code,
@@ -550,6 +612,11 @@ def employee_input_from_snapshot(snapshot: dict[str, Any], days_in_month: int) -
         days_in_month=days_in_month,
         paid_days=Decimal(paid) if paid is not None else None,
         has_summary=summary is not None,
+        payable_days=(
+            Decimal(summary["payable_days"])
+            if summary and summary.get("payable_days") is not None
+            else None
+        ),
         segments=tuple(
             Segment(
                 date_from=date.fromisoformat(s["from"]),

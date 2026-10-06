@@ -8,7 +8,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from hrms.modules.payroll.breakup import APPLIES_WHEN, CALCULATION_TYPES, COMPONENT_TYPES
+from hrms.modules.payroll.breakup import (
+    APPLIES_WHEN,
+    CALCULATION_TYPES,
+    COMPONENT_TYPES,
+    reserved_component_code_reason,
+)
 
 if TYPE_CHECKING:
     from hrms.modules.payroll.models import (
@@ -54,6 +59,14 @@ class SalaryComponentCreate(BaseModel):
     is_prorated: bool = True
     show_on_payslip: bool = True
     display_order: int = Field(default=0, ge=0, le=10_000)
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: str) -> str:
+        reason = reserved_component_code_reason(value)
+        if reason is not None:
+            raise ValueError(reason)
+        return value
 
     @field_validator("component_type")
     @classmethod

@@ -168,6 +168,8 @@ class LeavePolicyVersion(Base, TimestampMixin):
     # HR explicitly turns one off.
     allowed_during_probation: Mapped[bool] = mapped_column(Boolean, default=True)
     accrue_during_probation: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Decision 15 - the longest single application, in calendar days, this policy permits.
+    max_consecutive_days: Mapped[int] = mapped_column(Integer, default=30)
     # LD-19 — client spec §12. `max_encashment_days`/`min_balance_after_encashment` are enforced
     # by LeaveLedgerService.create_encashment; both nullable (no limit assumed when unset).
     # `encashment_frequency`/`encashment_calculation_basis` are informational only — frequency
@@ -345,7 +347,7 @@ class LeaveApplicationDay(Base, TimestampMixin):
     )
     calendar_date: Mapped[date] = mapped_column(Date)
     fraction: Mapped[Decimal] = mapped_column(Numeric(3, 2))
-    half: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    half: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_sandwich_generated: Mapped[bool] = mapped_column(Boolean, default=False)
     # PAY-010 — this day is approved as unpaid (LOP) leave, not debited from the balance.
     is_lop: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -476,4 +478,23 @@ class StatutoryLeaveMinimum(Base, TimestampMixin):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class LeaveYearEndRun(Base):
+    """Decision 16 - the durable "this employee's year-end for this leave year has been processed"
+    marker. The year-end sweep has a catch-up window, so it must be able to tell a year start that
+    was already handled from one that was missed; the unique key also makes two concurrent
+    catch-up runs idempotent. Insert-only for the runtime role, like the ledger."""
+
+    __tablename__ = "leave_year_end_run"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    year_start: Mapped[date] = mapped_column(Date)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

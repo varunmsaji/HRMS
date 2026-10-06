@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { FormField } from "@/components/common/form-field";
 import { useToast } from "@/components/common/toast";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { apiClient } from "@/lib/api/client";
+import { apiClient, newIdempotencyKey } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { LEAVE_HALF_DAY_VALUES, type LeaveApplication } from "@/lib/leave-application/types";
 import {
@@ -78,6 +78,9 @@ export function LeaveApplicationDialog({
   const [errors, setErrors] = useState<LeaveApplicationFormErrors & { employeeId?: string }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // One key per submission intent: kept across a retry after a network failure (the server then
+  // replays the first result instead of applying twice), dropped once the server has answered.
+  const idempotencyKey = useRef<string | null>(null);
 
   const needsEmployeePicker = mode === "ON_BEHALF" && !employeeId;
 
@@ -114,10 +117,13 @@ export function LeaveApplicationDialog({
     setFormError(null);
     try {
       const targetEmployeeId = mode === "ON_BEHALF" ? employeeId || selectedEmployeeId : undefined;
+      idempotencyKey.current ??= newIdempotencyKey();
       const created = await apiClient.post<LeaveApplication>(
         "/leave-applications",
         buildLeaveApplicationCreatePayload(values, targetEmployeeId),
+        { headers: { "Idempotency-Key": idempotencyKey.current } },
       );
+      idempotencyKey.current = null;
       onCreated(created);
       onOpenChange(false);
       toast({
@@ -126,6 +132,9 @@ export function LeaveApplicationDialog({
         variant: "success",
       });
     } catch (err) {
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        idempotencyKey.current = null; // answered (and rolled back): an edited retry is a new request
+      }
       if (err instanceof ApiError && err.status === 422) {
         setErrors({
           leaveTypeId: getFieldError(err.details, "leave_type_id"),

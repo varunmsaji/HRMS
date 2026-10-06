@@ -262,9 +262,11 @@ class LeaveRepository {
     required String days,
     required String effectiveDate,
     required String reason,
+    String? idempotencyKey,
   }) =>
       _client.post(
         '/leave-ledger/encashments',
+        headers: {'Idempotency-Key': idempotencyKey ?? ApiClient.newIdempotencyKey()},
         body: {'employee_id': employeeId, 'leave_type_id': leaveTypeId, 'days': days, 'effective_date': effectiveDate, 'reason': reason},
         parse: (_) {},
       );
@@ -276,9 +278,11 @@ class LeaveRepository {
     required String amount,
     required String effectiveDate,
     required String reason,
+    String? idempotencyKey,
   }) =>
       _client.post(
         '/leave-ledger/adjustments',
+        headers: {'Idempotency-Key': idempotencyKey ?? ApiClient.newIdempotencyKey()},
         body: {'employee_id': employeeId, 'leave_type_id': leaveTypeId, 'amount': amount, 'effective_date': effectiveDate, 'reason': reason},
         parse: (_) {},
       );
@@ -307,8 +311,11 @@ class LeaveRepository {
         parseItem: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       )
       .then((e) => e.data);
-  Future<LeaveApplication> submitLeaveApplication(Map<String, dynamic> body) => _client.post(
+  /// Requires an `Idempotency-Key`; pass the same [idempotencyKey] when retrying after a network
+  /// failure so the application is created once.
+  Future<LeaveApplication> submitLeaveApplication(Map<String, dynamic> body, {String? idempotencyKey}) => _client.post(
         '/leave-applications',
+        headers: {'Idempotency-Key': idempotencyKey ?? ApiClient.newIdempotencyKey()},
         body: body,
         parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       );

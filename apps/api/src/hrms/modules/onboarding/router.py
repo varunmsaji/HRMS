@@ -55,7 +55,13 @@ from hrms.modules.onboarding.service import (
     OnboardingReviewService,
     OnboardingTokenService,
 )
-from hrms.shared.pagination import DataEnvelope, ListEnvelope
+from hrms.shared.pagination import (
+    DataEnvelope,
+    ListEnvelope,
+    PageParams,
+    build_pagination_meta,
+    pagination_params,
+)
 
 router = APIRouter(tags=["onboarding"])
 
@@ -83,10 +89,15 @@ async def list_onboarding_cases(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
     status_filter: Annotated[str | None, Query(alias="status")] = None,
 ) -> ListEnvelope[OnboardingCaseRead]:
-    data = await service.list_cases(tenant.company_id, status=status_filter)
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    data, total = await service.list_cases(tenant.company_id, status=status_filter, page=page)
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/onboarding-cases/{case_id}", status_code=status.HTTP_200_OK)

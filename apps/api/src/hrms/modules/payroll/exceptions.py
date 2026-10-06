@@ -200,6 +200,25 @@ class PayRunAttendanceChangedError(ConflictError):
         super().__init__(message, details=_detail("attendance_period_id", self.code, message))
 
 
+class PayRunInputsChangedError(ConflictError):
+    """PD-4 — a payroll input in the locked snapshot changed after the inputs were locked, so the
+    run cannot be approved or finalised from it. The run is left as it is; it must be rolled back
+    to draft and its inputs locked again."""
+
+    code = "PAY_RUN_INPUTS_CHANGED"
+
+    def __init__(self, changes: list[dict[str, Any]]) -> None:
+        message = (
+            "Payroll inputs changed after this run's inputs were locked — roll the run back to "
+            "draft and lock its inputs again"
+        )
+        super().__init__(
+            message,
+            details=[{"field": "inputs", "code": self.code, "message": message,
+                      "context": {"changes": changes}}],
+        )  # fmt: skip
+
+
 class PayRunBlockedError(ConflictError):
     """Approval refused: employees with errors, or variances not yet acknowledged."""
 

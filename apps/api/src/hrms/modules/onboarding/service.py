@@ -19,6 +19,7 @@ from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
 from hrms.core.storage import DocumentStorageService
+from hrms.shared.pagination import PageParams
 from hrms.modules.onboarding.document_validation import (
     content_disposition_attachment,
     safe_document_object_key,
@@ -389,10 +390,26 @@ class OnboardingCaseService:
         return read
 
     async def list_cases(
-        self, company_id: UUID, *, status: str | None = None
-    ) -> list[OnboardingCaseRead]:
-        cases = await self._repo.list_cases(self._session, company_id=company_id, status=status)
-        return [onboarding_case_to_read(case) for case in cases]
+        self, company_id: UUID, *, status: str | None = None, page: PageParams | None = None
+    ) -> tuple[list[OnboardingCaseRead], int]:
+        """`page=None` returns every case, unpaginated, with `total` equal to that same count —
+        the exact shape this method had before FINDING-03. `GET /onboarding-cases` always passes
+        `page`."""
+        if page is None:
+            cases = await self._repo.list_cases(
+                self._session, company_id=company_id, status=status
+            )
+            reads = [onboarding_case_to_read(case) for case in cases]
+            return reads, len(reads)
+        cases = await self._repo.list_cases(
+            self._session,
+            company_id=company_id,
+            status=status,
+            limit=page.limit,
+            offset=page.offset,
+        )
+        total = await self._repo.count_cases(self._session, company_id=company_id, status=status)
+        return [onboarding_case_to_read(case) for case in cases], total
 
     async def get_case(self, company_id: UUID, case_id: UUID) -> OnboardingCaseRead:
         case = await self._repo.get_case(self._session, company_id=company_id, case_id=case_id)

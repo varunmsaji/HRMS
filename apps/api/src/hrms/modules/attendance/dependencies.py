@@ -30,49 +30,49 @@ from hrms.modules.attendance.service import (
 
 
 def get_attendance_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AttendanceService:
     return AttendanceService(session)
 
 
 def get_punch_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> PunchService:
     return PunchService(session)
 
 
 def get_attendance_day_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AttendanceDayService:
     return AttendanceDayService(session)
 
 
 def get_shift_roster_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> ShiftRosterService:
     return ShiftRosterService(session)
 
 
 def get_regularization_request_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> RegularizationRequestService:
     return RegularizationRequestService(session)
 
 
 def get_overtime_record_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OvertimeRecordService:
     return OvertimeRecordService(session)
 
 
 def get_attendance_period_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AttendancePeriodService:
     return AttendancePeriodService(session)
 
 
 def get_leave_projection_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> LeaveProjectionService:
     return LeaveProjectionService(session)
 
@@ -86,7 +86,7 @@ def get_face_photo_storage() -> FacePhotoStorage:
 
 
 def get_face_enrollment_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
     storage: Annotated[FacePhotoStorage, Depends(get_face_photo_storage)],
 ) -> FaceEnrollmentService:
@@ -94,7 +94,7 @@ def get_face_enrollment_service(
 
 
 def get_face_punch_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
 ) -> FacePunchService:
     return FacePunchService(session, provider, get_settings())

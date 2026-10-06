@@ -11,6 +11,6 @@ from hrms.modules.account_invite.service import AccountInviteService
 
 
 def get_account_invite_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AccountInviteService:
     return AccountInviteService(session, get_settings())

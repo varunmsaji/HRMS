@@ -241,7 +241,10 @@ async def _give_balance(
     employee_id: str,
     leave_type_id: str,
     amount: str = "20.00",
+    effective_date: str = "2026-01-01",
 ) -> None:
+    """The date must sit inside the employee's employment (D5): every helper that builds an
+    employee joins them on or before 2026-01-01."""
     response = await client.post(
         "/v1/leave-ledger/adjustments",
         headers=headers,
@@ -249,7 +252,7 @@ async def _give_balance(
             "employee_id": employee_id,
             "leave_type_id": leave_type_id,
             "amount": amount,
-            "effective_date": "2024-01-01",
+            "effective_date": effective_date,
             "reason": "Opening balance for test",
         },
     )
@@ -328,6 +331,7 @@ async def _teardown(*, company_id: UUID) -> None:
             "leave_application_action",
             "leave_application",
             "leave_ledger",
+            "leave_year_end_run",
             "leave_combination_rule",
             "policy_assignment",
             "leave_policy_version",

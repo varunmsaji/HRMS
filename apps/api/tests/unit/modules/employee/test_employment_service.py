@@ -1,5 +1,6 @@
 """Unit tests for `EmploymentService` — E-03 (employment lifecycle)."""
 
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -130,7 +131,7 @@ def _compensation(**overrides: object) -> EmployeeCompensation:
 
 
 @pytest.fixture
-def service() -> EmploymentService:
+def service() -> Iterator[EmploymentService]:
     session = MagicMock()
     svc = EmploymentService(session)
     svc._repo = AsyncMock()
@@ -148,7 +149,12 @@ def service() -> EmploymentService:
     svc._assignment_repo.get_current_assignment.return_value = None
     svc._compensation_repo.get_current_compensation.return_value = None
     svc._statutory_repo.get_current_statutory.return_value = None
-    return svc
+    # LM-15: termination takes the employee's leave-dates advisory lock and asks Leave for stranded
+    # leave. Both need a real session; they are exercised against PostgreSQL in
+    # `tests/integration/modules/leave/test_leave_employment_validity.py`.
+    svc._assert_no_leave_after = AsyncMock()  # type: ignore[method-assign]
+    with patch("hrms.modules.employee.service.lock_employee_leave_dates", new=AsyncMock()):
+        yield svc
 
 
 def _mock_legal_entity_ok() -> AsyncMock:

@@ -18,38 +18,38 @@ from hrms.modules.onboarding.service import (
 
 
 def get_onboarding_case_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OnboardingCaseService:
     return OnboardingCaseService(session, get_settings())
 
 
 def get_onboarding_activation_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OnboardingActivationService:
     return OnboardingActivationService(session, get_settings())
 
 
 def get_onboarding_document_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OnboardingDocumentService:
     return OnboardingDocumentService(session, get_settings())
 
 
 def get_onboarding_review_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OnboardingReviewService:
     return OnboardingReviewService(session, get_settings())
 
 
 def get_onboarding_token_service(
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OnboardingTokenService:
     return OnboardingTokenService(session, get_settings())
 
 
 async def get_onboarding_case_from_token(
     token: str,
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OnboardingTokenContext:
     """The security boundary for every public onboarding route (plan §5) — resolves and
     validates the raw path-parameter token, sets the RLS `company_id` GUC from it, and returns

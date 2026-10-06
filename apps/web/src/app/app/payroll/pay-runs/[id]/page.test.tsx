@@ -27,6 +27,7 @@ vi.mock("@/components/common/toast", () => ({
 
 vi.mock("@/lib/api/client", () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  newIdempotencyKey: () => "test-idempotency-key",
 }));
 
 import PayRunDetailPage from "@/app/app/payroll/pay-runs/[id]/page";
@@ -183,12 +184,16 @@ describe("PayRunDetailPage", () => {
     await user.click(screen.getByRole("button", { name: "Record correction" }));
 
     await waitFor(() =>
-      expect(mockedPost).toHaveBeenCalledWith("/payroll/adjustments", {
-        source_pay_run_id: "run-1",
-        employee_id: "emp-1",
-        paid_days_delta: "1.5",
-        reason: "Missed punches",
-      }),
+      expect(mockedPost).toHaveBeenCalledWith(
+        "/payroll/adjustments",
+        {
+          source_pay_run_id: "run-1",
+          employee_id: "emp-1",
+          paid_days_delta: "1.5",
+          reason: "Missed punches",
+        },
+        { headers: { "Idempotency-Key": "test-idempotency-key" } },
+      ),
     );
   });
 });

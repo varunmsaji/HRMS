@@ -1,7 +1,13 @@
+from typing import Any
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import task_failure
 
 from hrms.core.config.settings import get_settings
+from hrms.core.observability.logging import get_logger
+
+_logger = get_logger(__name__)
 
 
 def create_celery_app() -> Celery:
@@ -27,9 +33,12 @@ def create_celery_app() -> Celery:
         # daily (a validity window can lapse on any calendar day) — both idempotent, so a missed
         # or repeated run is harmless.
         beat_schedule={
+            # Daily, not day-1 only (PRA-07): `leave.accrue_company` only acts during the first
+            # `leave_accrual_run_window_days` days of a month and every write is idempotent, so
+            # the extra runs are no-ops - but a missed day-1 firing is repaired the next day.
             "leave-run-monthly-accrual": {
                 "task": "leave.run_monthly_accrual",
-                "schedule": crontab(minute=0, hour=1, day_of_month=1),
+                "schedule": crontab(minute=0, hour=1),
             },
             "leave-run-comp-off-credit-sweep": {
                 "task": "leave.run_comp_off_credit_sweep",
@@ -75,3 +84,26 @@ def create_celery_app() -> Celery:
 
 
 celery_app = create_celery_app()
+
+
+@task_failure.connect
+def _log_unhandled_task_failure(
+    sender: Any = None,
+    task_id: str | None = None,
+    exception: BaseException | None = None,
+    traceback: Any = None,
+    einfo: Any = None,
+    **_kwargs: Any,
+) -> None:
+    """FINDING-01 — a company-wide backstop so every task's failure leaves a structured,
+    server-side trace even if its module defines no `on_failure` of its own (unlike Leave's
+    `_LeaveTask`, §`leave/tasks.py`). Celery fires `task_failure` for any task that raises and is
+    not retried, independent of a custom `on_failure`, so Leave tasks log twice under their own
+    distinct event name plus this one — redundant, not harmful."""
+    _logger.error(
+        "celery_task_failed",
+        task=getattr(sender, "name", str(sender)),
+        task_id=task_id,
+        exception_type=type(exception).__name__ if exception else "unknown",
+        exception_message=str(exception) if exception else "",
+    )

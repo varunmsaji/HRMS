@@ -289,21 +289,30 @@ jobs:
 
       # DevOps Phase A — `apps/web` had no ESLint configuration or dependency at all (that is what
       # made `npm run lint` / `next lint` hang on an interactive setup prompt in CI). `eslint` +
-      # `eslint-config-next` (pinned to this repo's exact Next version) plus the new
-      # `.eslintrc.json` fix that: `next lint` is now genuinely non-interactive.
+      # `eslint-config-next` (pinned to this repo's exact Next version) plus the original
+      # `.eslintrc.json` fixed that: `next lint` was genuinely non-interactive.
       #
-      # Deliberately NOT a blocking gate yet: turning ESLint on for the first time immediately
-      # surfaced 7 pre-existing violations (6 `react/no-unescaped-entities`, 1
-      # `react-hooks/exhaustive-deps`) across 6 files untouched by this CI change. Fixing those is
-      # real frontend code modification outside this phase's scope (see
-      # docs/devops/PHASE_A_CI_IMPLEMENTATION.md §5) — `continue-on-error` is used here openly, as
-      # a documented initial policy, not to hide a required check: A12 does not list lint in the
-      # set of checks that must fail CI, and A8's "don't fail every PR over a pre-existing
-      # backlog" policy applies exactly as well to a first-time lint adoption. The step's output is
-      # still fully visible in the log either way. Promote to blocking once the backlog is cleared.
+      # FINDING-02 (pre-Payroll remediation, 2026-10-05) — `next lint` was removed entirely in
+      # Next 16 (the version this step's dependency bump requires, closing the critical Next.js
+      # CVE + the high-severity PostCSS one bundled inside it); `eslint-config-next@16` ships only
+      # a flat config, so this now runs the `eslint` CLI directly against `eslint.config.mjs`
+      # (`.eslintrc.json` removed). The same bump's `eslint-plugin-react-hooks@7` also added a new,
+      # broadly-applicable `react-hooks/set-state-in-effect` rule that fires on this codebase's
+      # very common "fetch in `useEffect`, `setState` on completion" pattern — the backlog this
+      # step surfaces jumped from 7 pre-existing violations to ~108 as a direct, visible
+      # consequence of that rule, not a regression introduced by this change.
+      #
+      # Deliberately NOT a blocking gate yet, for that original reason and now this new one:
+      # fixing either backlog is real frontend code modification outside a dependency-CVE
+      # remediation's scope (see docs/devops/PHASE_A_CI_IMPLEMENTATION.md §5 and
+      # docs/audits/PRE_PAYROLL_PRODUCTION_READINESS_FINAL_AUDIT.md's FINDING-02 remediation
+      # section) — `continue-on-error` is used here openly, as a documented policy, not to hide a
+      # required check: A12 does not list lint in the set of checks that must fail CI. The step's
+      # output is still fully visible in the log either way. Promote to blocking once a backlog
+      # pass addresses both.
       - name: ESLint (non-blocking — see step comment)
         continue-on-error: true
-        run: npx next lint
+        run: npx eslint .
 
       - name: Typecheck
         run: npx tsc --noEmit
@@ -312,12 +321,17 @@ jobs:
         run: npx vitest run --reporter=default --reporter=junit --outputFile=test-results/frontend-vitest.xml
 
       # DevOps Phase A — CI never actually built the frontend for production before; only the
-      # local `run_full_tests.py` did. `ignoreDuringBuilds: true` in `next.config.mjs` (new) keeps
-      # this step's pass/fail meaning "the production bundle compiles," not "and also has zero
-      # pre-existing lint findings" — see the ESLint step comment above for why those are kept
-      # separate for now.
+      # local `run_full_tests.py` did. ESLint findings are kept out of this step's pass/fail
+      # meaning (see the ESLint step comment above for why).
+      #
+      # FINDING-02 — `--webpack` is explicit, not incidental: Next 16 defaults `next build` to
+      # Turbopack, which fails this app with `Invariant: no direct app page entry found for
+      # /_not-found` (reproduced locally; not investigated further as a Turbopack bug report,
+      # since webpack already builds this app's exact pre-upgrade route set — 70 routes — cleanly
+      # and is this project's proven, tested bundler). `package.json`'s `build`/`dev` scripts carry
+      # the same flag for the same reason.
       - name: Production build
-        run: npx next build
+        run: npx next build --webpack
 
       # continue-on-error: same account-wide artifact storage quota finding as the backend
       # upload step above — reporting must not fail a job whose actual checks passed.
@@ -386,12 +400,14 @@ jobs:
           python-version: "3.12"
 
       # DevOps Phase A — A8. pip-audit is run via `uvx` (ephemeral) rather than added as a project
-      # dev-dependency, so it never touches uv.lock. Checked today: clean, 0 known vulnerabilities.
-      # Non-blocking for this first rollout by explicit policy (see docs/devops/CI.md §Dependency
-      # scanning) — the intent is to make findings visible immediately, not to silently fail every
-      # PR the day a new low-severity advisory is published for a transitive dependency.
-      - name: pip-audit (Python dependencies) — non-blocking, see step comment
-        continue-on-error: true
+      # dev-dependency, so it never touches uv.lock.
+      #
+      # FINDING-02 / P2-01 (pre-Payroll remediation, 2026-10-05) — promoted to blocking. The one
+      # finding this scan had (urllib3 2.7.0, 3 known CVEs, PYSEC-2026-4175/4176/4177) is fixed
+      # (urllib3 2.8.0, `uv.lock`); this is now the required regression gate the audit's §20 asked
+      # for ("fail the build on any new critical/high production-dependency vulnerability"), not
+      # just a visibility step.
+      - name: pip-audit (Python dependencies)
         working-directory: apps/api
         run: |
           uv export --no-hashes --no-emit-project -o /tmp/requirements-audit.txt
@@ -403,19 +419,22 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
-      # Checked today: 8 real advisories against the pinned Next.js 14.2.28 (1 critical, 5 high,
-      # 2 moderate — cache poisoning, SSRF, DoS, and an Image-Optimization-API RCE among them).
-      # Remediation is a Next.js major-version upgrade (14 -> 16), which is a breaking change well
-      # outside this phase's "CI foundation" scope and needs its own dedicated, tested effort — see
-      # docs/devops/PHASE_A_CI_IMPLEMENTATION.md §5 and the human decision this raises. Non-blocking
-      # for the same reason as pip-audit above, but reported loudly, not buried.
-      - name: npm audit (frontend dependencies) — non-blocking, see step comment
-        continue-on-error: true
+      # FINDING-02 (pre-Payroll remediation, 2026-10-05) — promoted to blocking, `--omit=dev`.
+      # The critical Next.js advisory (DoS/HTTP request smuggling) and the high-severity PostCSS
+      # one bundled inside it are fixed (next 14.2.35 -> 16.3.8; see FINDING-02's remediation
+      # section in docs/audits/PRE_PAYROLL_PRODUCTION_READINESS_FINAL_AUDIT.md for why a direct
+      # 14->15 patch could not close the PostCSS advisory — Next only bumped its own bundled
+      # PostCSS past the vulnerable range at 16.3.0). `--omit=dev` scopes this to the production
+      # bundle specifically: a handful of moderate/high advisories remain in devDependencies only
+      # (P3-05, unchanged, not in anything served to a user) and are deliberately not this gate's
+      # concern — `npm audit` (no `--omit=dev`) still runs informationally in the job summary
+      # below if you need the full picture.
+      - name: npm audit (frontend production dependencies)
         working-directory: apps/web
-        run: npm ci && npm audit --audit-level=high
+        run: npm ci && npm audit --omit=dev --audit-level=high
 
       - name: Job summary
         if: always()
         run: |
           echo "### Security — dependency vulnerability scanning" >> "$GITHUB_STEP_SUMMARY"
-          echo "pip-audit (Python) + npm audit (frontend). Non-blocking for this first rollout — see workflow step comments for the documented policy and today's findings." >> "$GITHUB_STEP_SUMMARY"
+          echo "pip-audit (Python) + npm audit --omit=dev (frontend production deps) — both blocking as of the FINDING-02/P2-01 remediation. devDependency-only advisories are tracked separately (P3-05) and do not gate this job." >> "$GITHUB_STEP_SUMMARY"
