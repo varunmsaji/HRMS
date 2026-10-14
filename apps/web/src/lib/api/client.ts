@@ -1,4 +1,4 @@
-import { ApiError, NetworkError } from "@/lib/api/errors";
+import { ApiError, NetworkError, offlineError, timeoutError } from "@/lib/api/errors";
 import type { DataEnvelope, ErrorEnvelope, ListEnvelope } from "@/lib/api/types";
 import {
   clearSession,
@@ -10,6 +10,14 @@ import {
 import type { TokenResponseData } from "@/lib/auth/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/** Without a client timeout a hung request spins forever (`fetch` has none). Uploads and file
+ * downloads get longer. A timeout is reported, never retried automatically. */
+export const DEFAULT_TIMEOUT_MS = 30_000;
+export const TRANSFER_TIMEOUT_MS = 120_000;
+
+/** Gateway failures from the proxy arrive without the API's JSON envelope. */
+const UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
 
 interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
@@ -24,6 +32,9 @@ interface RequestOptions {
   rawEnvelope?: boolean;
   /** Return the response body as a file (`DownloadedFile`) instead of JSON. */
   responseType?: "json" | "file";
+  /** Abort after this many milliseconds (default {@link DEFAULT_TIMEOUT_MS}, or
+   * {@link TRANSFER_TIMEOUT_MS} for uploads and file downloads). */
+  timeoutMs?: number;
 }
 
 /** A file returned by `apiClient.download` — the filename comes from `Content-Disposition`. */
@@ -79,17 +90,34 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     "X-Request-Id": requestId(),
     ...options.headers,
   };
+  // The id this attempt is logged under server-side — kept so an error without an envelope
+  // (network failure, timeout, proxy 502) still gives support something to search for.
+  const sentRequestId = headers["X-Request-Id"] ?? null;
+  const method = options.method ?? "GET";
   if (options.ifMatch) headers["If-Match"] = options.ifMatch;
   if (session) {
     headers.Authorization = `Bearer ${session.accessToken}`;
     headers["X-Company-Id"] = session.companyId;
   }
 
+  const timeoutMs =
+    options.timeoutMs ??
+    (isFormData || options.responseType === "file" ? TRANSFER_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timedOut = false;
+  const timer = controller
+    ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
+    : null;
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}/v1${path}`, {
-      method: options.method ?? "GET",
+      method,
       headers,
+      signal: controller?.signal,
       // SEC-06 — the API and web app are different origins even in development
       // (localhost:3000 vs localhost:8000); without `credentials: "include"` the browser
       // neither sends nor stores the HttpOnly `hrms_refresh` cookie cross-origin at all. Safe to
@@ -104,7 +132,13 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
             : JSON.stringify(options.body),
     });
   } catch {
-    throw new NetworkError();
+    if (timedOut) throw timeoutError(sentRequestId, method !== "GET");
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw offlineError(sentRequestId);
+    }
+    throw new NetworkError({ requestId: sentRequestId });
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
   if (options.responseType === "file" && response.ok) {
@@ -127,12 +161,19 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
 
   if (!response.ok) {
     const errorPayload = payload as ErrorEnvelope | null;
+    const hasEnvelope = Boolean(errorPayload?.error);
     throw new ApiError({
       status: response.status,
-      code: errorPayload?.error?.code ?? "UNKNOWN_ERROR",
-      message: errorPayload?.error?.message ?? `Request failed with status ${response.status}`,
+      code: errorPayload?.error?.code ?? (UNAVAILABLE_STATUSES.has(response.status) ? "SERVICE_UNAVAILABLE" : "UNKNOWN_ERROR"),
+      message:
+        errorPayload?.error?.message ??
+        (!hasEnvelope && UNAVAILABLE_STATUSES.has(response.status)
+          ? "The service is temporarily unavailable. Please try again in a moment."
+          : `Request failed with status ${response.status}`),
       details: errorPayload?.error?.details ?? [],
-      requestId: errorPayload?.error?.request_id ?? null,
+      // The envelope's id, else the API's response header, else the id this client sent.
+      requestId:
+        errorPayload?.error?.request_id ?? response.headers?.get?.("X-Request-Id") ?? sentRequestId,
     });
   }
 
@@ -155,6 +196,11 @@ async function refreshSession(): Promise<boolean> {
       method: "POST",
       headers: { "X-Request-Id": requestId() },
       credentials: "include",
+      // A hung refresh would otherwise hold every request queued behind `refreshOnce`.
+      signal:
+        typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+          ? AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+          : undefined,
     });
     if (!res.ok) return false;
     const envelope = (await res.json()) as DataEnvelope<TokenResponseData>;
@@ -165,10 +211,35 @@ async function refreshSession(): Promise<boolean> {
   }
 }
 
+const REFRESH_LOCK_NAME = "hrms-session-refresh";
+
+/**
+ * Cross-tab single-flight. Server-side replay detection is strict by design: presenting a refresh
+ * token that was already rotated revokes the whole session. Two tabs that hit an expired access
+ * token in the same moment would both send the same `hrms_refresh` cookie, so one of them would
+ * look like a replay and sign every tab out. A Web Lock serialises the tabs; the second tab then
+ * either sees that the shared session was already renewed (and just retries with the new token)
+ * or sends the *already rotated* cookie — a normal rotation, not a replay. The server is
+ * untouched: replay detection and its revocation are unchanged. Without Web Locks (old browsers,
+ * non-secure contexts) this falls back to the previous per-tab behaviour.
+ */
+async function refreshAcrossTabs(staleAccessToken: string | undefined): Promise<boolean> {
+  const renewIfStale = async (): Promise<boolean> => {
+    const current = loadSession();
+    if (current && staleAccessToken !== undefined && current.accessToken !== staleAccessToken) {
+      return true; // another tab already renewed the shared session
+    }
+    return refreshSession();
+  };
+  const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+  if (!locks || typeof locks.request !== "function") return refreshSession();
+  return locks.request(REFRESH_LOCK_NAME, renewIfStale);
+}
+
 /** Ensures concurrent 401s during one page trigger a single refresh call, not one per request. */
-function refreshOnce(): Promise<boolean> {
+function refreshOnce(staleAccessToken: string | undefined): Promise<boolean> {
   if (!refreshInFlight) {
-    refreshInFlight = refreshSession().finally(() => {
+    refreshInFlight = refreshAcrossTabs(staleAccessToken).finally(() => {
       refreshInFlight = null;
     });
   }
@@ -179,6 +250,9 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
   try {
     return await rawRequest<T>(path, options);
   } catch (error) {
+    // Token this request was sent with (best effort): lets a tab that lost the lock race notice
+    // that another tab has since renewed the shared session.
+    const staleAccessToken = loadSession()?.accessToken;
     const shouldAttemptRefresh =
       error instanceof ApiError &&
       error.status === 401 &&
@@ -186,7 +260,7 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
       loadSession() !== null;
 
     if (shouldAttemptRefresh) {
-      const refreshed = await refreshOnce();
+      const refreshed = await refreshOnce(staleAccessToken);
       if (refreshed) {
         return rawRequest<T>(path, options);
       }

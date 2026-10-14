@@ -23,15 +23,42 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The request never produced an HTTP response (status 0). `code` says why:
+ * - `NETWORK_ERROR` — the server could not be reached (DNS, refused, CORS-blocked);
+ * - `OFFLINE` — the browser reports no connectivity at all;
+ * - `REQUEST_TIMEOUT` — no response within the client's timeout. For a write the outcome is
+ *   unknown: the server may have applied it, so callers must not resubmit blindly.
+ * `requestId` is the id this client sent, so support can still find the attempt in server logs.
+ */
 export class NetworkError extends ApiError {
-  constructor() {
+  constructor(params: { code?: string; message?: string; requestId?: string | null } = {}) {
     super({
       status: 0,
-      code: "NETWORK_ERROR",
-      message: "Could not reach the server. Check your connection and try again.",
+      code: params.code ?? "NETWORK_ERROR",
+      message: params.message ?? "Could not reach the server. Check your connection and try again.",
+      requestId: params.requestId ?? null,
     });
     this.name = "NetworkError";
   }
+}
+
+export function offlineError(requestId: string | null): NetworkError {
+  return new NetworkError({
+    code: "OFFLINE",
+    message: "You appear to be offline. Check your connection and try again.",
+    requestId,
+  });
+}
+
+export function timeoutError(requestId: string | null, isWrite: boolean): NetworkError {
+  return new NetworkError({
+    code: "REQUEST_TIMEOUT",
+    message: isWrite
+      ? "The server took too long to respond. Your change may or may not have been saved — refresh to check before trying again."
+      : "The server took too long to respond. Please try again.",
+    requestId,
+  });
 }
 
 /**
@@ -62,9 +89,30 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
-/** A human-readable fallback for surfaces that just need one line of text (toasts, banners). */
+/**
+ * The support reference for a failure the user cannot fix themselves (a server error or no
+ * response at all) — the request id the API logged it under. `null` for ordinary 4xx outcomes
+ * (validation, permission, conflict), which the message already explains.
+ */
+export function errorReference(error: unknown): string | null {
+  if (!isApiError(error) || !error.requestId) return null;
+  return error.status === 0 || error.status >= 500 ? error.requestId : null;
+}
+
+/** True when repeating the *same read* is reasonable: no response, a gateway/availability
+ * failure, or rate limiting. Never use this to resubmit a write automatically. */
+export function isRetryableError(error: unknown): boolean {
+  if (!isApiError(error)) return false;
+  return error.status === 0 || error.status === 429 || [502, 503, 504].includes(error.status);
+}
+
+/** A human-readable fallback for surfaces that just need one line of text (toasts, banners).
+ * Server and connectivity failures carry their support reference. */
 export function describeApiError(error: unknown): string {
-  if (isApiError(error)) return error.message;
+  if (isApiError(error)) {
+    const reference = errorReference(error);
+    return reference ? `${error.message} (Reference: ${reference})` : error.message;
+  }
   if (error instanceof Error) return error.message;
   return "Something went wrong. Please try again.";
 }

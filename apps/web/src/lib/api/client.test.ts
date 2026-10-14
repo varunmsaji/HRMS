@@ -126,6 +126,89 @@ describe("apiClient", () => {
     expect(init.credentials).toBe("include");
   });
 
+  it("keeps the request id it sent on a network failure, so support can find the attempt", async () => {
+    saveSession(SAMPLE_SESSION);
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await apiClient.get("/some/path").catch((e: unknown) => e);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sent = (init.headers as Record<string, string>)["X-Request-Id"];
+    expect(error).toMatchObject({ status: 0, code: "NETWORK_ERROR", requestId: sent });
+  });
+
+  it("reports OFFLINE when the browser has no connectivity", async () => {
+    saveSession(SAMPLE_SESSION);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("offline")));
+    const onLine = vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+
+    await expect(apiClient.get("/some/path")).rejects.toMatchObject({ status: 0, code: "OFFLINE" });
+    onLine.mockRestore();
+  });
+
+  it("times out a hung request, says a write may have applied, and never retries it", async () => {
+    vi.useFakeTimers();
+    saveSession(SAMPLE_SESSION);
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = apiClient.post("/leave-applications", { a: 1 }, { timeoutMs: 5_000 }).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const error = await pending;
+    vi.useRealTimers();
+
+    expect(error).toMatchObject({ status: 0, code: "REQUEST_TIMEOUT" });
+    expect((error as Error).message).toMatch(/may or may not have been saved/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns a proxy 502 without a JSON body into a readable, referenced error", async () => {
+    saveSession(SAMPLE_SESSION);
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      json: async () => {
+        throw new SyntaxError("not json");
+      },
+    } as unknown as Response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await apiClient.get("/some/path").catch((e: unknown) => e);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(error).toMatchObject({
+      status: 502,
+      code: "SERVICE_UNAVAILABLE",
+      requestId: (init.headers as Record<string, string>)["X-Request-Id"],
+    });
+    expect((error as Error).message).toMatch(/temporarily unavailable/);
+  });
+
+  it("prefers the server's request id from the envelope, then the response header", async () => {
+    saveSession(SAMPLE_SESSION);
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse({ error: { code: "INTERNAL_ERROR", message: "x", details: [], request_id: "srv-1" } }, 500),
+        )
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          headers: new Headers({ "X-Request-Id": "hdr-2" }),
+          json: async () => null,
+        } as unknown as Response),
+    );
+
+    await expect(apiClient.get("/a")).rejects.toMatchObject({ requestId: "srv-1" });
+    await expect(apiClient.get("/b")).rejects.toMatchObject({ requestId: "hdr-2" });
+  });
+
   it("wraps a fetch rejection (offline/DNS failure) as a NetworkError", async () => {
     saveSession(SAMPLE_SESSION);
     vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("network down")));

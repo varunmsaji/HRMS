@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { ErrorDetail } from "@/lib/api/types";
-import { ApiError, describeLifecycleError } from "@/lib/api/errors";
+import {
+  ApiError,
+  describeApiError,
+  describeLifecycleError,
+  errorReference,
+  isRetryableError,
+  NetworkError,
+} from "@/lib/api/errors";
 import { compensationInfoToPayload, validateCompensationInfo } from "@/lib/onboarding/public-wizard";
 
 function apiError(status: number, code: string, message: string, detail?: Partial<ErrorDetail>) {
@@ -62,5 +69,29 @@ describe("onboarding compensation currency", () => {
       currency: "USD",
     });
     expect(validateCompensationInfo({ annualCtc: "1000", currency: "" })).toEqual({});
+  });
+});
+
+describe("support references and retryability", () => {
+  it("adds the reference only to server and connectivity failures", () => {
+    const server = new ApiError({ status: 500, code: "INTERNAL_ERROR", message: "An unexpected error occurred", requestId: "r-500" });
+    const offline = new NetworkError({ requestId: "r-0" });
+    const conflict = new ApiError({ status: 409, code: "CONFLICT", message: "Already exists", requestId: "r-409" });
+    const noId = new ApiError({ status: 500, code: "INTERNAL_ERROR", message: "Boom" });
+
+    expect(describeApiError(server)).toBe("An unexpected error occurred (Reference: r-500)");
+    expect(errorReference(offline)).toBe("r-0");
+    expect(describeApiError(conflict)).toBe("Already exists");
+    expect(describeApiError(noId)).toBe("Boom");
+  });
+
+  it("only treats no-response, gateway and rate-limit failures as retryable", () => {
+    const make = (status: number) => new ApiError({ status, code: "X", message: "x" });
+    expect(isRetryableError(new NetworkError())).toBe(true);
+    expect([502, 503, 504, 429].map((s) => isRetryableError(make(s)))).toEqual([true, true, true, true]);
+    expect([400, 401, 403, 409, 422, 500].map((s) => isRetryableError(make(s)))).toEqual([
+      false, false, false, false, false, false,
+    ]);
+    expect(isRetryableError(new Error("x"))).toBe(false);
   });
 });
