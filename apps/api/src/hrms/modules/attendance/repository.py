@@ -2247,6 +2247,15 @@ class FaceAttemptRepository:
         await session.flush()
         return row
 
+    async def get_matched_for_punch(
+        self, session: AsyncSession, *, company_id: UUID, punch_id: UUID
+    ) -> FaceVerificationAttempt | None:
+        stmt = select(FaceVerificationAttempt).where(
+            FaceVerificationAttempt.company_id == company_id,
+            FaceVerificationAttempt.punch_id == punch_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def count_failed_since(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, since: datetime
     ) -> int:

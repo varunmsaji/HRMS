@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import AppError, ValidationError
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.storage import DocumentStorageService
 from hrms.modules.employee.schemas import (
     AssignmentCreate,
@@ -41,6 +42,7 @@ from hrms.modules.employee_import.exceptions import (
     ImportFileEmptyError,
     ImportFileTooLargeError,
     ImportHeaderInvalidError,
+    ImportQueueUnavailableError,
     ImportRowLimitExceededError,
 )
 from hrms.modules.employee_import.repository import EmployeeImportRepository
@@ -56,6 +58,8 @@ from hrms.modules.employee_import.schemas import (
     row_error_to_read,
 )
 from hrms.modules.organisation.service import OrganisationService
+
+_logger = get_logger(__name__)
 
 #: How often (in rows) the batch's progress counters are flushed to the DB mid-run, so
 #: `GET /employee-imports/{id}` shows live progress on a large file instead of only at the end.
@@ -174,7 +178,30 @@ class EmployeeImportService:
         from hrms.modules.employee_import.tasks import process_batch
 
         actor_user_id_arg = str(actor_user_id) if actor_user_id is not None else None
-        process_batch.delay(str(company_id), str(batch_id), actor_user_id_arg)
+        try:
+            process_batch.delay(str(company_id), str(batch_id), actor_user_id_arg)
+        except Exception as exc:  # noqa: BLE001 — any broker/publish failure, see below
+            # The batch row is already committed. Without this, an unreachable broker left it
+            # PENDING forever with no message behind it (and the caller saw a bare 500). Close it
+            # as FAILED so no operator mistakes it for queued work, say so in the log, and tell the
+            # client nothing was imported so it can upload again.
+            now = datetime.now(UTC)
+            await self._repo.update_batch_progress(
+                self._session,
+                company_id=company_id,
+                batch_id=batch_id,
+                values={"status": "FAILED", "completed_at": now},
+                now=now,
+            )
+            await self._session.commit()
+            safe_log(
+                _logger.error,
+                "employee_import.batch.enqueue_failed",
+                company_id=str(company_id),
+                batch_id=str(batch_id),
+                **safe_error(exc),
+            )
+            raise ImportQueueUnavailableError() from exc
 
         return batch_to_read(batch)
 
@@ -275,22 +302,37 @@ class EmployeeImportService:
         self, company_id: UUID, batch_id: UUID, actor_user_id: UUID | None
     ) -> None:
         batch = await self._repo.get_batch(self._session, company_id=company_id, batch_id=batch_id)
+        ids = {"company_id": str(company_id), "batch_id": str(batch_id)}
         if batch is None:
-            return  # shouldn't happen — create_batch commits before enqueueing
+            # A message for a batch that no longer exists (e.g. deleted test data in a stale
+            # queue). Nothing to do, but no longer silent.
+            safe_log(_logger.warning, "employee_import.batch.skipped", reason="missing", **ids)
+            return
 
+        # Idempotency guard: only a PENDING batch is processed, claimed atomically. The pipeline
+        # is create-only, so running a batch a second time (a redelivered or duplicated message,
+        # a manual re-enqueue) would create duplicate employees for rows without a colliding
+        # `employee_code`. A normally pending batch is processed exactly as before. This does
+        # NOT decide whether an *old* PENDING batch should still run — see decision D-B in
+        # `docs/audits/LOGGING_ERROR_HANDLING_AUTONOMOUS_EXECUTION_REPORT.md`.
         now = datetime.now(UTC)
-        await self._repo.update_batch_progress(
-            self._session,
-            company_id=company_id,
-            batch_id=batch_id,
-            values={"status": "PROCESSING", "started_at": now},
-            now=now,
-        )
+        if not await self._repo.claim_pending_batch(
+            self._session, company_id=company_id, batch_id=batch_id, now=now
+        ):
+            safe_log(
+                _logger.warning,
+                "employee_import.batch.skipped",
+                reason="not_pending",
+                status=batch.status,
+                **ids,
+            )
+            return
         await self._commit_and_restore_rls(company_id)
+        started = datetime.now(UTC)
 
         try:
             file_bytes = await self._storage.get_object(key=batch.s3_key)
-        except Exception:  # noqa: BLE001 — must catch every storage failure, not just botocore's
+        except Exception as exc:  # noqa: BLE001 — must catch every storage failure, not just botocore's
             # Storage unavailable (MinIO down, bad credentials, missing bucket, ...): leave the
             # batch in a terminal FAILED state rather than stuck at PROCESSING forever with no
             # operator-visible outcome. Re-raised so the Celery task itself still records/logs
@@ -303,6 +345,10 @@ class EmployeeImportService:
                 now=datetime.now(UTC),
             )
             await self._session.commit()
+            # Compact: the Celery failure record that follows carries the traceback.
+            safe_log(
+                _logger.error, "employee_import.batch.storage_failed", **ids, **safe_error(exc)
+            )
             raise
 
         rows = [
@@ -383,6 +429,16 @@ class EmployeeImportService:
             now=completed_now,
         )
         await self._session.commit()
+        safe_log(
+            _logger.warning if error_count else _logger.info,
+            "employee_import.batch.finished",
+            status=final_status,
+            processed_rows=len(rows),
+            success_count=success_count,
+            error_count=error_count,
+            duration_ms=round((completed_now - started).total_seconds() * 1000, 1),
+            **ids,
+        )
 
     async def _resolve_row(
         self,

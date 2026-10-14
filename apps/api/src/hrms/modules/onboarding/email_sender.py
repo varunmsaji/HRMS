@@ -21,16 +21,65 @@ transport differs again. It calls Mailtrap's HTTP Send API directly over `httpx`
 dependency) rather than via Mailtrap's own synchronous Python SDK, so sending stays fully async
 like `SmtpEmailSender` instead of blocking the event loop on a sync HTTP call."""
 
+import sys
 from email.message import EmailMessage
-from typing import Protocol
+from typing import Any, Literal, Protocol
 
 import aiosmtplib
 import httpx
 
 from hrms.core.config.settings import Settings
-from hrms.core.observability.logging import get_logger
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 
 logger = get_logger(__name__)
+
+#: Mission Phase 6 — what is known about a failed send. `not_sent`: the provider certainly did not
+#: take the message (connection refused, rejected, auth failure). `unknown`: the request may have
+#: reached the provider before the failure (a read timeout, a dropped connection after sending, a
+#: 5xx) — retrying could send it twice, so it is never retried blindly.
+Outcome = Literal["not_sent", "unknown"]
+
+
+def _classify_http(exc: httpx.HTTPError) -> tuple[str, bool, Outcome, int | None]:
+    """(failure_class, retryable, outcome, status_code) for an HTTP API provider failure."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in (401, 403):
+            return "auth", False, "not_sent", status
+        if status == 429:
+            return "rate_limited", True, "not_sent", status
+        if status >= 500:
+            return "provider_error", True, "unknown", status
+        return "rejected", False, "not_sent", status
+    if isinstance(exc, httpx.ConnectTimeout):
+        return "timeout", True, "not_sent", None
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout", True, "unknown", None
+    if isinstance(exc, httpx.ConnectError):
+        return "network", True, "not_sent", None
+    return "network", True, "unknown", None
+
+
+def _classify_smtp(exc: aiosmtplib.SMTPException) -> tuple[str, bool, Outcome, int | None]:
+    code = getattr(exc, "code", None)
+    if isinstance(exc, aiosmtplib.SMTPAuthenticationError):
+        return "auth", False, "not_sent", code
+    if isinstance(exc, aiosmtplib.SMTPRecipientsRefused | aiosmtplib.SMTPSenderRefused):
+        return "rejected", False, "not_sent", code
+    if isinstance(exc, aiosmtplib.SMTPConnectError | aiosmtplib.SMTPConnectTimeoutError):
+        return "network", True, "not_sent", code
+    if isinstance(exc, aiosmtplib.SMTPTimeoutError | aiosmtplib.SMTPServerDisconnected):
+        return "timeout", True, "unknown", code
+    if isinstance(code, int):
+        transient = 400 <= code < 500
+        return ("provider_error" if transient else "rejected"), transient, "not_sent", code
+    return "provider_error", True, "unknown", code
+
+
+def _accepted(provider: str) -> None:
+    """The provider *accepted* the request. That is not delivery: bounces and spam filtering
+    happen later and are invisible to this application."""
+    safe_log(logger.info, "email.provider.accepted", provider=provider)
 
 
 class EmailSender(Protocol):
@@ -49,13 +98,18 @@ class LoggingEmailSender:
     logged here."""
 
     async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
-        del html_body  # not useful in a log line; the text body is
-        get_logger(__name__).info(
-            "onboarding_email_not_sent_smtp_not_configured",
-            to=to,
-            subject=subject,
-            text_body=text_body,
-        )
+        del html_body  # not useful to a developer; the text body is
+        # The structured log pipeline now redacts addresses and token links (LOG-08), which is
+        # exactly what this dev-only sender exists to show. So the readable copy goes to stderr,
+        # outside the JSON log stream, and the structured event carries no content.
+        # `Settings._guard_non_development_config` keeps this sender out of staging/production.
+        safe_log(logger.info, "email.logged_not_sent", provider="logging")
+        try:
+            sys.stderr.write(
+                f"--- [dev email, not sent] to={to} subject={subject}\n{text_body}\n---\n"
+            )
+        except (OSError, ValueError):
+            pass
 
 
 class SmtpEmailSender:
@@ -88,19 +142,11 @@ class SmtpEmailSender:
                 use_tls=settings.smtp_use_ssl,
             )
         except aiosmtplib.SMTPException as exc:
-            # Deliberately `logger.error`, not `logger.exception`: the latter attaches the full
-            # traceback/`str(exc)` to the log record, and `aiosmtplib`'s own exception messages
-            # are not a security-reviewed contract — logging only the exception's type name here
-            # keeps the "never log credentials" guarantee independent of any future change to
-            # `aiosmtplib`'s own error formatting. The original exception is still preserved on
-            # the Python exception chain (`from exc`) for local debugging/`repr()` in a traceback.
-            get_logger(__name__).error(  # noqa: TRY400 — see comment above; exception() is deliberately avoided
-                "onboarding_email_smtp_send_failed",
-                to=to,
-                subject=subject,
-                error_type=type(exc).__name__,
-            )
-            raise EmailDeliveryError("Failed to send email via SMTP.") from exc
+            # Never the exception text: `aiosmtplib`'s messages are not a security-reviewed
+            # contract. Classified here, logged once by the caller (`log_email_failure`), which
+            # knows which email this was. The original stays on the chain (`from exc`).
+            raise EmailDeliveryError("smtp", *_classify_smtp(exc), error_type=exc) from exc
+        _accepted("smtp")
 
 
 class MailtrapEmailSender:
@@ -135,19 +181,9 @@ class MailtrapEmailSender:
                 )
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            # Same log-hygiene rule as `SmtpEmailSender` above: never the API token, never the
-            # response body (which Mailtrap may echo request content into on a validation error).
-            status_code = (
-                exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            )
-            get_logger(__name__).error(
-                "onboarding_email_mailtrap_send_failed",
-                to=to,
-                subject=subject,
-                error_type=type(exc).__name__,
-                status_code=status_code,
-            )
-            raise EmailDeliveryError("Failed to send email via Mailtrap.") from exc
+            # Never the API token or the response body (Mailtrap may echo request content).
+            raise EmailDeliveryError("mailtrap", *_classify_http(exc), error_type=exc) from exc
+        _accepted("mailtrap")
 
 
 class HostingerEmailSender:
@@ -181,26 +217,70 @@ class HostingerEmailSender:
                 )
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            # Same log-hygiene rule as the other senders: never the token or response body.
-            status_code = (
-                exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-            )
-            get_logger(__name__).error(
-                "onboarding_email_hostinger_send_failed",
-                to=to,
-                subject=subject,
-                error_type=type(exc).__name__,
-                status_code=status_code,
-            )
-            raise EmailDeliveryError("Failed to send email via Hostinger.") from exc
+            # Never the token or the response body.
+            raise EmailDeliveryError("hostinger", *_classify_http(exc), error_type=exc) from exc
+        _accepted("hostinger")
 
 
 class EmailDeliveryError(Exception):
-    """Raised by `SmtpEmailSender.send`/`MailtrapEmailSender.send` on any transport-layer
-    failure. Deliberately carries no exception chain data in its own message (`from exc`
-    preserves the original for local debugging/`repr()` in a traceback, never for anything
-    serialized into a log line or an API response) — callers must not surface `str(exc)` to an
-    HTTP response or a structured log."""
+    """Raised by every real sender on a transport-layer failure, carrying a safe classification
+    (provider, failure class, whether a retry is reasonable, and whether the provider may have
+    accepted the message anyway). Its own message is a fixed string — `from exc` preserves the
+    original for local debugging only; callers must never surface `str(exc)`."""
+
+    def __init__(
+        self,
+        provider: str,
+        failure_class: str,
+        retryable: bool,
+        outcome: Outcome,
+        status_code: int | None,
+        *,
+        error_type: BaseException,
+    ) -> None:
+        super().__init__(f"Failed to send email via {provider}.")
+        self.provider = provider
+        self.failure_class = failure_class
+        self.retryable = retryable
+        self.outcome = outcome
+        self.status_code = status_code
+        self.error_type = type(error_type).__name__
+
+    def log_fields(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "failure_class": self.failure_class,
+            "retryable": self.retryable,
+            "outcome": self.outcome,
+            "status_code": self.status_code,
+            "error_type": self.error_type,
+        }
+
+
+def log_email_failure(kind: str, exc: BaseException, **ids: Any) -> None:
+    """LOG-06 — the single failure record for a best-effort send. Every caller swallows the
+    exception on purpose (an email failure must not fail the business action), so this is the
+    only trace that a specific email was lost. `kind` names the email (`password_reset`,
+    `onboarding_invite`, ...); `ids` are opaque identifiers only (`user_id`, `case_id`) — never
+    the recipient address. A non-transport failure (template build, misconfiguration, a bug)
+    has no provider classification and is logged at ERROR with its traceback, because it will
+    keep happening until fixed."""
+    if isinstance(exc, EmailDeliveryError):
+        safe_log(
+            logger.warning, "email.delivery.failed", email_kind=kind, **exc.log_fields(), **ids
+        )
+    else:
+        safe_log(
+            logger.error,
+            "email.delivery.failed",
+            email_kind=kind,
+            failure_class="internal",
+            retryable=False,
+            outcome="not_sent",
+            exc_info=exc,
+            **safe_error(exc),
+            **ids,
+        )
 
 
 def get_email_sender(settings: Settings) -> EmailSender:

@@ -33,13 +33,19 @@ import asyncio
 from datetime import date, timedelta
 from uuid import UUID
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select
 
-from hrms.core.celery_app import celery_app
+from hrms.core.celery_app import (
+    COMPANY_TASK_LIMITS,
+    FANOUT_TASK_LIMITS,
+    celery_app,
+    dispatch_per_company,
+)
 from hrms.core.db.models.identity import Company
 from hrms.core.db.session import session_scope
 from hrms.core.db.timeouts import is_wait_timeout
-from hrms.core.observability.logging import get_logger
+from hrms.core.observability.logging import get_logger, safe_error
 from hrms.modules.attendance.exceptions import (
     AttendanceDayLockedError,
     AttendancePeriodClosedError,
@@ -95,6 +101,10 @@ async def _calculate_employee_dates(
             # Expected, not a failure - a finalized period or a locked day is exactly
             # the state the sweep must never touch.
             counts["skipped_locked"] += 1
+        except SoftTimeLimitExceeded:
+            # The task's own time limit — stop the run, do not count it as one employee-date
+            # failing and carry on until the hard limit kills the process.
+            raise
         except Exception as exc:  # noqa: BLE001 - best-effort per employee-date
             timed_out = is_wait_timeout(exc)
             counts["timed_out" if timed_out else "failed"] += 1
@@ -105,7 +115,7 @@ async def _calculate_employee_dates(
                 company_id=str(company_id),
                 employee_id=str(employee_id),
                 attendance_date=target_date.isoformat(),
-                error=f"{type(exc).__name__}: {str(exc)[:600]}",
+                **safe_error(exc),
             )
     return counts
 
@@ -149,12 +159,12 @@ async def _calculate_company_async(company_id: UUID) -> int:
     return totals["calculated"]
 
 
-@celery_app.task(name="attendance.calculate_company")  # type: ignore[untyped-decorator]
+@celery_app.task(name="attendance.calculate_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def calculate_company(company_id: str) -> int:
     return asyncio.run(_calculate_company_async(UUID(company_id)))
 
 
-@celery_app.task(name="attendance.run_daily_calculation")  # type: ignore[untyped-decorator]
+@celery_app.task(name="attendance.run_daily_calculation", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def run_daily_calculation() -> int:
     """Beat-scheduled entrypoint — `celery_app.py`'s `beat_schedule`, `crontab(minute=30,
     hour=9)` under `Celery.conf.timezone = settings.app_timezone_default` (`Asia/Kolkata`), i.e.
@@ -162,9 +172,7 @@ def run_daily_calculation() -> int:
     calculating inline — keeps each tenant's run independently retryable, exactly like
     `leave.run_monthly_accrual`."""
     company_ids = asyncio.run(_list_active_company_ids())
-    for company_id in company_ids:
-        calculate_company.delay(str(company_id))
-    return len(company_ids)
+    return dispatch_per_company(calculate_company, company_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +245,7 @@ async def _calculate_range_async(
     return counts
 
 
-@celery_app.task(name="attendance.calculate_range")  # type: ignore[untyped-decorator]
+@celery_app.task(name="attendance.calculate_range", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def calculate_range(
     company_id: str,
     date_from: str,
@@ -285,16 +293,14 @@ async def _send_incomplete_reminders_async(company_id: UUID) -> int:
     return notified
 
 
-@celery_app.task(name="attendance.send_incomplete_reminders_company")  # type: ignore[untyped-decorator]
+@celery_app.task(name="attendance.send_incomplete_reminders_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def send_incomplete_reminders_company(company_id: str) -> int:
     return asyncio.run(_send_incomplete_reminders_async(UUID(company_id)))
 
 
-@celery_app.task(name="attendance.run_incomplete_reminders")  # type: ignore[untyped-decorator]
+@celery_app.task(name="attendance.run_incomplete_reminders", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def run_incomplete_reminders() -> int:
     """Beat-scheduled entrypoint, 10:00 IST — after `run_daily_calculation` (09:30) has
     refreshed the trailing days, so a day fixed by a late punch is not reminded about."""
     company_ids = asyncio.run(_list_active_company_ids())
-    for company_id in company_ids:
-        send_incomplete_reminders_company.delay(str(company_id))
-    return len(company_ids)
+    return dispatch_per_company(send_incomplete_reminders_company, company_ids)

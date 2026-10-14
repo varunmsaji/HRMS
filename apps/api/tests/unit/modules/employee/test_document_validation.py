@@ -32,9 +32,7 @@ class TestSafeEmployeeDocumentObjectKey:
             document_id=_DOCUMENT_ID,
             extension=".pdf",
         )
-        assert key == (
-            f"employee/{_COMPANY_ID}/{_EMPLOYEE_ID}/{_DOCUMENT_ID}/document.pdf"
-        )
+        assert key == (f"employee/{_COMPANY_ID}/{_EMPLOYEE_ID}/{_DOCUMENT_ID}/document.pdf")
 
     def test_extension_is_whatever_was_passed_not_reinterpreted(self) -> None:
         key = safe_employee_document_object_key(

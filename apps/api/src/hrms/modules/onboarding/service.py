@@ -17,7 +17,8 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.session import set_rls_company_id
-from hrms.core.errors.base import NotFoundError
+from hrms.core.errors.base import AppError, NotFoundError
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.storage import DocumentStorageService
 from hrms.modules.onboarding.document_validation import (
     content_disposition_attachment,
@@ -25,7 +26,7 @@ from hrms.modules.onboarding.document_validation import (
     sanitize_display_filename,
     sniff_document_content_type,
 )
-from hrms.modules.onboarding.email_sender import get_email_sender
+from hrms.modules.onboarding.email_sender import get_email_sender, log_email_failure
 from hrms.modules.onboarding.email_templates import (
     build_activated_email,
     build_changes_requested_email,
@@ -81,6 +82,8 @@ from hrms.modules.onboarding.schemas import (
     onboarding_section_review_to_read,
 )
 from hrms.shared.pagination import PageParams
+
+_logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from hrms.modules.onboarding.models import OnboardingCase
@@ -756,8 +759,11 @@ class OnboardingTokenService:
             await get_email_sender(self._settings).send(
                 to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
             )
-        except Exception:  # noqa: BLE001 — delivery failure must not fail the request, see above
+        except Exception as exc:  # noqa: BLE001 — delivery failure must not fail the request, see above
             email_sent = False
+            log_email_failure(
+                "onboarding_invite", exc, company_id=str(company_id), case_id=str(case_id)
+            )
 
         read = onboarding_case_to_read(case)
         await self._audit.record(
@@ -1086,8 +1092,13 @@ class OnboardingReviewService:
             await get_email_sender(self._settings).send(
                 to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
             )
-        except Exception:  # noqa: BLE001 — delivery failure must not block the status transition
-            pass
+        except Exception as exc:  # noqa: BLE001 — delivery failure must not block the status transition
+            log_email_failure(
+                "onboarding_changes_requested",
+                exc,
+                company_id=str(company_id),
+                case_id=str(case.id),
+            )
 
         read = onboarding_case_to_read(case)
         await self._audit.record(
@@ -1492,26 +1503,51 @@ class OnboardingActivationService:
             await get_email_sender(self._settings).send(
                 to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
             )
-        except Exception:  # noqa: BLE001 — delivery failure must not undo the activation
-            pass
+        except Exception as exc:  # noqa: BLE001 — delivery failure must not undo the activation
+            log_email_failure(
+                "onboarding_activated", exc, company_id=str(company_id), case_id=str(case.id)
+            )
 
         # Account-invite auto-issue — Decision P2 path 1 (`docs/modules/employee/
         # 41_EMPLOYEE_ACCOUNT_PROVISIONING_LOGIN_AUDIT_AND_PLAN.md`). Best-effort, same as the
         # activation email above: a failure here (including "no actor" for a system-triggered
         # activation) must never undo an activation that has already committed its Employee row.
+        #
+        # Inside a SAVEPOINT: without one, a database error in `issue_for_employee` left the
+        # request transaction aborted, so the audit write below (and the commit) failed and the
+        # activation *was* undone — the opposite of the stated intent. Rolling back to the
+        # savepoint discards only the invite's partial writes. The outcome is now logged
+        # (LOG-06): previously this `except` swallowed every failure silently.
         if actor_user_id is not None:
-            try:
-                from hrms.modules.account_invite.service import AccountInviteService
+            from hrms.modules.account_invite.service import AccountInviteService
 
-                await AccountInviteService(self._session, self._settings).issue_for_employee(
-                    company_id,
-                    employee.id,
-                    actor_user_id=actor_user_id,
-                    ip_address=ip_address,
-                    user_agent=user_agent,
+            try:
+                async with self._session.begin_nested():
+                    await AccountInviteService(self._session, self._settings).issue_for_employee(
+                        company_id,
+                        employee.id,
+                        actor_user_id=actor_user_id,
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                    )
+            except AppError as exc:
+                # An expected business outcome (e.g. the employee already has an account).
+                safe_log(
+                    _logger.warning,
+                    "account_invite.auto_issue_skipped",
+                    company_id=str(company_id),
+                    employee_id=str(employee.id),
+                    **safe_error(exc),
                 )
-            except Exception:  # noqa: BLE001 — must not undo the activation
-                pass
+            except Exception as exc:  # noqa: BLE001 — must not undo the activation
+                safe_log(
+                    _logger.error,
+                    "account_invite.auto_issue_failed",
+                    exc_info=exc,
+                    company_id=str(company_id),
+                    employee_id=str(employee.id),
+                    **safe_error(exc),
+                )
 
         read = onboarding_case_to_read(case)
         await self._audit.record(

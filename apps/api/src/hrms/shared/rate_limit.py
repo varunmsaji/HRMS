@@ -20,9 +20,31 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from hrms.core.config.settings import get_settings
 from hrms.core.errors.base import AppError
 from hrms.core.errors.envelope import ErrorBody, ErrorEnvelope
+from hrms.core.observability.logging import get_logger, safe_log
+from hrms.core.observability.security_events import security_event, subject_hash
 from hrms.core.tenancy.context import current_request_id
 
 _client: redis.Redis | None = None
+_logger = get_logger(__name__)
+
+
+def _log_rate_limited(bucket: str, counts: dict[str, int], limit: int, **fields: object) -> None:
+    """LOG-07 — a tripped limit is a security signal (credential stuffing, token guessing), but
+    a client hammering past the limit must not flood the bounded log in turn: only the *first*
+    over-limit request per key per window is logged (`count == limit + 1`); the rest are visible
+    as 429s in the `http_request` access events and Nginx. `dimension` says which bucket(s)
+    tripped. Never the raw email or token — `subject_hash`/token hash only."""
+    tripped = [name for name, count in counts.items() if count > limit]
+    if not any(counts[name] == limit + 1 for name in tripped):
+        return
+    security_event(
+        "rate_limited",
+        level="warning",
+        bucket=bucket,
+        dimension="+".join(tripped),
+        limit=limit,
+        **fields,
+    )
 
 
 class RateLimitExceededError(AppError):
@@ -89,6 +111,7 @@ def rate_limit(
                 "Rate limiter is temporarily unavailable — please try again shortly"
             ) from exc
         if count > limit:
+            _log_rate_limited(bucket, {"ip": count}, limit, client_ip=client_ip)
             raise RateLimitExceededError("Too many requests — please try again later")
 
     return _dependency
@@ -142,6 +165,13 @@ def rate_limit_by_ip_and_email(
             ) from exc
 
         if ip_count > limit or identity_count > limit:
+            _log_rate_limited(
+                bucket,
+                {"ip": ip_count, "email": identity_count},
+                limit,
+                client_ip=client_ip,
+                subject_hash=subject_hash(identity) if identity != "unknown" else None,
+            )
             raise RateLimitExceededError("Too many requests — please try again later")
 
     return _dependency
@@ -205,7 +235,15 @@ class OnboardingUploadRateLimitMiddleware:
 
         try:
             retry_after_seconds = await self._check_and_increment(client_ip, token_hash)
-        except RedisError:
+        except RedisError as exc:
+            # LOG-02 parity — this middleware answers directly (no `AppError`), so the 503 would
+            # otherwise leave no server-side record of the Redis outage.
+            safe_log(
+                _logger.warning,
+                "rate_limiter_unavailable",
+                bucket="onboarding_upload",
+                exception_type=type(exc).__name__,
+            )
             await self._send(
                 send,
                 503,
@@ -242,6 +280,17 @@ class OnboardingUploadRateLimitMiddleware:
             await client.expire(token_key, self._window_seconds)
 
         if ip_count > self._ip_limit or token_count > self._token_limit:
+            if ip_count == self._ip_limit + 1:
+                _log_rate_limited(
+                    "onboarding_upload", {"ip": ip_count}, self._ip_limit, client_ip=client_ip
+                )
+            if token_count == self._token_limit + 1:
+                _log_rate_limited(
+                    "onboarding_upload",
+                    {"token": token_count},
+                    self._token_limit,
+                    onboarding_ref=token_hash[:16],
+                )
             over_key = ip_key if ip_count > self._ip_limit else token_key
             ttl = await client.ttl(over_key)
             return ttl if ttl and ttl > 0 else self._window_seconds

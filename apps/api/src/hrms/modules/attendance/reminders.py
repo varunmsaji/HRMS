@@ -33,7 +33,7 @@ from hrms.modules.attendance.email_templates import (
 from hrms.modules.attendance.models import AttendanceDay, AttendancePeriod
 from hrms.modules.attendance.permissions import ATTENDANCE_LOCK
 from hrms.modules.employee.models import Employee, Employment
-from hrms.modules.onboarding.email_sender import EmailSender
+from hrms.modules.onboarding.email_sender import EmailSender, log_email_failure
 
 _logger = get_logger(__name__)
 
@@ -157,7 +157,14 @@ class IncompleteDayReminderService:
                 incomplete_dates=entry["dates"],
                 regularizations_url=f"{base_url}/app/regularizations",
             )
-            if await self._send(entry["email"], subject, html_body, text_body):
+            if await self._send(
+                entry["email"],
+                subject,
+                html_body,
+                text_body,
+                kind="attendance_incomplete_reminder",
+                ids={"company_id": str(company_id), "employee_id": str(employee_id)},
+            ):
                 result.employees_notified += 1
                 result.notified_employee_ids.append(employee_id)
             else:
@@ -190,7 +197,14 @@ class IncompleteDayReminderService:
             period_url=f"{base_url}/app/attendance-periods/{period.id}",
         )
         for email in hr_emails:
-            if await self._send(email, subject, html_body, text_body):
+            if await self._send(
+                email,
+                subject,
+                html_body,
+                text_body,
+                kind="attendance_incomplete_hr_digest",
+                ids={"company_id": str(company_id), "period_id": str(period.id)},
+            ):
                 result.hr_recipients += 1
             else:
                 result.send_failures += 1
@@ -223,12 +237,22 @@ class IncompleteDayReminderService:
         )
         return (await self._session.execute(stmt.limit(1))).first() is not None
 
-    async def _send(self, to: str, subject: str, html_body: str, text_body: str) -> bool:
+    async def _send(
+        self,
+        to: str,
+        subject: str,
+        html_body: str,
+        text_body: str,
+        *,
+        kind: str,
+        ids: dict[str, str],
+    ) -> bool:
         try:
             await self._sender.send(
                 to=to, subject=subject, html_body=html_body, text_body=text_body
             )
-        except Exception:  # noqa: BLE001 - one bad address must not stop the other reminders
-            _logger.warning("attendance_incomplete_reminder_send_failed", to=to)
+        except Exception as exc:  # noqa: BLE001 - one bad address must not stop the other reminders
+            # LOG-06 — identifiers only; the recipient address used to be logged here.
+            log_email_failure(kind, exc, **ids)
             return False
         return True

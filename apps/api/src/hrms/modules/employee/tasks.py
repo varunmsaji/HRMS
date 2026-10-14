@@ -16,7 +16,12 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from hrms.core.celery_app import celery_app
+from hrms.core.celery_app import (
+    COMPANY_TASK_LIMITS,
+    FANOUT_TASK_LIMITS,
+    celery_app,
+    dispatch_per_company,
+)
 from hrms.core.db.models.identity import Company
 from hrms.core.db.session import session_scope
 
@@ -34,14 +39,12 @@ async def _enforce_company_async(company_id: UUID) -> int:
         return await EmploymentService(session).enforce_elapsed_terminations(company_id)
 
 
-@celery_app.task(name="employee.enforce_terminations_company")  # type: ignore[untyped-decorator]
+@celery_app.task(name="employee.enforce_terminations_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def enforce_terminations_company(company_id: str) -> int:
     return asyncio.run(_enforce_company_async(UUID(company_id)))
 
 
-@celery_app.task(name="employee.run_termination_access_sweep")  # type: ignore[untyped-decorator]
+@celery_app.task(name="employee.run_termination_access_sweep", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def run_termination_access_sweep() -> int:
     company_ids = asyncio.run(_list_active_company_ids())
-    for company_id in company_ids:
-        enforce_terminations_company.delay(str(company_id))
-    return len(company_ids)
+    return dispatch_per_company(enforce_terminations_company, company_ids)

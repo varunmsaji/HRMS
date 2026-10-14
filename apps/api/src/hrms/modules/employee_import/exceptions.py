@@ -1,6 +1,6 @@
 """Module-specific AppError subclasses for employee_import."""
 
-from hrms.core.errors.base import NotFoundError, ValidationError
+from hrms.core.errors.base import AppError, NotFoundError, ValidationError
 
 
 class ImportBatchNotFoundError(NotFoundError):
@@ -66,3 +66,18 @@ class ImportFileEmptyError(ValidationError):
         super().__init__(
             message, details=[{"field": "file", "code": "IMPORT_FILE_EMPTY", "message": message}]
         )
+
+
+class ImportQueueUnavailableError(AppError):
+    """The batch was stored but could not be handed to the job queue (broker unreachable). The
+    batch has been closed as `FAILED`, so nothing is left `PENDING` waiting for a message that was
+    never sent; the client may simply upload the file again."""
+
+    code = "IMPORT_QUEUE_UNAVAILABLE"
+    status_code = 503
+
+    def __init__(
+        self,
+        message: str = "The import could not be queued; no data was imported. Try again shortly",
+    ) -> None:
+        super().__init__(message)

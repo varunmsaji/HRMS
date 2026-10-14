@@ -15,7 +15,6 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.exc import IntegrityError
-
 from tests.integration.modules.account_invite.test_account_invite import (
     _create_employee as _create_employee_for_invite,
 )
@@ -41,7 +40,9 @@ from hrms.modules.onboarding.models import OnboardingToken
 pytestmark = pytest.mark.asyncio
 
 
-async def _register_tenant(client: AsyncClient, **overrides: Any) -> tuple[dict[str, str], UUID, UUID | None]:
+async def _register_tenant(
+    client: AsyncClient, **overrides: Any
+) -> tuple[dict[str, str], UUID, UUID | None]:
     response, company_id, user_id = await _register(client, **overrides)
     assert response.status_code == 201, response.text
     assert company_id is not None
@@ -186,7 +187,9 @@ async def test_cross_tenant_users_list_never_leaks_an_invited_user(
     headers_b, company_b, admin_b = await _register_tenant(client)
     invitee_email = f"isolated-{uuid4().hex[:8]}@example.com"
     try:
-        employee = await _create_employee_for_invite(client, headers_a, personal_email=invitee_email)
+        employee = await _create_employee_for_invite(
+            client, headers_a, personal_email=invitee_email
+        )
         invite = (
             await client.post(f"/v1/employees/{employee['id']}/invite", headers=headers_a)
         ).json()["data"]
@@ -229,9 +232,7 @@ async def test_cross_tenant_onboarding_case_and_token_never_leak(
             )
         ).json()["data"]
         invite = (
-            await client.post(
-                f"/v1/onboarding-cases/{case['id']}/send-invite", headers=headers_a
-            )
+            await client.post(f"/v1/onboarding-cases/{case['id']}/send-invite", headers=headers_a)
         ).json()["data"]
         token = invite["invite_url"].rsplit("/", 1)[-1]
 

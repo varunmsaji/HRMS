@@ -11,19 +11,24 @@ review photo) is deleted again, best effort, so nothing biometric is orphaned. R
 revocation delete at the provider *first*: if that fails the profile is left unchanged and the
 action can be retried (provider deletion is idempotent)."""
 
+import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings
 from hrms.core.db.session import session_scope
-from hrms.core.observability.logging import get_logger
+from hrms.core.errors.base import ValidationError
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.rbac.types import DataScope
 from hrms.modules.attendance.exceptions import (
+    DuplicatePunchIdempotencyKeyError,
     FaceConsentRequiredError,
     FaceEnrollmentAngleMismatchError,
     FaceEnrollmentWindowNotFoundError,
@@ -53,6 +58,7 @@ from hrms.modules.attendance.repository import (
     FaceAttemptRepository,
     FaceEnrollmentWindowRepository,
     FaceProfileRepository,
+    PunchRepository,
 )
 from hrms.modules.attendance.schemas import (
     FACE_ENROLLMENT_ANGLES,
@@ -61,8 +67,10 @@ from hrms.modules.attendance.schemas import (
     FaceEnrollmentWindowRead,
     FaceProfileRead,
     FacePunchRead,
+    PunchRead,
     face_profile_to_read,
     face_window_to_read,
+    punch_to_read,
 )
 from hrms.modules.attendance.service import (
     PunchService,
@@ -480,17 +488,30 @@ class FaceEnrollmentService:
     ) -> None:
         try:
             await provider.delete_person(person_id=person_id)
-        except FaceProviderError:
+        except FaceProviderError as exc:
             # Not `.exception()`: the chained httpx error text is not a log-safe contract.
-            _logger.error(  # noqa: TRY400
-                "face_enrollment_orphaned_provider_person", provider=provider.provider_name
+            # LOG-09 — the provider's opaque person id is what an operator needs to delete the
+            # orphaned biometric record by hand; without it the record could never be found.
+            safe_log(
+                _logger.error,
+                "face_enrollment_orphaned_provider_person",
+                provider=provider.provider_name,
+                provider_person_id=person_id,
+                **safe_error(exc),
             )
 
     async def _delete_review_photo(self, key: str) -> None:
         try:
             await self._storage.delete_object(key=key)
-        except Exception:  # noqa: BLE001 - cleanup must never mask the real outcome
-            _logger.error("face_review_photo_delete_failed")  # noqa: TRY400
+        except Exception as exc:  # noqa: BLE001 - cleanup must never mask the real outcome
+            # LOG-09 — the object key (company/employee UUIDs + a random id, no personal data)
+            # is what locates the orphaned face photo for deletion.
+            safe_log(
+                _logger.error,
+                "face_review_photo_delete_failed",
+                object_key=key,
+                **safe_error(exc),
+            )
 
     # --- HR: review and revocation -----------------------------------------------------------
 
@@ -629,6 +650,24 @@ class FaceEnrollmentService:
         return face_profile_to_read(row)
 
 
+# Client-generated face-punch idempotency keys. Short enough that the namespaced stored form
+# (`face:<key>`) fits `punch.idempotency_key` (VARCHAR(100)); the character set keeps the value
+# free of anything that needs escaping in logs or SQL.
+FACE_PUNCH_KEY_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+_FACE_KEY_NAMESPACE = "face:"
+
+
+def _stored_face_key(key: str) -> str:
+    """The operation-scoped form persisted on the punch. The namespace stops a key sent to the
+    plain self-punch endpoint from replaying (or being replayed by) a face punch."""
+    return f"{_FACE_KEY_NAMESPACE}{key}"
+
+
+def key_ref(key: str) -> str:
+    """Log-safe correlation for a client key: a short digest, never the key itself."""
+    return hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
 class FacePunchService:
     """Self-service face punch: attempt limit -> enrollment -> liveness -> match -> punch.
 
@@ -649,6 +688,7 @@ class FacePunchService:
         self._settings = settings
         self._profiles = FaceProfileRepository()
         self._attempts = FaceAttemptRepository()
+        self._punches = PunchRepository()
 
     async def punch_self(
         self,
@@ -659,13 +699,30 @@ class FacePunchService:
         direction: str,
         scope: DataScope,
         actor_user_id: UUID | None,
+        idempotency_key: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> FacePunchRead:
+        """`idempotency_key` (optional, client-generated) makes a retry after a lost response
+        safe: the same key from the same employee for the same direction returns the original
+        result without a second verification or punch. Nothing is stored for a key until the
+        punch itself commits, so a rejected or failed attempt leaves the key reusable."""
         if self._provider is None:
             raise FaceVerificationUnavailableError()
         provider = self._provider
         content_type = sniff_face_image(image)
+        stored_key: str | None = None
+        if idempotency_key is not None:
+            if not FACE_PUNCH_KEY_PATTERN.fullmatch(idempotency_key):
+                raise ValidationError(
+                    "idempotency_key must be 16-64 characters of letters, digits, '_' or '-'"
+                )
+            stored_key = _stored_face_key(idempotency_key)
+            replay = await self._replay_if_recorded(
+                company_id, employee_id, stored_key, direction=direction, ref=key_ref(stored_key)
+            )
+            if replay is not None:
+                return replay
         await self._enforce_attempt_limit(company_id, employee_id)
 
         profile = await self._profiles.get_for_employee(
@@ -721,20 +778,26 @@ class FacePunchService:
             )
             raise FaceNotDetectedError() if match.decision == "NO_FACE" else FaceNotMatchedError()
 
-        punch = await PunchService(self._session).record_punch(
+        punch, replayed = await PunchService(self._session).record_punch_outcome(
             company_id,
             employee_id,
             direction=direction,
             requested_punch_time=None,
             source="FACE",
             reference=None,
-            idempotency_key=None,
+            idempotency_key=stored_key,
             scope=scope,
             caller_employee_id=employee_id,
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        if replayed:
+            # Lost a race with a concurrent request carrying the same key (the advisory lock
+            # makes this unreachable in the normal path; the unique index is the backstop). The
+            # winner already wrote its MATCHED attempt, so write none and return its result.
+            assert stored_key is not None
+            return await self._result_for_existing_punch(company_id, punch, ref=key_ref(stored_key))
         await self._attempts.insert(
             self._session,
             data=self._attempt_data(
@@ -750,6 +813,63 @@ class FacePunchService:
         )
         return FacePunchRead(
             punch=punch, similarity=match.similarity, liveness_score=liveness.score
+        )
+
+    async def _replay_if_recorded(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        stored_key: str,
+        *,
+        direction: str,
+        ref: str,
+    ) -> FacePunchRead | None:
+        """Serialises same-key requests (transaction-scoped advisory lock, released at commit or
+        rollback), then returns the original result if the key already produced a punch. The
+        lock means a concurrent duplicate waits for the first request to commit instead of
+        paying for a second provider round-trip and racing the unique index."""
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+            {"k": f"face-punch:{company_id}:{employee_id}:{stored_key}"},
+        )
+        existing = await self._punches.get_by_idempotency_key(
+            self._session, company_id=company_id, idempotency_key=stored_key
+        )
+        if existing is None:
+            return None
+        if existing.employee_id != employee_id or existing.direction != direction:
+            safe_log(
+                _logger.warning,
+                "attendance.face_punch.idempotency_conflict",
+                key_ref=ref,
+                employee_id=str(employee_id),
+            )
+            raise DuplicatePunchIdempotencyKeyError(
+                "This idempotency_key was already used for a different punch"
+            )
+        return await self._result_for_existing_punch(company_id, punch_to_read(existing), ref=ref)
+
+    async def _result_for_existing_punch(
+        self, company_id: UUID, punch: PunchRead, *, ref: str
+    ) -> FacePunchRead:
+        attempt = await self._attempts.get_matched_for_punch(
+            self._session, company_id=company_id, punch_id=punch.id
+        )
+        if attempt is None or attempt.similarity is None:
+            # A FACE punch always has its MATCHED attempt (same transaction). Refuse rather
+            # than invent scores.
+            raise DuplicatePunchIdempotencyKeyError(
+                "This idempotency_key refers to a punch that cannot be replayed"
+            )
+        safe_log(
+            _logger.info,
+            "attendance.face_punch.replayed",
+            key_ref=ref,
+            punch_id=str(punch.id),
+            employee_id=str(punch.employee_id),
+        )
+        return FacePunchRead(
+            punch=punch, similarity=attempt.similarity, liveness_score=attempt.liveness_score
         )
 
     async def _enforce_attempt_limit(self, company_id: UUID, employee_id: UUID) -> None:

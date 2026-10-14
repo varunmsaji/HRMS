@@ -8,6 +8,7 @@ from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.db.session import get_session
 from hrms.core.errors.base import PermissionDeniedError
+from hrms.core.observability.security_events import security_event
 from hrms.core.rbac.service import RbacService
 from hrms.core.rbac.types import DataScope
 
@@ -29,6 +30,14 @@ async def _check_permission(
     # be two round trips for every permission-gated route in the app for no extra correctness.
     scope = await rbac.resolve_data_scope(user.user_id, user.company_id, code)
     if not scope.levels:
+        # LOG-07 — INFO, not WARNING: a UI probing an action the role lacks is routine; the
+        # event exists so repeated denials for one user can be counted, not to page anyone.
+        security_event(
+            "authorization.denied",
+            permission=code,
+            user_id=str(user.user_id),
+            company_id=str(user.company_id),
+        )
         raise PermissionDeniedError(
             f"Permission {code} is required",
             code="PERMISSION_DENIED",

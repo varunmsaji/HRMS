@@ -6,7 +6,6 @@ paging, tenant isolation, authorization) plus the `status` filter interacting wi
 the one other parameter this endpoint accepts."""
 
 from typing import Any
-from uuid import UUID
 
 import pytest
 from httpx import AsyncClient

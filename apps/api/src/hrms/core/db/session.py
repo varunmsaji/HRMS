@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from hrms.core.config.settings import Settings, get_settings
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.tenancy.context import current_tenant_company_id
 
 _engine: AsyncEngine | None = None
+_logger = get_logger(__name__)
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
@@ -68,8 +70,21 @@ async def session_scope(
             yield session
             await session.commit()
         except Exception:
-            await session.rollback()
+            await _rollback_preserving_cause(session)
             raise
+
+
+async def _rollback_preserving_cause(session: AsyncSession) -> None:
+    """Rolls back after a failure without letting a *second* failure replace the first. When the
+    connection itself is gone, `rollback()` raises too; before this, that rollback error
+    propagated instead of the original one, so the handlers and logs described the symptom
+    (`rollback on a closed connection`) rather than the cause. The original exception is
+    re-raised by the caller; the rollback failure is recorded once here. The connection is
+    invalidated by SQLAlchemy and never returned to the pool in a half-open transaction."""
+    try:
+        await session.rollback()
+    except Exception as rollback_exc:  # noqa: BLE001 — the original exception wins, see above
+        safe_log(_logger.warning, "db_rollback_failed", **safe_error(rollback_exc))
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -83,7 +98,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
             yield session
             await session.commit()
         except Exception:
-            await session.rollback()
+            await _rollback_preserving_cause(session)
             raise
 
 

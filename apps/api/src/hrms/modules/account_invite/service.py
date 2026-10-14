@@ -41,7 +41,7 @@ from hrms.modules.account_invite.schemas import (
 )
 from hrms.modules.identity.schemas import CompanySummary, TokenResponseData
 from hrms.modules.identity.service import IdentityService
-from hrms.modules.onboarding.email_sender import get_email_sender
+from hrms.modules.onboarding.email_sender import get_email_sender, log_email_failure
 from hrms.shared.pagination import PageParams
 
 #: Matches onboarding's own `DEFAULT_TOKEN_TTL_DAYS` — no stated reason for a different window.
@@ -193,8 +193,11 @@ class AccountInviteService:
             await get_email_sender(self._settings).send(
                 to=email, subject=subject, html_body=html_body, text_body=text_body
             )
-        except Exception:  # noqa: BLE001 — delivery failure must not fail the request
+        except Exception as exc:  # noqa: BLE001 — delivery failure must not fail the request
             email_sent = False
+            log_email_failure(
+                "account_invite", exc, company_id=str(company_id), invite_id=str(invite.id)
+            )
 
         await self._audit.record(
             self._session,

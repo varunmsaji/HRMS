@@ -2,9 +2,20 @@
 must leave a structured server-side trace too, even for modules (Attendance, Employee,
 Organisation) that define no `on_failure` of their own, unlike Leave's `_LeaveTask`."""
 
+import pytest
+import structlog
 from structlog.testing import capture_logs
 
 from hrms.core.celery_app import celery_app
+
+
+@pytest.fixture(autouse=True)
+def _uncached_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cache_logger_on_first_use` lets a module-level logger keep whatever pipeline was active
+    when an earlier test first used it, which `capture_logs()` cannot intercept."""
+    monkeypatch.setattr(
+        "hrms.core.celery_app._logger", structlog.get_logger("hrms.core.celery_app")
+    )
 
 
 def test_unhandled_task_failure_is_logged() -> None:
@@ -25,4 +36,7 @@ def test_unhandled_task_failure_is_logged() -> None:
     assert entry["task"] == "test.always_fails"
     assert entry["task_id"] == result.id
     assert entry["exception_type"] == "RuntimeError"
-    assert entry["exception_message"] == "task exploded"
+    # LOG-08 — a compact summary: no raw exception text (Celery's own failure record carries the
+    # single, redacted traceback).
+    assert "exception_message" not in entry
+    assert "task exploded" not in str(entry)

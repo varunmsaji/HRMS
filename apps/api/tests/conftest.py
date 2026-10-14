@@ -1,5 +1,6 @@
 import os
 import uuid
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 import redis.asyncio as redis
@@ -14,6 +15,23 @@ os.environ.setdefault(
 os.environ.setdefault("REDIS_URL", "redis://localhost:6380/0")
 os.environ.setdefault("JWT_ACCESS_SECRET", "test-access-secret-min-16-chars")
 os.environ.setdefault("JWT_REFRESH_SECRET", "test-refresh-secret-min-16-chars")
+
+# External-side-effect isolation. These are FORCED (not `setdefault`): a developer's
+# `apps/api/.env` may select a real email provider, real Face++ credentials, or a broker DB
+# holding a real backlog, and process env always wins over the dotenv file. Tests that need a
+# specific provider construct `Settings(...)` explicitly or override the FastAPI dependency.
+#
+# The Celery broker/result backend go to a dedicated Redis DB (15 by default) so integration
+# tests that enqueue work (employee imports) can never add to — or be mistaken for — the
+# backlog in DB 0. `HRMS_TEST_CELERY_DB` lets a developer pick a different isolated DB.
+os.environ["EMAIL_PROVIDER"] = "logging"
+os.environ["FACE_VERIFICATION_PROVIDER"] = "disabled"
+os.environ["CELERY_BROKER_URL"] = urlunsplit(
+    urlsplit(os.environ["REDIS_URL"])._replace(
+        path="/" + os.environ.get("HRMS_TEST_CELERY_DB", "15")
+    )
+)
+os.environ["CELERY_RESULT_BACKEND"] = os.environ["CELERY_BROKER_URL"]
 
 from entrypoints.api import app
 

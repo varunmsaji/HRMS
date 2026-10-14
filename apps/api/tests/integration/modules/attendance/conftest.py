@@ -143,6 +143,25 @@ async def face_tenant(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> AsyncIterator[tuple[dict[str, str], UUID]]:
     """A freshly registered company (admin headers, company id), torn down afterwards."""
+    async for value in _face_tenant(client):
+        yield value
+
+
+@pytest.fixture
+async def face_tenant_b(
+    client: AsyncClient, seeded_plan_catalogue: None, face_tenant: tuple[dict[str, str], UUID]
+) -> AsyncIterator[tuple[dict[str, str], UUID]]:
+    """A second, independent company alongside `face_tenant` (tenant-isolation tests)."""
+    # `_cleanup_scoped_users` deletes every `scoped-%` user in the database, which would fail
+    # (FK) while the primary tenant's scoped users still hold a `user_company` row; the primary
+    # tenant's teardown runs afterwards and sweeps both tenants' scoped users.
+    async for value in _face_tenant(client, sweep_scoped_users=False):
+        yield value
+
+
+async def _face_tenant(
+    client: AsyncClient, *, sweep_scoped_users: bool = True
+) -> AsyncIterator[tuple[dict[str, str], UUID]]:
     from tests.integration.modules.attendance.test_attendance_day import (
         _cleanup_attendance_day,
         _register_tenant,
@@ -168,4 +187,5 @@ async def face_tenant(
         await session.commit()
     await _cleanup_attendance_day(company_id=company_id)
     await _cleanup(company_id=company_id, user_id=user_id)
-    await _cleanup_scoped_users()
+    if sweep_scoped_users:
+        await _cleanup_scoped_users()

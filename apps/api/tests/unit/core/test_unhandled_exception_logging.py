@@ -43,7 +43,9 @@ def _find_log_line(raw_stdout: str) -> dict[str, object]:
             continue
         if parsed.get("event") == "unhandled_exception":
             return parsed
-    raise AssertionError(f"no unhandled_exception log line found in captured stdout: {raw_stdout!r}")
+    raise AssertionError(
+        f"no unhandled_exception log line found in captured stdout: {raw_stdout!r}"
+    )
 
 
 def test_unhandled_exception_is_logged_with_request_context(capfd: CaptureFixture[str]) -> None:
@@ -66,7 +68,9 @@ def test_unhandled_exception_is_logged_with_request_context(capfd: CaptureFixtur
     assert entry["http_method"] == "GET"
     assert entry["http_path"] == "/boom"
     assert entry["exception_type"] == "ValueError"
-    assert entry["exception_message"] == "something broke"
+    # LOG-08 — no separate raw-message field; the message lives only inside the (redacted)
+    # traceback below.
+    assert "exception_message" not in entry
     # company/user context was never established on this route
     assert entry["company_id"] is None
     assert entry["user_id"] is None

@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ from hrms.core.errors.auth import (
 )
 from hrms.core.errors.base import ValidationError
 from hrms.core.observability.logging import get_logger, safe_log
+from hrms.core.observability.security_events import security_event, subject_hash
 from hrms.core.rbac.service import RbacService
 from hrms.modules.identity.email_templates import (
     build_email_verification_email,
@@ -33,7 +35,7 @@ from hrms.modules.identity.schemas import (
     TokenResponseData,
     UserProfile,
 )
-from hrms.modules.onboarding.email_sender import get_email_sender
+from hrms.modules.onboarding.email_sender import get_email_sender, log_email_failure
 
 #: Matches `account_invite`'s own default — no stated reason for a different window, and a
 #: shorter-lived credential (a password reset, vs. a first-time account setup) if anything argues
@@ -64,17 +66,34 @@ class IdentityService:
     ) -> TokenResponseData:
         user = await self._repo.get_user_by_email(self._session, body.email.lower())
         if user is None or not user.password_hash:
+            # LOG-07 — operational security events below never reach the client (identical
+            # INVALID_CREDENTIALS answer either way) and never carry the address or password.
+            self._login_failed("unknown_account", None, body.email, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         now = datetime.now(UTC)
         if user.locked_until and user.locked_until > now:
+            self._login_failed("account_locked", user.id, body.email, ip_address)
             raise AccountLockedError("Account is temporarily locked")
 
         if not verify_password(user.password_hash, body.password):
-            await self._repo.increment_failed_login(self._session, user.id)
+            updated = await self._repo.increment_failed_login(self._session, user.id)
+            failed_attempts, locked_until = updated.failed_login_count, updated.locked_until
             # `get_session` rolls the request transaction back on any exception, which would
             # silently discard this increment and make lockout impossible — persist it first.
             await self._session.commit()
+            self._login_failed(
+                "bad_password", user.id, body.email, ip_address, failed_attempts=failed_attempts
+            )
+            if locked_until is not None and locked_until > now:
+                security_event(
+                    "account.locked",
+                    level="warning",
+                    user_id=str(user.id),
+                    failed_attempts=failed_attempts,
+                    locked_until=locked_until.isoformat(),
+                    client_ip=ip_address,
+                )
             raise InvalidCredentialsError("Invalid email or password")
 
         await self._repo.reset_failed_login(self._session, user.id)
@@ -83,6 +102,7 @@ class IdentityService:
         # is not disclosed, and (like the email-verified check below) only after the password is
         # confirmed so it cannot act as an account-existence oracle.
         if user.status != "ACTIVE":
+            self._login_failed("inactive_account", user.id, body.email, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         # SEC-09 (RELEASE_HARDENING_PHASE_3A) — checked only after the password itself is
@@ -92,10 +112,12 @@ class IdentityService:
         # both issue tokens via `issue_tokens_for` directly, never through this method — only a
         # subsequent login attempt.
         if user.email_verified_at is None:
+            self._login_failed("email_not_verified", user.id, body.email, ip_address)
             raise EmailNotVerifiedError("Please verify your email address before signing in")
 
         memberships = await self._repo.list_user_companies_for_login(self._session, user.id)
         if not memberships:
+            self._login_failed("no_membership", user.id, body.email, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         company_summaries: list[CompanySummary] = []
@@ -111,6 +133,7 @@ class IdentityService:
             primary = next((m for m in memberships if m.is_primary), memberships[0])
             active_company_id = primary.company_id
         elif not any(m.company_id == active_company_id for m in memberships):
+            self._login_failed("company_not_member", user.id, body.email, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
         # `active_company_id` is now verified (matched against a real membership row above) —
@@ -120,13 +143,38 @@ class IdentityService:
         # login has no prior request-scoped tenant context to inherit it from.
         await set_rls_company_id(self._session, str(active_company_id))
 
-        return await self.issue_tokens_for(
+        tokens = await self.issue_tokens_for(
             user_id=user.id,
             company_id=active_company_id,
             companies=company_summaries,
             ip_address=ip_address,
             user_agent=user_agent,
             audit_action="LOGIN",
+        )
+        security_event(
+            "login.succeeded",
+            user_id=str(user.id),
+            company_id=str(active_company_id),
+            client_ip=ip_address,
+        )
+        return tokens
+
+    @staticmethod
+    def _login_failed(
+        reason: str,
+        user_id: UUID | None,
+        email: str,
+        ip_address: str | None,
+        **extra: object,
+    ) -> None:
+        security_event(
+            "login.failed",
+            level="warning",
+            reason=reason,
+            user_id=str(user_id) if user_id else None,
+            subject_hash=None if user_id else subject_hash(email),
+            client_ip=ip_address,
+            **extra,
         )
 
     async def refresh(self, raw_refresh_token: str) -> TokenResponseData:
@@ -135,6 +183,7 @@ class IdentityService:
         now = datetime.now(UTC)
 
         if record is None:
+            security_event("refresh.rejected", level="warning", reason="unknown_token")
             raise InvalidTokenError("Refresh token is invalid")
 
         if record.revoked_at is not None:
@@ -142,9 +191,11 @@ class IdentityService:
             raise InvalidTokenError("Refresh token has been revoked")
 
         if record.expires_at < now:
+            self._refresh_rejected("expired", record.user_id)
             raise InvalidTokenError("Refresh token has expired")
 
         if record.company_id is None or record.session_id is None:
+            self._refresh_rejected("incomplete_record", record.user_id, level="warning")
             raise InvalidTokenError("Refresh token is invalid")
 
         # A refresh token is only as good as the session, account and membership behind it —
@@ -152,12 +203,15 @@ class IdentityService:
         # deactivation and membership removal end the refresh chain too.
         db_session = await self._repo.get_session_by_id(self._session, record.session_id)
         if db_session is None or db_session.revoked_at is not None:
+            self._refresh_rejected("session_revoked", record.user_id)
             raise InvalidTokenError("Session is no longer valid")
         user = await self._repo.get_user_by_id(self._session, record.user_id)
         if user is None or user.status != "ACTIVE":
+            self._refresh_rejected("inactive_account", record.user_id, level="warning")
             raise InvalidTokenError("User is not active")
         memberships = await self._repo.list_user_companies_for_login(self._session, record.user_id)
         if not any(m.company_id == record.company_id for m in memberships):
+            self._refresh_rejected("membership_invalid", record.user_id, level="warning")
             raise InvalidTokenError("Company membership is not valid")
 
         if not await self._repo.rotate_refresh_token(self._session, record.id):
@@ -188,6 +242,15 @@ class IdentityService:
             token_family_id=record.token_family_id,
             existing_session_id=record.session_id,
         )
+
+    @staticmethod
+    def _refresh_rejected(
+        reason: str, user_id: UUID, *, level: Literal["info", "warning"] = "info"
+    ) -> None:
+        """Expired tokens and ended sessions are routine (INFO); an inactive account, a lost
+        membership or a malformed record presenting a refresh token is worth a WARNING. Reuse
+        has its own event (`security.refresh_token_reuse_detected`)."""
+        security_event("refresh.rejected", level=level, reason=reason, user_id=str(user_id))
 
     async def _revoke_family_on_reuse(self, token_family_id: UUID | None, user_id: UUID) -> None:
         """Reuse of an already-rotated refresh token means the chain may be stolen: revoke every
@@ -221,6 +284,12 @@ class IdentityService:
             action="LOGOUT",
             entity_type="session",
             entity_id=session_id,
+        )
+        security_event(
+            "logout",
+            user_id=str(user_id),
+            company_id=str(company_id),
+            session_id=str(session_id),
         )
 
     async def get_me(
@@ -346,8 +415,14 @@ class IdentityService:
         the caller (same reasoning as every other best-effort send in this codebase)."""
         user = await self._repo.get_user_by_email(self._session, email.lower())
         if user is None or user.deleted_at is not None or user.status != "ACTIVE":
+            security_event(
+                "password_reset.requested",
+                account_matched=False,
+                subject_hash=subject_hash(email),
+            )
             return
 
+        security_event("password_reset.requested", account_matched=True, user_id=str(user.id))
         now = datetime.now(UTC)
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -366,8 +441,8 @@ class IdentityService:
             await get_email_sender(self._settings).send(
                 to=user.email or email, subject=subject, html_body=html_body, text_body=text_body
             )
-        except Exception:  # noqa: BLE001 — delivery failure must not fail the request
-            pass
+        except Exception as exc:  # noqa: BLE001 — delivery failure must not fail the request
+            log_email_failure("password_reset", exc, user_id=str(user.id))
 
         # No `AuditService.record` call here, deliberately: that table's `company_id` is a real
         # tenant FK (and RLS-protected) — a password reset has no company context to attach to
@@ -405,6 +480,7 @@ class IdentityService:
         token = await self._repo.get_password_reset_token_by_hash(self._session, token_hash)
         now = datetime.now(UTC)
         if token is None or token.used_at is not None or token.expires_at <= now:
+            security_event("password_reset.failed", level="warning", reason="invalid_or_expired")
             raise InvalidTokenError("This password reset link is invalid or has expired")
 
         await self._repo.update_user_password(
@@ -415,6 +491,9 @@ class IdentityService:
         )
         await self._repo.mark_password_reset_token_used(self._session, token, now)
         # No `AuditService.record` call — same reasoning as `forgot_password` above.
+        security_event(
+            "password_reset.completed", user_id=str(token.user_id), sessions_revoked=True
+        )
 
     async def send_verification_email(
         self, *, user_id: UUID, email: str, first_name: str | None
@@ -443,8 +522,8 @@ class IdentityService:
             await get_email_sender(self._settings).send(
                 to=email, subject=subject, html_body=html_body, text_body=text_body
             )
-        except Exception:  # noqa: BLE001 — delivery failure must not fail the caller
-            pass
+        except Exception as exc:  # noqa: BLE001 — delivery failure must not fail the caller
+            log_email_failure("email_verification", exc, user_id=str(user_id))
 
     async def verify_email(self, raw_token: str) -> None:
         """`POST /auth/email/verify` — single-use, TTL-bound, same failure-mode-hiding posture as
@@ -454,10 +533,14 @@ class IdentityService:
         token = await self._repo.get_email_verification_token_by_hash(self._session, token_hash)
         now = datetime.now(UTC)
         if token is None or token.used_at is not None or token.expires_at <= now:
+            security_event(
+                "email_verification.failed", level="warning", reason="invalid_or_expired"
+            )
             raise InvalidTokenError("This verification link is invalid or has expired")
 
         await self._repo.mark_user_email_verified(self._session, token.user_id, now)
         await self._repo.mark_email_verification_token_used(self._session, token, now)
+        security_event("email_verification.completed", user_id=str(token.user_id))
 
     async def resend_verification_email(self, email: str) -> None:
         """`POST /auth/email/resend-verification` — always returns successfully regardless of

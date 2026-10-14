@@ -90,6 +90,7 @@ from hrms.modules.attendance.models import (
     OvertimePolicyRateRow,
     OvertimePolicyVersion,
     OvertimeRecord,
+    Punch,
 )
 from hrms.modules.attendance.repository import (
     AttendanceBreakRepository,
@@ -2528,6 +2529,15 @@ class ShiftRosterService:
         return [shift_roster_to_read(r) for r in rows]
 
 
+def _ensure_same_logical_punch(existing: Punch, *, direction: str, source: str) -> None:
+    """A key replays only the request that created it. The same key carrying a different
+    direction or source is a *different* logical punch; replaying would silently drop it."""
+    if existing.direction != direction or existing.source != source:
+        raise DuplicatePunchIdempotencyKeyError(
+            "This idempotency_key was already used for a different punch"
+        )
+
+
 class PunchService:
     """Punch ingestion (architecture §19.1 step 9, WD-11 — punches are immutable, append-only
     once written; corrections are new punches, never an UPDATE/DELETE of this row)."""
@@ -2553,7 +2563,44 @@ class PunchService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> PunchRead:
-        """Idempotent on `idempotency_key` when the caller supplies one — a resubmission with
+        """`record_punch_outcome` without the replay flag — see it for the full contract."""
+        read, _replayed = await self.record_punch_outcome(
+            company_id,
+            employee_id,
+            direction=direction,
+            requested_punch_time=requested_punch_time,
+            source=source,
+            reference=reference,
+            idempotency_key=idempotency_key,
+            scope=scope,
+            caller_employee_id=caller_employee_id,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def record_punch_outcome(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        direction: str,
+        requested_punch_time: datetime | None,
+        source: str,
+        reference: str | None,
+        idempotency_key: str | None,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> tuple[PunchRead, bool]:
+        """Returns `(punch, replayed)`: `replayed` is True when an earlier row with the same
+        `idempotency_key` was returned instead of writing a new one (callers that attach
+        further records to a *new* punch must not do so for a replay).
+
+        Idempotent on `idempotency_key` when the caller supplies one — a resubmission with
         the same key replays the original row rather than erroring or duplicating (the DB
         partial unique index is the concurrency backstop, not the primary check). The
         *load-bearing* dedup mechanism for W4 sources is calculation-time duplicate collapsing
@@ -2592,7 +2639,8 @@ class PunchService:
                     # employee's punch would drop this one silently and hand that employee's
                     # record back to the caller, so a cross-employee reuse is refused instead.
                     raise DuplicatePunchIdempotencyKeyError()
-                return punch_to_read(existing)
+                _ensure_same_logical_punch(existing, direction=direction, source=source)
+                return punch_to_read(existing), True
 
         now = datetime.now(UTC)
         punch_time = now if requested_punch_time is None else requested_punch_time
@@ -2634,8 +2682,18 @@ class PunchService:
             "created_at": now,
         }
         try:
-            row = await self._repo.insert(self._session, data=data)
+            # SAVEPOINT: a lost race on the unique index must not poison the outer transaction,
+            # so the winner's row can be read back and replayed below.
+            async with self._session.begin_nested():
+                row = await self._repo.insert(self._session, data=data)
         except IntegrityError as exc:
+            if idempotency_key:
+                winner = await self._repo.get_by_idempotency_key(
+                    self._session, company_id=company_id, idempotency_key=idempotency_key
+                )
+                if winner is not None and winner.employee_id == employee_id:
+                    _ensure_same_logical_punch(winner, direction=direction, source=source)
+                    return punch_to_read(winner), True
             raise DuplicatePunchIdempotencyKeyError() from exc
 
         read = punch_to_read(row)
@@ -2658,7 +2716,7 @@ class PunchService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        return read
+        return read, False
 
     async def _try_immediate_calculate(
         self,

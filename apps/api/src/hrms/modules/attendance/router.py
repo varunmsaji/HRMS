@@ -1918,10 +1918,15 @@ async def create_face_punch(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
     service: Annotated[FacePunchService, Depends(get_face_punch_service)],
+    idempotency_key: Annotated[str | None, Form()] = None,
 ) -> DataEnvelope[FacePunchRead]:
     """Same contract as `POST /attendance/punches/me` — no time, source or employee field; the
     server stamps the instant — plus a live photo that must pass liveness and match the caller's
-    enrolled face profile before any punch is written."""
+    enrolled face profile before any punch is written.
+
+    `idempotency_key` (optional, 16-64 of `[A-Za-z0-9_-]`): resend the same key when retrying
+    after a lost response and the original result is returned instead of a second punch. The
+    same key with a different direction is a 409."""
     if user.employee_id is None:
         raise ValidationError("The caller has no linked employee record")
     image = await read_upload_bounded(photo, max_bytes=FACE_IMAGE_MAX_BYTES)
@@ -1930,6 +1935,7 @@ async def create_face_punch(
         user.employee_id,
         image=image,
         direction=direction,
+        idempotency_key=idempotency_key,
         scope=scope,
         actor_user_id=tenant.user_id,
         **_client_meta(request),

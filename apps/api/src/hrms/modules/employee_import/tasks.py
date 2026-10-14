@@ -29,7 +29,11 @@ async def _process_batch_async(
         await EmployeeImportService(session).process_batch(company_id, batch_id, actor_user_id)
 
 
-@celery_app.task(name="employee_import.process_batch", queue="reports_exports")  # type: ignore[untyped-decorator]
+#: Hard limit only, deliberately no soft limit: a soft limit would raise mid-batch and leave a
+#: partly imported batch in a state the import semantics do not define. The hard limit only frees
+#: a worker slot from a genuinely hung run (the batch then stays PROCESSING, which the
+#: stuck-import check in the runbook detects) — before this, a hang held the slot forever.
+@celery_app.task(name="employee_import.process_batch", queue="reports_exports", time_limit=3600)  # type: ignore[untyped-decorator]
 def process_batch(company_id: str, batch_id: str, actor_user_id: str | None) -> None:
     resolved_actor_id = UUID(actor_user_id) if actor_user_id is not None else None
     asyncio.run(_process_batch_async(UUID(company_id), UUID(batch_id), resolved_actor_id))

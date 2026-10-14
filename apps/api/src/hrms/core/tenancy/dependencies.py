@@ -8,6 +8,7 @@ from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.db.session import get_session, set_rls_company_id
 from hrms.core.errors.base import NotFoundError
+from hrms.core.observability.security_events import security_event
 from hrms.core.tenancy.context import TenantContext, set_tenant
 
 
@@ -17,6 +18,15 @@ async def get_tenant_context(
     x_company_id: Annotated[str | None, Header(alias="X-Company-Id")] = None,
 ) -> TenantContext:
     if x_company_id is not None and x_company_id != str(user.company_id):
+        # LOG-07 — an authenticated caller naming a company other than the one its token is
+        # bound to. The requested value is attacker-controlled, so it is not logged.
+        security_event(
+            "tenant.rejected",
+            level="warning",
+            reason="company_header_mismatch",
+            user_id=str(user.user_id),
+            company_id=str(user.company_id),
+        )
         raise NotFoundError("Resource not found")
 
     repo = IdentityRepository()
@@ -24,6 +34,13 @@ async def get_tenant_context(
         session, user_id=user.user_id, company_id=user.company_id
     )
     if membership is None:
+        security_event(
+            "tenant.rejected",
+            level="warning",
+            reason="no_membership",
+            user_id=str(user.user_id),
+            company_id=str(user.company_id),
+        )
         raise NotFoundError("Resource not found")
 
     ctx = TenantContext(company_id=user.company_id, user_id=user.user_id)

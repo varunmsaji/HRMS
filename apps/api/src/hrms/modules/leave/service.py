@@ -12,6 +12,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +20,7 @@ from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import get_settings
 from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave_dates
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError
-from hrms.core.observability.logging import get_logger
+from hrms.core.observability.logging import get_logger, safe_error
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.leave.approval_chain import effective_stage_sequence, next_approval_stage
 from hrms.modules.leave.exceptions import (
@@ -1622,6 +1623,8 @@ class LeaveAccrualService:
                         resolver=resolver,
                         employee_service=employee_service,
                     )
+            except SoftTimeLimitExceeded:
+                raise  # the task's time limit — stop the run, not one employee's failure
             except Exception as exc:  # noqa: BLE001 - isolate one employee, see above
                 failed += 1
                 _logger.warning(
@@ -1629,7 +1632,7 @@ class LeaveAccrualService:
                     company_id=str(company_id),
                     employee_id=str(employee_id),
                     period_end=period_end.isoformat(),
-                    error=f"{type(exc).__name__}: {str(exc)[:300]}",
+                    **safe_error(exc),
                 )
         if failed:
             _logger.warning(
@@ -1795,6 +1798,8 @@ class LeaveAccrualService:
                         accrual_types=accrual_types,
                         resolver=resolver,
                     )
+            except SoftTimeLimitExceeded:
+                raise  # the task's time limit — stop the run, not one employee's failure
             except Exception as exc:  # noqa: BLE001 - isolate one employee, see above
                 failed += 1
                 _logger.warning(
@@ -1803,7 +1808,7 @@ class LeaveAccrualService:
                     employee_id=str(employee_id),
                     year_start=year_start.isoformat(),
                     as_of=as_of.isoformat(),
-                    error=f"{type(exc).__name__}: {str(exc)[:300]}",
+                    **safe_error(exc),
                 )
         if failed:
             _logger.warning(

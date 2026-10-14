@@ -547,7 +547,9 @@ async def _revoke_company_admin_view_documents(*, company_id: UUID) -> None:
             text(
                 """
                 DELETE FROM role_permission
-                WHERE permission_id = (SELECT id FROM permission WHERE code = 'EMPLOYEE.VIEW_DOCUMENTS')
+                WHERE permission_id = (
+                    SELECT id FROM permission WHERE code = 'EMPLOYEE.VIEW_DOCUMENTS'
+                )
                   AND role_id = (
                       SELECT id FROM role WHERE company_id = :cid AND code = 'COMPANY_ADMIN'
                   )
@@ -643,30 +645,36 @@ async def test_existing_company_admin_backfilled_gains_view_documents(
         factory = get_session_factory()
         async with factory() as session:
             rows = (
-                await session.execute(
-                    select(RolePermission)
-                    .join(Role, Role.id == RolePermission.role_id)
-                    .join(Permission, Permission.id == RolePermission.permission_id)
-                    .where(
-                        Role.company_id == company_id,
-                        Role.code == "COMPANY_ADMIN",
-                        Permission.code == "EMPLOYEE.VIEW_DOCUMENTS",
+                (
+                    await session.execute(
+                        select(RolePermission)
+                        .join(Role, Role.id == RolePermission.role_id)
+                        .join(Permission, Permission.id == RolePermission.permission_id)
+                        .where(
+                            Role.company_id == company_id,
+                            Role.code == "COMPANY_ADMIN",
+                            Permission.code == "EMPLOYEE.VIEW_DOCUMENTS",
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(rows) == 1
             assert rows[0].data_scope == "COMPANY"
 
             permission_rows = (
-                await session.execute(
-                    select(Permission).where(Permission.code == "EMPLOYEE.VIEW_DOCUMENTS")
+                (
+                    await session.execute(
+                        select(Permission).where(Permission.code == "EMPLOYEE.VIEW_DOCUMENTS")
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(permission_rows) == 1
 
-        still_works = await client.get(
-            f"/v1/employees/{employee['id']}/documents", headers=headers
-        )
+        still_works = await client.get(f"/v1/employees/{employee['id']}/documents", headers=headers)
         assert still_works.status_code == 200
     finally:
         await _teardown(company_id=company_id, user_id=user_id)
@@ -712,10 +720,14 @@ async def test_view_documents_permission_catalogue_has_single_row(
         factory = get_session_factory()
         async with factory() as session:
             rows = (
-                await session.execute(
-                    select(Permission).where(Permission.code == "EMPLOYEE.VIEW_DOCUMENTS")
+                (
+                    await session.execute(
+                        select(Permission).where(Permission.code == "EMPLOYEE.VIEW_DOCUMENTS")
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(rows) == 1
     finally:
         await _teardown(company_id=company_id, user_id=user_id)

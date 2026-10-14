@@ -58,4 +58,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # `exec` replaces the shell so gunicorn itself is PID 1 and receives signals directly (no
 # intermediate `sh` swallowing them). Override `command:` in compose for worker/beat/ingestion —
 # same image, four entrypoints (docs/product/13_DevOps_Architecture.md §2).
-CMD ["sh", "-c", "exec gunicorn entrypoints.api:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --workers ${GUNICORN_WORKERS:-2} --timeout ${GUNICORN_TIMEOUT:-60} --graceful-timeout 30 --access-logfile - --error-logfile -"]
+# No `--access-logfile`: the app emits one structured JSON `http_request` event per request
+# (request id, route template, status, duration — `core/observability/request_context.py`), which
+# replaces gunicorn/uvicorn's plaintext access line. Without it gunicorn's access logger has no
+# handler, so that line is dropped rather than duplicated.
+CMD ["sh", "-c", "exec gunicorn entrypoints.api:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --workers ${GUNICORN_WORKERS:-2} --timeout ${GUNICORN_TIMEOUT:-60} --graceful-timeout 30 --error-logfile -"]

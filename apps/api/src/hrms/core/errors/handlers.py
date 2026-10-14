@@ -7,16 +7,27 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError as SqlDataError
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from hrms.core.db.timeouts import is_wait_timeout
 from hrms.core.errors.base import AppError
 from hrms.core.errors.envelope import ErrorBody, ErrorDetail, ErrorEnvelope
-from hrms.core.observability.logging import get_logger, safe_log
+from hrms.core.observability.classification import RETRYABLE_DB_CATEGORIES, error_category
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.redaction import redact_path
 from hrms.core.tenancy.context import current_request_id, verified_tenant_for_logging
 
 _logger = get_logger(__name__)
+
+
+def note_error_code(scope: Mapping[str, Any], code: str) -> None:
+    """Records the envelope's error code on the request scope so the per-request `http_request`
+    access event (`RequestContextMiddleware`) can report *which* handled error a 4xx/5xx was,
+    without parsing the response body."""
+    state = scope.get("state")
+    if isinstance(state, dict):
+        state["error_code"] = code
 
 
 def _error_response(
@@ -66,6 +77,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         _log_app_error(request.scope, exc)
+        note_error_code(request.scope, exc.code)
         detail_models = [
             ErrorDetail(
                 field=str(d.get("field", "")),
@@ -79,9 +91,10 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
-        _request: Request,
+        request: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
+        note_error_code(request.scope, "REQUEST_VALIDATION_ERROR")
         details = [
             ErrorDetail(
                 field=".".join(str(p) for p in err.get("loc", [])),
@@ -97,35 +110,43 @@ def register_exception_handlers(app: FastAPI) -> None:
             details,
         )
 
+    @app.exception_handler(PoolTimeoutError)
+    async def pool_timeout_handler(request: Request, exc: PoolTimeoutError) -> JSONResponse:
+        """Every pooled connection stayed busy for `pool_timeout`: the request never reached the
+        database, so it is safe to retry — the same contract as a lock/statement timeout. Before
+        this it fell through to the generic 500 with a traceback per request."""
+        _log_db_error(request.scope, exc, status_code=503)
+        return _database_busy(request.scope)
+
     @app.exception_handler(DBAPIError)
     async def db_error_handler(request: Request, exc: DBAPIError) -> JSONResponse:
         """Safety net for the whole class "client value does not fit the column": a 422, not a
         500. Schemas should still bound their fields; this catches whatever they miss. Any other
         database error keeps the generic 500 envelope."""
-        if is_wait_timeout(exc):
-            # A lock or statement timeout: the work was rolled back cleanly and is safe to retry.
+        if is_wait_timeout(exc) or error_category(exc) in RETRYABLE_DB_CATEGORIES:
+            # A lock/statement timeout, a deadlock victim or a serialization failure: Postgres
+            # rolled the whole transaction back, so it is safe to retry. A *connection* loss is
+            # deliberately not here — the COMMIT may already have landed, so it stays a 500
+            # rather than inviting a retry that could apply a mutation twice.
             _log_db_error(request.scope, exc, status_code=503)
-            response = _error_response(
-                503,
-                "DATABASE_BUSY",
-                "The system is busy right now. Please try again in a moment.",
-            )
-            response.headers["Retry-After"] = "2"
-            return response
+            return _database_busy(request.scope)
         if _is_bad_input(exc):
+            note_error_code(request.scope, "INVALID_VALUE")
             return _error_response(
                 422,
                 "INVALID_VALUE",
                 "A submitted value is out of range or not storable",
             )
         _log_db_error(request.scope, exc, status_code=500)
+        note_error_code(request.scope, "INTERNAL_ERROR")
         return _error_response(500, "INTERNAL_ERROR", "An unexpected error occurred")
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(
-        _request: Request,
+        request: Request,
         exc: StarletteHTTPException,
     ) -> JSONResponse:
+        note_error_code(request.scope, "HTTP_ERROR")
         return _error_response(exc.status_code, "HTTP_ERROR", str(exc.detail))
 
     @app.exception_handler(Exception)
@@ -139,6 +160,17 @@ def register_exception_handlers(app: FastAPI) -> None:
         # middleware (focused tests) still logs and answers with the standard envelope.
         log_unhandled_exception(request.scope, exc, response_started=False)
         return unhandled_error_response()
+
+
+def _database_busy(scope: Mapping[str, Any]) -> JSONResponse:
+    note_error_code(scope, "DATABASE_BUSY")
+    response = _error_response(
+        503,
+        "DATABASE_BUSY",
+        "The system is busy right now. Please try again in a moment.",
+    )
+    response.headers["Retry-After"] = "2"
+    return response
 
 
 def route_for_logging(scope: Mapping[str, Any]) -> str:
@@ -159,7 +191,7 @@ def route_for_logging(scope: Mapping[str, Any]) -> str:
     return redact_path(raw_path)
 
 
-def _tenant_fields() -> dict[str, str | None]:
+def tenant_log_fields() -> dict[str, str | None]:
     tenant = verified_tenant_for_logging()
     if tenant is None:
         return {"company_id": None, "user_id": None}
@@ -176,6 +208,7 @@ def log_unhandled_exception(
     traceback (server-side only; the client gets the generic envelope). When the response had
     already started, the exception is re-raised to the server, which prints its own traceback,
     so this record omits it to avoid logging the same traceback twice."""
+    note_error_code(scope, "INTERNAL_ERROR")
     safe_log(
         _logger.error,
         "unhandled_exception",
@@ -183,10 +216,11 @@ def log_unhandled_exception(
         request_id=current_request_id() or "unknown",
         http_method=scope.get("method"),
         http_path=route_for_logging(scope),
-        exception_type=type(exc).__name__,
-        exception_message=str(exc),
+        # LOG-08 — no `str(exc)` field: the message is already inside the traceback, which goes
+        # through the redaction processor; a separate copy would bypass nothing but add bulk.
+        **safe_error(exc),
         response_started=response_started,
-        **_tenant_fields(),
+        **tenant_log_fields(),
     )
 
 
@@ -214,7 +248,7 @@ def _log_app_error(scope: Mapping[str, Any], exc: AppError) -> None:
         "error_code": exc.code,
         "exception_type": type(exc).__name__,
         "cause_type": type(exc.__cause__).__name__ if exc.__cause__ is not None else None,
-        **_tenant_fields(),
+        **tenant_log_fields(),
     }
     if exc.status_code == 500:
         safe_log(_logger.error, "app_error", exc_info=exc, **fields)
@@ -222,11 +256,14 @@ def _log_app_error(scope: Mapping[str, Any], exc: AppError) -> None:
         safe_log(_logger.warning, "app_error", **fields)
 
 
-def _log_db_error(scope: Mapping[str, Any], exc: DBAPIError, *, status_code: int) -> None:
+def _log_db_error(
+    scope: Mapping[str, Any], exc: DBAPIError | PoolTimeoutError, *, status_code: int
+) -> None:
     """LOG-02 — database failures that become a 5xx. Never `str(exc)` as a field: the engine runs
     with `hide_parameters=True` (`core/db/session.py`), so the traceback's SQL text carries no
     bound values, but the statement itself is still only rendered inside the traceback."""
-    driver = _driver_error(exc)
+    driver = _driver_error(exc) if isinstance(exc, DBAPIError) else None
+    category = error_category(exc)
     fields: dict[str, Any] = {
         "request_id": current_request_id() or "unknown",
         "http_method": scope.get("method"),
@@ -235,10 +272,14 @@ def _log_db_error(scope: Mapping[str, Any], exc: DBAPIError, *, status_code: int
         "exception_type": type(exc).__name__,
         "driver_error": type(driver).__name__ if driver is not None else None,
         "sqlstate": getattr(driver, "sqlstate", None),
-        **_tenant_fields(),
+        "error_category": category,
+        **tenant_log_fields(),
     }
     if status_code == 503:
-        safe_log(_logger.warning, "db_wait_timeout", **fields)
+        # Transient and retryable: one compact WARNING per request, no traceback. The event
+        # name stays `db_wait_timeout` for lock/statement timeouts (existing alert queries).
+        event = "db_wait_timeout" if category == "db_timeout" else category
+        safe_log(_logger.warning, event, **fields)
     else:
         safe_log(_logger.error, "db_error", exc_info=exc, **fields)
 

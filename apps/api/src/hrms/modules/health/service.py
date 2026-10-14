@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_engine
 from hrms.core.errors.handlers import server_meta
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.tenancy.context import current_request_id
 from hrms.shared.pagination import DataEnvelope, ResponseMeta
 
@@ -12,6 +13,20 @@ from hrms.shared.pagination import DataEnvelope, ResponseMeta
 #: fast rather than block the probe indefinitely; neither asyncpg's `connect()` nor redis-py's
 #: `ping()` applies a timeout by default.
 _READINESS_TIMEOUT_SECONDS = 3.0
+
+_logger = get_logger(__name__)
+
+
+def _log_dependency_failure(dependency: str, exc: BaseException) -> None:
+    """LOG-12 — a failing readiness probe used to return 503 with no server-side record of which
+    dependency failed or why. One compact WARNING per failing probe (no traceback); the
+    response body itself stays ok/error only."""
+    safe_log(
+        _logger.warning,
+        "readiness_dependency_failed",
+        dependency=dependency,
+        **safe_error(exc),
+    )
 
 
 class HealthData(BaseModel):
@@ -63,7 +78,8 @@ async def _check_database() -> Literal["ok", "error"]:
         async with asyncio.timeout(_READINESS_TIMEOUT_SECONDS):
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-    except (SQLAlchemyError, TimeoutError):
+    except (SQLAlchemyError, TimeoutError, OSError) as exc:
+        _log_dependency_failure("database", exc)
         return "error"
     else:
         return "ok"
@@ -81,7 +97,8 @@ async def _check_redis() -> Literal["ok", "error"]:
     )
     try:
         await client.ping()
-    except (RedisError, OSError):
+    except (RedisError, OSError) as exc:
+        _log_dependency_failure("redis", exc)
         return "error"
     else:
         return "ok"

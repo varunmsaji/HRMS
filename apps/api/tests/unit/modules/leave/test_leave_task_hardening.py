@@ -91,4 +91,6 @@ def test_a_failed_leave_task_is_logged_with_its_id_and_arguments(
     assert failures[0]["task"] == "leave.accrue_company"
     assert failures[0]["task_id"] == "task-123"
     assert failures[0]["task_args"] == [company]
-    assert "RuntimeError: boom" in failures[0]["error"]
+    # LOG-08 — classified by type, never the raw exception text.
+    assert failures[0]["exception_type"] == "RuntimeError"
+    assert "boom" not in str(failures[0])

@@ -24,7 +24,7 @@ from hrms.core.celery_app import celery_app
 from hrms.core.config.settings import get_settings
 from hrms.core.db.models.identity import Company
 from hrms.core.db.session import session_scope
-from hrms.core.observability.logging import get_logger
+from hrms.core.observability.logging import get_logger, safe_error
 from hrms.shared.business_time import business_today
 
 _logger = get_logger(__name__)
@@ -43,7 +43,7 @@ class _LeaveTask(Task):  # type: ignore[misc]
             task=self.name,
             task_id=task_id,
             task_args=[str(a) for a in args],
-            error=f"{type(exc).__name__}: {str(exc)[:300]}",
+            **safe_error(exc),
         )
 
 
@@ -80,7 +80,7 @@ def _dispatch(task: Any, company_ids: list[UUID], *args: Any) -> int:
                 "leave_task_dispatch_failed",
                 task=getattr(task, "name", str(task)),
                 company_id=str(company_id),
-                error=f"{type(exc).__name__}: {str(exc)[:300]}",
+                **safe_error(exc),
             )
     return queued
 

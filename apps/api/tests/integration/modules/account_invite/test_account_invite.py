@@ -195,6 +195,9 @@ async def test_invite_employee_accept_and_login_success(
                 "EMPLOYEE.VIEW_SENSITIVE",
                 "EMPLOYEE.VIEW_EXPERIENCE",
                 "EMPLOYEE.VIEW_NOMINEE",
+                # Employee documents: the base role reads (SELF-scoped) its own documents; writes
+                # need EMPLOYEE.UPDATE_SENSITIVE, which it does NOT hold (see the absence below).
+                "EMPLOYEE.VIEW_DOCUMENTS",
                 "PAYROLL.PAYSLIP_VIEW_OWN",
                 # Leave decision 12 - the default employee role submits own leave and sees own
                 # balances.

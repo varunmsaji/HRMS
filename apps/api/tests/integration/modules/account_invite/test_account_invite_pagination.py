@@ -9,7 +9,6 @@ test is about pagination mechanics, not invite business logic, which `test_accou
 already covers."""
 
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,7 +18,12 @@ from hrms.core.db.models.identity import User, UserCompany
 from hrms.core.db.session import get_session_factory
 
 from ..organisation.test_registration_flow import VALID_PASSWORD, _cleanup
-from .test_account_invite import _create_employee, _register_tenant, _teardown, _token_from_invite_url
+from .test_account_invite import (
+    _create_employee,
+    _register_tenant,
+    _teardown,
+    _token_from_invite_url,
+)
 
 pytestmark = pytest.mark.asyncio
 

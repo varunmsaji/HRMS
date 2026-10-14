@@ -176,3 +176,48 @@ async def test_conditional_rotation_is_single_winner_under_a_row_lock(
         await a.commit()
         assert await b_attempt is False
         await b.rollback()
+
+
+async def test_normal_rotation_chain_keeps_one_live_token_and_one_session(
+    client: AsyncClient, seeded_db: None
+) -> None:
+    """The happy path the strict policy must not break: each refresh retires exactly the token
+    presented, mints one live successor in the same family and session, and revokes nothing else."""
+    access, token = await _login(client)
+    seen = [token]
+    for _ in range(3):
+        rotated = await _refresh(client, seen[-1])
+        assert rotated.status_code == 200
+        new_access = rotated.json()["data"]["access_token"]
+        access = new_access
+        seen.append(rotated.cookies.get("hrms_refresh"))
+        assert seen[-1] and seen[-1] != seen[-2]
+
+    family, sessions = await _family_rows(seen[-1])
+    assert len(family) == 4
+    assert len({r.token_family_id for r in family}) == 1
+    live = [r for r in family if r.revoked_at is None]
+    assert [r.token_hash for r in live] == [hash_token(seen[-1])]
+    assert all(r.revoked_reason != "REUSE_DETECTED" for r in family)
+    assert all(s.revoked_at is None for s in sessions) and len(sessions) == 1
+    assert (
+        await client.get("/v1/auth/me", headers={"Authorization": f"Bearer {access}"})
+    ).status_code == 200
+    assert (await _refresh(client, seen[-1])).status_code == 200  # the chain continues
+
+
+async def test_concurrent_refresh_race_revokes_only_its_own_family(
+    client: AsyncClient, seeded_db: None
+) -> None:
+    """The simultaneous-tab race ends in a revoked family (documented policy) — but a second,
+    independent login of the same account must be completely unaffected."""
+    _, racing = await _login(client)
+    _, bystander = await _login(client)
+
+    results = await asyncio.gather(_refresh(client, racing), _refresh(client, racing))
+    assert sorted(r.status_code for r in results) == [200, 401]
+
+    other_family, other_sessions = await _family_rows(bystander)
+    assert all(r.revoked_at is None for r in other_family)
+    assert all(s.revoked_at is None for s in other_sessions)
+    assert (await _refresh(client, bystander)).status_code == 200

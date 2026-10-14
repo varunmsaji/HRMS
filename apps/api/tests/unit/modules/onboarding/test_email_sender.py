@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import aiosmtplib
 import httpx
 import pytest
+import structlog
 from pydantic import ValidationError
 from structlog.testing import capture_logs
 
@@ -20,10 +21,21 @@ from hrms.modules.onboarding.email_sender import (
     MailtrapEmailSender,
     SmtpEmailSender,
     get_email_sender,
+    log_email_failure,
 )
 
 _SMTP_SECRET_MARKER = "s3cr3t-smtp-password-marker-zzz"
 _MAILTRAP_TOKEN_MARKER = "s3cr3t-mailtrap-token-marker-zzz"
+
+
+@pytest.fixture(autouse=True)
+def _uncached_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`cache_logger_on_first_use` lets a module-level logger keep whatever pipeline was active
+    when an earlier test first used it, which `capture_logs()` cannot intercept."""
+    monkeypatch.setattr(
+        "hrms.modules.onboarding.email_sender.logger",
+        structlog.get_logger("hrms.modules.onboarding.email_sender"),
+    )
 
 
 def _smtp_settings(**overrides: object) -> Settings:
@@ -320,22 +332,29 @@ async def test_smtp_send_failure_does_not_log_the_email_body(
     sender = SmtpEmailSender(settings)
 
     with capture_logs() as logs:
-        with pytest.raises(EmailDeliveryError):
+        with pytest.raises(EmailDeliveryError) as exc_info:
             await sender.send(
                 to="alice@example.com",
                 subject="Verify your email",
                 html_body=f"<p><a href='{token_marker}'>Verify</a></p>",
                 text_body=token_marker,
             )
+        # Mission Phase 6 — the sender classifies; the caller logs once with the email's kind.
+        log_email_failure("email_verification", exc_info.value, user_id="u-1")
 
     for log in logs:
         assert token_marker not in repr(log)
+        assert "alice@example.com" not in repr(log)
 
-    failure_logs = [log for log in logs if log.get("event") == "onboarding_email_smtp_send_failed"]
-    assert len(failure_logs) == 1
-    assert failure_logs[0]["to"] == "alice@example.com"
-    assert failure_logs[0]["subject"] == "Verify your email"
-    assert "error_type" in failure_logs[0]
+    (failure,) = [log for log in logs if log.get("event") == "email.delivery.failed"]
+    assert failure["log_level"] == "warning"
+    assert failure["email_kind"] == "email_verification"
+    assert failure["provider"] == "smtp"
+    assert failure["failure_class"] == "rejected"
+    assert failure["retryable"] is False
+    assert failure["outcome"] == "not_sent"
+    assert failure["error_type"] == "SMTPRecipientsRefused"
+    assert "to" not in failure and "subject" not in failure
 
 
 # --- Email sending (Mailtrap transport mocked) -------------------------------------------
@@ -438,25 +457,24 @@ async def test_mailtrap_send_failure_does_not_log_the_email_body(
     sender = MailtrapEmailSender(settings)
 
     with capture_logs() as logs:
-        with pytest.raises(EmailDeliveryError):
+        with pytest.raises(EmailDeliveryError) as exc_info:
             await sender.send(
                 to="alice@example.com",
                 subject="Verify your email",
                 html_body=f"<p><a href='{token_marker}'>Verify</a></p>",
                 text_body=token_marker,
             )
+        log_email_failure("email_verification", exc_info.value, user_id="u-1")
 
     for log in logs:
         assert token_marker not in repr(log)
+        assert "alice@example.com" not in repr(log)
 
-    failure_logs = [
-        log for log in logs if log.get("event") == "onboarding_email_mailtrap_send_failed"
-    ]
-    assert len(failure_logs) == 1
-    assert failure_logs[0]["to"] == "alice@example.com"
-    assert failure_logs[0]["subject"] == "Verify your email"
-    assert failure_logs[0]["status_code"] == 422
-    assert "error_type" in failure_logs[0]
+    (failure,) = [log for log in logs if log.get("event") == "email.delivery.failed"]
+    assert failure["provider"] == "mailtrap"
+    assert failure["status_code"] == 422
+    assert failure["failure_class"] == "rejected"
+    assert failure["error_type"] == "HTTPStatusError"
 
 
 # --- Hostinger Mail API ------------------------------------------------------------------

@@ -19,10 +19,16 @@ the same task as everything inside it). It:
    Now the exception is logged exactly once, with its traceback, and the standard 500 envelope is
    sent through the *same* CORS and security-header middleware classes the app uses, configured
    identically. It is not re-raised, so uvicorn does not print a second traceback.
-5. Restores the previous context only after the response is complete.
+5. Emits exactly one `http_request` access event per request (method, route *template*, status,
+   duration, the handled error code, and the membership-verified company/user), still inside the
+   request's log context. This replaces the plaintext gunicorn/uvicorn access line, which had no
+   request id, duration or route template. Successful health probes are not logged (they would
+   otherwise dominate the bounded Docker log).
+6. Restores the previous context only after the response is complete.
 """
 
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -31,7 +37,13 @@ import structlog
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from hrms.core.errors.handlers import log_unhandled_exception, unhandled_error_response
+from hrms.core.errors.handlers import (
+    log_unhandled_exception,
+    route_for_logging,
+    tenant_log_fields,
+    unhandled_error_response,
+)
+from hrms.core.observability.logging import get_logger, safe_log
 from hrms.core.security_headers import SecurityHeadersMiddleware
 from hrms.core.tenancy.context import (
     reset_request_context,
@@ -46,6 +58,11 @@ from hrms.core.tenancy.context import (
 #: whitespace, control characters, quotes, `/`, and anything non-ASCII.
 REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
 REQUEST_ID_HEADER = "x-request-id"
+
+#: Liveness/readiness probes hit these every few seconds; a successful probe is not logged.
+_QUIET_PATHS = frozenset({"/health", "/health/live", "/health/ready"})
+
+_logger = get_logger("hrms.http")
 
 
 def resolve_request_id(raw: str | None) -> str:
@@ -79,11 +96,14 @@ class RequestContextMiddleware:
         scope.setdefault("state", {})["request_id"] = request_id
         log_tokens = structlog.contextvars.bind_contextvars(request_id=request_id)
         response_started = False
+        status_code = 500
+        started = time.perf_counter()
 
         async def send_with_request_id(message: Message) -> None:
-            nonlocal response_started
+            nonlocal response_started, status_code
             if message["type"] == "http.response.start":
                 response_started = True
+                status_code = int(message.get("status", 500))
                 headers = [
                     (k, v) for k, v in message.get("headers", []) if k.lower() != b"x-request-id"
                 ]
@@ -101,8 +121,25 @@ class RequestContextMiddleware:
                 raise
             await self._send_error(scope, receive, send_with_request_id)
         finally:
+            self._log_access(scope, status_code, started)
             structlog.contextvars.reset_contextvars(**log_tokens)
             reset_request_context(snapshot)
+
+    @staticmethod
+    def _log_access(scope: Scope, status_code: int, started: float) -> None:
+        if status_code < 400 and scope.get("path") in _QUIET_PATHS:
+            return
+        state = scope.get("state") or {}
+        safe_log(
+            _logger.info,
+            "http_request",
+            http_method=scope.get("method"),
+            http_path=route_for_logging(scope),
+            status_code=status_code,
+            duration_ms=round((time.perf_counter() - started) * 1000, 1),
+            error_code=state.get("error_code") if isinstance(state, dict) else None,
+            **tenant_log_fields(),
+        )
 
     async def _send_error(self, scope: Scope, receive: Receive, send: Send) -> None:
         response = unhandled_error_response()
