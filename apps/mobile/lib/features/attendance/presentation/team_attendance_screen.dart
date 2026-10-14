@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
@@ -128,6 +129,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
       appBar: AppBar(
         title: const Text('Team attendance'),
         actions: [
+          IconButton(tooltip: 'Insights', icon: const Icon(Icons.insights_outlined), onPressed: () => context.push('/app/attendance-insights')),
           if (canPunch)
             IconButton(
               tooltip: 'Record punch',

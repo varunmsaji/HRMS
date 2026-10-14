@@ -9,6 +9,7 @@ import '../../features/auth/presentation/register_screen.dart';
 import '../../features/auth/presentation/reset_password_screen.dart';
 import '../../features/auth/presentation/verify_email_screen.dart';
 import '../../features/attendance/presentation/attendance_periods_screen.dart';
+import '../../features/attendance/presentation/attendance_insights_screen.dart';
 import '../../features/attendance/presentation/attendance_self_screen.dart';
 import '../../features/attendance/presentation/policy_assignments_screen.dart';
 import '../../features/attendance/presentation/policy_resolution_screen.dart';
@@ -123,6 +124,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/regularizations', builder: (context, state) => RequestListScreen(config: regularizationConfig)),
       GoRoute(path: '/app/overtime', builder: (context, state) => RequestListScreen(config: overtimeConfig)),
       GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
+      GoRoute(path: '/app/attendance-insights', builder: (context, state) => const AttendanceInsightsScreen()),
       GoRoute(path: '/app/rosters', builder: (context, state) => const RostersScreen()),
       GoRoute(path: '/app/roster-calendar', builder: (context, state) => const RosterCalendarScreen()),
       GoRoute(path: '/app/attendance-periods', builder: (context, state) => const AttendancePeriodsScreen()),
