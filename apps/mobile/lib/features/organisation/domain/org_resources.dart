@@ -1,8 +1,10 @@
+import 'package:flutter/widgets.dart' show Column;
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/resource/resource_config.dart';
 import '../../../core/resource/sub_resource_section.dart';
 import '../../../core/time.dart';
+import '../presentation/day_type_lookup.dart';
 
 /// Resource configs for the organisation module — each spec mirrors a `*Create`/`*Update` schema
 /// in `apps/api/.../organisation/schemas.py` and the matching web form.
@@ -205,17 +207,20 @@ final workCalendarResource = ResourceConfig(
   rowTitle: (r) => r['name'] as String,
   rowSubtitle: (r) => r['code'] as String?,
   manage: orgCalendarManage,
-  detailExtras: (context, row, reload) => SubResourceSection(
-    title: 'Exceptions',
-    singular: 'exception',
-    listPath: '/work-calendars/${row['id']}/exceptions',
-    itemPath: (e) => '/calendar-exceptions/${e['id']}',
-    spec: calendarExceptionSpec,
-    manage: orgCalendarManage,
-    rowTitle: (e) => '${e['exception_date']} · ${exceptionTypeLabels[e['exception_type']] ?? e['exception_type']}',
-    rowSubtitle: (e) => _join([e['name'], e['reason']]),
-    emptyLabel: 'No exceptions yet.',
-  ),
+  detailExtras: (context, row, reload) => Column(children: [
+    SubResourceSection(
+      title: 'Exceptions',
+      singular: 'exception',
+      listPath: '/work-calendars/${row['id']}/exceptions',
+      itemPath: (e) => '/calendar-exceptions/${e['id']}',
+      spec: calendarExceptionSpec,
+      manage: orgCalendarManage,
+      rowTitle: (e) => '${e['exception_date']} · ${exceptionTypeLabels[e['exception_type']] ?? e['exception_type']}',
+      rowSubtitle: (e) => _join([e['name'], e['reason']]),
+      emptyLabel: 'No exceptions yet.',
+    ),
+    DayTypeLookup(calendarId: row['id'] as String),
+  ]),
 );
 
 // ---- weekly-off patterns ----------------------------------------------------------------------

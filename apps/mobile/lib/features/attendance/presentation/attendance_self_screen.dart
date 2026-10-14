@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
+import 'attendance_month_card.dart';
 import 'attendance_widgets.dart';
 import 'face_punch_card.dart';
 
@@ -58,15 +60,30 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
     }
   }
 
+  /// The idempotency key of a punch whose outcome is unknown (no response). A retry of the
+  /// *same* direction reuses it, so a punch that did reach the server is not recorded twice.
+  ({String direction, String key})? _unconfirmedPunch;
+
   Future<void> _punch(String direction) async {
     setState(() => _punching = true);
+    final pending = _unconfirmedPunch;
+    final key =
+        pending != null && pending.direction == direction
+            ? pending.key
+            : ApiClient.newIdempotencyKey();
     try {
-      await ref.read(attendanceRepositoryProvider).punchMe(direction: direction);
+      await ref.read(attendanceRepositoryProvider).punchMe(direction: direction, idempotencyKey: key);
+      _unconfirmedPunch = null;
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(direction == 'IN' ? 'Punched in.' : 'Punched out.')));
       _load();
     } catch (error) {
+      // No response: keep the key for a retry. Any real answer settles this attempt.
+      _unconfirmedPunch =
+          error is ApiError && error.status == 0
+              ? (direction: direction, key: key)
+              : null;
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is ApiError ? error.message : 'Something went wrong.')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(describeApiError(error))));
       }
     } finally {
       if (mounted) setState(() => _punching = false);
@@ -120,6 +137,10 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
                 ),
               ),
             ]),
+            const SizedBox(height: 24),
+            Text('This month', style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 8),
+            AttendanceMonthCard(employeeId: employeeId, zone: ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata'),
             const SizedBox(height: 24),
             Text('Last 14 days', style: Theme.of(context).textTheme.labelMedium),
             const SizedBox(height: 8),

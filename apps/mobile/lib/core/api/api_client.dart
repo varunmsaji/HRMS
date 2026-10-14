@@ -4,10 +4,12 @@ import 'dart:math';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../auth/auth_types.dart';
 import '../auth/token_storage.dart';
+import '../diagnostics/app_diagnostics.dart';
 import 'api_error.dart';
 import 'envelope.dart';
 
@@ -19,6 +21,14 @@ const _apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: 'http://localhost:8000',
 );
+
+/// Without explicit timeouts dio waits forever, so a punch on a dead network used to spin
+/// indefinitely (LOG-15). Uploads and file downloads get longer windows. A timeout is reported,
+/// never retried automatically.
+const connectTimeout = Duration(seconds: 10);
+const receiveTimeout = Duration(seconds: 30);
+const sendTimeout = Duration(seconds: 60);
+const transferTimeout = Duration(seconds: 120);
 
 /// 1-indexed `page`/`per_page` query params for a paginated list endpoint (API-01).
 class PageQuery {
@@ -47,6 +57,8 @@ class ApiClient {
   ApiClient._(this._dio, this._cookieJar);
 
   final Dio _dio;
+  // Held for the client's lifetime; the `CookieManager` interceptor does the reads and writes.
+  // ignore: unused_field
   final CookieJar _cookieJar;
   Completer<bool>? _refreshInFlight;
 
@@ -56,11 +68,22 @@ class ApiClient {
     if (_instance != null) return _instance!;
     final dir = await getApplicationSupportDirectory();
     final cookieJar = PersistCookieJar(storage: FileStorage('${dir.path}/.cookies/'));
-    final dio = Dio(BaseOptions(baseUrl: '$_apiBaseUrl/v1'));
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: '$_apiBaseUrl/v1',
+        connectTimeout: connectTimeout,
+        receiveTimeout: receiveTimeout,
+        sendTimeout: sendTimeout,
+      ),
+    );
     dio.interceptors.add(CookieManager(cookieJar));
     _instance = ApiClient._(dio, cookieJar);
     return _instance!;
   }
+
+  /// A client over a caller-supplied [Dio] (tests use a stub adapter). No cookie persistence.
+  @visibleForTesting
+  factory ApiClient.withDio(Dio dio) => ApiClient._(dio, CookieJar());
 
   /// A fresh `Idempotency-Key` value. Pass the same one when retrying a request after a network
   /// failure so the server runs the mutation once; use a new one for a new request.
@@ -91,6 +114,9 @@ class ApiClient {
       'X-Request-Id': _requestId(),
       ...?headers,
     };
+    // The id this attempt is logged under server-side — kept for errors without an envelope.
+    final sentRequestId = requestHeaders['X-Request-Id'];
+    final isTransfer = body is FormData Function() || responseType == ResponseType.bytes;
     if (ifMatch != null) requestHeaders['If-Match'] = ifMatch;
     if (session != null) {
       requestHeaders['Authorization'] = 'Bearer ${session.accessToken}';
@@ -104,10 +130,26 @@ class ApiClient {
         // A FormData can only be sent once, so multipart callers pass a builder and the
         // 401-refresh retry gets a fresh one.
         data: body is FormData Function() ? body() : body,
-        options: Options(method: method, headers: requestHeaders, responseType: responseType),
+        options: Options(
+          method: method,
+          headers: requestHeaders,
+          responseType: responseType,
+          sendTimeout: isTransfer ? transferTimeout : null,
+          receiveTimeout: isTransfer ? transferTimeout : null,
+        ),
       );
     } on DioException catch (e) {
-      if (e.response == null) throw NetworkError();
+      if (e.response == null) {
+        final error = switch (e.type) {
+          // Connecting never succeeded, so nothing reached the server.
+          DioExceptionType.connectionTimeout => NetworkError(requestId: sentRequestId),
+          DioExceptionType.sendTimeout || DioExceptionType.receiveTimeout =>
+            NetworkError.timeout(isWrite: method != 'GET', requestId: sentRequestId),
+          _ => NetworkError(requestId: sentRequestId),
+        };
+        AppDiagnostics.instance.recordFailedRequest(error);
+        throw error;
+      }
       response = e.response!;
     }
 
@@ -126,15 +168,23 @@ class ApiClient {
 
     if (!ok) {
       final errorPayload = payload is Map<String, dynamic> ? payload['error'] as Map<String, dynamic>? : null;
-      throw ApiError(
+      // Proxy gateway failures arrive without the API's JSON envelope.
+      final unavailable = errorPayload == null && const {502, 503, 504}.contains(response.statusCode);
+      final error = ApiError(
         status: response.statusCode ?? 0,
-        code: errorPayload?['code'] as String? ?? 'UNKNOWN_ERROR',
-        message: errorPayload?['message'] as String? ?? 'Request failed with status ${response.statusCode}',
+        code: errorPayload?['code'] as String? ?? (unavailable ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN_ERROR'),
+        message: errorPayload?['message'] as String? ??
+            (unavailable
+                ? 'The service is temporarily unavailable. Please try again in a moment.'
+                : 'Request failed with status ${response.statusCode}'),
         details: (errorPayload?['details'] as List? ?? [])
             .map((d) => ErrorDetail.fromJson(d as Map<String, dynamic>))
             .toList(),
-        requestId: errorPayload?['request_id'] as String?,
+        // The envelope's id, else the API's response header, else the id this client sent.
+        requestId: errorPayload?['request_id'] as String? ?? response.headers.value('x-request-id') ?? sentRequestId,
       );
+      AppDiagnostics.instance.recordFailedRequest(error);
+      throw error;
     }
 
     if (parseEnvelope != null) {

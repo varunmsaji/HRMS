@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../data/attendance_repository.dart';
 import 'face_enrollment_screen.dart';
@@ -77,6 +78,10 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
     await _load();
   }
 
+  /// The key of a face punch whose outcome is unknown (no response). A retry of the same
+  /// direction reuses it, so a punch the server did record is returned, not recorded twice.
+  ({String direction, String key})? _unconfirmedPunch;
+
   Future<void> _punch(String direction) async {
     final messenger = ScaffoldMessenger.of(context);
     final List<int>? photo;
@@ -91,14 +96,19 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
     if (photo == null || !mounted) return;
 
     setState(() => _verifyingDirection = direction);
+    final pending = _unconfirmedPunch;
+    final key = pending != null && pending.direction == direction ? pending.key : ApiClient.newIdempotencyKey();
     try {
-      final result = await ref.read(attendanceRepositoryProvider).facePunchMe(direction: direction, photoJpeg: photo);
+      final result = await ref.read(attendanceRepositoryProvider).facePunchMe(direction: direction, photoJpeg: photo, idempotencyKey: key);
+      _unconfirmedPunch = null;
       final label = result.direction == 'IN' ? 'Punched in' : 'Punched out';
       messenger.showSnackBar(SnackBar(
         content: Text('$label · face verified (${(result.similarity * 100).round()}% match)'),
       ));
       widget.onPunched?.call();
     } catch (error) {
+      // No response: keep the key for a retry. Any real answer settles this attempt.
+      _unconfirmedPunch = error is ApiError && error.status == 0 ? (direction: direction, key: key) : null;
       messenger.showSnackBar(SnackBar(content: Text(describeApiError(error))));
       if (error is ApiError && error.code == 'FACE_NOT_ENROLLED') _load();
     } finally {

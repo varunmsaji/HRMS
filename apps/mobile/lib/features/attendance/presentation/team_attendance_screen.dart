@@ -12,6 +12,7 @@ import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/punch_form.dart';
 import 'attendance_day_detail_screen.dart';
+import 'attendance_summary.dart';
 import 'attendance_widgets.dart';
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
@@ -51,6 +52,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   late String _date;
   String _employeeId = '';
   String _status = '';
+  String? _bucket;
   final _exceptions = <String>{};
   bool _loading = true;
   ApiError? _error;
@@ -84,7 +86,6 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
             employeeId: _employeeId.isEmpty ? null : _employeeId,
             dateFrom: _date,
             dateTo: _date,
-            attendanceStatus: _status.isEmpty ? null : _status,
           );
       if (mounted) setState(() => _days = days);
     } catch (e) {
@@ -119,11 +120,10 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canPunch = permissions.contains(attendancePunchOnBehalf);
-    final visible = _days.where((d) => _exceptions.every((k) => _matches(d, k))).toList();
-    final counts = <String, int>{};
-    for (final d in _days) {
-      counts[d.attendanceStatus] = (counts[d.attendanceStatus] ?? 0) + 1;
-    }
+    final visible = _days
+        .where((d) => (_status.isEmpty || d.attendanceStatus == _status) && (_bucket == null || attendanceBucketOf(d) == _bucket) && _exceptions.every((k) => _matches(d, k)))
+        .toList();
+    final summary = AttendanceSummary.compute(_days);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Team attendance'),
@@ -153,10 +153,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                   isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Status', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
                   items: [const DropdownMenuItem(value: '', child: Text('All')), for (final s in attendanceStatuses) DropdownMenuItem(value: s, child: Text(s.replaceAll('_', ' ')))],
-                  onChanged: (v) {
-                    setState(() => _status = v ?? '');
-                    _load();
-                  },
+                  onChanged: (v) => setState(() => _status = v ?? ''),
                 ),
               ),
             ]),
@@ -179,14 +176,6 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                   FilterChip(label: Text(label), selected: _exceptions.contains(key), onSelected: (v) => setState(() => v ? _exceptions.add(key) : _exceptions.remove(key))),
               ]),
             ),
-            if (counts.isNotEmpty)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(counts.entries.map((e) => '${e.key.replaceAll('_', ' ').toLowerCase()} ${e.value}').join(' · '), style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                ),
-              ),
           ]),
         ),
         Expanded(
@@ -208,6 +197,8 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                       child: ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
+                          if (_days.isNotEmpty) AttendanceSummaryCard(summary: summary, selectedBucket: _bucket, onBucketTap: (b) => setState(() => _bucket = b)),
+                          const SizedBox(height: 8),
                           if (visible.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No attendance days match these filters.'))),
                           for (final d in visible)
                             AttendanceDayTile(

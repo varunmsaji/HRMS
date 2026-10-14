@@ -17,13 +17,15 @@ class _FakeRepository implements AttendanceRepository {
   final Future<FacePunchResult> Function() respond;
   final FaceEnrollmentStatus status;
   final calls = <({String direction, List<int> photo})>[];
+  final keys = <String?>[];
 
   @override
   Future<FaceEnrollmentStatus> getMyFaceEnrollment() async => status;
 
   @override
-  Future<FacePunchResult> facePunchMe({required String direction, required List<int> photoJpeg}) {
+  Future<FacePunchResult> facePunchMe({required String direction, required List<int> photoJpeg, String? idempotencyKey}) {
     calls.add((direction: direction, photo: photoJpeg));
+    keys.add(idempotencyKey);
     return respond();
   }
 
@@ -73,6 +75,40 @@ void main() {
     expect(repository.calls.single.photo, _selfie);
     expect(find.text('Punched in · face verified (97% match)'), findsOneWidget);
     expect(refreshed, 1);
+  });
+
+  testWidgets('a retry after a no-response failure reuses the key; a real answer settles it', (tester) async {
+    final outcomes = <Future<FacePunchResult> Function()>[
+      () async => throw ApiError(status: 0, code: 'TIMEOUT', message: 'timed out'),
+      () async => throw ApiError(status: 0, code: 'NETWORK_ERROR', message: 'offline'),
+      () async => throw ApiError(status: 422, code: 'FACE_NOT_MATCHED', message: 'no match'),
+      () async => _result('IN'),
+    ];
+    final repository = _FakeRepository(() => outcomes.removeAt(0)());
+    await _pump(tester, repository: repository, capture: () async => _selfie);
+
+    for (var i = 0; i < 4; i++) {
+      await tester.tap(find.text('Face punch in'));
+      await tester.pumpAndSettle();
+    }
+
+    final keys = repository.keys;
+    expect(keys.every((k) => k != null && k.isNotEmpty), isTrue);
+    expect(keys[1], keys[0], reason: 'timeout -> retry resends the same key');
+    expect(keys[2], keys[1], reason: 'network failure -> retry resends the same key');
+    expect(keys[3], isNot(keys[2]), reason: 'a real server answer (422) ends the unconfirmed attempt');
+  });
+
+  testWidgets('switching direction after an unconfirmed punch uses a new key', (tester) async {
+    final repository = _FakeRepository(() async => throw ApiError(status: 0, code: 'TIMEOUT', message: 'timed out'));
+    await _pump(tester, repository: repository, capture: () async => _selfie);
+
+    await tester.tap(find.text('Face punch in'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Face punch out'));
+    await tester.pumpAndSettle();
+
+    expect(repository.keys[1], isNot(repository.keys[0]));
   });
 
   testWidgets('cancelling the camera sends nothing', (tester) async {

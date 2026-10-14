@@ -301,37 +301,58 @@ class AttendanceRepository {
   // Shift rosters
   // Attendance periods
   // Attendance days + punches
-  Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) =>
-      _client
-          .getList(
-            '/attendance/days',
-            query: PageQuery(perPage: 100),
-            filters: {
-              if (employeeId != null) 'employee_id': employeeId,
-              'date_from': dateFrom,
-              'date_to': dateTo,
-              if (attendanceStatus != null) 'attendance_status': attendanceStatus,
-            },
-            parseItem: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>),
-          )
-          .then((e) => e.data);
-  Future<void> punchMe({required String direction, String? reference}) => _client.post(
+  /// Pages through every result (capped at 50 pages) so day-level summaries are not truncated.
+  Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async {
+    final all = <AttendanceDay>[];
+    for (var page = 1; page <= 50; page++) {
+      final env = await _client.getList(
+        '/attendance/days',
+        query: PageQuery(page: page, perPage: 100),
+        filters: {
+          if (employeeId != null) 'employee_id': employeeId,
+          'date_from': dateFrom,
+          'date_to': dateTo,
+          if (attendanceStatus != null) 'attendance_status': attendanceStatus,
+        },
+        parseItem: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>),
+      );
+      all.addAll(env.data);
+      if (env.pagination == null || !env.pagination!.hasNext) break;
+    }
+    return all;
+  }
+
+  /// [idempotencyKey]: pass the same key when retrying after a failure with no response
+  /// (timeout, network) — the server then replays the original punch instead of recording a
+  /// second one. Use a new key for a new punch.
+  Future<void> punchMe({required String direction, String? reference, String? idempotencyKey}) => _client.post(
         '/attendance/punches/me',
-        body: {'direction': direction, if (reference != null) 'reference': reference},
+        body: {
+          'direction': direction,
+          if (reference != null) 'reference': reference,
+          'idempotency_key': idempotencyKey ?? ApiClient.newIdempotencyKey(),
+        },
         parse: (_) {},
       );
 
   /// Self punch gated on a live selfie: the server checks liveness and matches it against
   /// the caller's enrolled face before recording a punch (server-timed, source `FACE`).
-  Future<FacePunchResult> facePunchMe({required String direction, required List<int> photoJpeg}) =>
-      _client.postMultipart(
-        '/attendance/face-punches/me',
-        buildForm: () => FormData.fromMap({
-          'direction': direction,
-          'photo': MultipartFile.fromBytes(photoJpeg, filename: 'selfie.jpg', contentType: DioMediaType('image', 'jpeg')),
-        }),
-        parse: (d) => FacePunchResult.fromJson(d as Map<String, dynamic>),
-      );
+  ///
+  /// [idempotencyKey]: pass the same key when retrying after a failure with no response (the
+  /// punch may have been recorded); the server then returns the original punch instead of a
+  /// second one. A fresh key is generated when omitted.
+  Future<FacePunchResult> facePunchMe({required String direction, required List<int> photoJpeg, String? idempotencyKey}) {
+    final key = idempotencyKey ?? ApiClient.newIdempotencyKey();
+    return _client.postMultipart(
+      '/attendance/face-punches/me',
+      buildForm: () => FormData.fromMap({
+        'direction': direction,
+        'idempotency_key': key,
+        'photo': MultipartFile.fromBytes(photoJpeg, filename: 'selfie.jpg', contentType: DioMediaType('image', 'jpeg')),
+      }),
+      parse: (d) => FacePunchResult.fromJson(d as Map<String, dynamic>),
+    );
+  }
 
   Future<AttendanceDay> getAttendanceDay(String id) =>
       _client.get('/attendance/days/$id', parse: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>));

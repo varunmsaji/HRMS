@@ -59,7 +59,7 @@ class _FakeLeave implements LeaveRepository {
   Future<LeaveApplication> getLeaveApplication(String id) async => LeaveApplication.fromJson(apps.firstWhere((a) => a['id'] == id));
 
   @override
-  Future<LeaveApplication> submitLeaveApplication(Map<String, dynamic> body) async {
+  Future<LeaveApplication> submitLeaveApplication(Map<String, dynamic> body, {String? idempotencyKey}) async {
     calls.add('submit:$body');
     return LeaveApplication.fromJson(apps.first);
   }

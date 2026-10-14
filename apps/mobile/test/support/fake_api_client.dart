@@ -39,7 +39,7 @@ class FakeApiClient implements ApiClient {
   }
 
   @override
-  Future<T> post<T>(String path, {dynamic body, required T Function(dynamic) parse, bool authenticated = true, String? ifMatch}) =>
+  Future<T> post<T>(String path, {dynamic body, required T Function(dynamic) parse, bool authenticated = true, String? ifMatch, Map<String, String>? headers}) =>
       _write('POST', path, body, ifMatch, parse);
 
   @override

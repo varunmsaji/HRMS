@@ -197,13 +197,16 @@ void main() {
       expect(find.byTooltip('Record punch'), findsOneWidget);
     });
 
-    testWidgets('the status filter is sent to the server', (tester) async {
+    testWidgets('the status filter narrows the list locally, keeping the day summary whole', (tester) async {
       final repo = await pump(tester, const []);
       await tester.tap(find.byType(DropdownButtonFormField<String>).first);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('ABSENT').last);
+      await tester.tap(find.text('PRESENT').last);
       await tester.pumpAndSettle();
-      expect(repo.calls.last, endsWith(':ABSENT'));
+      expect(repo.calls.last, endsWith(':*'));
+      expect(find.textContaining('Ravi Iyer (E-2)'), findsOneWidget);
+      expect(find.textContaining('Asha Rao (E-1)'), findsNothing);
+      expect(find.text('Status distribution'), findsOneWidget);
     });
   });
 
