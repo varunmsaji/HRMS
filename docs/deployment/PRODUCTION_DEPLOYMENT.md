@@ -301,8 +301,15 @@ API, worker and beat emit one JSON object per line (via `structlog`), each tagge
 `"service": "api" | "worker" | "beat"`; worker and beat route Celery's own records (task received /
 succeeded / failed, including the failed task's traceback) through the same JSON format. The only
 plain-text lines are Celery's startup banner and shutdown notice, which Celery prints directly
-rather than logging. The API's own access line (gunicorn/uvicorn) stays in uvicorn's plain-text
-format. Nginx emits JSON access logs (`infra/nginx/nginx.conf`'s `json_combined` format).
+rather than logging. The API writes one structured `http_request` event per request (method, route
+template, status, `duration_ms`, the handled `error_code`, and the membership-verified
+`company_id`/`user_id`); gunicorn's plain-text access line is no longer written (the image's `CMD`
+has no `--access-logfile`). Successful `/health*` probes are not logged. Every string field passes
+a redaction processor (tokens, JWTs, presigned signatures, connection-string passwords, email
+addresses and constraint-violation values are masked). Nginx emits JSON access logs
+(`infra/nginx/nginx.conf`'s `json_combined` format). The event catalogue and the alert/runbook
+set are in `docs/operations/LOGGING_AND_OBSERVABILITY.md` and
+`docs/operations/ALERTS_AND_RUNBOOKS.md`.
 
 **Finding everything for one request.** Every API response carries an `X-Request-Id` header, and
 every error body carries the same value as `error.request_id`. Nginx generates the id when the
@@ -338,9 +345,10 @@ docker image prune -f            # remove dangling (unreferenced) images after a
 du -sh /opt/hrms/backups/*       # backup directory sizes
 ```
 
-Set up a disk-usage alert (even a simple cron + `df` threshold check + email/webhook) — this
-repository does not include one; it is flagged as a deferred item in the Phase 3B audit report, not
-silently assumed to be someone else's problem.
+Disk usage is one of the checks in `infra/monitoring/hrms_monitor.sh` (read-only host monitor;
+cron it every 5 minutes and give it an `HRMS_ALERT_COMMAND` — see
+`docs/operations/ALERTS_AND_RUNBOOKS.md`). No alert destination is configured by this repository;
+choosing one is an open operational decision.
 
 ## 17. Common failure cases (found and fixed during this phase — read before re-debugging them)
 

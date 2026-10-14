@@ -351,6 +351,32 @@ jobs:
           echo "### Frontend — Web job" >> "$GITHUB_STEP_SUMMARY"
           echo "ESLint (non-blocking, see workflow comment), TypeScript, Vitest, production build." >> "$GITHUB_STEP_SUMMARY"
 
+  mobile:
+    # Mission Phase 14 — the Flutter suite (including the API error-handling, timeout and
+    # diagnostics tests) was never run in CI. `test/live` is opt-in and skips without its env.
+    name: Mobile — analyze, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.29.2"
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Tests
+        run: flutter test
+
   security-scan:
     name: Security — secret scanning
     runs-on: ubuntu-latest
