@@ -106,7 +106,7 @@ export interface DashboardFilters {
   scope: "" | "range";
   shiftId: string;
   employeeStatus: string;
-  /** Scopes the attendance-period panels only — attendance days carry no legal entity. */
+  /** Scopes the attendance-period panels only — attendance days carry no company. */
   legalEntityId: string;
 }
 

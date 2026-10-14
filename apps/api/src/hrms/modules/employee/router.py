@@ -27,7 +27,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
@@ -37,11 +37,13 @@ from hrms.core.rbac.service import RbacService
 from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
+from hrms.core.uploads import read_upload_bounded
 from hrms.modules.employee.dependencies import (
     get_employee_assignment_service,
     get_employee_bank_service,
     get_employee_compensation_service,
     get_employee_dependent_service,
+    get_employee_document_service,
     get_employee_education_service,
     get_employee_experience_service,
     get_employee_service,
@@ -61,12 +63,14 @@ from hrms.modules.employee.permissions import (
     EMPLOYEE_VIEW_ALL,
     EMPLOYEE_VIEW_BANKING,
     EMPLOYEE_VIEW_COMPENSATION,
+    EMPLOYEE_VIEW_DOCUMENTS,
     EMPLOYEE_VIEW_EXPERIENCE,
     EMPLOYEE_VIEW_NOMINEE,
     EMPLOYEE_VIEW_SENSITIVE,
     EMPLOYEE_VIEW_STATUTORY,
 )
 from hrms.modules.employee.schemas import (
+    EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES,
     AssignmentCreate,
     AssignmentRead,
     BankCreate,
@@ -77,6 +81,9 @@ from hrms.modules.employee.schemas import (
     EmployeeCreate,
     EmployeeDependentCreate,
     EmployeeDependentRead,
+    EmployeeDocumentRead,
+    EmployeeDocumentReviewRequest,
+    EmployeeDocumentWithUrlRead,
     EmployeeEducationCreate,
     EmployeeEducationRead,
     EmployeeExperienceCreate,
@@ -97,6 +104,7 @@ from hrms.modules.employee.service import (
     EmployeeBankService,
     EmployeeCompensationService,
     EmployeeDependentService,
+    EmployeeDocumentService,
     EmployeeEducationService,
     EmployeeExperienceService,
     EmployeeService,
@@ -1137,3 +1145,118 @@ async def delete_dependent(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
+
+
+# --- Employee Document (post-onboarding document management) --------------------------------
+#
+# An employee's ongoing document store, independent of onboarding's own, separate
+# `OnboardingDocument` feature. Upload/delete/review are HR/Admin-only (`.UPDATE_SENSITIVE`,
+# same code every other sensitive sub-resource write reuses in this module); list is gated by
+# the new `.VIEW_DOCUMENTS` code, `SELF`-scoped for the base `EMPLOYEE` role so an employee can
+# see (and download) their own documents read-only.
+
+
+@router.post(
+    "/employees/{employee_id}/documents",
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_employee_document(
+    employee_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeDocumentService, Depends(get_employee_document_service)],
+    document_type: Annotated[str, Form()],
+    file: Annotated[UploadFile, File()],
+) -> DataEnvelope[EmployeeDocumentRead]:
+    body = await read_upload_bounded(file, max_bytes=EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES)
+    data = await service.upload_document(
+        tenant.company_id,
+        employee_id,
+        document_type=document_type,
+        filename=file.filename or "upload",
+        content_type=file.content_type or "application/octet-stream",
+        data=body,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/documents",
+    status_code=status.HTTP_200_OK,
+)
+async def list_employee_documents(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_DOCUMENTS))],
+    service: Annotated[EmployeeDocumentService, Depends(get_employee_document_service)],
+) -> ListEnvelope[EmployeeDocumentWithUrlRead]:
+    data = await service.list_documents_with_urls(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.delete(
+    "/employees/{employee_id}/documents/{document_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def delete_employee_document(
+    employee_id: UUID,
+    document_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeDocumentService, Depends(get_employee_document_service)],
+) -> DataEnvelope[dict[str, bool]]:
+    await service.delete_document(
+        tenant.company_id,
+        employee_id,
+        document_id,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data={"deleted": True}, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post(
+    "/employees/{employee_id}/documents/{document_id}/review",
+    status_code=status.HTTP_200_OK,
+)
+async def review_employee_document(
+    employee_id: UUID,
+    document_id: UUID,
+    body: EmployeeDocumentReviewRequest,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_SENSITIVE))],
+    service: Annotated[EmployeeDocumentService, Depends(get_employee_document_service)],
+) -> DataEnvelope[EmployeeDocumentRead]:
+    data = await service.review_document(
+        tenant.company_id,
+        employee_id,
+        document_id,
+        status=body.status,
+        rejection_reason=body.rejection_reason,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))

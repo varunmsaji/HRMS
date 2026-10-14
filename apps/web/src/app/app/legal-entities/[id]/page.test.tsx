@@ -58,7 +58,7 @@ describe("LegalEntityDetailPage", () => {
     toastMock.mockReset();
   });
 
-  it("loads and renders the legal entity", async () => {
+  it("loads and renders the company", async () => {
     mockedGet.mockResolvedValueOnce(sampleEntity);
     render(<LegalEntityDetailPage />);
 
@@ -85,7 +85,7 @@ describe("LegalEntityDetailPage", () => {
     render(<LegalEntityDetailPage />);
 
     expect(
-      await screen.findByText(/do not have permission to view this legal entity/i),
+      await screen.findByText(/do not have permission to view this company/i),
     ).toBeInTheDocument();
   });
 
@@ -152,7 +152,7 @@ describe("LegalEntityDetailPage", () => {
     expect(screen.getByRole("button", { name: /reload latest/i })).toBeInTheDocument();
   });
 
-  it("deactivates the legal entity after confirmation", async () => {
+  it("deactivates the company after confirmation", async () => {
     mockedGet.mockResolvedValueOnce(sampleEntity);
     mockedDelete.mockResolvedValueOnce({ ...sampleEntity, is_active: false, version: 2 });
     const user = userEvent.setup();
@@ -185,7 +185,7 @@ describe("LegalEntityDetailPage", () => {
 
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Can't deactivate this legal entity", variant: "danger" }),
+        expect.objectContaining({ title: "Can't deactivate this company", variant: "danger" }),
       ),
     );
   });

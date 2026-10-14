@@ -15,6 +15,7 @@ from structlog.testing import capture_logs
 from hrms.core.config.settings import Settings
 from hrms.modules.onboarding.email_sender import (
     EmailDeliveryError,
+    HostingerEmailSender,
     LoggingEmailSender,
     MailtrapEmailSender,
     SmtpEmailSender,
@@ -154,6 +155,7 @@ def test_production_accepts_smtp_provider() -> None:
         s3_bucket_documents="hrms-test-documents",
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",
+        web_app_base_url="https://app.example.com",
     )
     assert settings.email_provider == "smtp"
 
@@ -193,6 +195,7 @@ def test_production_accepts_mailtrap_provider() -> None:
         s3_bucket_documents="hrms-test-documents",
         aws_access_key_id="test-access-key",
         aws_secret_access_key="test-secret-key",
+        web_app_base_url="https://app.example.com",
     )
     assert settings.email_provider == "mailtrap"
 
@@ -454,3 +457,70 @@ async def test_mailtrap_send_failure_does_not_log_the_email_body(
     assert failure_logs[0]["subject"] == "Verify your email"
     assert failure_logs[0]["status_code"] == 422
     assert "error_type" in failure_logs[0]
+
+
+# --- Hostinger Mail API ------------------------------------------------------------------
+
+_HOSTINGER_TOKEN_MARKER = "s3cr3t-hostinger-token-marker-zzz"
+_HOSTINGER_MAILBOX_ID = "AC0000000000000000000000000000"
+
+
+def _hostinger_settings(**overrides: object) -> Settings:
+    base: dict[str, object] = {
+        "environment": "development",
+        "email_provider": "hostinger",
+        "hostinger_mail_api_token": _HOSTINGER_TOKEN_MARKER,
+        "hostinger_mail_mailbox_id": _HOSTINGER_MAILBOX_ID,
+        "smtp_from_name": "Staff Spectrum HRMS",
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
+def test_hostinger_provider_selected_when_configured() -> None:
+    assert isinstance(get_email_sender(_hostinger_settings()), HostingerEmailSender)
+
+
+def test_hostinger_missing_token_rejected() -> None:
+    with pytest.raises(ValueError, match="hostinger_mail_api_token"):
+        _hostinger_settings(hostinger_mail_api_token="")
+
+
+def test_hostinger_missing_mailbox_id_rejected() -> None:
+    with pytest.raises(ValueError, match="hostinger_mail_mailbox_id"):
+        _hostinger_settings(hostinger_mail_mailbox_id="")
+
+
+async def test_hostinger_sender_posts_correct_payload_and_auth_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = httpx.Request("POST", "https://api.mail.hostinger.com")
+    fake_post = AsyncMock(return_value=httpx.Response(200, request=request, json={"data": {}}))
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    sender = HostingerEmailSender(_hostinger_settings())
+    await sender.send(to="alice@example.com", subject="Hi", html_body="<p>h</p>", text_body="t")
+
+    args, kwargs = fake_post.await_args.args, fake_post.await_args.kwargs
+    assert args[0] == (
+        f"https://api.mail.hostinger.com/api/v1/mailboxes/{_HOSTINGER_MAILBOX_ID}/send"
+    )
+    assert kwargs["headers"]["Authorization"] == f"Bearer {_HOSTINGER_TOKEN_MARKER}"
+    assert kwargs["json"] == {
+        "to": ["alice@example.com"],
+        "display_name": "Staff Spectrum HRMS",
+        "subject": "Hi",
+        "text": "t",
+        "html": "<p>h</p>",
+    }
+
+
+async def test_hostinger_sender_raises_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = httpx.Request("POST", "https://api.mail.hostinger.com")
+    fake_post = AsyncMock(return_value=httpx.Response(401, request=request, json={}))
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    with pytest.raises(EmailDeliveryError):
+        await HostingerEmailSender(_hostinger_settings()).send(
+            to="alice@example.com", subject="s", html_body="<p>h</p>", text_body="t"
+        )

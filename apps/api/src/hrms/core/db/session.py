@@ -24,6 +24,10 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
             cfg.database_url,
             pool_pre_ping=True,
             echo=cfg.is_development and cfg.log_level == "DEBUG",
+            # LOG-02/LOG-08 — keeps bound values (names, emails, ciphertext, salary figures) out
+            # of every `DBAPIError` message, and therefore out of the tracebacks the error
+            # handlers and task-failure logs now record. The SQL text itself is still shown.
+            hide_parameters=True,
         )
     return _engine
 

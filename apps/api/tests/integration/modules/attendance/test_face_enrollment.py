@@ -377,9 +377,12 @@ async def test_storage_failure_cleans_up_provider_person(
     me = await _self_headers(company_id, employee_id)
     fake_photo_storage.fail_put = True
 
-    # The test transport re-raises unhandled server errors instead of rendering the 500.
-    with pytest.raises(RuntimeError, match="storage down"):
-        await _submit(client, me)
+    # LOG-01 — an unhandled error is now rendered as the standard 500 envelope by the app itself
+    # (`RequestContextMiddleware`) instead of escaping to the server/test transport.
+    response = await _submit(client, me)
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "INTERNAL_ERROR"
+    assert "storage down" not in response.text
 
     assert fake_face_provider.names()[-1] == "delete_person"
     assert (await _status(client, admin, employee_id))["profile"] is None

@@ -61,17 +61,17 @@ describe("LegalEntitiesPage", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
-  it("shows the empty state with guidance when there are no legal entities", async () => {
+  it("shows the empty state with guidance when there are no companies", async () => {
     mockedGet.mockResolvedValueOnce([]);
     render(<LegalEntitiesPage />);
 
     expect(
-      await screen.findByText(/no legal entities have been configured yet/i),
+      await screen.findByText(/no companies have been configured yet/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/add the legal company\/entity/i)).toBeInTheDocument();
+    expect(screen.getByText(/add the registered company/i)).toBeInTheDocument();
   });
 
-  it("renders the list of legal entities", async () => {
+  it("renders the list of companies", async () => {
     mockedGet.mockResolvedValueOnce([sampleEntity]);
     render(<LegalEntitiesPage />);
 
@@ -87,7 +87,7 @@ describe("LegalEntitiesPage", () => {
     render(<LegalEntitiesPage />);
 
     expect(
-      await screen.findByText(/do not have permission to view legal entities/i),
+      await screen.findByText(/do not have permission to view companies/i),
     ).toBeInTheDocument();
   });
 
@@ -102,16 +102,16 @@ describe("LegalEntitiesPage", () => {
     expect(await screen.findByText("Acme Technologies Pvt Ltd")).toBeInTheDocument();
   });
 
-  it("creates a legal entity from the empty state and refreshes the list", async () => {
+  it("creates a company from the empty state and refreshes the list", async () => {
     mockedGet.mockResolvedValueOnce([]);
     mockedGet.mockResolvedValueOnce([sampleEntity]);
     mockedPost.mockResolvedValueOnce(sampleEntity);
     const user = userEvent.setup();
     render(<LegalEntitiesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /add legal entity/i }));
-    await user.type(screen.getByLabelText(/legal entity name/i), "Acme Technologies Pvt Ltd");
-    await user.click(screen.getByRole("button", { name: /^add legal entity$/i }));
+    await user.click(await screen.findByRole("button", { name: /add company/i }));
+    await user.type(screen.getByLabelText(/company name/i), "Acme Technologies Pvt Ltd");
+    await user.click(screen.getByRole("button", { name: /^add company$/i }));
 
     await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
     expect(mockedPost).toHaveBeenCalledWith(
@@ -127,10 +127,10 @@ describe("LegalEntitiesPage", () => {
     const user = userEvent.setup();
     render(<LegalEntitiesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /add legal entity/i }));
-    await user.click(screen.getByRole("button", { name: /^add legal entity$/i }));
+    await user.click(await screen.findByRole("button", { name: /add company/i }));
+    await user.click(screen.getByRole("button", { name: /^add company$/i }));
 
-    expect(await screen.findByText(/legal entity name is required/i)).toBeInTheDocument();
+    expect(await screen.findByText(/company name is required/i)).toBeInTheDocument();
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -142,13 +142,13 @@ describe("LegalEntitiesPage", () => {
     const user = userEvent.setup();
     render(<LegalEntitiesPage />);
 
-    await user.click(await screen.findByRole("button", { name: /add legal entity/i }));
-    await user.type(screen.getByLabelText(/legal entity name/i), "Acme Pvt Ltd");
-    await user.click(screen.getByRole("button", { name: /^add legal entity$/i }));
+    await user.click(await screen.findByRole("button", { name: /add company/i }));
+    await user.type(screen.getByLabelText(/company name/i), "Acme Pvt Ltd");
+    await user.click(screen.getByRole("button", { name: /^add company$/i }));
 
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Could not add legal entity", variant: "danger" }),
+        expect.objectContaining({ title: "Could not add company", variant: "danger" }),
       ),
     );
   });

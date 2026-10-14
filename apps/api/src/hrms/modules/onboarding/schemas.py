@@ -60,11 +60,13 @@ ONBOARDING_SECTION_NAMES = (
     "emergency_contact",
     "bank_info",
     "statutory_info",
-    "compensation_info",
     "previous_employment_info",
     "education_info",
     "nominee_info",
 )
+# `compensation_info` is deliberately NOT in `ONBOARDING_SECTION_NAMES` (candidates no longer
+# enter or get reviewed on CTC during onboarding). Its column and `SECTION_SCHEMAS` entry stay so
+# a value written some other way is still turned into an `employee_compensation` row at activation.
 
 # Human-readable labels for the five reviewable sections — used in the "changes requested" email
 # (O6) and available for any admin-UI rendering that wants one canonical mapping. Plan §4.4's own

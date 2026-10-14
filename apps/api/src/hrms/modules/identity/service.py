@@ -19,6 +19,7 @@ from hrms.core.errors.auth import (
     InvalidTokenError,
 )
 from hrms.core.errors.base import ValidationError
+from hrms.core.observability.logging import get_logger, safe_log
 from hrms.core.rbac.service import RbacService
 from hrms.modules.identity.email_templates import (
     build_email_verification_email,
@@ -42,6 +43,8 @@ PASSWORD_RESET_TTL_HOURS = 2
 #: SEC-09 — longer than the password-reset window: verifying an address is lower-stakes than
 #: recovering account access, and a registrant may reasonably check their inbox a day later.
 EMAIL_VERIFICATION_TTL_HOURS = 24
+
+_logger = get_logger(__name__)
 
 
 class IdentityService:
@@ -135,10 +138,7 @@ class IdentityService:
             raise InvalidTokenError("Refresh token is invalid")
 
         if record.revoked_at is not None:
-            if record.token_family_id:
-                await self._repo.revoke_refresh_family(
-                    self._session, record.token_family_id, "REUSE_DETECTED"
-                )
+            await self._revoke_family_on_reuse(record.token_family_id, record.user_id)
             raise InvalidTokenError("Refresh token has been revoked")
 
         if record.expires_at < now:
@@ -160,7 +160,11 @@ class IdentityService:
         if not any(m.company_id == record.company_id for m in memberships):
             raise InvalidTokenError("Company membership is not valid")
 
-        await self._repo.revoke_refresh_token(self._session, record.id, "ROTATED")
+        if not await self._repo.rotate_refresh_token(self._session, record.id):
+            # Another request rotated (or revoked) this token between our read and this write —
+            # the same token presented twice, i.e. reuse.
+            await self._revoke_family_on_reuse(record.token_family_id, record.user_id)
+            raise InvalidTokenError("Refresh token has been revoked")
         summaries: list[CompanySummary] = []
         for m in memberships:
             company = await self._repo.get_company_by_id(self._session, m.company_id)
@@ -183,6 +187,28 @@ class IdentityService:
             audit_action="TOKEN_REFRESH",
             token_family_id=record.token_family_id,
             existing_session_id=record.session_id,
+        )
+
+    async def _revoke_family_on_reuse(self, token_family_id: UUID | None, user_id: UUID) -> None:
+        """Reuse of an already-rotated refresh token means the chain may be stolen: revoke every
+        token in the family and the session(s) behind it, so the newest refresh token *and* every
+        access token minted for that session stop working (`get_current_user` checks the session).
+
+        The caller raises `InvalidTokenError` right after this, and `get_session` rolls the request
+        transaction back on any exception — which would silently undo the revocation. So it is
+        committed here, before the raise (the same reason `login` commits its failed-attempt
+        counter). Both callers reach this before the request has written anything else, so the
+        commit persists only the revocation. If the commit itself fails, the database error
+        propagates (a 500, logged) instead of a 401 that would imply the family was revoked."""
+        if token_family_id is not None:
+            await self._repo.revoke_refresh_family(self._session, token_family_id, "REUSE_DETECTED")
+        await self._session.commit()
+        safe_log(
+            _logger.warning,
+            "security.refresh_token_reuse_detected",
+            user_id=str(user_id),
+            token_family_id=str(token_family_id) if token_family_id else None,
+            family_revoked=token_family_id is not None,
         )
 
     async def logout(self, session_id: UUID, user_id: UUID, company_id: UUID) -> None:

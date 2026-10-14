@@ -31,7 +31,7 @@ const branch: Branch = {
 };
 
 describe("validateBranchForm", () => {
-  it("requires a legal entity", () => {
+  it("requires a company", () => {
     const errors = validateBranchForm({ ...EMPTY_BRANCH_FORM_VALUES, name: "HQ" });
     expect(errors.legalEntityId).toBeDefined();
   });
@@ -121,7 +121,7 @@ describe("validateBranchForm", () => {
 });
 
 describe("branchToFormValues / buildCreatePayload", () => {
-  it("round-trips name/legal entity and nulls other optional fields", () => {
+  it("round-trips name/company and nulls other optional fields", () => {
     const values = branchToFormValues(branch);
     expect(values.name).toBe("HQ Branch");
     expect(values.legalEntityId).toBe("le-1");

@@ -19,6 +19,7 @@ from hrms.modules.employee.permissions import (
     EMPLOYEE_VIEW_ALL,
     EMPLOYEE_VIEW_BANKING,
     EMPLOYEE_VIEW_COMPENSATION,
+    EMPLOYEE_VIEW_DOCUMENTS,
     EMPLOYEE_VIEW_EXPERIENCE,
     EMPLOYEE_VIEW_NOMINEE,
     EMPLOYEE_VIEW_SENSITIVE,
@@ -36,6 +37,7 @@ from hrms.modules.organisation.calendar_resolution import CalendarResolutionServ
 from hrms.modules.organisation.exceptions import (
     BranchDeactivationBlockedError,
     CalendarExceptionDateConflictError,
+    CompanyLimitReachedError,
     CompanyWriteBlockedError,
     CurrencyLockedError,
     DepartmentCycleDetectedError,
@@ -769,6 +771,7 @@ class OrganisationService:
             EMPLOYEE_VIEW_SENSITIVE,
             EMPLOYEE_VIEW_EXPERIENCE,
             EMPLOYEE_VIEW_NOMINEE,
+            EMPLOYEE_VIEW_DOCUMENTS,
         ):
             await self._repo.insert_role_permission(
                 self._session,
@@ -1110,6 +1113,13 @@ class OrganisationService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> LegalEntityRead:
+        limit = self._settings.max_legal_entities_per_company
+        if (
+            limit > 0
+            and await self._repo.count_legal_entities(self._session, company_id=company_id) >= limit
+        ):
+            raise CompanyLimitReachedError(limit=limit)
+
         now = datetime.now(UTC)
         entity_id = uuid4()
         entity = await self._repo.insert_legal_entity(

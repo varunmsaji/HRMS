@@ -66,9 +66,7 @@ class InvalidBranchReferenceError(ValidationError):
 class InvalidLegalEntityReferenceError(ValidationError):
     code = "INVALID_LEGAL_ENTITY"
 
-    def __init__(
-        self, message: str = "legal_entity_id does not reference a valid legal entity"
-    ) -> None:
+    def __init__(self, message: str = "legal_entity_id does not reference a valid company") -> None:
         super().__init__(
             message,
             details=[
@@ -331,7 +329,7 @@ class OnboardingCaseMissingLegalEntityError(ValidationError):
 
     def __init__(
         self,
-        message: str = "A legal entity must be set on this case before it can be activated",
+        message: str = "A company must be set on this case before it can be activated",
     ) -> None:
         super().__init__(
             message,

@@ -73,6 +73,9 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # LOG-01 — the same id this request's edge log line carries (`$hrms_request_id`,
+        # nginx.conf); the API validates it and echoes it back as `X-Request-Id`.
+        proxy_set_header X-Request-Id $hrms_request_id;
         # Above the default 60s — payroll pay-run computation and bulk employee import can run
         # longer than a typical request; this is the outer HTTP-layer ceiling, not a claim that
         # every request should take this long.

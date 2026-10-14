@@ -98,7 +98,7 @@ describe("BranchesPage", () => {
     expect(await screen.findByText(/no branches have been configured yet/i)).toBeInTheDocument();
   });
 
-  it("prompts to add a legal entity first when none exist", async () => {
+  it("prompts to add a company first when none exist", async () => {
     mockLoad([], []);
     render(<BranchesPage />);
 
@@ -145,7 +145,7 @@ describe("BranchesPage", () => {
     render(<BranchesPage />);
 
     await user.click(await screen.findByRole("button", { name: /add branch/i }));
-    // Only one legal entity exists, so the selector is hidden and pre-filled automatically.
+    // Only one company exists, so the selector is hidden and pre-filled automatically.
     await user.type(screen.getByLabelText(/branch name/i), "HQ Branch");
     await user.click(screen.getByRole("button", { name: /^add branch$/i }));
 
@@ -158,8 +158,8 @@ describe("BranchesPage", () => {
   });
 
   it("shows a validation error when required fields are missing", async () => {
-    // Two legal entities so the selector isn't auto-hidden/pre-filled (see
-    // `hideLegalEntitySelector` in BranchForm), letting the "select a legal entity" error fire.
+    // Two companies so the selector isn't auto-hidden/pre-filled (see
+    // `hideLegalEntitySelector` in BranchForm), letting the "select a company" error fire.
     mockLoad([], [sampleEntity, { ...sampleEntity, id: "le-2", name: "Second Entity" }]);
     const user = userEvent.setup();
     render(<BranchesPage />);
@@ -168,7 +168,7 @@ describe("BranchesPage", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /^add branch$/i }));
 
-    expect(await within(dialog).findByText(/select a legal entity\./i)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/select a company\./i)).toBeInTheDocument();
     expect(mockedPost).not.toHaveBeenCalled();
   });
 });

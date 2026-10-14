@@ -150,6 +150,51 @@ class MailtrapEmailSender:
             raise EmailDeliveryError("Failed to send email via Mailtrap.") from exc
 
 
+class HostingerEmailSender:
+    """Real delivery via the Hostinger Mail API
+    (`POST /api/v1/mailboxes/{mailboxResourceId}/send`). The sender is the mailbox named by
+    `Settings.hostinger_mail_mailbox_id`; only the display name is settable per message.
+    `Settings._guard_hostinger_config` has already validated the token and mailbox id."""
+
+    _API_BASE_URL = "https://api.mail.hostinger.com"
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
+        settings = self._settings
+        url = f"{self._API_BASE_URL}/api/v1/mailboxes/{settings.hostinger_mail_mailbox_id}/send"
+        payload = {
+            "to": [to],
+            "display_name": settings.smtp_from_name,
+            "subject": subject,
+            "text": text_body,
+            "html": html_body,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {settings.hostinger_mail_api_token}"},
+                )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            # Same log-hygiene rule as the other senders: never the token or response body.
+            status_code = (
+                exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            )
+            get_logger(__name__).error(
+                "onboarding_email_hostinger_send_failed",
+                to=to,
+                subject=subject,
+                error_type=type(exc).__name__,
+                status_code=status_code,
+            )
+            raise EmailDeliveryError("Failed to send email via Hostinger.") from exc
+
+
 class EmailDeliveryError(Exception):
     """Raised by `SmtpEmailSender.send`/`MailtrapEmailSender.send` on any transport-layer
     failure. Deliberately carries no exception chain data in its own message (`from exc`
@@ -163,4 +208,6 @@ def get_email_sender(settings: Settings) -> EmailSender:
         return SmtpEmailSender(settings)
     if settings.email_provider == "mailtrap":
         return MailtrapEmailSender(settings)
+    if settings.email_provider == "hostinger":
+        return HostingerEmailSender(settings)
     return LoggingEmailSender()

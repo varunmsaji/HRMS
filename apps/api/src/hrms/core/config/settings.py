@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -33,6 +34,12 @@ _DEV_PII_MASTER_KEY_DEFAULT = "change-me-local-dev-pii-master-key-min-16"
 _MIN_NON_DEV_SECRET_LENGTH = 32
 _MIN_NON_DEV_SECRET_UNIQUE_CHARS = 8
 
+#: FINDING-001 — the development frontend origin. Safe for a local `next dev` on port 3000.
+#: Outside development this exact value, and any other loopback origin, is refused at boot:
+#: verification, password-reset, invite, onboarding, and attendance emails embed it.
+_DEV_WEB_APP_BASE_URL_DEFAULT = "http://localhost:3000"
+_LOOPBACK_WEB_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1"})
+
 
 def _is_weak_secret(secret: str) -> bool:
     if len(secret) < _MIN_NON_DEV_SECRET_LENGTH:
@@ -44,6 +51,30 @@ def _split_comma_list(value: object) -> object:
     if isinstance(value, str):
         return tuple(item.strip() for item in value.split(",") if item.strip())
     return value
+
+
+def _normalize_web_app_base_url(value: str) -> str:
+    return value.strip().rstrip("/")
+
+
+def _web_app_base_url_is_unsafe_outside_development(value: str) -> bool:
+    """True when `value` must not be embedded in an email outside development.
+
+    Requires an absolute `https` URL whose host is not loopback. A path prefix is allowed
+    (`https://app.example.com/hr`). Userinfo, a query, and a fragment are not: they would be
+    copied into every reset, verification, invite, and reminder link.
+    """
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if parsed.scheme.lower() != "https" or not host:
+        return True
+    if host in _LOOPBACK_WEB_HOSTS or host.endswith(".localhost"):
+        return True
+    if parsed.username is not None or parsed.password is not None:
+        return True
+    if parsed.query or parsed.fragment:
+        return True
+    return False
 
 
 class Settings(BaseSettings):
@@ -134,7 +165,7 @@ class Settings(BaseSettings):
     # explicitly switched; `_guard_non_development_config` below refuses to boot staging/
     # production with `"logging"` still selected, so a pilot deployment can never silently believe
     # emails are being sent when they are merely being logged.
-    email_provider: Literal["logging", "smtp", "mailtrap"] = "logging"
+    email_provider: Literal["logging", "smtp", "mailtrap", "hostinger"] = "logging"
 
     # Sender identity shown on outgoing email — shared by whichever provider is active (`"smtp"`
     # or `"mailtrap"`); not itself an SMTP protocol detail, despite the field name predating the
@@ -162,6 +193,13 @@ class Settings(BaseSettings):
     # calls Mailtrap's HTTP API directly over `httpx` rather than via Mailtrap's own (synchronous)
     # Python SDK, to stay consistent with this module's fully async transport.
     mailtrap_api_token: str = ""
+
+    # Hostinger Mail API config — only meaningful, and only validated, when
+    # `email_provider == "hostinger"` (see `_guard_hostinger_config` below). Mail goes out from the
+    # mailbox identified by `hostinger_mail_mailbox_id` (its `resourceId`, from `GET /api/v1/me`);
+    # the sender address is that mailbox, so `smtp_from_email` is not used by this provider.
+    hostinger_mail_api_token: str = ""
+    hostinger_mail_mailbox_id: str = ""
 
     # Face attendance (`attendance/face_verification.py`). `"disabled"` (the default) rejects every
     # face punch/enrollment as unavailable — there is deliberately no fake always-match provider,
@@ -216,12 +254,22 @@ class Settings(BaseSettings):
     # key to finish (then replays its result) before failing with a retryable "busy" error.
     idempotency_wait_ms: int = Field(default=10000, ge=100)
 
-    web_app_base_url: str = "http://localhost:3000"
+    # Public frontend origin embedded in email links (verification, password reset, account
+    # invite, onboarding, attendance reminders). Development keeps the localhost default.
+    # `_guard_non_development_config` refuses to boot staging/production on that default, on
+    # any other loopback host, or on a non-https URL. Operators set `WEB_APP_BASE_URL` to
+    # `https://` plus the same host as compose's `WEB_DOMAIN` (see `.env.production.example`).
+    web_app_base_url: str = _DEV_WEB_APP_BASE_URL_DEFAULT
 
     # PAY-006 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decision 16) — employees with
     # unresolved INCOMPLETE days are reminded daily from this many days before an open attendance
     # period's end until it is closed; HR gets a matching digest.
     attendance_incomplete_reminder_lead_days: int = 3
+
+    # Initial-release product rule: a tenant has exactly one company (the `legal_entity` table)
+    # with any number of branches under it. `0` removes the cap (multi-company), which is what the
+    # test-suite sets so its multi-entity scenarios keep working.
+    max_legal_entities_per_company: int = 1
 
     rate_limit_window_ms: int = 60000
     rate_limit_max: int = 100
@@ -258,6 +306,13 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_comma_separated(cls, value: object) -> object:
         return _split_comma_list(value)
+
+    @field_validator("web_app_base_url")
+    @classmethod
+    def _canonicalize_web_app_base_url(cls, value: str) -> str:
+        # A trailing slash would produce `https://app.example.com//reset-password/...` in every
+        # builder that concatenates a path. Strip it once, here, including in development.
+        return _normalize_web_app_base_url(value)
 
     @model_validator(mode="after")
     def _guard_smtp_config(self) -> "Settings":
@@ -321,6 +376,25 @@ class Settings(BaseSettings):
             raise ValueError(
                 "smtp_from_email must be set explicitly when email_provider='mailtrap' — "
                 "refusing to boot without a sender address."
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def _guard_hostinger_config(self) -> "Settings":
+        """Mirrors `_guard_mailtrap_config` for the `"hostinger"` provider."""
+        if self.email_provider != "hostinger":
+            return self
+
+        if not self.hostinger_mail_api_token:
+            raise ValueError(
+                "hostinger_mail_api_token must be set explicitly when email_provider='hostinger' — "
+                "refusing to boot without an API token to authenticate with."
+            )
+        if not self.hostinger_mail_mailbox_id:
+            raise ValueError(
+                "hostinger_mail_mailbox_id must be set explicitly when email_provider='hostinger' "
+                "— refusing to boot without a mailbox to send from."
             )
 
         return self
@@ -405,12 +479,27 @@ class Settings(BaseSettings):
         # being sent when they are, in fact, only written to a log line. `_guard_smtp_config`/
         # `_guard_mailtrap_config` (above) have already validated the chosen provider's own fields
         # by the time this is reached.
-        if self.email_provider not in ("smtp", "mailtrap"):
+        if self.email_provider not in ("smtp", "mailtrap", "hostinger"):
             raise ValueError(
                 "email_provider must be 'smtp' or 'mailtrap' for environment="
                 f"{self.environment!r} — refusing to boot with the logging-only email sender in "
                 "a non-development environment; real users cannot receive verification, invite, "
                 "or password-reset emails otherwise."
+            )
+
+        # FINDING-001 — those emails embed `web_app_base_url`. The field default is
+        # http://localhost:3000, and nothing else in this guard used to notice. A process that
+        # followed `.env.production.example` therefore sent real mail whose links only resolved
+        # on the API host. Refuse that, and any other loopback or cleartext origin. Do not
+        # substitute a hard-coded production host: the operator must set WEB_APP_BASE_URL.
+        if _web_app_base_url_is_unsafe_outside_development(self.web_app_base_url):
+            raise ValueError(
+                "web_app_base_url must be an explicit https URL with a non-loopback host for "
+                f"environment={self.environment!r} — refusing to boot with "
+                f"{_DEV_WEB_APP_BASE_URL_DEFAULT} or any other localhost, loopback, or "
+                "non-https origin, because verification, password-reset, invite, onboarding, "
+                "and attendance emails embed this URL. Set WEB_APP_BASE_URL to the public "
+                "frontend origin (https:// plus the same host as WEB_DOMAIN)."
             )
 
         # DATA-01 (plan §5.4/§10.3) — the complementary, database-backed half of the boot guard

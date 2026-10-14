@@ -3,7 +3,7 @@ lifecycle), E-04 (employee assignment), E-06 (employee compensation), E-07 (empl
 statutory), and E-08 (employee banking)."""
 
 from datetime import UTC, date, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
@@ -16,7 +16,14 @@ from hrms.core.db.locks import lock_employee_leave_dates
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.errors.base import NotFoundError
 from hrms.core.rbac.types import DataScope, DataScopeLevel
+from hrms.core.storage import DocumentStorageService
 from hrms.modules.employee.coverage import EmploymentCoverage, evaluate_employment_coverage
+from hrms.modules.employee.document_validation import (
+    content_disposition_attachment,
+    safe_employee_document_object_key,
+    sanitize_display_filename,
+    sniff_document_content_type,
+)
 from hrms.modules.employee.exceptions import (
     AssignmentDatesOverlapError,
     AssignmentFieldsRequiredError,
@@ -27,6 +34,7 @@ from hrms.modules.employee.exceptions import (
     CompensationDatesOverlapError,
     CompensationVersionRequiredError,
     DuplicateEmployeeCodeError,
+    EmployeeDocumentTooLargeError,
     EmployeeNotOnProbationError,
     EmployeeSeatLimitExceededError,
     EmploymentChangeConflictsWithLeaveError,
@@ -37,6 +45,7 @@ from hrms.modules.employee.exceptions import (
     InvalidDepartmentReferenceError,
     InvalidDesignationReferenceError,
     InvalidEffectiveFromError,
+    InvalidEmployeeDocumentTypeError,
     InvalidGradeReferenceError,
     InvalidLastWorkingDayError,
     InvalidLegalEntityReferenceError,
@@ -49,6 +58,7 @@ from hrms.modules.employee.exceptions import (
     StatutoryDatesOverlapError,
     StatutoryVersionRequiredError,
     TaxRegimeSwitchNotAllowedError,
+    UnsupportedEmployeeDocumentContentError,
 )
 from hrms.modules.employee.repository import (
     REPORTEE_TREE_MAX_DEPTH,
@@ -56,6 +66,7 @@ from hrms.modules.employee.repository import (
     EmployeeBankRepository,
     EmployeeCompensationRepository,
     EmployeeDependentRepository,
+    EmployeeDocumentRepository,
     EmployeeEducationRepository,
     EmployeeExperienceRepository,
     EmployeeRepository,
@@ -63,6 +74,8 @@ from hrms.modules.employee.repository import (
     EmploymentRepository,
 )
 from hrms.modules.employee.schemas import (
+    EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES,
+    EMPLOYEE_DOCUMENT_TYPES,
     AssignmentCreate,
     AssignmentRead,
     BankCreate,
@@ -73,6 +86,8 @@ from hrms.modules.employee.schemas import (
     EmployeeCreate,
     EmployeeDependentCreate,
     EmployeeDependentRead,
+    EmployeeDocumentRead,
+    EmployeeDocumentWithUrlRead,
     EmployeeEducationCreate,
     EmployeeEducationRead,
     EmployeeExperienceCreate,
@@ -97,6 +112,9 @@ from hrms.modules.employee.schemas import (
     compensation_to_read,
     employee_dependent_to_audit_dict,
     employee_dependent_to_read,
+    employee_document_to_audit_dict,
+    employee_document_to_read,
+    employee_document_to_read_with_url,
     employee_education_to_audit_dict,
     employee_education_to_read,
     employee_experience_to_audit_dict,
@@ -3382,3 +3400,326 @@ class EmployeeDependentService:
             ip=ip_address,
             user_agent=user_agent,
         )
+
+
+class EmployeeDocumentService:
+    """An employee's ongoing document store (post-onboarding document management) — HR/Admin
+    upload/delete/review, gated by `EMPLOYEE.UPDATE_SENSITIVE`; read access (list, with
+    presigned download URLs) is gated by `EMPLOYEE.VIEW_DOCUMENTS`, `SELF`-scoped for the base
+    `EMPLOYEE` role so an employee can see their own documents read-only.
+
+    Unlike `OnboardingDocumentService`, there is no case-status writability gate — the only gate
+    on every method here is `_assert_employee_visible` (identical body to
+    `EmployeeExperienceService`'s own) plus whatever permission the caller's route resolved.
+    `Employee.status` (active/terminated/etc.) is never consulted: a terminated employee's
+    documents remain fully visible/manageable to anyone whose scope already covers them, same as
+    every other employee sub-resource in this module."""
+
+    def __init__(self, session: AsyncSession, settings: Settings | None = None) -> None:
+        self._session = session
+        self._settings = settings or get_settings()
+        self._repo = EmployeeDocumentRepository()
+        self._employee_repo = EmployeeRepository()
+        self._employee_service = EmployeeService(session, self._settings)
+        self._storage = DocumentStorageService(self._settings)
+        self._audit = AuditService()
+
+    async def _assert_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        visible_ids = (
+            await self._employee_service.resolve_visible_employee_ids(
+                company_id, scope, caller_employee_id
+            )
+            if scope is not None
+            else None
+        )
+        employee = await self._employee_repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
+    async def upload_document(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        document_type: str,
+        filename: str,
+        content_type: str,
+        data: bytes,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeDocumentRead:
+        """`content_type` (the client's `UploadFile.content_type`) is accepted for interface
+        compatibility but never trusted or persisted — same SEC-04 posture as
+        `OnboardingDocumentService.upload_document`, the stored `content_type`/object-key
+        extension are both derived from `sniff_document_content_type(data)` instead."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        if document_type not in EMPLOYEE_DOCUMENT_TYPES:
+            raise InvalidEmployeeDocumentTypeError(document_type)
+        if len(data) > EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES:
+            raise EmployeeDocumentTooLargeError(EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES)
+
+        sniffed = sniff_document_content_type(data)
+        if sniffed is None:
+            raise UnsupportedEmployeeDocumentContentError()
+        sniffed_content_type, extension = sniffed
+        display_filename = sanitize_display_filename(filename)
+
+        now = datetime.now(UTC)
+        document_id = uuid4()
+        s3_key = safe_employee_document_object_key(
+            company_id=company_id,
+            employee_id=employee_id,
+            document_id=document_id,
+            extension=extension,
+        )
+        await self._storage.put_object(key=s3_key, body=data, content_type=sniffed_content_type)
+
+        document = await self._repo.insert_document(
+            self._session,
+            data={
+                "id": document_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "document_type": document_type,
+                "s3_key": s3_key,
+                "original_filename": display_filename,
+                "content_type": sniffed_content_type,
+                "size_bytes": len(data),
+                "status": "PENDING",
+                "uploaded_at": now,
+                "created_at": now,
+                "updated_at": now,
+                "source_onboarding_document_id": None,
+            },
+        )
+        read = employee_document_to_read(document)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_DOCUMENT_UPLOADED",
+            entity_type="employee_document",
+            entity_id=document_id,
+            after=employee_document_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def list_documents_with_urls(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> list[EmployeeDocumentWithUrlRead]:
+        """The only list method this service exposes — a presigned GET URL per document for
+        every caller who can see the list at all (HR/Admin and the SELF-scoped employee alike).
+        Unlike onboarding's split `list_documents`/`list_documents_with_urls`, there is no
+        "candidate might still replace an unreviewed upload" case here to justify withholding
+        the URL from one of the two caller types."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        documents = await self._repo.list_documents(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        result = []
+        for document in documents:
+            url = await self._storage.presigned_get_url(
+                key=document.s3_key,
+                response_content_disposition=content_disposition_attachment(
+                    document.original_filename
+                ),
+            )
+            result.append(employee_document_to_read_with_url(document, url))
+        return result
+
+    async def delete_document(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        document_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        document = await self._repo.get_document(
+            self._session, company_id=company_id, employee_id=employee_id, document_id=document_id
+        )
+        if document is None:
+            raise NotFoundError("Resource not found")
+
+        before = employee_document_to_audit_dict(employee_document_to_read(document))
+        await self._storage.delete_object(key=document.s3_key)
+        await self._repo.delete_document(self._session, document=document)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_DOCUMENT_DELETED",
+            entity_type="employee_document",
+            entity_id=document_id,
+            before=before,
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def review_document(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        document_id: UUID,
+        *,
+        status: str,
+        rejection_reason: str | None,
+        actor_user_id: UUID | None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeDocumentRead:
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        document = await self._repo.get_document(
+            self._session, company_id=company_id, employee_id=employee_id, document_id=document_id
+        )
+        if document is None:
+            raise NotFoundError("Resource not found")
+
+        now = datetime.now(UTC)
+        updated = await self._repo.update_review(
+            self._session,
+            document=document,
+            status=status,
+            rejection_reason=rejection_reason,
+            verified_by_user_id=actor_user_id,
+            now=now,
+        )
+        read = employee_document_to_read(updated)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_DOCUMENT_REVIEWED",
+            entity_type="employee_document",
+            entity_id=document_id,
+            after=employee_document_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
+    async def migrate_from_onboarding(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        onboarding_document: Any,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeDocumentRead:
+        """Called once per document, from `OnboardingActivationService.activate_case`, for every
+        `OnboardingDocument` row belonging to the case being activated. `onboarding_document` is
+        untyped (`Any`) deliberately — the employee module never imports onboarding's model
+        classes (the dependency direction between these two modules runs the other way; see this
+        module's `document_validation.py` docstring), so this method only ever reads plain
+        attributes off whatever row-like object the caller passes (duck-typed: `document_type`,
+        `s3_key`, `original_filename`, `content_type`, `size_bytes`, `status`,
+        `verified_by_user_id`, `verified_at`, `rejection_reason`, `uploaded_at`, `id`).
+
+        Copies the source document's bytes to a **new** `employee/...`-prefixed S3 object rather
+        than reusing the source's own `onboarding/...` key — `delete_document` above calls
+        `storage.delete_object` on whatever key a row holds, and the source `OnboardingDocument`
+        row is never deleted by activation (it stays reachable from the old onboarding case's own
+        admin view indefinitely). Sharing one S3 object between two independently-deletable rows
+        would let deleting the migrated copy silently break the source row's still-live download
+        link. The one-time extra GET+PUT per document (bounded by the existing 10MB cap, at the
+        already-infrequent activation event) buys full lifecycle independence between the two
+        rows. No re-validation (sniff/size-cap) of the bytes happens here — they were already
+        validated once, at original upload time, under the same rules.
+
+        Preserves `document_type`/`original_filename`/`content_type`/`size_bytes`/`status`/
+        `verified_by_user_id`/`verified_at`/`rejection_reason`/`uploaded_at` as-is from the
+        source — an already-`VERIFIED` onboarding document stays `VERIFIED` here; a `PENDING`
+        one stays `PENDING`, now awaiting review in its new, permanent home. Does not re-run
+        `_assert_employee_visible`: activation is a system-initiated action composing the
+        employee module's services with no acting caller's own visibility to narrow against,
+        same `scope=None`/`caller_employee_id=None` posture every other sub-resource call in
+        `OnboardingActivationService.activate_case` already uses."""
+        extension = ""
+        if "." in onboarding_document.s3_key.rsplit("/", 1)[-1]:
+            extension = "." + onboarding_document.s3_key.rsplit(".", 1)[-1]
+        document_id = uuid4()
+        new_key = safe_employee_document_object_key(
+            company_id=company_id,
+            employee_id=employee_id,
+            document_id=document_id,
+            extension=extension,
+        )
+        data = await self._storage.get_object(key=onboarding_document.s3_key)
+        await self._storage.put_object(
+            key=new_key, body=data, content_type=onboarding_document.content_type
+        )
+
+        now = datetime.now(UTC)
+        document = await self._repo.insert_document(
+            self._session,
+            data={
+                "id": document_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "document_type": onboarding_document.document_type,
+                "s3_key": new_key,
+                "original_filename": onboarding_document.original_filename,
+                "content_type": onboarding_document.content_type,
+                "size_bytes": onboarding_document.size_bytes,
+                "status": onboarding_document.status,
+                "verified_by_user_id": onboarding_document.verified_by_user_id,
+                "verified_at": onboarding_document.verified_at,
+                "rejection_reason": onboarding_document.rejection_reason,
+                "uploaded_at": onboarding_document.uploaded_at,
+                "created_at": now,
+                "updated_at": now,
+                "source_onboarding_document_id": onboarding_document.id,
+            },
+        )
+        read = employee_document_to_read(document)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="EMPLOYEE_DOCUMENT_MIGRATED_FROM_ONBOARDING",
+            entity_type="employee_document",
+            entity_id=document_id,
+            after=employee_document_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read

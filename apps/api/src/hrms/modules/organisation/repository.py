@@ -371,6 +371,14 @@ class OrganisationRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def count_legal_entities(self, session: AsyncSession, *, company_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(LegalEntity)
+            .where(LegalEntity.company_id == company_id, LegalEntity.deleted_at.is_(None))
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
     async def get_legal_entity(
         self, session: AsyncSession, *, company_id: UUID, entity_id: UUID
     ) -> LegalEntity | None:

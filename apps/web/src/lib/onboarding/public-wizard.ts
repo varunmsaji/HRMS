@@ -4,6 +4,80 @@
  * `StatutoryInfoSection`). Numeric/boolean/enum fields follow the same string-in-a-form,
  * typed-on-submit convention as `lib/employee/validate-statutory.ts`/`validate-bank.ts`. */
 
+import { INDIA_STATE_CODES } from "@/lib/branch/validate-branch";
+
+export { INDIA_STATE_CODES };
+
+// --- Fixed option sets for dropdown fields ---------------------------------------------------
+// Backend fields are plain free-text strings (schemas.py `gender`/`blood_group`/etc. are
+// `str | None`), so these are a frontend-only closed list — no backend/migration change needed.
+
+export const GENDER_VALUES = ["MALE", "FEMALE", "OTHER", "PREFER_NOT_TO_SAY"] as const;
+export type Gender = (typeof GENDER_VALUES)[number];
+export const GENDER_LABELS: Record<Gender, string> = {
+  MALE: "Male",
+  FEMALE: "Female",
+  OTHER: "Other",
+  PREFER_NOT_TO_SAY: "Prefer not to say",
+};
+
+export const BLOOD_GROUP_VALUES = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"] as const;
+
+export const MARITAL_STATUS_VALUES = ["SINGLE", "MARRIED", "DIVORCED", "WIDOWED"] as const;
+export type MaritalStatus = (typeof MARITAL_STATUS_VALUES)[number];
+export const MARITAL_STATUS_LABELS: Record<MaritalStatus, string> = {
+  SINGLE: "Single",
+  MARRIED: "Married",
+  DIVORCED: "Divorced",
+  WIDOWED: "Widowed",
+};
+
+export const RELATIONSHIP_VALUES = [
+  "SPOUSE",
+  "FATHER",
+  "MOTHER",
+  "SON",
+  "DAUGHTER",
+  "BROTHER",
+  "SISTER",
+  "GUARDIAN",
+  "FRIEND",
+  "OTHER",
+] as const;
+export type Relationship = (typeof RELATIONSHIP_VALUES)[number];
+export const RELATIONSHIP_LABELS: Record<Relationship, string> = {
+  SPOUSE: "Spouse",
+  FATHER: "Father",
+  MOTHER: "Mother",
+  SON: "Son",
+  DAUGHTER: "Daughter",
+  BROTHER: "Brother",
+  SISTER: "Sister",
+  GUARDIAN: "Guardian",
+  FRIEND: "Friend",
+  OTHER: "Other",
+};
+
+export const QUALIFICATION_VALUES = [
+  "10TH",
+  "12TH",
+  "DIPLOMA",
+  "BACHELORS",
+  "MASTERS",
+  "DOCTORATE",
+  "OTHER",
+] as const;
+export type QualificationLevel = (typeof QUALIFICATION_VALUES)[number];
+export const QUALIFICATION_LABELS: Record<QualificationLevel, string> = {
+  "10TH": "10th / Secondary",
+  "12TH": "12th / Higher secondary",
+  DIPLOMA: "Diploma",
+  BACHELORS: "Bachelor's degree",
+  MASTERS: "Master's degree",
+  DOCTORATE: "Doctorate",
+  OTHER: "Other",
+};
+
 export type PaymentMode = "BANK" | "CASH" | "CHEQUE" | "UPI";
 export const PAYMENT_MODE_VALUES: PaymentMode[] = ["BANK", "CASH", "CHEQUE", "UPI"];
 export const PAYMENT_MODE_LABELS: Record<PaymentMode, string> = {
@@ -98,6 +172,18 @@ export function validatePersonalInfo(
   if (aadhaar && !AADHAAR_PATTERN.test(aadhaar)) {
     errors.aadhaarNumber = "Enter a valid 12-digit Aadhaar number.";
   }
+  if (values.dateOfBirth) {
+    const dob = new Date(values.dateOfBirth);
+    const today = new Date();
+    if (Number.isNaN(dob.getTime()) || dob > today) {
+      errors.dateOfBirth = "Date of birth cannot be in the future.";
+    } else {
+      const ageYears = (today.getTime() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+      if (ageYears < 15 || ageYears > 100) {
+        errors.dateOfBirth = "Enter a realistic date of birth.";
+      }
+    }
+  }
   return errors;
 }
 
@@ -184,6 +270,32 @@ export function addressInfoToPayload(values: AddressInfoFormValues): Record<stri
   };
 }
 
+const PINCODE_PATTERN = /^[1-9][0-9]{5}$/;
+
+export function validateAddressInfo(
+  values: AddressInfoFormValues,
+): Partial<Record<keyof AddressInfoFormValues, string>> {
+  const errors: Partial<Record<keyof AddressInfoFormValues, string>> = {};
+  if (values.stateCode && !(values.stateCode.toUpperCase() in INDIA_STATE_CODES)) {
+    errors.stateCode = "Select a valid state or union territory.";
+  }
+  if (values.pincode.trim() && !PINCODE_PATTERN.test(values.pincode.trim())) {
+    errors.pincode = "Enter a valid 6-digit PIN code.";
+  }
+  if (!values.permanentSameAsPresent) {
+    if (
+      values.permanentStateCode &&
+      !(values.permanentStateCode.toUpperCase() in INDIA_STATE_CODES)
+    ) {
+      errors.permanentStateCode = "Select a valid state or union territory.";
+    }
+    if (values.permanentPincode.trim() && !PINCODE_PATTERN.test(values.permanentPincode.trim())) {
+      errors.permanentPincode = "Enter a valid 6-digit PIN code.";
+    }
+  }
+  return errors;
+}
+
 // --- Emergency contact -------------------------------------------------------------------------
 
 export interface EmergencyContactFormValues {
@@ -216,12 +328,19 @@ export function emergencyContactToPayload(values: EmergencyContactFormValues): R
   };
 }
 
+const PHONE_PATTERN = /^[6-9]\d{9}$/;
+
 export function validateEmergencyContact(
   values: EmergencyContactFormValues,
 ): Partial<Record<keyof EmergencyContactFormValues, string>> {
   const errors: Partial<Record<keyof EmergencyContactFormValues, string>> = {};
   if (!values.contactName.trim()) errors.contactName = "Contact name is required.";
-  if (!values.phone.trim()) errors.phone = "Phone number is required.";
+  const phone = values.phone.trim().replace(/[\s-]/g, "").replace(/^\+?91/, "");
+  if (!values.phone.trim()) {
+    errors.phone = "Phone number is required.";
+  } else if (!PHONE_PATTERN.test(phone)) {
+    errors.phone = "Enter a valid 10-digit mobile number.";
+  }
   return errors;
 }
 
@@ -267,11 +386,36 @@ export function bankInfoToPayload(values: BankInfoFormValues): Record<string, un
   };
 }
 
+const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+const ACCOUNT_NUMBER_PATTERN = /^\d{9,18}$/;
+
 export function validateBankInfo(
   values: BankInfoFormValues,
 ): Partial<Record<keyof BankInfoFormValues, string>> {
   const errors: Partial<Record<keyof BankInfoFormValues, string>> = {};
   if (!values.paymentMode) errors.paymentMode = "Payment mode is required.";
+
+  const ifsc = values.ifsc.trim().toUpperCase();
+  const accountNumber = values.accountNumber.trim();
+  if (values.paymentMode === "BANK") {
+    if (!accountNumber) {
+      errors.accountNumber = "Account number is required for bank transfer.";
+    } else if (!ACCOUNT_NUMBER_PATTERN.test(accountNumber)) {
+      errors.accountNumber = "Enter a valid account number (9-18 digits).";
+    }
+    if (!ifsc) {
+      errors.ifsc = "IFSC is required for bank transfer.";
+    } else if (!IFSC_PATTERN.test(ifsc)) {
+      errors.ifsc = "Enter a valid 11-character IFSC code (e.g. SBIN0001234).";
+    }
+  } else {
+    if (accountNumber && !ACCOUNT_NUMBER_PATTERN.test(accountNumber)) {
+      errors.accountNumber = "Enter a valid account number (9-18 digits).";
+    }
+    if (ifsc && !IFSC_PATTERN.test(ifsc)) {
+      errors.ifsc = "Enter a valid 11-character IFSC code (e.g. SBIN0001234).";
+    }
+  }
   return errors;
 }
 
@@ -363,11 +507,25 @@ export function statutoryInfoToPayload(values: StatutoryInfoFormValues): Record<
   };
 }
 
+const UAN_PATTERN = /^\d{12}$/;
+const ESI_IP_PATTERN = /^\d{10}$/;
+
 export function validateStatutoryInfo(
   values: StatutoryInfoFormValues,
 ): Partial<Record<keyof StatutoryInfoFormValues, string>> {
   const errors: Partial<Record<keyof StatutoryInfoFormValues, string>> = {};
   if (!values.taxRegime) errors.taxRegime = "Tax regime is required.";
+  const uan = values.uanNumber.trim();
+  if (uan && !UAN_PATTERN.test(uan)) {
+    errors.uanNumber = "Enter a valid 12-digit UAN.";
+  }
+  const esiIp = values.esiIpNumber.trim();
+  if (esiIp && !ESI_IP_PATTERN.test(esiIp)) {
+    errors.esiIpNumber = "Enter a valid 10-digit ESI IP number.";
+  }
+  if (values.ptStateCode && !(values.ptStateCode.toUpperCase() in INDIA_STATE_CODES)) {
+    errors.ptStateCode = "Select a valid state or union territory.";
+  }
   return errors;
 }
 
@@ -516,6 +674,16 @@ export function validatePreviousEmployment(
   );
   if (hasIncompleteRow) {
     errors.items = "Each entry needs at least a company name and a from date.";
+    return errors;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const hasBadDates = values.items.some((row) => {
+    if (row.fromDate > today) return true;
+    if (row.toDate && (row.toDate < row.fromDate || row.toDate > today)) return true;
+    return false;
+  });
+  if (hasBadDates) {
+    errors.items = "Each entry's dates must be in order and not in the future.";
   }
   return errors;
 }
@@ -575,6 +743,16 @@ export function validateEducation(
   const hasIncompleteRow = values.items.some((row) => !row.qualification.trim());
   if (hasIncompleteRow) {
     errors.items = "Each entry needs at least a qualification.";
+    return errors;
+  }
+  const currentYear = new Date().getFullYear();
+  const hasBadYear = values.items.some((row) => {
+    if (!row.yearOfPassing) return false;
+    const year = Number(row.yearOfPassing);
+    return !Number.isInteger(year) || year < 1950 || year > currentYear + 1;
+  });
+  if (hasBadYear) {
+    errors.items = `Year of passing must be between 1950 and ${currentYear + 1}.`;
   }
   return errors;
 }
@@ -706,6 +884,14 @@ export function validateNominee(values: NomineeFormValues): Partial<Record<"item
     errors.items =
       "Each entry needs a name and relationship; minors need a guardian name, and a " +
       "nominee scheme needs its share percentage.";
+    return errors;
+  }
+  const hasBadAadhaar = values.items.some((row) => {
+    const aadhaar = row.aadhaarNumber.trim().replace(/\s+/g, "");
+    return aadhaar !== "" && !AADHAAR_PATTERN.test(aadhaar);
+  });
+  if (hasBadAadhaar) {
+    errors.items = "Enter a valid 12-digit Aadhaar number for each nominee that has one.";
     return errors;
   }
   if (nomineePfPercentageTotal(values) > 100) {

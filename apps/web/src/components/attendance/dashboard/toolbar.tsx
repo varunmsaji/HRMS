@@ -36,7 +36,7 @@ interface ToolbarProps {
   range: DateRange;
   today: string;
   lookups: FilterLookups;
-  /** Org-level controls (legal entity, shift) are meaningless to a plain team view. */
+  /** Org-level controls (company, shift) are meaningless to a plain team view. */
   showEntity: boolean;
   onChange: (patch: Partial<DashboardFilters>) => void;
   onReset: () => void;
@@ -70,7 +70,7 @@ function activeChips(f: DashboardFilters, range: DateRange, lookups: FilterLooku
   if (f.legalEntityId) {
     chips.push({
       key: "entity",
-      label: `Legal entity: ${lookups.entities.find((e) => e.id === f.legalEntityId)?.name ?? "selected"}`,
+      label: `Company: ${lookups.entities.find((e) => e.id === f.legalEntityId)?.name ?? "selected"}`,
       clear: { legalEntityId: "" },
     });
   }
@@ -151,9 +151,9 @@ function FilterFields({
         </Field>
       ) : null}
       {showEntity && lookups.entities.length > 0 ? (
-        <Field id={`${idPrefix}-entity`} label="Legal entity (periods)">
+        <Field id={`${idPrefix}-entity`} label="Company (periods)">
           <NativeSelect id={`${idPrefix}-entity`} value={filters.legalEntityId} onChange={(e) => onChange({ legalEntityId: e.target.value })}>
-            <option value="">All legal entities</option>
+            <option value="">All companies</option>
             {lookups.entities.map((entity) => (
               <option key={entity.id} value={entity.id}>
                 {entity.name}

@@ -26,7 +26,7 @@ export function LegalEntityForm({ values, errors, onChange, idPrefix = "" }: Leg
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField
             id={id("name")}
-            label="Legal entity name"
+            label="Company name"
             required
             error={errors.name}
             description="The legally registered company that employs your workforce."

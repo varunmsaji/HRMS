@@ -1,8 +1,9 @@
 """Pure-query repository for the employee module — no business rules (Module Standard §2),
 mirroring `organisation/repository.py`'s own convention exactly."""
 
+from collections.abc import Sequence
 from datetime import date, datetime
-from typing import Any, Sequence
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, literal, or_, select, text, update
@@ -16,6 +17,7 @@ from hrms.modules.employee.models import (
     EmployeeBank,
     EmployeeCompensation,
     EmployeeDependent,
+    EmployeeDocument,
     EmployeeEducation,
     EmployeeExperience,
     EmployeeStatutory,
@@ -1218,3 +1220,61 @@ class EmployeeDependentRepository:
         )
         total = (await session.execute(stmt)).scalar_one()
         return float(total) if total is not None else 0.0
+
+
+class EmployeeDocumentRepository:
+    """Mirrors `OnboardingDocumentRepository` (`hrms.modules.onboarding.repository`) — hard
+    delete, no soft-delete/no `version` column, ordered-by-`uploaded_at` listing."""
+
+    async def insert_document(
+        self, session: AsyncSession, *, data: dict[str, Any]
+    ) -> EmployeeDocument:
+        row = EmployeeDocument(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def get_document(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, document_id: UUID
+    ) -> EmployeeDocument | None:
+        stmt = select(EmployeeDocument).where(
+            EmployeeDocument.id == document_id,
+            EmployeeDocument.employee_id == employee_id,
+            EmployeeDocument.company_id == company_id,
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_documents(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> list[EmployeeDocument]:
+        stmt = (
+            select(EmployeeDocument)
+            .where(
+                EmployeeDocument.company_id == company_id,
+                EmployeeDocument.employee_id == employee_id,
+            )
+            .order_by(EmployeeDocument.uploaded_at)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def delete_document(self, session: AsyncSession, *, document: EmployeeDocument) -> None:
+        await session.delete(document)
+        await session.flush()
+
+    async def update_review(
+        self,
+        session: AsyncSession,
+        *,
+        document: EmployeeDocument,
+        status: str,
+        rejection_reason: str | None,
+        verified_by_user_id: UUID | None,
+        now: datetime,
+    ) -> EmployeeDocument:
+        document.status = status
+        document.rejection_reason = rejection_reason
+        document.verified_by_user_id = verified_by_user_id
+        document.verified_at = now
+        document.updated_at = now
+        await session.flush()
+        return document

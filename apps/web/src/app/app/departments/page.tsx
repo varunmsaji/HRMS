@@ -149,7 +149,7 @@ export default function DepartmentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Departments"
-        description="Organisational units under your branches — Legal Entity → Branch → Department."
+        description="Organisational units under your branches — Company → Branch → Department."
         actions={
           departments && departments.length > 0 ? (
             <Button type="button" onClick={openCreate}>

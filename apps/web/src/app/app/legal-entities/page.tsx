@@ -84,7 +84,7 @@ export default function LegalEntitiesPage() {
     try {
       await apiClient.post<LegalEntity>("/legal-entities", buildCreatePayload(formValues));
       setCreateOpen(false);
-      toast({ title: "Legal entity added", variant: "success" });
+      toast({ title: "Company added", variant: "success" });
       await loadEntities();
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
@@ -98,13 +98,13 @@ export default function LegalEntitiesPage() {
       if (err instanceof ApiError && err.status === 403) {
         setCreateOpen(false);
         toast({
-          title: "You don't have permission to add legal entities",
+          title: "You don't have permission to add companies",
           variant: "danger",
         });
         return;
       }
       toast({
-        title: "Could not add legal entity",
+        title: "Could not add company",
         description: describeApiError(err),
         variant: "danger",
       });
@@ -116,26 +116,26 @@ export default function LegalEntitiesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Legal Entities"
-        description="The legally registered companies that employ your workforce."
+        title="Companies"
+        description="The legally registered company that employs your workforce. Add your locations as branches under it."
         actions={
           entities && entities.length > 0 ? (
-            <Button type="button" onClick={openCreate}>
-              Add Legal Entity
-            </Button>
+            <Link href="/app/branches" className="text-sm text-foreground-secondary hover:underline">
+              Manage branches →
+            </Link>
           ) : null
         }
       />
 
       <Card>
         <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading legal entities…" /> : null}
+          {loading ? <LoadingState label="Loading companies…" /> : null}
 
           {error && !loading ? (
             <ErrorState
               message={
                 error.status === 403
-                  ? "You do not have permission to view legal entities."
+                  ? "You do not have permission to view companies."
                   : error.message
               }
               onRetry={() => void loadEntities()}
@@ -145,11 +145,11 @@ export default function LegalEntitiesPage() {
           {!loading && !error && entities && entities.length === 0 ? (
             <EmptyState
               icon={Landmark}
-              title="No legal entities have been configured yet."
-              description="Add the legal company/entity that employs your workforce. You can add more than one if your organisation operates multiple registered companies."
+              title="No companies have been configured yet."
+              description="Add the registered company that employs your workforce. You can then add as many branches as you need under it."
               action={
                 <Button type="button" onClick={openCreate}>
-                  Add Legal Entity
+                  Add Company
                 </Button>
               }
             />
@@ -183,7 +183,7 @@ export default function LegalEntitiesPage() {
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add Legal Entity</DialogTitle>
+            <DialogTitle>Add Company</DialogTitle>
           </DialogHeader>
           <div className="max-h-[60vh] overflow-y-auto pr-1">
             <LegalEntityForm
@@ -198,7 +198,7 @@ export default function LegalEntitiesPage() {
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={saving}>
-              {saving ? "Adding…" : "Add legal entity"}
+              {saving ? "Adding…" : "Add company"}
             </Button>
           </DialogFooter>
         </DialogContent>

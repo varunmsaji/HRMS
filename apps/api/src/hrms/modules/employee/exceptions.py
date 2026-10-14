@@ -62,9 +62,7 @@ class InvalidLegalEntityReferenceError(ValidationError):
 
     code = "INVALID_LEGAL_ENTITY"
 
-    def __init__(
-        self, message: str = "legal_entity_id does not reference a valid legal entity"
-    ) -> None:
+    def __init__(self, message: str = "legal_entity_id does not reference a valid company") -> None:
         super().__init__(
             message,
             details=[
@@ -606,4 +604,46 @@ class EmploymentChangeConflictsWithLeaveError(ConflictError):
                     "context": {"leave_applications": conflicts},
                 }
             ],
+        )
+
+
+class InvalidEmployeeDocumentTypeError(ValidationError):
+    code = "INVALID_DOCUMENT_TYPE"
+
+    def __init__(self, document_type: str) -> None:
+        message = f"{document_type} is not a valid document type"
+        super().__init__(
+            message,
+            details=[
+                {"field": "document_type", "code": "INVALID_DOCUMENT_TYPE", "message": message}
+            ],
+        )
+
+
+class EmployeeDocumentTooLargeError(ValidationError):
+    """Mirrors `OnboardingDocumentTooLargeError` — same cap, same "no source document names a
+    number" posture, this task's own engineering decision."""
+
+    code = "DOCUMENT_TOO_LARGE"
+
+    def __init__(self, max_size_bytes: int) -> None:
+        message = f"File exceeds the {max_size_bytes // (1024 * 1024)}MB upload limit"
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "DOCUMENT_TOO_LARGE", "message": message}],
+        )
+
+
+class UnsupportedEmployeeDocumentContentError(ValidationError):
+    """Mirrors `UnsupportedDocumentContentError` (onboarding) — raised when an uploaded file's
+    own bytes don't match any allowed document signature
+    (`hrms.modules.employee.document_validation.sniff_document_content_type`)."""
+
+    code = "UNSUPPORTED_DOCUMENT_CONTENT"
+
+    def __init__(self) -> None:
+        message = "File content is not a supported document type (PDF, JPEG, or PNG)"
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "UNSUPPORTED_DOCUMENT_CONTENT", "message": message}],
         )

@@ -81,7 +81,8 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
   {
     label: "Organisation",
     items: [
-      { href: "/app/company", label: "Company", icon: Building2 },
+      { href: "/app/company", label: "Company Profile", icon: Building2 },
+      { href: "/app/legal-entities", label: "Companies", icon: Landmark },
       { href: "/app/branches", label: "Branches", icon: Building },
       { href: "/app/departments", label: "Departments", icon: Network },
       { href: "/app/designations", label: "Designations", icon: Briefcase },

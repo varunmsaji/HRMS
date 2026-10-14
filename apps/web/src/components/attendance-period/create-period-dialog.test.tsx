@@ -46,7 +46,7 @@ describe("CreatePeriodDialog", () => {
     mockedPost.mockReset();
   });
 
-  it("defaults to the current calendar month of the only legal entity", async () => {
+  it("defaults to the current calendar month of the only company", async () => {
     mockedPost.mockResolvedValueOnce({ id: "p-1" });
     const { onCreated } = renderDialog([entity("le-1", "Acme India")]);
 
@@ -64,11 +64,11 @@ describe("CreatePeriodDialog", () => {
     renderDialog([entity("le-1", "Acme India"), entity("le-2", "Acme Services")]);
 
     await userEvent.click(screen.getByRole("button", { name: /create period/i }));
-    expect(await screen.findByText("Choose a legal entity.")).toBeInTheDocument();
+    expect(await screen.findByText("Choose a company.")).toBeInTheDocument();
     expect(mockedPost).not.toHaveBeenCalled();
 
     mockedPost.mockResolvedValueOnce({ id: "p-1" });
-    await userEvent.selectOptions(screen.getByLabelText("Legal entity"), "le-2");
+    await userEvent.selectOptions(screen.getByLabelText("Company"), "le-2");
     await userEvent.selectOptions(screen.getByLabelText("Cycle"), "CUSTOM");
     await userEvent.click(screen.getByRole("button", { name: /create period/i }));
 
@@ -82,7 +82,7 @@ describe("CreatePeriodDialog", () => {
     );
   });
 
-  it("explains an overlap within the same legal entity", async () => {
+  it("explains an overlap within the same company", async () => {
     mockedPost.mockRejectedValueOnce(
       new ApiError({ status: 409, code: "ATTENDANCE_PERIOD_OVERLAP", message: "overlap" }),
     );
@@ -91,7 +91,7 @@ describe("CreatePeriodDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: /create period/i }));
 
     expect(
-      await screen.findByText(/another period for this legal entity already covers/i),
+      await screen.findByText(/another period for this company already covers/i),
     ).toBeInTheDocument();
   });
 });

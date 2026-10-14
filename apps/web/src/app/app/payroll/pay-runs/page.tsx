@@ -45,7 +45,7 @@ function previousMonth(today: string): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-/** Payroll Phase 5.2 — pay runs (`/v1/payroll/pay-runs`): one per legal entity per calendar
+/** Payroll Phase 5.2 — pay runs (`/v1/payroll/pay-runs`): one per company per calendar
  * month (decisions 14/18). */
 export default function PayRunsPage() {
   const router = useRouter();
@@ -157,7 +157,7 @@ export default function PayRunsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Pay Runs"
-        description="Monthly payroll for each legal entity, from the closed attendance period."
+        description="Monthly payroll for each company, from the closed attendance period."
         actions={
           <div className="flex flex-wrap gap-2">
             {canSetup ? (
@@ -186,11 +186,11 @@ export default function PayRunsPage() {
           {legalEntities.length > 1 ? (
             <div className="mb-4 max-w-xs">
               <NativeSelect
-                aria-label="Filter by legal entity"
+                aria-label="Filter by company"
                 value={entityFilter}
                 onChange={(e) => setEntityFilter(e.target.value)}
               >
-                <option value="">All legal entities</option>
+                <option value="">All companies</option>
                 {legalEntities.map((entity) => (
                   <option key={entity.id} value={entity.id}>
                     {entity.name}
@@ -212,7 +212,7 @@ export default function PayRunsPage() {
             <EmptyState
               icon={Banknote}
               title="No pay runs yet."
-              description="Close the month's attendance period for a legal entity, then create its pay run."
+              description="Close the month's attendance period for a company, then create its pay run."
             />
           ) : null}
           {!loading && !error && visibleRuns && visibleRuns.length > 0 ? (
@@ -221,7 +221,7 @@ export default function PayRunsPage() {
                 <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Month</th>
-                    <th className="px-3 py-2 text-left font-medium">Legal entity</th>
+                    <th className="px-3 py-2 text-left font-medium">Company</th>
                     <th className="px-3 py-2 text-left font-medium">Status</th>
                     <th className="px-3 py-2 text-right font-medium">Employees</th>
                     <th className="px-3 py-2 text-right font-medium">Net pay</th>
@@ -270,12 +270,12 @@ export default function PayRunsPage() {
           <DialogHeader>
             <DialogTitle>New pay run</DialogTitle>
             <DialogDescription>
-              One pay run per legal entity per month. Its inputs can be locked once that
+              One pay run per company per month. Its inputs can be locked once that
               month&apos;s attendance period is closed.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <FormField id="pay-run-entity" label="Legal entity" required>
+            <FormField id="pay-run-entity" label="Company" required>
               <NativeSelect value={entityId} onChange={(e) => setEntityId(e.target.value)}>
                 {activeEntities.map((entity) => (
                   <option key={entity.id} value={entity.id}>

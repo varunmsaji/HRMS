@@ -326,7 +326,7 @@ export default function PayRunDetailPage() {
     <div className="space-y-6">
       <PageHeader
         title={`Pay run — ${formatPayMonth(run.month)}`}
-        description={`${entityName ?? "Legal entity"} · ${run.period_start} to ${run.period_end}`}
+        description={`${entityName ?? "Company"} · ${run.period_start} to ${run.period_end}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <PayRunStatusBadge status={run.status} />
@@ -438,7 +438,7 @@ export default function PayRunDetailPage() {
           </div>
           {run.status === "DRAFT" ? (
             <p className="text-sm text-foreground-muted">
-              Lock the inputs once this month&apos;s attendance period for the legal entity is
+              Lock the inputs once this month&apos;s attendance period for the company is
               closed. Everything the pay is computed from is copied into the run at that moment.
             </p>
           ) : null}

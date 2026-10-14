@@ -299,6 +299,9 @@ async def test_registration_success_full_row_graph(
                 # Added by market-parity onboarding-data pass part 6 (PF/Gratuity nominee + ESI
                 # family details) — gates `GET /employees/{id}/dependents`.
                 "EMPLOYEE.VIEW_NOMINEE",
+                # Added by the Employee Document module (post-onboarding document management) —
+                # gates `GET /employees/{id}/documents`.
+                "EMPLOYEE.VIEW_DOCUMENTS",
                 "LEAVE.TYPE_MANAGE",
                 "LEAVE.POLICY_MANAGE",
                 "LEAVE.BALANCE_VIEW",

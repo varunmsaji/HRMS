@@ -19,7 +19,6 @@ from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import NotFoundError
 from hrms.core.storage import DocumentStorageService
-from hrms.shared.pagination import PageParams
 from hrms.modules.onboarding.document_validation import (
     content_disposition_attachment,
     safe_document_object_key,
@@ -81,6 +80,7 @@ from hrms.modules.onboarding.schemas import (
     onboarding_document_to_read_with_url,
     onboarding_section_review_to_read,
 )
+from hrms.shared.pagination import PageParams
 
 if TYPE_CHECKING:
     from hrms.modules.onboarding.models import OnboardingCase
@@ -396,9 +396,7 @@ class OnboardingCaseService:
         the exact shape this method had before FINDING-03. `GET /onboarding-cases` always passes
         `page`."""
         if page is None:
-            cases = await self._repo.list_cases(
-                self._session, company_id=company_id, status=status
-            )
+            cases = await self._repo.list_cases(self._session, company_id=company_id, status=status)
             reads = [onboarding_case_to_read(case) for case in cases]
             return reads, len(reads)
         cases = await self._repo.list_cases(
@@ -1449,6 +1447,28 @@ class OnboardingActivationService:
                 company_id,
                 employee.id,
                 EmployeeDependentCreate(**item),
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        # Employee Document module — migrates every document the candidate uploaded during
+        # onboarding into the new, ongoing `employee_document` store (`EmployeeDocumentService.
+        # migrate_from_onboarding`'s own docstring covers why each row gets a freshly-copied S3
+        # object rather than reusing the source's key) so HR has one continuous document history
+        # for this person from day one, instead of it staying trapped on a now-closed case. The
+        # source `OnboardingDocument` rows are left completely untouched — this is additive only.
+        from hrms.modules.employee.service import EmployeeDocumentService
+
+        document_service = EmployeeDocumentService(self._session, self._settings)
+        onboarding_documents = await OnboardingDocumentRepository().list_documents(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        for onboarding_document in onboarding_documents:
+            await document_service.migrate_from_onboarding(
+                company_id,
+                employee.id,
+                onboarding_document,
                 actor_user_id=actor_user_id,
                 ip_address=ip_address,
                 user_agent=user_agent,

@@ -66,6 +66,23 @@ class CompanyWriteBlockedError(LockedError):
         super().__init__(message, code="LOCKED")
 
 
+class CompanyLimitReachedError(ConflictError):
+    """Initial release allows a single company per tenant (any number of branches)."""
+
+    code = "COMPANY_LIMIT_REACHED"
+
+    def __init__(self, *, limit: int) -> None:
+        message = (
+            "Only one company can be added. Add more branches under your existing company instead."
+            if limit == 1
+            else f"At most {limit} companies can be added."
+        )
+        super().__init__(
+            message,
+            details=[{"field": "name", "code": "COMPANY_LIMIT_REACHED", "message": message}],
+        )
+
+
 class LegalEntityDeactivationBlockedError(ConflictError):
     """FR-ORG-014 — never hard-delete; deactivation is blocked while active Branch rows
     still reference this legal entity."""

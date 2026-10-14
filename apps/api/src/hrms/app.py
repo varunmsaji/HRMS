@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,7 @@ from hrms.core.crypto.registry import EncryptionKeyRegistry
 from hrms.core.db.session import dispose_engine, get_engine, session_scope
 from hrms.core.errors.handlers import register_exception_handlers
 from hrms.core.observability.logging import configure_logging
+from hrms.core.observability.request_context import RequestContextMiddleware
 from hrms.core.security_headers import SecurityHeadersMiddleware
 from hrms.core.tenancy.middleware import TenancyMiddleware
 from hrms.core.uploads import MaxUploadSizeMiddleware
@@ -67,13 +69,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.effective_cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # Shared with `RequestContextMiddleware` below, which replays an unhandled-error 500 through
+    # an identically configured `CORSMiddleware` (LOG-01) — one definition, so the two can never
+    # disagree about which origins may read an error.
+    cors_options: dict[str, Any] = {
+        "allow_origins": settings.effective_cors_origins,
+        "allow_credentials": True,
+        "allow_methods": ["*"],
+        "allow_headers": ["*"],
+        # Lets browser code read the correlation id off any response (CORS hides non-safelisted
+        # response headers from cross-origin JavaScript otherwise).
+        "expose_headers": ["X-Request-Id"],
+    }
+    app.add_middleware(CORSMiddleware, **cors_options)
     # SEC-03 (docs/audits/UPLOAD_BATCH_B_FILE_VALIDATION.md) — the public, unauthenticated
     # onboarding document-upload endpoint is the finding's primary target; the authenticated
     # employee-import CSV upload shares the same `await file.read()`-before-size-check pattern
@@ -95,6 +103,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         MaxUploadSizeMiddleware,
         max_bytes=MAX_IMPORT_FILE_SIZE_BYTES + 1024 * 1024,
         path_prefixes=("/v1/employee-imports",),
+    )
+    from hrms.modules.employee.schemas import EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES
+
+    # Scoped to all of `/v1/employees` rather than just the `.../documents` sub-path — harmless,
+    # since this is a ceiling (no other employee route accepts a body anywhere near this size),
+    # and `MaxUploadSizeMiddleware` only matches by path prefix.
+    app.add_middleware(
+        MaxUploadSizeMiddleware,
+        max_bytes=EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES + 2 * 1024 * 1024,
+        path_prefixes=("/v1/employees",),
     )
     from hrms.modules.attendance.schemas import FACE_ENROLLMENT_ANGLES, FACE_IMAGE_MAX_BYTES
 
@@ -141,6 +159,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ProxyHeadersMiddleware,
         trusted_hosts=list(settings.trusted_proxy_hosts),
     )
+    # LOG-01/LOG-05 — added very last, so it wraps every other middleware: it owns the request id
+    # (validated, bounded, always echoed as `X-Request-Id`) for the whole stack, and catches any
+    # exception that escapes it, logging once and answering with the standard 500 envelope plus
+    # CORS and security headers (`core/observability/request_context.py`). It does not read the
+    # client address, so sitting outside ProxyHeadersMiddleware is harmless.
+    app.add_middleware(RequestContextMiddleware, cors_options=cors_options)
 
     register_exception_handlers(app)
 

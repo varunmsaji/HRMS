@@ -14,7 +14,7 @@ interface BranchFormProps {
   onChange: (values: BranchFormValues) => void;
   legalEntities: LegalEntity[];
   idPrefix?: string;
-  /** Hide the Legal Entity picker when the company only has one (the common case) — it's
+  /** Hide the Company picker when the company only has one (the common case) — it's
    * already set on `values.legalEntityId` by the caller, nothing for the user to choose. */
   hideLegalEntitySelector?: boolean;
 }
@@ -47,17 +47,17 @@ export function BranchForm({
           {hideLegalEntitySelector ? null : (
             <FormField
               id={id("legalEntityId")}
-              label="Legal entity"
+              label="Company"
               required
               error={errors.legalEntityId}
-              description="The legal entity this branch operates under."
+              description="The company this branch operates under."
               className="sm:col-span-2"
             >
               <NativeSelect
                 value={values.legalEntityId}
                 onChange={(e) => update("legalEntityId", e.target.value)}
               >
-                <option value="">Select a legal entity</option>
+                <option value="">Select a company</option>
                 {legalEntities.map((entity) => (
                   <option key={entity.id} value={entity.id}>
                     {entity.name}

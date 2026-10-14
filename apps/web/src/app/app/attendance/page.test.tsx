@@ -458,17 +458,17 @@ describe("AttendanceDashboardPage", () => {
     });
   });
 
-  describe("legal entity + periods", () => {
-    it("scopes the attendance periods to the chosen legal entity", async () => {
+  describe("company + periods", () => {
+    it("scopes the attendance periods to the chosen company", async () => {
       mockApi({ days: sampleDays(), periods: [PERIOD_OPEN] });
       const user = userEvent.setup();
       render(<AttendanceDashboardPage />);
-      const select = await screen.findByLabelText("Legal entity (periods)");
+      const select = await screen.findByLabelText("Company (periods)");
       await user.selectOptions(select, "le-2");
       await waitFor(() =>
         expect(mockedGet).toHaveBeenCalledWith("/attendance-periods?legal_entity_id=le-2"),
       );
-      expect(screen.getByRole("button", { name: /remove filter legal entity: abc services llp/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /remove filter company: abc services llp/i })).toBeInTheDocument();
     });
 
     it("shows period state with its entity, and surfaces a blocked period as a payroll blocker", async () => {
@@ -559,7 +559,7 @@ describe("AttendanceDashboardPage", () => {
       expect(screen.getByRole("button", { name: /record punch/i })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /needs attention/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /attendance periods/i })).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("Legal entity (periods)")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Company (periods)")).not.toBeInTheDocument();
 
       const paths = [...mockedGet.mock.calls.map((c) => c[0]), ...mockedGetList.mock.calls.map((c) => c[0])];
       expect(paths.some((p) => p.startsWith("/attendance-periods"))).toBe(false);
@@ -574,7 +574,7 @@ describe("AttendanceDashboardPage", () => {
       expect(await findKpi(/^Present: 2\./)).toBeInTheDocument();
       expect(screen.getByRole("heading", { name: /needs attention/i })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /attendance periods/i })).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("Legal entity (periods)")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Company (periods)")).not.toBeInTheDocument();
       // No pointless lookups the manager can't make.
       expect(mockedGetList).not.toHaveBeenCalled();
     });

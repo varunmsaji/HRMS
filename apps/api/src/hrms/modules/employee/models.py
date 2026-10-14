@@ -438,6 +438,49 @@ class EmployeeDependent(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, default=1)
 
 
+class EmployeeDocument(Base, TimestampMixin):
+    """An employee's ongoing document store — HR/Admin-managed (`EMPLOYEE.UPDATE_SENSITIVE`),
+    independent of onboarding. Mirrors `OnboardingDocument`
+    (`hrms.modules.onboarding.models`) field-for-field, with the parent FK swapped from
+    `onboarding_case_id` to `employee_id`: same hard-delete, no soft-delete/no `version` column
+    posture, same `s3_key`-points-into-`Settings.s3_bucket_documents`/presigned-GET-URL-only
+    read path.
+
+    `source_onboarding_document_id` has no analog on `OnboardingDocument` — set only on rows
+    created by `EmployeeDocumentService.migrate_from_onboarding` (run once, at case activation,
+    for every document the candidate uploaded during onboarding), `NULL` for a row HR uploads
+    directly after that. Plain, unconstrained UUID (no FK) — pure traceability, never joined or
+    filtered on. Deliberately **not** an FK to `onboarding_document.id`: a migrated row owns its
+    own, independently-copied S3 object (see `EmployeeDocumentService.migrate_from_onboarding`'s
+    own docstring for why), so nothing here needs referential integrity against the source row's
+    continued existence."""
+
+    __tablename__ = "employee_document"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    document_type: Mapped[str] = mapped_column(String(40))
+    s3_key: Mapped[str] = mapped_column(String(512))
+    original_filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING")
+    verified_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id"), nullable=True
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_onboarding_document_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+
+
 class NumberSeries(Base, TimestampMixin):
     """Race-safe sequential code allocator (`docs/sprints/SPRINT_3_COMPANY_FOUNDATION.md`
     Task 4.5.1 shape), scoped to `EMPLOYEE_CODE` only for this slice. Built inside the employee

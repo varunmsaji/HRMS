@@ -30,7 +30,7 @@ export function buildEmploymentCreatePayload(values: EmploymentFormValues): Reco
 
 export function validateEmploymentForm(values: EmploymentFormValues): EmploymentFormErrors {
   const errors: EmploymentFormErrors = {};
-  if (!values.legalEntityId) errors.legalEntityId = "Select a legal entity.";
+  if (!values.legalEntityId) errors.legalEntityId = "Select a company.";
   if (!values.joiningDate) errors.joiningDate = "Joining date is required.";
   return errors;
 }

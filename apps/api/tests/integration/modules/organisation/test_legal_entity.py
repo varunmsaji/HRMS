@@ -425,3 +425,22 @@ async def test_company_registration_does_not_auto_create_legal_entity(
             assert rows == []
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_second_company_rejected_when_limit_is_one(
+    client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Initial release: one company per tenant (branches are unlimited)."""
+    from hrms.core.config.settings import get_settings
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        monkeypatch.setattr(get_settings(), "max_legal_entities_per_company", 1)
+        first = await client.post("/v1/legal-entities", headers=headers, json={"name": "Acme"})
+        assert first.status_code == 201
+        second = await client.post("/v1/legal-entities", headers=headers, json={"name": "Beta"})
+        assert second.status_code == 409
+        assert second.json()["error"]["details"][0]["code"] == "COMPANY_LIMIT_REACHED"
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)

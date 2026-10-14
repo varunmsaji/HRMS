@@ -31,8 +31,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "HRMS Platform",
-  description: "Enterprise HRMS — local development",
+  title: "Spectrum HRMS",
+  description: "Spectrum HRMS — local development",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

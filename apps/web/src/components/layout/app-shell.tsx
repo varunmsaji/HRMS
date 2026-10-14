@@ -17,8 +17,8 @@ function SidebarBrand() {
         <Building2 className="h-4 w-4" aria-hidden="true" />
       </div>
       <div className="flex flex-col leading-tight">
-        <span className="text-sm font-semibold text-primary">Staff Spectrum</span>
-        <span className="text-[11px] font-medium text-foreground-muted">HRMS Enterprise</span>
+        <span className="text-sm font-semibold text-primary">Spectrum HRMS</span>
+        <span className="text-[11px] font-medium text-foreground-muted">Enterprise</span>
       </div>
     </Link>
   );

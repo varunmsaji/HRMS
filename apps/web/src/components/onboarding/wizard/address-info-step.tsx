@@ -1,12 +1,15 @@
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
-import type { AddressInfoFormValues } from "@/lib/onboarding/public-wizard";
+import { NativeSelect } from "@/components/ui/native-select";
+import { INDIA_STATE_CODES, type AddressInfoFormValues } from "@/lib/onboarding/public-wizard";
 
 interface AddressInfoStepProps {
   values: AddressInfoFormValues;
   errors: Partial<Record<keyof AddressInfoFormValues, string>>;
   onChange: (values: AddressInfoFormValues) => void;
 }
+
+const STATE_OPTIONS = Object.entries(INDIA_STATE_CODES).sort((a, b) => a[1].localeCompare(b[1]));
 
 export function AddressInfoStep({ values, errors, onChange }: AddressInfoStepProps) {
   function update<K extends keyof AddressInfoFormValues>(key: K, value: AddressInfoFormValues[K]) {
@@ -27,8 +30,18 @@ export function AddressInfoStep({ values, errors, onChange }: AddressInfoStepPro
           <FormField id="city" label="City" error={errors.city}>
             <Input value={values.city} onChange={(e) => update("city", e.target.value)} />
           </FormField>
-          <FormField id="stateCode" label="State code" error={errors.stateCode}>
-            <Input value={values.stateCode} onChange={(e) => update("stateCode", e.target.value)} />
+          <FormField id="stateCode" label="State / union territory" error={errors.stateCode}>
+            <NativeSelect
+              value={values.stateCode}
+              onChange={(e) => update("stateCode", e.target.value)}
+            >
+              <option value="">Select a state</option>
+              {STATE_OPTIONS.map(([code, name]) => (
+                <option key={code} value={code}>
+                  {name}
+                </option>
+              ))}
+            </NativeSelect>
           </FormField>
           <FormField id="pincode" label="Pincode" error={errors.pincode}>
             <Input value={values.pincode} onChange={(e) => update("pincode", e.target.value)} />
@@ -82,11 +95,22 @@ export function AddressInfoStep({ values, errors, onChange }: AddressInfoStepPro
             <FormField id="permanentCity" label="City" error={errors.permanentCity}>
               <Input value={values.permanentCity} onChange={(e) => update("permanentCity", e.target.value)} />
             </FormField>
-            <FormField id="permanentStateCode" label="State code" error={errors.permanentStateCode}>
-              <Input
+            <FormField
+              id="permanentStateCode"
+              label="State / union territory"
+              error={errors.permanentStateCode}
+            >
+              <NativeSelect
                 value={values.permanentStateCode}
                 onChange={(e) => update("permanentStateCode", e.target.value)}
-              />
+              >
+                <option value="">Select a state</option>
+                {STATE_OPTIONS.map(([code, name]) => (
+                  <option key={code} value={code}>
+                    {name}
+                  </option>
+                ))}
+              </NativeSelect>
             </FormField>
             <FormField id="permanentPincode" label="Pincode" error={errors.permanentPincode}>
               <Input

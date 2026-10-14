@@ -14,7 +14,7 @@ const GAPS: { label: string; reason: string }[] = [
   },
   {
     label: "Legal-entity filtering of attendance days",
-    reason: "Days carry no legal entity; the entity filter applies to attendance periods only.",
+    reason: "Days carry no company; the entity filter applies to attendance periods only.",
   },
   {
     label: "Payable hours and expected working days",

@@ -21,7 +21,7 @@ export interface AttendancePeriodActionEntry {
 export interface AttendancePeriod {
   id: string;
   company_id: string;
-  /** Decision 14 — each legal entity runs its own attendance cycle. */
+  /** Decision 14 — each company runs its own attendance cycle. */
   legal_entity_id: string;
   period_start: string;
   period_end: string;

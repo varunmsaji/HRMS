@@ -176,7 +176,7 @@ export function EmployeeOverview({ employee }: { employee: Employee }) {
                 value={data.employment ? data.employment.status : "No employment on record"}
               />
               <DetailField
-                label="Legal entity"
+                label="Company"
                 value={
                   data.employment ? nameOf(data.legalEntities, data.employment.legal_entity_id) : null
                 }

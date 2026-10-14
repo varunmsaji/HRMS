@@ -26,7 +26,7 @@ export default async function HomePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-8 p-8">
       <header>
-        <p className="text-sm font-medium uppercase tracking-wide text-slate-500">HRMS Platform</p>
+        <p className="text-sm font-medium uppercase tracking-wide text-slate-500">Spectrum HRMS</p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-900">Local development</h1>
         <p className="mt-2 text-slate-600">
           Next.js frontend and FastAPI backend. This page calls the API health endpoint on each

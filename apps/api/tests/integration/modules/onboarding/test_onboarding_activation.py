@@ -11,6 +11,7 @@ rejection, and cross-tenant isolation."""
 from typing import Any
 from uuid import UUID
 
+import httpx
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
@@ -24,6 +25,7 @@ from .test_onboarding_case import (
     _register_tenant,
     _teardown,
 )
+from .test_onboarding_documents import _JPEG_BYTES, _cleanup_documents
 from .test_onboarding_public import _cleanup_tokens, _issue_token
 from .test_onboarding_review import _cleanup_section_reviews
 from .test_onboarding_submit import _fill_all_sections
@@ -87,7 +89,6 @@ _ALL_SECTIONS = [
     "emergency_contact",
     "bank_info",
     "statutory_info",
-    "compensation_info",
     "previous_employment_info",
     "education_info",
     "nominee_info",
@@ -173,6 +174,12 @@ async def _cleanup_employee_graph(*, company_id: UUID) -> None:
             text("DELETE FROM employee_dependent WHERE company_id = :cid"),
             {"cid": str(company_id)},
         )
+        # Employee Document module — same FK reasoning: activation may now migrate
+        # `OnboardingDocument` rows into `employee_document`, which FK-references `employee.id`.
+        await session.execute(
+            text("DELETE FROM employee_document WHERE company_id = :cid"),
+            {"cid": str(company_id)},
+        )
         await session.execute(
             text("DELETE FROM employee_assignment WHERE company_id = :cid"),
             {"cid": str(company_id)},
@@ -200,6 +207,11 @@ async def _cleanup_employee_graph(*, company_id: UUID) -> None:
 
 async def _full_teardown(*, company_id: UUID, user_id: UUID | None) -> None:
     await _cleanup_section_reviews(company_id=company_id)
+    # `onboarding_document` FK-references `onboarding_case` — must go before
+    # `_cleanup_employee_graph` below deletes `onboarding_case` rows (latent gap: no activation
+    # test uploaded a document before `test_activate_migrates_onboarding_documents_to_employee_
+    # documents` exercised it).
+    await _cleanup_documents(company_id=company_id)
     await _cleanup_tokens(company_id=company_id)
     await _cleanup_employee_graph(company_id=company_id)
     await _teardown(company_id=company_id, user_id=user_id)
@@ -270,6 +282,109 @@ async def test_activate_success_creates_full_employee_graph(
         assert compensations[0]["annual_ctc_minor"] == 60000000
         assert compensations[0]["currency"] == "INR"
         assert compensations[0]["revision_type"] == "JOINING"
+
+        # Employee Document module — this case never uploaded any documents, so activation must
+        # migrate zero rows, not error.
+        documents = (
+            await client.get(f"/v1/employees/{employee_id}/documents", headers=headers)
+        ).json()["data"]
+        assert documents == []
+    finally:
+        await _full_teardown(company_id=company_id, user_id=user_id)
+
+
+async def test_activate_migrates_onboarding_documents_to_employee_documents(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Employee Document module — every `OnboardingDocument` uploaded before submission must
+    appear on the activated employee's own document store, preserving type/filename/status, with
+    a freshly-copied S3 object (not the source's own key) and the source onboarding case's
+    document left completely untouched (`EmployeeDocumentService.migrate_from_onboarding`'s own
+    docstring covers why)."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        legal_entity = await _create_legal_entity(client, headers)
+        branch = await _create_branch(client, headers, legal_entity_id=legal_entity["id"])
+        department = await _create_department(client, headers, branch_id=branch["id"])
+        designation = await _create_designation(client, headers, department_id=department["id"])
+        case = await _create_case(
+            client,
+            headers,
+            branch_id=branch["id"],
+            department_id=department["id"],
+            designation_id=designation["id"],
+        )
+        token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]))
+
+        upload = await client.post(
+            f"/v1/public/onboarding/{token}/documents",
+            data={"document_type": "PAN"},
+            files={"file": ("pan.jpg", _JPEG_BYTES, "image/jpeg")},
+        )
+        assert upload.status_code == 201, upload.text
+        onboarding_document_id = upload.json()["data"]["id"]
+        review = await client.post(
+            f"/v1/onboarding-cases/{case['id']}/documents/{onboarding_document_id}/review",
+            headers=headers,
+            json={"status": "VERIFIED"},
+        )
+        assert review.status_code == 200, review.text
+
+        await _fill_all_sections(client, token)
+        submit = await client.post(f"/v1/public/onboarding/{token}/submit")
+        assert submit.status_code == 200, submit.text
+        for section in _ALL_SECTIONS:
+            response = await client.post(
+                _review_url(case["id"], section), headers=headers, json={"status": "VERIFIED"}
+            )
+            assert response.status_code == 200, response.text
+
+        activate = await client.post(f"/v1/onboarding-cases/{case['id']}/activate", headers=headers)
+        assert activate.status_code == 200, activate.text
+        employee_id = activate.json()["data"]["employee_id"]
+
+        employee_docs = (
+            await client.get(f"/v1/employees/{employee_id}/documents", headers=headers)
+        ).json()["data"]
+        assert len(employee_docs) == 1
+        migrated = employee_docs[0]
+        assert migrated["document_type"] == "PAN"
+        assert migrated["status"] == "VERIFIED"
+        assert migrated["original_filename"] == "pan.jpg"
+        assert migrated["download_url"].startswith("http")
+
+        # The source onboarding case's document is left completely untouched — still there,
+        # still downloadable, nothing deleted by the migration.
+        onboarding_docs = (
+            await client.get(f"/v1/onboarding-cases/{case['id']}/documents", headers=headers)
+        ).json()["data"]
+        assert len(onboarding_docs) == 1
+        assert onboarding_docs[0]["id"] == onboarding_document_id
+
+        # Each row owns its own, independently-keyed S3 object (not a shared key) — verified
+        # indirectly: deleting the migrated copy must not break the source's own download link.
+        delete_response = await client.delete(
+            f"/v1/employees/{employee_id}/documents/{migrated['id']}", headers=headers
+        )
+        assert delete_response.status_code == 200
+        async with httpx.AsyncClient() as raw_client:
+            source_download = await raw_client.get(onboarding_docs[0]["download_url"])
+        assert source_download.status_code == 200
+        assert source_download.content == _JPEG_BYTES
+
+        factory = get_session_factory()
+        async with factory() as session:
+            audit_row = (
+                await session.execute(
+                    text(
+                        "SELECT action FROM audit_log WHERE entity_type = 'employee_document' "
+                        "AND action = 'EMPLOYEE_DOCUMENT_MIGRATED_FROM_ONBOARDING' "
+                        "AND company_id = :cid"
+                    ),
+                    {"cid": str(company_id)},
+                )
+            ).first()
+            assert audit_row is not None
     finally:
         await _full_teardown(company_id=company_id, user_id=user_id)
 

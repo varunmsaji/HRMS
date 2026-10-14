@@ -1,11 +1,21 @@
+import sys
 from typing import Any
 
+import structlog
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import task_failure
+from celery.signals import (
+    before_task_publish,
+    setup_logging,
+    task_failure,
+    task_postrun,
+    task_prerun,
+)
+from kombu import Queue  # type: ignore[import-untyped]
 
 from hrms.core.config.settings import get_settings
-from hrms.core.observability.logging import get_logger
+from hrms.core.observability.logging import configure_logging, get_logger
+from hrms.core.tenancy.context import current_request_id
 
 _logger = get_logger(__name__)
 
@@ -25,6 +35,16 @@ def create_celery_app() -> Celery:
         enable_utc=True,
         task_track_started=True,
         task_default_queue="default",
+        # PRA-04 — every queue a task routes to must be declared here. A worker started without
+        # `-Q` (docker-compose.prod.yml, apps/api/README.md) consumes exactly the queues in
+        # `task_queues`; before this list existed it consumed only `default`, so
+        # `employee_import.process_batch` (`queue="reports_exports"`) was never picked up and
+        # every import batch stayed PENDING. Names match what Celery auto-created before, so
+        # messages already waiting in Redis under `reports_exports` are consumed as-is.
+        task_queues=(
+            Queue("default", routing_key="default"),
+            Queue("reports_exports", routing_key="reports_exports"),
+        ),
         # docs/architecture/04_Background_Job_Architecture.md §5 — "Leave accrual | Monthly
         # cron | leave.run_monthly_accrual" is the only entry with a real task behind it so
         # far; Outbox sweep/Attendance lock are still unimplemented (planned-only in that doc).
@@ -86,7 +106,7 @@ def create_celery_app() -> Celery:
 celery_app = create_celery_app()
 
 
-@task_failure.connect
+@task_failure.connect  # type: ignore[untyped-decorator]
 def _log_unhandled_task_failure(
     sender: Any = None,
     task_id: str | None = None,
@@ -107,3 +127,55 @@ def _log_unhandled_task_failure(
         exception_type=type(exception).__name__ if exception else "unknown",
         exception_message=str(exception) if exception else "",
     )
+
+
+#: Message header carrying the API request id into a task it dispatched (LOG-03). Namespaced so
+#: it can never collide with one of Celery's own protocol headers.
+_REQUEST_ID_HEADER = "hrms_request_id"
+
+
+@setup_logging.connect  # type: ignore[untyped-decorator]
+def _configure_worker_logging(**_kwargs: Any) -> None:
+    """LOG-03 — the worker and Beat used to run with structlog unconfigured (console-format
+    lines, `LOG_LEVEL` ignored) while Celery configured its own plaintext stdlib handlers.
+    Connecting this signal tells Celery not to configure logging itself; instead the same JSON
+    contract the API uses is applied, including the stdlib tree, so Celery's own records (task
+    received/succeeded, and "Task ... raised unexpected" with its traceback) become JSON lines
+    too. That Celery record is the single traceback for a failed task; `celery_task_failed`
+    below stays a compact, searchable summary without repeating it. The level comes from
+    `LOG_LEVEL` (Settings), the same source the API uses, not the `--loglevel` CLI flag."""
+    service = "beat" if "beat" in sys.argv else "worker"
+    configure_logging(service, configure_stdlib=True)
+
+
+@before_task_publish.connect  # type: ignore[untyped-decorator]
+def _propagate_request_id(headers: dict[str, Any] | None = None, **_kwargs: Any) -> None:
+    """A task enqueued while serving an HTTP request carries that request's (already validated)
+    id, so the worker's log lines can be joined to the API's. Beat-scheduled tasks have none."""
+    request_id = current_request_id()
+    if headers is not None and request_id is not None:
+        headers.setdefault(_REQUEST_ID_HEADER, request_id)
+
+
+#: structlog contextvar tokens per running task id, so `task_postrun` restores exactly the
+#: context that existed before the task (relevant when a task runs eagerly inside a request).
+_task_log_tokens: dict[str, Any] = {}
+
+
+@task_prerun.connect  # type: ignore[untyped-decorator]
+def _bind_task_context(task_id: str | None = None, task: Any = None, **_kwargs: Any) -> None:
+    request_id = getattr(getattr(task, "request", None), _REQUEST_ID_HEADER, None)
+    tokens = structlog.contextvars.bind_contextvars(
+        task_id=task_id,
+        task_name=getattr(task, "name", None),
+        **({"request_id": request_id} if isinstance(request_id, str) else {}),
+    )
+    if task_id is not None:
+        _task_log_tokens[task_id] = tokens
+
+
+@task_postrun.connect  # type: ignore[untyped-decorator]
+def _restore_task_context(task_id: str | None = None, **_kwargs: Any) -> None:
+    tokens = _task_log_tokens.pop(task_id, None) if task_id is not None else None
+    if tokens:
+        structlog.contextvars.reset_contextvars(**tokens)

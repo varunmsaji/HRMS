@@ -48,7 +48,12 @@ Two separate `.env`-shaped files, **not merged**, both gitignored (never commit 
 2. **`apps/api/env/.env.production`** — copy from `apps/api/env/.env.production.example`. Drives
    the application's full `Settings` (JWT secrets, `PII_MASTER_KEY`, CORS, rate limits, etc.) —
    referenced by the `api`/`worker`/`beat`/`migrate` services' `env_file:` in
-   `docker-compose.prod.yml`.
+   `docker-compose.prod.yml`. `WEB_APP_BASE_URL` in that file must be `https://` plus the same
+   host as this compose file's `WEB_DOMAIN`. Verification, password-reset, invite, onboarding,
+   and attendance emails embed it. The API refuses to boot in production when it is missing
+   or still the development default `http://localhost:3000`. It is not derived from
+   `NEXT_PUBLIC_API_URL` (that value is the API origin baked into the web image, not the
+   site users open from an email).
 
 **The Postgres and MinIO credentials must match between the two files** — `docker-compose.prod.yml`'s
 `.env` sets the actual container credentials (`POSTGRES_PASSWORD`, `HRMS_APP_PASSWORD`,
@@ -292,8 +297,30 @@ restored object).
 docker compose -f docker-compose.prod.yml logs -f api worker beat nginx
 ```
 
-API/worker/beat emit structured JSON (via `structlog`); Nginx emits JSON access logs
-(`infra/nginx/nginx.conf`'s `json_combined` format) — both parseable by the same log pipeline. All
+API, worker and beat emit one JSON object per line (via `structlog`), each tagged
+`"service": "api" | "worker" | "beat"`; worker and beat route Celery's own records (task received /
+succeeded / failed, including the failed task's traceback) through the same JSON format. The only
+plain-text lines are Celery's startup banner and shutdown notice, which Celery prints directly
+rather than logging. The API's own access line (gunicorn/uvicorn) stays in uvicorn's plain-text
+format. Nginx emits JSON access logs (`infra/nginx/nginx.conf`'s `json_combined` format).
+
+**Finding everything for one request.** Every API response carries an `X-Request-Id` header, and
+every error body carries the same value as `error.request_id`. Nginx generates the id when the
+client sends none (or forwards the client's, which the API keeps only if it is 1–64 characters
+of `A-Z a-z 0-9 . _ : -`, replacing it with a UUID otherwise). The id appears in the Nginx access
+line, every API log event for the request, the `audit_log.request_id` column, and the worker log
+lines of any Celery task the request enqueued:
+
+```bash
+docker compose -f docker-compose.prod.yml logs api worker nginx | grep '<request id>'
+```
+
+**Tokens are masked.** Onboarding, account-invite, password-reset and email-verification links
+carry a token in the URL path. Nginx and the API access/error logs record that segment as
+`[REDACTED]`, and Nginx logs paths without query strings (so presigned storage URLs never appear).
+Errors log the route template (e.g. `/v1/public/onboarding/{token}`), not the raw path.
+
+Both log streams are parseable by the same log pipeline. All
 containers' logs are bounded (`docker-compose.prod.yml`'s `x-logging` anchor: `max-size: 10m,
 max-file: 5` per container) so a runaway log volume cannot fill the VPS disk on its own; see §16
 for the rest of the disk budget.

@@ -87,7 +87,7 @@ deliberately-not-added by that earlier slice; added now that the confirmation ac
 exists (`POST /employees/{id}/confirm`, `PROBATION` -> `ACTIVE`). Deliberately minimal: no
 reminders, no manager-recommendation routing, no auto-extend/auto-confirm rules, no letter
 generation — see this feature's own plan/decision notes for the full FR-EMP-010 scope this does
-*not* cover. `.VIEW_DOCUMENTS` remains unaddressed, still belonging to a later slice.
+*not* cover.
 
 Bulk Employee Import adds `EMPLOYEE.BULK_IMPORT` (**new**) — gates the CSV upload/status/error
 endpoints in `modules/employee_import/`. Not folded into `EMPLOYEE_CREATE`: bulk-creating up to a
@@ -132,6 +132,18 @@ precedent as `.VIEW_SENSITIVE`/`.VIEW_EXPERIENCE` above. Writes reuse `EMPLOYEE.
 a dependent's Aadhaar number is PAN/Aadhaar-grade PII, at least as sensitive as anything else
 gated by that code. `SELF`-scoped for the base `EMPLOYEE` role, same posture as
 `.VIEW_SENSITIVE`/`.VIEW_BANKING`/`.VIEW_EXPERIENCE`.
+
+Employee Document (post-onboarding document management — an employee's ongoing document store,
+independent of onboarding's own, separate `OnboardingDocument` feature) adds
+`EMPLOYEE.VIEW_DOCUMENTS` — this is the exact code the Employee Confirmation slice's own
+docstring above once flagged as "remains unaddressed, still belonging to a later slice"; this is
+that later slice. Same "one new view code per newly-visible sub-resource" precedent as every
+other `.VIEW_*` code above; gates `GET /employees/{id}/documents`. Writes (upload/delete/review)
+reuse `EMPLOYEE.UPDATE_SENSITIVE` rather than minting a new write code, same reasoning
+`.VIEW_EXPERIENCE`/`.VIEW_NOMINEE` already gave: this module treats the whole document
+sub-resource as one unit, not split per-action. `SELF`-scoped for the base `EMPLOYEE` role, same
+posture as every other `.VIEW_*` code above — an employee can see (and download) their own
+documents read-only; only HR/Admin can upload, delete, or verify/reject one.
 """
 
 EMPLOYEE_VIEW_ALL = "EMPLOYEE.VIEW_ALL"
@@ -152,6 +164,7 @@ EMPLOYEE_INVITE = "EMPLOYEE.INVITE"
 EMPLOYEE_VIEW_SENSITIVE = "EMPLOYEE.VIEW_SENSITIVE"
 EMPLOYEE_VIEW_EXPERIENCE = "EMPLOYEE.VIEW_EXPERIENCE"
 EMPLOYEE_VIEW_NOMINEE = "EMPLOYEE.VIEW_NOMINEE"
+EMPLOYEE_VIEW_DOCUMENTS = "EMPLOYEE.VIEW_DOCUMENTS"
 
 EMPLOYEE_PERMISSIONS = [
     (EMPLOYEE_VIEW_ALL, "EMPLOYEE", "View all employees in the company"),
@@ -180,4 +193,5 @@ EMPLOYEE_PERMISSIONS = [
         "EMPLOYEE",
         "View an employee's PF/Gratuity nominee and ESI family details",
     ),
+    (EMPLOYEE_VIEW_DOCUMENTS, "EMPLOYEE", "View an employee's documents"),
 ]

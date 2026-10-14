@@ -9,6 +9,7 @@ import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-con
 import { AssignmentPanel } from "@/components/employee/assignment-panel";
 import { BankingPanel } from "@/components/employee/banking-panel";
 import { CompensationPanel } from "@/components/employee/compensation-panel";
+import { DocumentPanel } from "@/components/employee/document-panel";
 import { SalaryPanel } from "@/components/payroll/salary-panel";
 import { EmployeeForm } from "@/components/employee/employee-form";
 import { EmployeeOverview } from "@/components/employee/employee-overview";
@@ -51,6 +52,7 @@ type TabKey =
   | "salary"
   | "statutory"
   | "banking"
+  | "documents"
   | "attendance";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -61,6 +63,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "salary", label: "Salary" },
   { key: "statutory", label: "Statutory" },
   { key: "banking", label: "Banking" },
+  { key: "documents", label: "Documents" },
   { key: "attendance", label: "Attendance" },
 ];
 
@@ -437,6 +440,7 @@ export default function EmployeeDetailPage() {
           {tab === "salary" ? <SalaryPanel employeeId={employee.id} /> : null}
           {tab === "statutory" ? <StatutoryPanel employeeId={employee.id} /> : null}
           {tab === "banking" ? <BankingPanel employeeId={employee.id} /> : null}
+          {tab === "documents" ? <DocumentPanel employeeId={employee.id} /> : null}
           {tab === "attendance" ? (
             <EmployeeAttendancePanel employeeId={employee.id} employeeLabel={employeeName(employee)} />
           ) : null}

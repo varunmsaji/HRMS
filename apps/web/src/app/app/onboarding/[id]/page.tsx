@@ -182,6 +182,9 @@ export default function OnboardingCaseDetailPage() {
   const [sendingInvite, setSendingInvite] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [reviewingSection, setReviewingSection] = useState<OnboardingSectionName | null>(null);
+  const [verifyingAll, setVerifyingAll] = useState(false);
+  const [sendingLoginLink, setSendingLoginLink] = useState(false);
+  const [loginLinkUrl, setLoginLinkUrl] = useState<string | null>(null);
   const [rejectSection, setRejectSection] = useState<OnboardingSectionName | null>(null);
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [activating, setActivating] = useState(false);
@@ -290,6 +293,42 @@ export default function OnboardingCaseDetailPage() {
     }
   }
 
+  /** Verifies every section and document still `PENDING` in one go (rejected items are left
+   * alone — HR rejected those on purpose). Runs the existing per-item review calls in order; the
+   * API moves the case to `VERIFIED` itself when the last one lands. */
+  async function handleVerifyAll() {
+    if (!onboardingCase) return;
+    setVerifyingAll(true);
+    try {
+      const pendingSections = ONBOARDING_SECTION_NAMES.filter((section) => {
+        const status = onboardingCase.section_reviews.find((r) => r.section === section)?.status;
+        return status !== "VERIFIED" && status !== "REJECTED";
+      });
+      const pendingDocuments = (documents ?? []).filter((d) => d.status === "PENDING");
+      for (const section of pendingSections) {
+        await apiClient.post(`/onboarding-cases/${params.id}/sections/${section}/review`, {
+          status: "VERIFIED",
+        });
+      }
+      for (const document of pendingDocuments) {
+        await apiClient.post(`/onboarding-cases/${params.id}/documents/${document.id}/review`, {
+          status: "VERIFIED",
+        });
+      }
+      toast({ title: "Everything verified", variant: "success" });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast({ title: "You don't have permission to review this case", variant: "danger" });
+      } else {
+        toast({ title: "Could not verify everything", description: describeApiError(err), variant: "danger" });
+      }
+    } finally {
+      setVerifyingAll(false);
+      void load();
+      void loadDocuments();
+    }
+  }
+
   async function handleRequestChanges() {
     setRequestingChanges(true);
     try {
@@ -359,6 +398,41 @@ export default function OnboardingCaseDetailPage() {
     }
   }
 
+  /** Employee login setup: `POST /employees/{id}/invite` emails a one-time link where the new
+   * employee chooses a password, then signs in with their email + that password. Shown here too
+   * (not only emailed) because email delivery isn't configured in every environment. */
+  async function handleSendLoginLink() {
+    if (!onboardingCase?.employee_id) return;
+    setSendingLoginLink(true);
+    try {
+      const result = await apiClient.post<{ invite_url: string; email: string; email_sent: boolean }>(
+        `/employees/${onboardingCase.employee_id}/invite`,
+      );
+      setLoginLinkUrl(result.invite_url);
+      toast({
+        title: result.email_sent ? `Login link sent to ${result.email}` : "Login link created",
+        description: result.email_sent
+          ? "They can set a password from the email and sign in."
+          : "The link is ready to copy — email delivery isn't configured in this environment.",
+        variant: "success",
+      });
+    } catch (err) {
+      toast({ title: "Could not send login link", description: describeApiError(err), variant: "danger" });
+    } finally {
+      setSendingLoginLink(false);
+    }
+  }
+
+  async function handleCopyLoginLink() {
+    if (!loginLinkUrl) return;
+    try {
+      await navigator.clipboard.writeText(loginLinkUrl);
+      toast({ title: "Link copied", variant: "success" });
+    } catch {
+      toast({ title: "Could not copy link", variant: "danger" });
+    }
+  }
+
   async function handleCopyLink() {
     if (!inviteUrl) return;
     try {
@@ -402,6 +476,11 @@ export default function OnboardingCaseDetailPage() {
       : onboardingCase.status === "ACTIVATED"
         ? "Get Link"
         : "Resend Invite";
+  const hasUnverified =
+    ONBOARDING_SECTION_NAMES.some((section) => {
+      const status = onboardingCase.section_reviews.find((r) => r.section === section)?.status;
+      return status !== "VERIFIED" && status !== "REJECTED";
+    }) || (documents ?? []).some((d) => d.status === "PENDING");
   const hasAnyRejection =
     onboardingCase.section_reviews.some((r) => r.status === "REJECTED") ||
     (documents ?? []).some((d) => d.status === "REJECTED");
@@ -429,6 +508,11 @@ export default function OnboardingCaseDetailPage() {
                   {sendingInvite ? "Sending…" : inviteLabel}
                 </Button>
               ) : null}
+              {canReview && isReviewable && hasUnverified ? (
+                <Button type="button" size="sm" onClick={() => void handleVerifyAll()} disabled={verifyingAll}>
+                  {verifyingAll ? "Verifying…" : "Verify All"}
+                </Button>
+              ) : null}
               {canReview && onboardingCase.status === "UNDER_REVIEW" && hasAnyRejection ? (
                 <Button
                   type="button"
@@ -443,6 +527,11 @@ export default function OnboardingCaseDetailPage() {
               {canActivate && onboardingCase.status === "VERIFIED" ? (
                 <Button type="button" size="sm" onClick={() => void handleActivate()} disabled={activating}>
                   {activating ? "Activating…" : "Activate"}
+                </Button>
+              ) : null}
+              {onboardingCase.status === "ACTIVATED" && onboardingCase.employee_id && can("EMPLOYEE.INVITE") ? (
+                <Button type="button" size="sm" onClick={() => void handleSendLoginLink()} disabled={sendingLoginLink}>
+                  {sendingLoginLink ? "Sending…" : "Send Login Link"}
                 </Button>
               ) : null}
               {onboardingCase.status === "ACTIVATED" && onboardingCase.employee_id ? (
@@ -473,6 +562,18 @@ export default function OnboardingCaseDetailPage() {
             </div>
           ) : null}
 
+          {loginLinkUrl ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-background-secondary px-3 py-2 text-sm">
+              <span className="text-foreground-muted">Login setup link:</span>
+              <a href={loginLinkUrl} target="_blank" rel="noreferrer" className="truncate text-foreground underline">
+                {loginLinkUrl}
+              </a>
+              <Button type="button" variant="outline" size="sm" onClick={() => void handleCopyLoginLink()}>
+                Copy link
+              </Button>
+            </div>
+          ) : null}
+
           <LinkStatus status={onboardingCase.token_status} expiresAt={onboardingCase.token_expires_at} />
 
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -481,7 +582,7 @@ export default function OnboardingCaseDetailPage() {
             <DetailField label="Personal email" value={onboardingCase.personal_email} />
             <DetailField label="Personal mobile" value={onboardingCase.personal_mobile} />
             <DetailField label="Proposed joining date" value={onboardingCase.proposed_joining_date} />
-            <DetailField label="Legal entity" value={nameIn(refs?.legalEntities, onboardingCase.legal_entity_id)} />
+            <DetailField label="Company" value={nameIn(refs?.legalEntities, onboardingCase.legal_entity_id)} />
             <DetailField label="Branch" value={nameIn(refs?.branches, onboardingCase.branch_id)} />
             <DetailField label="Department" value={nameIn(refs?.departments, onboardingCase.department_id)} />
             <DetailField label="Designation" value={nameIn(refs?.designations, onboardingCase.designation_id)} />

@@ -109,7 +109,7 @@ export function validateLegalEntityForm(values: LegalEntityFormValues): LegalEnt
   const errors: LegalEntityFormErrors = {};
 
   if (!values.name.trim()) {
-    errors.name = "Legal entity name is required.";
+    errors.name = "Company name is required.";
   }
 
   if (values.pan.trim() && !PAN_PATTERN.test(values.pan.trim().toUpperCase())) {

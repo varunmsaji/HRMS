@@ -128,11 +128,11 @@ export default function LegalEntityDetailPage() {
       setEntity(updated);
       setEditing(false);
       setFormValues(null);
-      toast({ title: "Legal entity saved", variant: "success" });
+      toast({ title: "Company saved", variant: "success" });
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409 && err.code === "STALE_RESOURCE") {
-          setStaleMessage("This legal entity was changed by someone else.");
+          setStaleMessage("This company was changed by someone else.");
           return;
         }
         if (err.status === 422) {
@@ -150,7 +150,7 @@ export default function LegalEntityDetailPage() {
         }
       }
       toast({
-        title: "Could not save legal entity",
+        title: "Could not save company",
         description: describeApiError(err),
         variant: "danger",
       });
@@ -165,7 +165,7 @@ export default function LegalEntityDetailPage() {
       setEditing(false);
       setFormValues(null);
       setStaleMessage(null);
-      toast({ title: "Legal entity reloaded", variant: "success" });
+      toast({ title: "Company reloaded", variant: "success" });
     }
   }
 
@@ -178,7 +178,7 @@ export default function LegalEntityDetailPage() {
           ifMatch: String(entity.version),
         });
         setEntity(updated);
-        toast({ title: "Legal entity deactivated", variant: "success" });
+        toast({ title: "Company deactivated", variant: "success" });
       } else {
         const updated = await apiClient.patch<LegalEntity>(
           `/legal-entities/${entity.id}`,
@@ -186,13 +186,13 @@ export default function LegalEntityDetailPage() {
           { ifMatch: String(entity.version) },
         );
         setEntity(updated);
-        toast({ title: "Legal entity reactivated", variant: "success" });
+        toast({ title: "Company reactivated", variant: "success" });
       }
       setConfirmOpen(false);
     } catch (err) {
       if (err instanceof ApiError && err.status === 409 && err.code === "LEGAL_ENTITY_HAS_ACTIVE_BRANCHES") {
         toast({
-          title: "Can't deactivate this legal entity",
+          title: "Can't deactivate this company",
           description: "It still has active branches assigned to it.",
           variant: "danger",
         });
@@ -200,7 +200,7 @@ export default function LegalEntityDetailPage() {
         return;
       }
       toast({
-        title: "Could not update legal entity status",
+        title: "Could not update company status",
         description: describeApiError(err),
         variant: "danger",
       });
@@ -213,13 +213,13 @@ export default function LegalEntityDetailPage() {
     <div className="space-y-6">
       <div>
         <Link href="/app/legal-entities" className="text-sm text-foreground-secondary hover:underline">
-          ← Legal Entities
+          ← Companies
         </Link>
       </div>
 
       <PageHeader
-        title={entity?.name ?? "Legal entity"}
-        description="Registration and statutory details for this legal entity."
+        title={entity?.name ?? "Company"}
+        description="Registration and statutory details for this company."
         actions={
           entity && !editing ? (
             <div className="flex items-center gap-2">
@@ -236,15 +236,15 @@ export default function LegalEntityDetailPage() {
 
       <Card>
         <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading legal entity…" /> : null}
+          {loading ? <LoadingState label="Loading company…" /> : null}
 
           {error && !loading ? (
             <ErrorState
               message={
                 error.status === 403
-                  ? "You do not have permission to view this legal entity."
+                  ? "You do not have permission to view this company."
                   : error.status === 404
-                    ? "This legal entity could not be found."
+                    ? "This company could not be found."
                     : error.message
               }
               onRetry={error.status === 404 ? undefined : () => void loadEntity()}
@@ -289,7 +289,7 @@ export default function LegalEntityDetailPage() {
               <section>
                 <h3 className="text-sm font-medium text-foreground">Identity</h3>
                 <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <DetailField label="Legal entity name" value={entity.name} />
+                  <DetailField label="Company name" value={entity.name} />
                   <DetailField label="Registered address" value={entity.registered_address} />
                 </dl>
               </section>
@@ -320,11 +320,11 @@ export default function LegalEntityDetailPage() {
       <Dialog open={confirmOpen} onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{entity?.is_active ? "Deactivate legal entity?" : "Reactivate legal entity?"}</DialogTitle>
+            <DialogTitle>{entity?.is_active ? "Deactivate company?" : "Reactivate company?"}</DialogTitle>
             <DialogDescription>
               {entity?.is_active
-                ? "This legal entity will no longer be available for new activity. You can reactivate it later."
-                : "This legal entity will become available for use again."}
+                ? "This company will no longer be available for new activity. You can reactivate it later."
+                : "This company will become available for use again."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

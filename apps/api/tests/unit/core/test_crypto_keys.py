@@ -93,6 +93,7 @@ def _prod_settings(**overrides: object) -> Settings:
         "smtp_host": "smtp.example.com",
         "smtp_from_email": "onboarding@example.com",
         "smtp_use_tls": True,
+        "web_app_base_url": "https://app.example.com",
     }
     base.update(overrides)
     return Settings(**base)

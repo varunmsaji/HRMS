@@ -2,10 +2,13 @@ import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import {
+  INDIA_STATE_CODES,
   TAX_REGIME_VALUES,
   type StatutoryInfoFormValues,
   type TaxRegime,
 } from "@/lib/onboarding/public-wizard";
+
+const STATE_OPTIONS = Object.entries(INDIA_STATE_CODES).sort((a, b) => a[1].localeCompare(b[1]));
 
 interface StatutoryInfoStepProps {
   values: StatutoryInfoFormValues;
@@ -125,8 +128,18 @@ export function StatutoryInfoStep({ values, errors, onChange }: StatutoryInfoSte
           <FormField id="esiIpNumber" label="ESI IP number" error={errors.esiIpNumber}>
             <Input value={values.esiIpNumber} onChange={(e) => update("esiIpNumber", e.target.value)} />
           </FormField>
-          <FormField id="ptStateCode" label="Professional tax state code" error={errors.ptStateCode}>
-            <Input value={values.ptStateCode} onChange={(e) => update("ptStateCode", e.target.value)} />
+          <FormField id="ptStateCode" label="Professional tax state" error={errors.ptStateCode}>
+            <NativeSelect
+              value={values.ptStateCode}
+              onChange={(e) => update("ptStateCode", e.target.value)}
+            >
+              <option value="">Select a state</option>
+              {STATE_OPTIONS.map(([code, name]) => (
+                <option key={code} value={code}>
+                  {name}
+                </option>
+              ))}
+            </NativeSelect>
           </FormField>
         </div>
       </section>

@@ -1,6 +1,11 @@
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
-import type { EmergencyContactFormValues } from "@/lib/onboarding/public-wizard";
+import { NativeSelect } from "@/components/ui/native-select";
+import {
+  RELATIONSHIP_LABELS,
+  RELATIONSHIP_VALUES,
+  type EmergencyContactFormValues,
+} from "@/lib/onboarding/public-wizard";
 
 interface EmergencyContactStepProps {
   values: EmergencyContactFormValues;
@@ -22,7 +27,17 @@ export function EmergencyContactStep({ values, errors, onChange }: EmergencyCont
         <Input value={values.contactName} onChange={(e) => update("contactName", e.target.value)} />
       </FormField>
       <FormField id="relationship" label="Relationship" error={errors.relationship}>
-        <Input value={values.relationship} onChange={(e) => update("relationship", e.target.value)} />
+        <NativeSelect
+          value={values.relationship}
+          onChange={(e) => update("relationship", e.target.value)}
+        >
+          <option value="">Select a relationship</option>
+          {RELATIONSHIP_VALUES.map((value) => (
+            <option key={value} value={value}>
+              {RELATIONSHIP_LABELS[value]}
+            </option>
+          ))}
+        </NativeSelect>
       </FormField>
       <FormField id="phone" label="Phone number" required error={errors.phone}>
         <Input value={values.phone} onChange={(e) => update("phone", e.target.value)} />

@@ -114,12 +114,28 @@ async def test_refresh_token_rotation(
     assert new_refresh
     assert new_refresh != old_refresh
 
+    second = await client.post("/v1/auth/token/refresh", json={"refresh_token": new_refresh})
+    assert second.status_code == 200
+
+
+async def test_refresh_token_reuse_revokes_the_newest_token(
+    client: AsyncClient, seeded_db: None, admin_tokens: dict[str, str]
+) -> None:
+    """TXN-01 — replaying a rotated token is treated as theft: the whole family is revoked, so
+    the newest token (which an attacker may hold) stops working too. This test previously
+    asserted the opposite — the revocation was being rolled back with the failed request."""
+    old_refresh = admin_tokens["refresh_token"]
+    first = await client.post("/v1/auth/token/refresh", json={"refresh_token": old_refresh})
+    assert first.status_code == 200
+    new_refresh = first.cookies.get("hrms_refresh")
+
     reuse = await client.post("/v1/auth/token/refresh", json={"refresh_token": old_refresh})
     assert reuse.status_code == 401
     assert reuse.json()["error"]["code"] == "INVALID_TOKEN"
 
-    second = await client.post("/v1/auth/token/refresh", json={"refresh_token": new_refresh})
-    assert second.status_code == 200
+    after = await client.post("/v1/auth/token/refresh", json={"refresh_token": new_refresh})
+    assert after.status_code == 401
+    assert after.json()["error"]["code"] == "INVALID_TOKEN"
 
 
 async def test_permission_denied(

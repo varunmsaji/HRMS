@@ -39,6 +39,7 @@ if TYPE_CHECKING:
         EmployeeBank,
         EmployeeCompensation,
         EmployeeDependent,
+        EmployeeDocument,
         EmployeeEducation,
         EmployeeExperience,
         EmployeeStatutory,
@@ -1124,3 +1125,97 @@ def employee_dependent_to_audit_dict(dependent: EmployeeDependentRead) -> dict[s
     `SENSITIVE_FIELD_MASKS` is keyed by field name (not table), so it already covers this field
     with no registry change needed (`redact.py` module docstring's own point)."""
     return mask_sensitive(dependent.model_dump(mode="json"), sensitive_fields=SENSITIVE_FIELD_MASKS)
+
+
+# --- Employee Document (post-onboarding document management) --------------------------------
+#
+# An employee's ongoing document store, independent of onboarding (which has its own, separate
+# `OnboardingDocument`/`ONBOARDING_DOCUMENT_TYPES` in `hrms.modules.onboarding.schemas`). The
+# type list below is the same literal set as `ONBOARDING_DOCUMENT_TYPES` — re-declared locally
+# rather than imported, so this module's public contract doesn't depend on onboarding's schema
+# module (the only existing cross-module dependency between these two modules runs the other
+# way: onboarding composes the employee module's services at activation, never the reverse).
+
+EMPLOYEE_DOCUMENT_TYPES = (
+    "PHOTO",
+    "PAN",
+    "AADHAAR",
+    "ADDRESS_PROOF",
+    "EDUCATION_CERTIFICATE",
+    "PREVIOUS_EMPLOYMENT_PROOF",
+    "BANK_PROOF",
+    "OTHER",
+)
+
+# Same cap as `ONBOARDING_DOCUMENT_MAX_SIZE_BYTES` — this task's own engineering decision, no
+# source document names a number for this sub-resource either.
+EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES = 10 * 1024 * 1024
+
+EMPLOYEE_DOCUMENT_STATUS_VALUES = ("PENDING", "VERIFIED", "REJECTED")
+
+
+class EmployeeDocumentRead(BaseModel):
+    """Deliberately excludes `s3_key`/`source_onboarding_document_id` — internal storage/
+    provenance details, never returned to a caller."""
+
+    id: UUID
+    employee_id: UUID
+    document_type: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    status: str
+    verified_by_user_id: UUID | None
+    verified_at: str | None
+    rejection_reason: str | None
+    uploaded_at: str
+
+
+class EmployeeDocumentWithUrlRead(EmployeeDocumentRead):
+    """Adds the short-lived presigned GET URL — document bytes never round-trip through the API
+    server. Returned to every caller who can list documents at all (HR/Admin and the SELF-scoped
+    employee alike): unlike onboarding's candidate-facing `list_documents` (no URL, because an
+    unreviewed candidate upload might still be replaced), every viewer here is already permitted
+    to download what they can see."""
+
+    download_url: str
+
+
+class EmployeeDocumentReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["VERIFIED", "REJECTED"]
+    rejection_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _require_reason_when_rejected(self) -> "EmployeeDocumentReviewRequest":
+        if self.status == "REJECTED" and not (self.rejection_reason or "").strip():
+            raise ValueError("rejection_reason is required when status is REJECTED")
+        return self
+
+
+def employee_document_to_read(document: "EmployeeDocument") -> EmployeeDocumentRead:
+    return EmployeeDocumentRead(
+        id=document.id,
+        employee_id=document.employee_id,
+        document_type=document.document_type,
+        original_filename=document.original_filename,
+        content_type=document.content_type,
+        size_bytes=document.size_bytes,
+        status=document.status,
+        verified_by_user_id=document.verified_by_user_id,
+        verified_at=_format_timestamp(document.verified_at),
+        rejection_reason=document.rejection_reason,
+        uploaded_at=_format_timestamp(document.uploaded_at) or "",
+    )
+
+
+def employee_document_to_read_with_url(
+    document: "EmployeeDocument", download_url: str
+) -> EmployeeDocumentWithUrlRead:
+    base = employee_document_to_read(document)
+    return EmployeeDocumentWithUrlRead(**base.model_dump(), download_url=download_url)
+
+
+def employee_document_to_audit_dict(document: EmployeeDocumentRead) -> dict[str, Any]:
+    return document.model_dump(mode="json")

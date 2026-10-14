@@ -1,8 +1,11 @@
 import { FormField } from "@/components/common/form-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import {
   EMPTY_EDUCATION_ROW,
+  QUALIFICATION_LABELS,
+  QUALIFICATION_VALUES,
   type EducationFormValues,
   type EducationRowValues,
 } from "@/lib/onboarding/public-wizard";
@@ -50,10 +53,17 @@ export function EducationInfoStep({ values, errors, onChange }: EducationInfoSte
         <div key={index} className="space-y-4 rounded-md border border-border p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FormField id={`education-${index}-qualification`} label="Qualification" required>
-              <Input
+              <NativeSelect
                 value={row.qualification}
                 onChange={(e) => updateRow(index, { qualification: e.target.value })}
-              />
+              >
+                <option value="">Select a qualification</option>
+                {QUALIFICATION_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {QUALIFICATION_LABELS[value]}
+                  </option>
+                ))}
+              </NativeSelect>
             </FormField>
             <FormField id={`education-${index}-institution`} label="Institution name">
               <Input

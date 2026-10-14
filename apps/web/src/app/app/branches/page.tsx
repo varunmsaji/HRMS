@@ -48,8 +48,8 @@ export default function BranchesPage() {
   const [formErrors, setFormErrors] = useState<BranchFormErrors>({});
   const [saving, setSaving] = useState(false);
 
-  // First-run-only: replaces the old "go to Legal Entities first" dead end. Most companies only
-  // ever have one legal entity, so we collect just its name here, inline, instead of making the
+  // First-run-only: replaces the old "go to Companies first" dead end. Most companies only
+  // ever have one company, so we collect just its name here, inline, instead of making the
   // user understand a separate top-level concept before they can add their first branch.
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   const [quickSetupName, setQuickSetupName] = useState("");
@@ -85,13 +85,13 @@ export default function BranchesPage() {
   }, [loadBranches]);
 
   function legalEntityName(legalEntityId: string): string {
-    return legalEntities.find((entity) => entity.id === legalEntityId)?.name ?? "Unknown legal entity";
+    return legalEntities.find((entity) => entity.id === legalEntityId)?.name ?? "Unknown company";
   }
 
   function openCreate() {
     setFormValues({
       ...EMPTY_BRANCH_FORM_VALUES,
-      // The common case: exactly one legal entity, so there's nothing to pick — pre-fill it and
+      // The common case: exactly one company, so there's nothing to pick — pre-fill it and
       // the form hides the selector (see `hideLegalEntitySelector` below).
       legalEntityId: legalEntities.length === 1 ? legalEntities[0].id : "",
     });
@@ -190,7 +190,7 @@ export default function BranchesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Branches"
-        description="Physical work locations under your legal entities."
+        description="Physical work locations under your companies."
         actions={
           branches && branches.length > 0 ? (
             <Button type="button" onClick={openCreate} disabled={hasNoLegalEntities}>
@@ -219,7 +219,7 @@ export default function BranchesPage() {
             <EmptyState
               icon={Building}
               title="Let's set up your company."
-              description="Tell us your company's registered name, then add your first branch. Takes a few seconds — you can fill in registration numbers (PAN, GST, etc.) later from Legal Entities."
+              description="Tell us your company's registered name, then add your first branch. Takes a few seconds — you can fill in registration numbers (PAN, GST, etc.) later from Companies."
               action={
                 <Button type="button" onClick={openQuickSetup}>
                   Get started
@@ -232,7 +232,7 @@ export default function BranchesPage() {
             <EmptyState
               icon={Building}
               title="No branches have been configured yet."
-              description="Add the physical work locations under your legal entities. You can add more than one branch per legal entity."
+              description="Add the physical work locations under your companies. You can add more than one branch per company."
               action={
                 <Button type="button" onClick={openCreate}>
                   Add Branch

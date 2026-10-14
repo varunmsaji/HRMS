@@ -208,3 +208,52 @@ export interface Bank {
   created_at: string;
   updated_at: string;
 }
+
+// --- Employee Document (post-onboarding document management) ------------------------------
+//
+// An employee's ongoing document store, independent of onboarding's own, separate
+// `OnboardingDocument` (`@/lib/onboarding/types`). Same type list/labels as that module's
+// `ONBOARDING_DOCUMENT_TYPES`/`ONBOARDING_DOCUMENT_TYPE_LABELS` — a document migrated from
+// onboarding at activation keeps its original `document_type` as-is.
+
+export const EMPLOYEE_DOCUMENT_TYPES = [
+  "PHOTO",
+  "PAN",
+  "AADHAAR",
+  "ADDRESS_PROOF",
+  "EDUCATION_CERTIFICATE",
+  "PREVIOUS_EMPLOYMENT_PROOF",
+  "BANK_PROOF",
+  "OTHER",
+] as const;
+export type EmployeeDocumentType = (typeof EMPLOYEE_DOCUMENT_TYPES)[number];
+
+export const EMPLOYEE_DOCUMENT_TYPE_LABELS: Record<EmployeeDocumentType, string> = {
+  PHOTO: "Photo",
+  PAN: "PAN card",
+  AADHAAR: "Aadhaar card",
+  ADDRESS_PROOF: "Address proof",
+  EDUCATION_CERTIFICATE: "Education certificate",
+  PREVIOUS_EMPLOYMENT_PROOF: "Previous employment proof",
+  BANK_PROOF: "Bank proof",
+  OTHER: "Other",
+};
+
+/** `GET /employees/{id}/documents` — mirrors `EmployeeDocumentWithUrlRead`. Always carries a
+ * presigned `download_url`, for both HR/Admin and the SELF-scoped employee alike (unlike
+ * onboarding's candidate-facing list, there is no "might still replace an unreviewed upload"
+ * case here that would justify withholding it). */
+export interface EmployeeDocument {
+  id: string;
+  employee_id: string;
+  document_type: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: string;
+  verified_by_user_id: string | null;
+  verified_at: string | null;
+  rejection_reason: string | null;
+  uploaded_at: string;
+  download_url: string;
+}

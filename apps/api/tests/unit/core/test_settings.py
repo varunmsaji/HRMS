@@ -46,6 +46,9 @@ def _non_dev_settings(**overrides: object) -> Settings:
         "smtp_from_email": "onboarding@hrms.example.com",
         "smtp_use_tls": True,
         "smtp_use_ssl": False,
+        # FINDING-001 — required outside development. Explicit so a local `.env` cannot
+        # substitute either localhost or some other origin under this helper.
+        "web_app_base_url": "https://app.example.com",
     }
     base.update(overrides)
     return Settings(**base)

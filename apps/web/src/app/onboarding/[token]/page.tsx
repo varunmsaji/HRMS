@@ -16,7 +16,6 @@ import {
   Upload,
   User,
   Users,
-  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -27,7 +26,6 @@ import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { AddressInfoStep } from "@/components/onboarding/wizard/address-info-step";
 import { BankInfoStep } from "@/components/onboarding/wizard/bank-info-step";
-import { CompensationInfoStep } from "@/components/onboarding/wizard/compensation-info-step";
 import { DocumentUploadStep } from "@/components/onboarding/wizard/document-upload-step";
 import { EducationInfoStep } from "@/components/onboarding/wizard/education-info-step";
 import { EmergencyContactStep } from "@/components/onboarding/wizard/emergency-contact-step";
@@ -43,7 +41,6 @@ import type { OnboardingDocument, PublicOnboardingCase } from "@/lib/onboarding/
 import {
   EMPTY_ADDRESS_INFO,
   EMPTY_BANK_INFO,
-  EMPTY_COMPENSATION_INFO,
   EMPTY_EDUCATION_INFO,
   EMPTY_EMERGENCY_CONTACT,
   EMPTY_NOMINEE_INFO,
@@ -54,8 +51,6 @@ import {
   addressInfoToPayload,
   bankInfoFromSection,
   bankInfoToPayload,
-  compensationInfoFromSection,
-  compensationInfoToPayload,
   educationFromSection,
   educationToPayload,
   emergencyContactFromSection,
@@ -68,8 +63,8 @@ import {
   previousEmploymentToPayload,
   statutoryInfoFromSection,
   statutoryInfoToPayload,
+  validateAddressInfo,
   validateBankInfo,
-  validateCompensationInfo,
   validateEducation,
   validateEmergencyContact,
   validateNominee,
@@ -78,7 +73,6 @@ import {
   validateStatutoryInfo,
   type AddressInfoFormValues,
   type BankInfoFormValues,
-  type CompensationInfoFormValues,
   type EducationFormValues,
   type EmergencyContactFormValues,
   type NomineeFormValues,
@@ -94,7 +88,6 @@ const STEPS = [
   "emergency",
   "bank",
   "statutory",
-  "compensation",
   "previousEmployment",
   "education",
   "nominee",
@@ -110,7 +103,6 @@ const STEP_LABELS: Record<Step, string> = {
   emergency: "Emergency Contact",
   bank: "Bank Details",
   statutory: "Statutory Details",
-  compensation: "Compensation",
   previousEmployment: "Previous Employment",
   education: "Education",
   nominee: "Nominees & Family",
@@ -125,7 +117,6 @@ const STEP_ICONS: Record<Step, LucideIcon> = {
   emergency: Phone,
   bank: Landmark,
   statutory: FileText,
-  compensation: Wallet,
   previousEmployment: Briefcase,
   education: GraduationCap,
   nominee: Users,
@@ -139,7 +130,6 @@ const STEP_DESCRIPTIONS: Partial<Record<Step, string>> = {
   emergency: "Who we should contact if something happens at work.",
   bank: "Where your salary will be paid.",
   statutory: "Tax and statutory registration details.",
-  compensation: "Your agreed compensation for this role.",
   previousEmployment: "Help HR carry forward your PF account from a past employer, if any.",
   education: "Your educational qualifications.",
   nominee: "Your PF/Gratuity nominees and ESI-covered family members.",
@@ -153,7 +143,7 @@ function WizardHeader() {
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary-subtle text-primary">
           <Building2 className="h-4 w-4" aria-hidden="true" />
         </span>
-        <span className="text-md font-semibold text-foreground">HRMS Platform</span>
+        <span className="text-md font-semibold text-foreground">Spectrum HRMS</span>
       </div>
     </header>
   );
@@ -265,14 +255,28 @@ export default function OnboardingWizardPage() {
     useState<EmergencyContactFormValues>(EMPTY_EMERGENCY_CONTACT);
   const [bankInfo, setBankInfo] = useState<BankInfoFormValues>(EMPTY_BANK_INFO);
   const [statutoryInfo, setStatutoryInfo] = useState<StatutoryInfoFormValues>(EMPTY_STATUTORY_INFO);
-  const [compensationInfo, setCompensationInfo] =
-    useState<CompensationInfoFormValues>(EMPTY_COMPENSATION_INFO);
   const [previousEmployment, setPreviousEmployment] = useState<PreviousEmploymentFormValues>(
     EMPTY_PREVIOUS_EMPLOYMENT_INFO,
   );
   const [educationInfo, setEducationInfo] = useState<EducationFormValues>(EMPTY_EDUCATION_INFO);
   const [nomineeInfo, setNomineeInfo] = useState<NomineeFormValues>(EMPTY_NOMINEE_INFO);
   const [documents, setDocuments] = useState<OnboardingDocument[]>([]);
+
+  const [personalErrors, setPersonalErrors] = useState<
+    Partial<Record<keyof PersonalInfoFormValues, string>>
+  >({});
+  const [addressErrors, setAddressErrors] = useState<
+    Partial<Record<keyof AddressInfoFormValues, string>>
+  >({});
+  const [emergencyErrors, setEmergencyErrors] = useState<
+    Partial<Record<keyof EmergencyContactFormValues, string>>
+  >({});
+  const [bankErrors, setBankErrors] = useState<Partial<Record<keyof BankInfoFormValues, string>>>(
+    {},
+  );
+  const [statutoryErrors, setStatutoryErrors] = useState<
+    Partial<Record<keyof StatutoryInfoFormValues, string>>
+  >({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -294,7 +298,6 @@ export default function OnboardingWizardPage() {
       setEmergencyContact(emergencyContactFromSection(data.emergency_contact));
       setBankInfo(bankInfoFromSection(data.bank_info));
       setStatutoryInfo(statutoryInfoFromSection(data.statutory_info));
-      setCompensationInfo(compensationInfoFromSection(data.compensation_info));
       setPreviousEmployment(previousEmploymentFromSection(data.previous_employment_info));
       setEducationInfo(educationFromSection(data.education_info));
       setNomineeInfo(nomineeFromSection(data.nominee_info));
@@ -434,12 +437,6 @@ export default function OnboardingWizardPage() {
       summary: statutoryInfo.taxRegime ? `Tax regime: ${statutoryInfo.taxRegime}` : "Not filled in yet",
     },
     {
-      step: "compensation",
-      summary: compensationInfo.annualCtc
-        ? `Annual CTC: ${compensationInfo.annualCtc} ${compensationInfo.currency}`
-        : "Not filled in yet",
-    },
-    {
       step: "previousEmployment",
       summary:
         previousEmployment.items.length > 0
@@ -517,7 +514,11 @@ export default function OnboardingWizardPage() {
                   status={sectionReviewFor("personal_info")?.status}
                   reason={sectionReviewFor("personal_info")?.rejection_reason}
                 />
-                <PersonalInfoStep values={personalInfo} errors={{}} onChange={setPersonalInfo} />
+                <PersonalInfoStep
+                  values={personalInfo}
+                  errors={personalErrors}
+                  onChange={setPersonalInfo}
+                />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("welcome")}>
                     Back
@@ -531,8 +532,9 @@ export default function OnboardingWizardPage() {
                         return;
                       }
                       const errors = validatePersonalInfo(personalInfo);
+                      setPersonalErrors(errors);
                       if (Object.keys(errors).length > 0) {
-                        toast({ title: "First name is required", variant: "danger" });
+                        toast({ title: Object.values(errors)[0], variant: "danger" });
                         return;
                       }
                       const ok = await saveSection("personal_info", personalInfoToPayload(personalInfo));
@@ -556,7 +558,7 @@ export default function OnboardingWizardPage() {
                   status={sectionReviewFor("address_info")?.status}
                   reason={sectionReviewFor("address_info")?.rejection_reason}
                 />
-                <AddressInfoStep values={addressInfo} errors={{}} onChange={setAddressInfo} />
+                <AddressInfoStep values={addressInfo} errors={addressErrors} onChange={setAddressInfo} />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("personal")}>
                     Back
@@ -567,6 +569,12 @@ export default function OnboardingWizardPage() {
                     onClick={async () => {
                       if (sectionReviewFor("address_info")?.status === "VERIFIED") {
                         goTo("emergency");
+                        return;
+                      }
+                      const errors = validateAddressInfo(addressInfo);
+                      setAddressErrors(errors);
+                      if (Object.keys(errors).length > 0) {
+                        toast({ title: Object.values(errors)[0], variant: "danger" });
                         return;
                       }
                       const ok = await saveSection("address_info", addressInfoToPayload(addressInfo));
@@ -590,7 +598,11 @@ export default function OnboardingWizardPage() {
                   status={sectionReviewFor("emergency_contact")?.status}
                   reason={sectionReviewFor("emergency_contact")?.rejection_reason}
                 />
-                <EmergencyContactStep values={emergencyContact} errors={{}} onChange={setEmergencyContact} />
+                <EmergencyContactStep
+                  values={emergencyContact}
+                  errors={emergencyErrors}
+                  onChange={setEmergencyContact}
+                />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("address")}>
                     Back
@@ -604,8 +616,9 @@ export default function OnboardingWizardPage() {
                         return;
                       }
                       const errors = validateEmergencyContact(emergencyContact);
+                      setEmergencyErrors(errors);
                       if (Object.keys(errors).length > 0) {
-                        toast({ title: "Contact name and phone are required", variant: "danger" });
+                        toast({ title: Object.values(errors)[0], variant: "danger" });
                         return;
                       }
                       const ok = await saveSection(
@@ -632,7 +645,7 @@ export default function OnboardingWizardPage() {
                   status={sectionReviewFor("bank_info")?.status}
                   reason={sectionReviewFor("bank_info")?.rejection_reason}
                 />
-                <BankInfoStep values={bankInfo} errors={{}} onChange={setBankInfo} />
+                <BankInfoStep values={bankInfo} errors={bankErrors} onChange={setBankInfo} />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("emergency")}>
                     Back
@@ -646,8 +659,9 @@ export default function OnboardingWizardPage() {
                         return;
                       }
                       const errors = validateBankInfo(bankInfo);
+                      setBankErrors(errors);
                       if (Object.keys(errors).length > 0) {
-                        toast({ title: "Payment mode is required", variant: "danger" });
+                        toast({ title: Object.values(errors)[0], variant: "danger" });
                         return;
                       }
                       const ok = await saveSection("bank_info", bankInfoToPayload(bankInfo));
@@ -671,7 +685,11 @@ export default function OnboardingWizardPage() {
                   status={sectionReviewFor("statutory_info")?.status}
                   reason={sectionReviewFor("statutory_info")?.rejection_reason}
                 />
-                <StatutoryInfoStep values={statutoryInfo} errors={{}} onChange={setStatutoryInfo} />
+                <StatutoryInfoStep
+                  values={statutoryInfo}
+                  errors={statutoryErrors}
+                  onChange={setStatutoryInfo}
+                />
                 <div className="flex justify-between">
                   <Button type="button" variant="outline" onClick={() => goTo("bank")}>
                     Back
@@ -681,68 +699,23 @@ export default function OnboardingWizardPage() {
                     disabled={saving}
                     onClick={async () => {
                       if (sectionReviewFor("statutory_info")?.status === "VERIFIED") {
-                        goTo("compensation");
+                        goTo("previousEmployment");
                         return;
                       }
                       const errors = validateStatutoryInfo(statutoryInfo);
+                      setStatutoryErrors(errors);
                       if (Object.keys(errors).length > 0) {
-                        toast({ title: "Tax regime is required", variant: "danger" });
+                        toast({ title: Object.values(errors)[0], variant: "danger" });
                         return;
                       }
                       const ok = await saveSection(
                         "statutory_info",
                         statutoryInfoToPayload(statutoryInfo),
                       );
-                      if (ok) goTo("compensation");
-                    }}
-                  >
-                    {sectionReviewFor("statutory_info")?.status === "VERIFIED"
-                      ? "Continue"
-                      : saving
-                        ? "Saving…"
-                        : "Save & Continue"}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
-            {step === "compensation" ? (
-              <div className="space-y-6">
-                <StepHeading step="compensation" />
-                <SectionReviewBanner
-                  status={sectionReviewFor("compensation_info")?.status}
-                  reason={sectionReviewFor("compensation_info")?.rejection_reason}
-                />
-                <CompensationInfoStep
-                  values={compensationInfo}
-                  errors={{}}
-                  onChange={setCompensationInfo}
-                />
-                <div className="flex justify-between">
-                  <Button type="button" variant="outline" onClick={() => goTo("statutory")}>
-                    Back
-                  </Button>
-                  <Button
-                    type="button"
-                    disabled={saving}
-                    onClick={async () => {
-                      if (sectionReviewFor("compensation_info")?.status === "VERIFIED") {
-                        goTo("previousEmployment");
-                        return;
-                      }
-                      const errors = validateCompensationInfo(compensationInfo);
-                      if (Object.keys(errors).length > 0) {
-                        toast({ title: "Enter a valid annual CTC", variant: "danger" });
-                        return;
-                      }
-                      const ok = await saveSection(
-                        "compensation_info",
-                        compensationInfoToPayload(compensationInfo),
-                      );
                       if (ok) goTo("previousEmployment");
                     }}
                   >
-                    {sectionReviewFor("compensation_info")?.status === "VERIFIED"
+                    {sectionReviewFor("statutory_info")?.status === "VERIFIED"
                       ? "Continue"
                       : saving
                         ? "Saving…"
@@ -765,7 +738,7 @@ export default function OnboardingWizardPage() {
                   onChange={setPreviousEmployment}
                 />
                 <div className="flex justify-between">
-                  <Button type="button" variant="outline" onClick={() => goTo("compensation")}>
+                  <Button type="button" variant="outline" onClick={() => goTo("statutory")}>
                     Back
                   </Button>
                   <Button
@@ -962,7 +935,7 @@ export default function OnboardingWizardPage() {
           <p className="mt-4 text-center text-xs text-foreground-muted">
             Having trouble? Contact your HR team.{" "}
             <Link href="/" className="underline">
-              HRMS Platform
+              Spectrum HRMS
             </Link>
           </p>
         </div>

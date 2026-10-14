@@ -110,7 +110,7 @@ export function buildCreatePayload(values: BranchFormValues): Record<string, unk
   };
 }
 
-/** Diff-only payload for `PATCH /branches/{id}` — mirrors `buildUpdatePatch` for Legal Entity. */
+/** Diff-only payload for `PATCH /branches/{id}` — mirrors `buildUpdatePatch` for Company. */
 export function buildUpdatePatch(values: BranchFormValues, branch: Branch): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
 
@@ -152,7 +152,7 @@ export function validateBranchForm(values: BranchFormValues): BranchFormErrors {
   const errors: BranchFormErrors = {};
 
   if (!values.legalEntityId.trim()) {
-    errors.legalEntityId = "Select a legal entity.";
+    errors.legalEntityId = "Select a company.";
   }
 
   if (!values.name.trim()) {

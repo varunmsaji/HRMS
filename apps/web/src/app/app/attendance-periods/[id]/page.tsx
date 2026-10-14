@@ -116,7 +116,7 @@ export default function AttendancePeriodDetailPage() {
   }
 
   /** PAY-001 — queues calculation of every employed day in the period (up to today) for this
-   * period's legal entity (decision 14) so it can be finalized; the job runs in the background
+   * period's company (decision 14) so it can be finalized; the job runs in the background
    * and `Validate` shows when it has caught up. */
   async function handleCalculateRange() {
     if (!period) return;
@@ -219,7 +219,7 @@ export default function AttendancePeriodDetailPage() {
               <h2 className="mb-4 text-sm font-medium text-foreground">Period</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <Field label="Label" value={period.label ?? "—"} />
-                <Field label="Legal entity" value={legalEntityName ?? "—"} />
+                <Field label="Company" value={legalEntityName ?? "—"} />
                 <Field label="Period start" value={period.period_start} />
                 <Field label="Period end" value={period.period_end} />
                 <Field label="Opened at" value={formatDateTime(period.opened_at, tz)} />

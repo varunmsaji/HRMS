@@ -12,6 +12,7 @@ from hrms.modules.employee.service import (
     EmployeeBankService,
     EmployeeCompensationService,
     EmployeeDependentService,
+    EmployeeDocumentService,
     EmployeeEducationService,
     EmployeeExperienceService,
     EmployeeService,
@@ -72,3 +73,9 @@ def get_employee_dependent_service(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> EmployeeDependentService:
     return EmployeeDependentService(session, get_settings())
+
+
+def get_employee_document_service(
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+) -> EmployeeDocumentService:
+    return EmployeeDocumentService(session, get_settings())

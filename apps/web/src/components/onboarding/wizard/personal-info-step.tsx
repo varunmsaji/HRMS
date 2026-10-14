@@ -1,6 +1,14 @@
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
-import type { PersonalInfoFormValues } from "@/lib/onboarding/public-wizard";
+import { NativeSelect } from "@/components/ui/native-select";
+import {
+  BLOOD_GROUP_VALUES,
+  GENDER_LABELS,
+  GENDER_VALUES,
+  MARITAL_STATUS_LABELS,
+  MARITAL_STATUS_VALUES,
+  type PersonalInfoFormValues,
+} from "@/lib/onboarding/public-wizard";
 
 interface PersonalInfoStepProps {
   values: PersonalInfoFormValues;
@@ -28,13 +36,40 @@ export function PersonalInfoStep({ values, errors, onChange }: PersonalInfoStepP
         <Input type="date" value={values.dateOfBirth} onChange={(e) => update("dateOfBirth", e.target.value)} />
       </FormField>
       <FormField id="gender" label="Gender" error={errors.gender}>
-        <Input value={values.gender} onChange={(e) => update("gender", e.target.value)} />
+        <NativeSelect value={values.gender} onChange={(e) => update("gender", e.target.value)}>
+          <option value="">Select gender</option>
+          {GENDER_VALUES.map((value) => (
+            <option key={value} value={value}>
+              {GENDER_LABELS[value]}
+            </option>
+          ))}
+        </NativeSelect>
       </FormField>
       <FormField id="bloodGroup" label="Blood group" error={errors.bloodGroup}>
-        <Input value={values.bloodGroup} onChange={(e) => update("bloodGroup", e.target.value)} />
+        <NativeSelect
+          value={values.bloodGroup}
+          onChange={(e) => update("bloodGroup", e.target.value)}
+        >
+          <option value="">Select blood group</option>
+          {BLOOD_GROUP_VALUES.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </NativeSelect>
       </FormField>
       <FormField id="maritalStatus" label="Marital status" error={errors.maritalStatus}>
-        <Input value={values.maritalStatus} onChange={(e) => update("maritalStatus", e.target.value)} />
+        <NativeSelect
+          value={values.maritalStatus}
+          onChange={(e) => update("maritalStatus", e.target.value)}
+        >
+          <option value="">Select marital status</option>
+          {MARITAL_STATUS_VALUES.map((value) => (
+            <option key={value} value={value}>
+              {MARITAL_STATUS_LABELS[value]}
+            </option>
+          ))}
+        </NativeSelect>
       </FormField>
       <FormField id="nationality" label="Nationality" error={errors.nationality}>
         <Input value={values.nationality} onChange={(e) => update("nationality", e.target.value)} />

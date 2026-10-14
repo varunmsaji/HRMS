@@ -1,8 +1,13 @@
 import { FormField } from "@/components/common/form-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import {
   EMPTY_NOMINEE_ROW,
+  GENDER_LABELS,
+  GENDER_VALUES,
+  RELATIONSHIP_LABELS,
+  RELATIONSHIP_VALUES,
   nomineeGratuityPercentageTotal,
   nomineePfPercentageTotal,
   type NomineeFormValues,
@@ -106,11 +111,17 @@ export function NomineeInfoStep({ values, errors, onChange }: NomineeInfoStepPro
               />
             </FormField>
             <FormField id={`nominee-${index}-relationship`} label="Relationship" required>
-              <Input
+              <NativeSelect
                 value={row.relationship}
-                placeholder="e.g. SPOUSE, SON, DAUGHTER, FATHER, MOTHER"
                 onChange={(e) => updateRow(index, { relationship: e.target.value })}
-              />
+              >
+                <option value="">Select a relationship</option>
+                {RELATIONSHIP_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {RELATIONSHIP_LABELS[value]}
+                  </option>
+                ))}
+              </NativeSelect>
             </FormField>
             <FormField id={`nominee-${index}-dob`} label="Date of birth">
               <Input
@@ -120,10 +131,17 @@ export function NomineeInfoStep({ values, errors, onChange }: NomineeInfoStepPro
               />
             </FormField>
             <FormField id={`nominee-${index}-gender`} label="Gender">
-              <Input
+              <NativeSelect
                 value={row.gender}
                 onChange={(e) => updateRow(index, { gender: e.target.value })}
-              />
+              >
+                <option value="">Select gender</option>
+                {GENDER_VALUES.map((value) => (
+                  <option key={value} value={value}>
+                    {GENDER_LABELS[value]}
+                  </option>
+                ))}
+              </NativeSelect>
             </FormField>
             <FormField id={`nominee-${index}-aadhaar`} label="Aadhaar number">
               <Input
@@ -173,12 +191,17 @@ export function NomineeInfoStep({ values, errors, onChange }: NomineeInfoStepPro
                 id={`nominee-${index}-guardian-relationship`}
                 label="Guardian relationship"
               >
-                <Input
+                <NativeSelect
                   value={row.guardianRelationship}
-                  onChange={(e) =>
-                    updateRow(index, { guardianRelationship: e.target.value })
-                  }
-                />
+                  onChange={(e) => updateRow(index, { guardianRelationship: e.target.value })}
+                >
+                  <option value="">Select a relationship</option>
+                  {RELATIONSHIP_VALUES.map((value) => (
+                    <option key={value} value={value}>
+                      {RELATIONSHIP_LABELS[value]}
+                    </option>
+                  ))}
+                </NativeSelect>
               </FormField>
             </div>
           ) : null}

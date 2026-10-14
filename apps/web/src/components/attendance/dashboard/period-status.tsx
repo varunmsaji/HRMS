@@ -33,11 +33,11 @@ export function PeriodStatus({ periods, entityNames, today }: PeriodStatusProps)
     <SectionCard
       id="att-periods"
       title="Attendance periods"
-      description="Payroll-facing cycles, one per legal entity."
+      description="Payroll-facing cycles, one per company."
       status={periods.status}
       error={periods.error}
       onRetry={periods.retry}
-      empty={list.length === 0 ? { title: "No attendance periods yet.", description: "Periods are opened per legal entity." } : null}
+      empty={list.length === 0 ? { title: "No attendance periods yet.", description: "Periods are opened per company." } : null}
       actions={
         <Button asChild size="sm" variant="outline">
           <Link href="/app/attendance-periods">All periods →</Link>
@@ -51,7 +51,7 @@ export function PeriodStatus({ periods, entityNames, today }: PeriodStatusProps)
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">{periodTitle(period)}</p>
                 <p className="text-xs text-foreground-muted">
-                  {entityNames.get(period.legal_entity_id) ?? "Legal entity"} · {formatShortDate(period.period_start)} – {formatShortDate(period.period_end)}
+                  {entityNames.get(period.legal_entity_id) ?? "Company"} · {formatShortDate(period.period_start)} – {formatShortDate(period.period_end)}
                 </p>
               </div>
               <AttendancePeriodStatusBadge status={period.status} />
@@ -116,7 +116,7 @@ export function MonthlySummary({ periods, today }: { periods: Section<Attendance
       status={status}
       error={periods.status === "error" ? periods.error : summary.error}
       onRetry={periods.status === "error" ? periods.retry : summary.retry}
-      empty={periodId === null ? { title: "No attendance period to summarise.", description: "Open a period for a legal entity first." } : null}
+      empty={periodId === null ? { title: "No attendance period to summarise.", description: "Open a period for a company first." } : null}
       actions={
         list.length > 1 ? (
           <>

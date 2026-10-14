@@ -22,7 +22,7 @@ import type { LegalEntity } from "@/lib/legal-entity/types";
 /** `/v1/attendance-periods` list (architecture §4.2/§22, decision log WD-30). Company-wide
  * config/administration screen, not employee-scoped — mirrors the Attendance/Overtime/
  * Regularization Policies screens' single list rather than a My/Team toggle. Periods are per
- * legal entity (decision 14), so the list shows and filters by entity. */
+ * company (decision 14), so the list shows and filters by entity. */
 export default function AttendancePeriodsPage() {
   const { can } = usePermissions();
   const canManage = can("ATTENDANCE.LOCK");
@@ -38,7 +38,7 @@ export default function AttendancePeriodsPage() {
     setLoading(true);
     setError(null);
     try {
-      // Entity names are a nicety — a caller who cannot read legal entities still gets the list.
+      // Entity names are a nicety — a caller who cannot read companies still gets the list.
       const [data, entities] = await Promise.all([
         apiClient.get<AttendancePeriod[]>("/attendance-periods"),
         apiClient.get<LegalEntity[]>("/legal-entities").catch(() => [] as LegalEntity[]),
@@ -70,7 +70,7 @@ export default function AttendancePeriodsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Attendance Periods"
-        description="Close and lock each legal entity's attendance for a month once every exception in it is resolved."
+        description="Close and lock each company's attendance for a month once every exception in it is resolved."
         actions={
           canManage ? (
             <Button type="button" onClick={() => setCreateOpen(true)}>
@@ -85,11 +85,11 @@ export default function AttendancePeriodsPage() {
           {legalEntities.length > 1 ? (
             <div className="mb-4 max-w-xs">
               <NativeSelect
-                aria-label="Filter by legal entity"
+                aria-label="Filter by company"
                 value={entityFilter}
                 onChange={(e) => setEntityFilter(e.target.value)}
               >
-                <option value="">All legal entities</option>
+                <option value="">All companies</option>
                 {legalEntities.map((entity) => (
                   <option key={entity.id} value={entity.id}>
                     {entity.name}
@@ -122,7 +122,7 @@ export default function AttendancePeriodsPage() {
                 <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Label</th>
-                    <th className="px-3 py-2 text-left font-medium">Legal entity</th>
+                    <th className="px-3 py-2 text-left font-medium">Company</th>
                     <th className="px-3 py-2 text-left font-medium">Range</th>
                     <th className="px-3 py-2 text-left font-medium">Status</th>
                     <th className="px-3 py-2 text-left font-medium">Last validation</th>

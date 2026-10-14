@@ -106,7 +106,7 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
   const isRehire = Boolean(employments && employments.length > 0 && !current);
 
   function legalEntityName(id: string): string {
-    return legalEntities.find((entity) => entity.id === id)?.name ?? "Unknown legal entity";
+    return legalEntities.find((entity) => entity.id === id)?.name ?? "Unknown company";
   }
 
   function openHire() {
@@ -331,7 +331,7 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                 <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-                      Legal entity
+                      Company
                     </dt>
                     <dd className="mt-0.5 text-sm text-foreground">{legalEntityName(current.legal_entity_id)}</dd>
                   </div>
@@ -412,12 +412,12 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
             </p>
           ) : null}
           <div className="grid grid-cols-1 gap-4">
-            <FormField id="hire-legal-entity" label="Legal entity" required error={hireErrors.legalEntityId}>
+            <FormField id="hire-legal-entity" label="Company" required error={hireErrors.legalEntityId}>
               <NativeSelect
                 value={hireValues.legalEntityId}
                 onChange={(e) => setHireValues({ ...hireValues, legalEntityId: e.target.value })}
               >
-                <option value="">Select a legal entity</option>
+                <option value="">Select a company</option>
                 {legalEntities.map((entity) => (
                   <option key={entity.id} value={entity.id}>
                     {entity.name}
@@ -479,16 +479,16 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
             <DialogTitle>Edit employment</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-foreground-muted">
-            Joining date is a historical fact and can&apos;t be changed here. Legal entity, probation end date and
+            Joining date is a historical fact and can&apos;t be changed here. Company, probation end date and
             pay basis are correctable.
           </p>
           <div className="grid grid-cols-1 gap-4">
-            <FormField id="edit-legal-entity" label="Legal entity" required error={editErrors.legalEntityId}>
+            <FormField id="edit-legal-entity" label="Company" required error={editErrors.legalEntityId}>
               <NativeSelect
                 value={editValues.legalEntityId}
                 onChange={(e) => setEditValues({ ...editValues, legalEntityId: e.target.value })}
               >
-                <option value="">Select a legal entity</option>
+                <option value="">Select a company</option>
                 {legalEntities.map((entity) => (
                   <option key={entity.id} value={entity.id}>
                     {entity.name}

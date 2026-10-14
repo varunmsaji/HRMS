@@ -191,7 +191,6 @@ async def test_verifying_all_sections_auto_verifies_case(
             "emergency_contact",
             "bank_info",
             "statutory_info",
-            "compensation_info",
             "previous_employment_info",
             "nominee_info",
         ]

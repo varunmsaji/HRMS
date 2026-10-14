@@ -140,6 +140,20 @@ class IdentityRepository:
             .values(revoked_at=datetime.now(UTC), revoked_reason=reason)
         )
 
+    async def rotate_refresh_token(self, session: AsyncSession, token_id: UUID) -> bool:
+        """Marks one refresh token `ROTATED` only if it is still unrevoked, and reports whether
+        this call did it. The `revoked_at IS NULL` predicate makes rotation single-winner: a
+        concurrent refresh of the same token blocks on the row lock until the first transaction
+        ends, then re-evaluates the predicate (READ COMMITTED) and updates nothing — so two
+        requests can never both rotate one token into two live descendants."""
+        result = await session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.id == token_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC), revoked_reason="ROTATED")
+            .returning(RefreshToken.id)
+        )
+        return result.first() is not None
+
     async def revoke_refresh_family(
         self,
         session: AsyncSession,

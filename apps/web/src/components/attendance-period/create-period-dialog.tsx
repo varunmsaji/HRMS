@@ -32,7 +32,7 @@ interface CreatePeriodDialogProps {
 type Cycle = "MONTH" | "CUSTOM";
 
 /** `POST /v1/attendance-periods` (architecture §4.2/§22, decision log WD-30). Creating a period
- * opens it immediately — there is no separate "open" step. Each legal entity runs its own cycle
+ * opens it immediately — there is no separate "open" step. Each company runs its own cycle
  * (decision 14); the backend rejects a range overlapping another period of the same entity
  * (`ATTENDANCE_PERIOD_OVERLAP`). A full calendar month is the default (decision 18); a custom
  * range stays available for an off-cycle period. */
@@ -72,7 +72,7 @@ export function CreatePeriodDialog({
   async function handleCreate() {
     const entityId = legalEntityId || defaultEntityId();
     if (!entityId) {
-      setFormError("Choose a legal entity.");
+      setFormError("Choose a company.");
       return;
     }
     setSaving(true);
@@ -92,7 +92,7 @@ export function CreatePeriodDialog({
       toast({ title: "Attendance period created", variant: "success" });
     } catch (err) {
       if (err instanceof ApiError && err.code === "ATTENDANCE_PERIOD_OVERLAP") {
-        setFormError("Another period for this legal entity already covers part of these dates.");
+        setFormError("Another period for this company already covers part of these dates.");
         return;
       }
       setFormError(describeApiError(err));
@@ -115,16 +115,16 @@ export function CreatePeriodDialog({
           <DialogTitle>New attendance period</DialogTitle>
           <DialogDescription>
             The period opens immediately — attendance for these dates stays fully editable until
-            you finalize it. Each legal entity closes its own period.
+            you finalize it. Each company closes its own period.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <FormField id="period-legal-entity" label="Legal entity">
+          <FormField id="period-legal-entity" label="Company">
             <NativeSelect
               value={legalEntityId || defaultEntityId()}
               onChange={(e) => setLegalEntityId(e.target.value)}
             >
-              {legalEntities.length !== 1 ? <option value="">Select a legal entity</option> : null}
+              {legalEntities.length !== 1 ? <option value="">Select a company</option> : null}
               {legalEntities.map((entity) => (
                 <option key={entity.id} value={entity.id}>
                   {entity.name}

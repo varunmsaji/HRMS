@@ -6,6 +6,7 @@ import redis.asyncio as redis
 from httpx import ASGITransport, AsyncClient
 
 os.environ.setdefault("ENVIRONMENT", "development")
+os.environ.setdefault("MAX_LEGAL_ENTITIES_PER_COMPANY", "0")
 os.environ.setdefault(
     "DATABASE_URL",
     "postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev",

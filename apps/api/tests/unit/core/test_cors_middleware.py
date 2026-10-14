@@ -32,6 +32,7 @@ _TEST_S3_KWARGS: dict[str, object] = {
     "smtp_host": "smtp.example.com",
     "smtp_from_email": "onboarding@example.com",
     "smtp_use_tls": True,
+    "web_app_base_url": "https://app.example.com",
 }
 
 

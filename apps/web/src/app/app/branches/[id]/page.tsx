@@ -92,7 +92,7 @@ export default function BranchDetailPage() {
   }, [loadBranch]);
 
   function legalEntityName(legalEntityId: string): string {
-    return legalEntities.find((entity) => entity.id === legalEntityId)?.name ?? "Unknown legal entity";
+    return legalEntities.find((entity) => entity.id === legalEntityId)?.name ?? "Unknown company";
   }
 
   function startEditing() {
@@ -305,7 +305,7 @@ export default function BranchDetailPage() {
               <section>
                 <h3 className="text-sm font-medium text-foreground">Identity</h3>
                 <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <DetailField label="Legal entity" value={legalEntityName(branch.legal_entity_id)} />
+                  <DetailField label="Company" value={legalEntityName(branch.legal_entity_id)} />
                   <DetailField label="Branch name" value={branch.name} />
                   <DetailField label="Branch code" value={branch.code} />
                 </dl>
