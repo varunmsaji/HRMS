@@ -31,6 +31,10 @@ export interface UserProfile {
    * without a separate round trip. Always the company's timezone, never a per-shift/branch
    * resolution — see the field's own docstring on the backend `UserProfile` schema. */
   company_timezone: string;
+  /** Platform console lifecycle status. `PENDING_APPROVAL` and `SUSPENDED` companies are
+   * read-only (writes answer 403 `COMPANY_PENDING_APPROVAL` / `COMPANY_SUSPENDED`). Absent on
+   * older API versions — treat as active. */
+  company_status?: string;
 }
 
 export interface MeResponseData {

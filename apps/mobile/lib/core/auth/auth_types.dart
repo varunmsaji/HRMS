@@ -50,6 +50,7 @@ class UserProfile {
     required this.employeeId,
     required this.permissions,
     required this.companyTimezone,
+    this.companyStatus = 'ACTIVE',
   });
 
   final String id;
@@ -63,6 +64,10 @@ class UserProfile {
   /// this rather than the device's local timezone.
   final String companyTimezone;
 
+  /// Platform lifecycle status of the company. `PENDING_APPROVAL` and `SUSPENDED` are read-only:
+  /// the API refuses writes with 403 `COMPANY_PENDING_APPROVAL` / `COMPANY_SUSPENDED`.
+  final String companyStatus;
+
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
         id: json['id'] as String,
         email: json['email'] as String?,
@@ -70,5 +75,6 @@ class UserProfile {
         employeeId: json['employee_id'] as String?,
         permissions: (json['permissions'] as List).cast<String>(),
         companyTimezone: json['company_timezone'] as String,
+        companyStatus: (json['company_status'] as String?) ?? 'ACTIVE',
       );
 }

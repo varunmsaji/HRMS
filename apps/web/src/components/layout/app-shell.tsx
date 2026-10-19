@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 import { CompanyContext } from "@/components/layout/company-context";
+import { CompanyStatusBanner } from "@/components/layout/company-status-banner";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { UserMenu } from "@/components/layout/user-menu";
 import { Button } from "@/components/ui/button";
@@ -56,7 +57,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 print:p-0">
-          <div className="mx-auto w-full max-w-[1280px]">{children}</div>
+          <div className="mx-auto w-full max-w-[1280px]">
+            <CompanyStatusBanner />
+            {children}
+          </div>
         </main>
       </div>
 
