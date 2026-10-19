@@ -39,6 +39,8 @@ PROJECT="${HRMS_COMPOSE_PROJECT:-hrms-prod}"
 MAX_5XX="${HRMS_MAX_5XX:-5}"
 MAX_DISK_PCT="${HRMS_MAX_DISK_PCT:-85}"
 MAX_RESTARTS="${HRMS_MAX_RESTARTS:-3}"
+MAX_FACE_REJECTIONS="${HRMS_MAX_FACE_REJECTIONS:-10}"
+MAX_FACE_SPOOF_SIGNALS="${HRMS_MAX_FACE_SPOOF_SIGNALS:-3}"
 MAX_BACKUP_AGE_HOURS="${HRMS_MAX_BACKUP_AGE_HOURS:-26}"
 ALERT_TIMEOUT="${HRMS_ALERT_TIMEOUT:-30}"
 # Compose services that are expected to be stopped after doing their job.
@@ -135,6 +137,13 @@ n=$(count "$TMP/api.jsonl" '.event == "security.refresh_token_reuse_detected"')
 check refresh_token_reuse "$(bool test "$n" -eq 0)" "$n" 0 medium
 n=$(count "$TMP/api.jsonl" '.event == "security.account.locked"')
 check account_lockouts "$(bool test "$n" -le 10)" "$n" 10 medium
+# Face attendance rejections (`security.face_punch.rejected`, `security.face_enrollment.rejected`).
+# The first is volume of any rejected punch or enrollment; the second is the narrower set that
+# looks like an attack (spoof, replayed capture, different person in some frame, ambiguous face).
+n=$(count "$TMP/api.jsonl" '.event == "security.face_punch.rejected" or .event == "security.face_enrollment.rejected"')
+check face_rejections "$(bool test "$n" -le "$MAX_FACE_REJECTIONS")" "$n" "$MAX_FACE_REJECTIONS" medium
+n=$(count "$TMP/api.jsonl" '(.event == "security.face_punch.rejected" or .event == "security.face_enrollment.rejected") and ((.reason // "") | test("^(SPOOF_SUSPECTED|CAPTURE_REPLAYED|IDENTITY_INCONSISTENT|AMBIGUOUS_FACE|MULTIPLE_FACES)$"))')
+check face_spoof_signals "$(bool test "$n" -le "$MAX_FACE_SPOOF_SIGNALS")" "$n" "$MAX_FACE_SPOOF_SIGNALS" high
 n=$(cat "$TMP/api.jsonl" "$TMP/worker.jsonl" | count /dev/stdin '.event == "email.delivery.failed"')
 check email_delivery_failures "$(bool test "$n" -le 5)" "$n" 5 high
 n=$(cat "$TMP/api.jsonl" "$TMP/worker.jsonl" | count /dev/stdin '.event == "log_writes_dropped"')
@@ -145,6 +154,10 @@ n=$(count "$TMP/worker.jsonl" '(.event // "") | test("_incomplete$")')
 check partial_runs "$(bool test "$n" -eq 0)" "$n" 0 high
 n=$(cat "$TMP/api.jsonl" "$TMP/worker.jsonl" | count /dev/stdin '(.event // "") | test("^(employee_import\\.batch\\.storage_failed|face_review_photo_delete_failed|face_enrollment_orphaned_provider_person)$")')
 check storage_and_orphan_failures "$(bool test "$n" -eq 0)" "$n" 0 high
+# A queued Face++/photo deletion that keeps failing (the worker logs ERROR only once a row has
+# passed FACE_DELETION_ALERT_AFTER_ATTEMPTS attempts; earlier attempts are WARNING and retried).
+n=$(count "$TMP/worker.jsonl" '.event == "face_deletion_failed" and .level == "error"')
+check face_deletion_stuck "$(bool test "$n" -eq 0)" "$n" 0 high
 
 # --- Backups -------------------------------------------------------------------------------
 if [ -n "${BACKUP_ROOT:-}" ]; then

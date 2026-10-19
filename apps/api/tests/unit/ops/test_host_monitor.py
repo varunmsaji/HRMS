@@ -132,7 +132,28 @@ SIGNALS: list[tuple[dict[str, str], str]] = [
     (_api(event="log_writes_dropped", newly_dropped=3), "log_writes_dropped"),
     (_worker(event="leave_accrual_incomplete"), "partial_runs"),
     (_many("worker.log", 6, event="email.delivery.failed"), "email_delivery_failures"),
+    (
+        _many("api.log", 11, event="security.face_punch.rejected", reason="NO_MATCH"),
+        "face_rejections",
+    ),
+    (
+        _many("api.log", 11, event="security.face_enrollment.rejected", reason="ANGLE_MISMATCH"),
+        "face_rejections",
+    ),
+    (
+        _many("api.log", 4, event="security.face_punch.rejected", reason="SPOOF_SUSPECTED"),
+        "face_spoof_signals",
+    ),
+    (
+        _many("api.log", 4, event="security.face_punch.rejected", reason="IDENTITY_INCONSISTENT"),
+        "face_spoof_signals",
+    ),
+    (
+        _many("api.log", 4, event="security.face_enrollment.rejected", reason="SPOOF_SUSPECTED"),
+        "face_spoof_signals",
+    ),
     (_worker(event="employee_import.batch.storage_failed"), "storage_and_orphan_failures"),
+    (_worker(event="face_deletion_failed", level="error"), "face_deletion_stuck"),
 ]
 
 
@@ -145,6 +166,18 @@ def test_each_signal_fails_its_check(
     code, report = _run(env)
     assert code == 1
     assert failing in report["failing"], report["failing"]
+
+
+def test_a_few_ordinary_face_rejections_do_not_alert(env: dict[str, str]) -> None:
+    """Genuine employees fail the camera sometimes: a handful of NO_MATCH / NO_FACE per window
+    is the normal baseline, not an alert."""
+    _write(
+        env,
+        "api.log",
+        _many("api.log", 8, event="security.face_punch.rejected", reason="NO_FACE")["api.log"],
+    )
+    code, report = _run(env)
+    assert code == 0, report["failing"]
 
 
 def test_stale_or_failed_backup_fails(env: dict[str, str]) -> None:

@@ -90,6 +90,8 @@ The default window is the last 5 minutes (`HRMS_MONITOR_WINDOW`).
 | `pii_integrity_errors` | At least 1 `app_error` with `DECRYPTION_FAILED`, `MALFORMED_CIPHERTEXT` or `UNKNOWN_KEY_VERSION` | API logs | Critical | None. |
 | `refresh_token_reuse` | At least 1 `security.refresh_token_reuse_detected` | API logs | Medium | Two browser tabs refreshing at the same instant trigger it too (decision D-A). |
 | `account_lockouts` | More than 10 `security.account.locked` | API logs | Medium | A forgotten password after a policy change. |
+| `face_rejections` | More than 10 `security.face_punch.rejected` or `security.face_enrollment.rejected` in the window (`HRMS_MAX_FACE_REJECTIONS`) | API logs | Medium | A bad-light morning at one site, or a camera/app regression. Ordinary `NO_FACE` / `NO_MATCH` are the normal baseline; see §3.9. |
+| `face_spoof_signals` | More than 3 of those events with `reason` `SPOOF_SUSPECTED`, `CAPTURE_REPLAYED`, `IDENTITY_INCONSISTENT`, `AMBIGUOUS_FACE` or `MULTIPLE_FACES` (`HRMS_MAX_FACE_SPOOF_SIGNALS`) | API logs | High | Thresholds are untuned (liveness is uncalibrated, so false `SPOOF_SUSPECTED` is possible). Group by `employee_id` first. |
 | `email_delivery_failures` | More than 5 `email.delivery.failed` | API and worker logs | High | Provider maintenance. |
 | `task_failures` | At least 1 `celery_task_failed`, `celery_task_unknown` or `celery_fanout_incomplete` | Worker logs | High | A one-off broker hiccup. |
 | `partial_runs` | At least 1 `*_incomplete` event (attendance calculation, leave accrual, year-end) | Worker logs | High (Critical before a payroll cut-off) | Per-employee data problems. |
@@ -239,6 +241,13 @@ WHERE status IN ('PENDING','PROCESSING') AND created_at < now() - interval '30 m
 
 - A single IP is a likely credential-stuffing attempt. Consider an Nginx `deny` (change-controlled).
 - Many IPs against one `subject_hash` is a targeted account. Contact its owner.
+
+**`face_rejections`, `face_spoof_signals`.** Events carry only a fixed `reason`, `company_id`, `employee_id` and (punch) `liveness_session_id` or (enrollment) `enrollment_window_id` and `angle`: never scores, frames or provider data.
+
+1. Group by `employee_id`. One employee repeating `NO_FACE`/`NO_MATCH` is a camera or lighting problem: help them, or have HR record the punch (regularisation).
+2. Many employees at one time with `SPOOF_SUSPECTED` or `LIVENESS_INCONCLUSIVE` points to a lighting/device/app regression or an uncalibrated threshold, not an attack. Compare with `face_verification_attempt` (scores are in the DB, not the log).
+3. `IDENTITY_INCONSISTENT` (frames disagree) or `CAPTURE_REPLAYED` from one employee, repeatedly, is the pattern worth escalating to HR/security.
+4. Rejections are bounded per employee by the failed-attempt limit (5 per 10 min for punches, 5 per HR-opened window for enrollment), so one actor cannot flood these events.
 
 **`pii_integrity_errors`.** Stop any key rotation, check the `encryption_keys` table and the master-key configuration, and escalate to the security owner immediately.
 

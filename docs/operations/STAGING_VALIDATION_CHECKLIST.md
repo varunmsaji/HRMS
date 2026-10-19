@@ -264,7 +264,7 @@ installed with `HRMS_COMPOSE_PROJECT` set for staging; the stack's log driver is
 
 ### B-20 Deployment pre-checks
 - **Action:** apply migrations on staging; start the new worker and beat; verify heartbeat appears; verify no import backlog is drained before reconciliation (B-11); verify `jq` is installed; verify log-shape changes (saved queries updated).
-- **Evidence:** `alembic current`, `job_health` output, release notes. (The face-punch change needs **no** migration.)
+- **Evidence:** `alembic current`, `job_health` output, release notes. (The face-punch idempotency change needed no migration; server-side face liveness adds `20261015090000_face_liveness_session` — see B-21.)
 - **Safe for staging:** Yes, staging only
 - **Human authorisation / external configuration:** Staging owner performs the deploy; migrations are applied by the owner, not by this tooling
 - **Status:** `NOT RUN`
@@ -281,3 +281,21 @@ installed with `HRMS_COMPOSE_PROJECT` set for staging; the stack's log driver is
 | … | | | | | |
 
 A scenario with no evidence link is *not run*, whatever the result column says.
+
+
+### B-21 Server-side face liveness (anti-spoofing) — calibration gate
+Production face attendance stays disabled (`FACE_LIVENESS_ENGINE=disabled`) until this passes and is accepted. Full plan: `docs/audits/FACE_ATTENDANCE_LIVENESS_IMPLEMENTATION_REPORT.md` §11.
+- **Pre:** staging image built with `uv sync --extra liveness` and `models/liveness/minifasnet-v1` copied in (the default Dockerfile does neither); `FACE_LIVENESS_ENGINE=minifasnet`, `FACE_LIVENESS_MODEL_DIR` set; migration `20261015090000` applied by the staging owner; Face++ in its sandbox/staging account; consented participants only; test employees only.
+- **Action:** per device model (at least 2 Android + 1 iOS, low/mid/high end): genuine punches in bright, dim and backlit light, with and without glasses; then attacks — printed photo (matte + glossy), photo on another phone, photo on a laptop monitor, prerecorded video on phone/monitor, a cut-out print; replay a captured request with a fresh challenge; reuse a challenge; let a challenge expire; background the app mid-capture.
+- **Expect-UI:** genuine punches succeed within ≤ 2 tries; every attack ends in "could not confirm a live face" / "could not check your face clearly"; no punch recorded for any attack.
+- **Expect-Log:** `face_liveness_assessed` with decision and duration only (no image data); `face_verification_attempt` rows `SPOOF_SUSPECTED`/`LIVENESS_INCONCLUSIVE`/`CHALLENGE_REJECTED`/`CAPTURE_REPLAYED` as appropriate.
+- **Record:** per device × condition: attempts, APCER (attacks accepted / attacks) and BPCER (genuine rejected / genuine), per-frame live scores from `provider_response.liveness` → choose thresholds from data, not defaults.
+- **Recover:** set `FACE_LIVENESS_ENGINE=disabled` (face punch then answers 503 `FACE_LIVENESS_UNAVAILABLE`; other punch methods unaffected).
+- **Safe for staging:** Yes (consented participants, test employees)
+- **Human authorisation / external configuration:** Biometric-consent sign-off; participant consent forms; staging Face++ account; device pool; product/security acceptance of measured APCER/BPCER
+- **Status:** `NOT RUN`
+
+> **Update 2026-10-17 (B-21):** the migration prerequisite also includes `20261017090000` (irreversibly erases stored Face++ bodies — backup first). The
+> evaluation protocol, metric definitions, calibration/holdout rules and the owner/sign-off register for B-21 are in
+> `docs/operations/FACE_ATTENDANCE_STAGING_READINESS_PLAN.md` and `docs/operations/FACE_ATTENDANCE_STAGING_SECURITY_CHECKLIST.md` (sections 9–18).
+> B-21 remains `NOT RUN`.
