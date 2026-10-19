@@ -1,7 +1,20 @@
 # Super admin (platform console) — implementation plan
 
-Status: **proposal, nothing implemented.** Decisions marked **[DECIDE]** need a product answer before the
-phase that depends on them starts.
+Status: **implemented** (see `docs/operations/PLATFORM_CONSOLE.md` for the operating guide and the
+deviations from this plan). Decisions taken:
+
+| # | Decision |
+| --- | --- |
+| 1 | Unapproved company's admin can sign in and **view** only (read-only). |
+| 2 | Approval is always manual (`COMPANY_APPROVAL_REQUIRED`, default on; off restores the old behaviour). |
+| 3 | Suspend = **read-only grace mode** (sign-in and reads work, writes refused). |
+| 4 | MFA deferred — not implemented; sign-in is username + password with lockout and rate limit. |
+| 5 | First super admin created by `scripts/create_platform_admin.py` (login by **username**, not email). |
+| 6 | No impersonation. |
+| 7 | Terminated companies have a data **retention period** (`TERMINATED_COMPANY_RETENTION_DAYS`, default 90); nothing purges data automatically. |
+
+The sections below are the original proposal; where the implementation differs it is noted in
+`PLATFORM_CONSOLE.md`.
 
 ## 1. Goal
 

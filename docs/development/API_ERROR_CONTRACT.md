@@ -46,10 +46,10 @@ responses too.
 | --- | --- | --- |
 | 400 | Malformed request that is not schema validation | `BAD_REQUEST` |
 | 401 | Missing/invalid/expired credentials, revoked session. Carries `WWW-Authenticate: Bearer` | `UNAUTHORIZED`, `INVALID_TOKEN`, `INVALID_CREDENTIALS` |
-| 403 | Authenticated but not allowed (permission, data scope, unverified email) | `PERMISSION_DENIED`, `FORBIDDEN`, `EMAIL_NOT_VERIFIED` |
+| 403 | Authenticated but not allowed (permission, data scope, unverified email, company lifecycle) | `PERMISSION_DENIED`, `FORBIDDEN`, `EMAIL_NOT_VERIFIED`, `COMPANY_PENDING_APPROVAL`, `COMPANY_SUSPENDED` (read-only: writes refused), `COMPANY_REJECTED`, `COMPANY_TERMINATED` (no access) |
 | 404 | Unknown route, or resource absent / not visible to the caller's tenant | `NOT_FOUND`, module `*_NOT_FOUND` |
 | 405 | Wrong method. Carries `Allow` | `METHOD_NOT_ALLOWED` |
-| 409 | State conflict, duplicate, stale `If-Match` version | `CONFLICT`, `DUPLICATE_RESOURCE`, `STALE_RESOURCE`, module codes |
+| 409 | State conflict, duplicate, stale `If-Match` version | `CONFLICT`, `DUPLICATE_RESOURCE`, `STALE_RESOURCE`, `INVALID_COMPANY_TRANSITION`, module codes |
 | 413 | Upload/body over the limit | `PAYLOAD_TOO_LARGE` |
 | 422 | Schema validation or business input rule failed; value not storable | `REQUEST_VALIDATION_ERROR`, `VALIDATION_ERROR`, `INVALID_VALUE`, module codes |
 | 423 | Account locked | `ACCOUNT_LOCKED`, `LOCKED` |
