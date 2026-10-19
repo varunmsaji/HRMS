@@ -128,7 +128,7 @@ def test_validation_and_not_found_record_their_codes(
     with TestClient(app) as c:
         capfd.readouterr()
         c.get("/v1/does-not-exist")
-        assert _one(capfd)["error_code"] == "HTTP_ERROR"
+        assert _one(capfd)["error_code"] == "NOT_FOUND"
         c.post("/__t/validated", json={})
         event = _one(capfd)
     assert event["status_code"] == 422

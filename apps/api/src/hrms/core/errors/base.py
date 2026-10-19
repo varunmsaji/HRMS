@@ -6,6 +6,9 @@ class AppError(Exception):
 
     code: str = "INTERNAL_ERROR"
     status_code: int = 500
+    #: Protocol headers the response must carry (`WWW-Authenticate` on a 401, `Retry-After` on a
+    #: 429/503). A class default; an instance may override it with its own value.
+    headers: dict[str, str] | None = None
 
     def __init__(
         self,
@@ -13,10 +16,13 @@ class AppError(Exception):
         *,
         code: str | None = None,
         details: list[dict[str, Any]] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         if code is not None:
             self.code = code
+        if headers is not None:
+            self.headers = headers
         self.message = message
         self.details = details or []
 

@@ -51,6 +51,14 @@ class RateLimitExceededError(AppError):
     code = "RATE_LIMITED"
     status_code = 429
 
+    def __init__(self, message: str, *, retry_after_seconds: int | None = None) -> None:
+        # The counter window is an upper bound on the wait (the key expires at most that long
+        # after its first hit), so it is a safe `Retry-After`.
+        super().__init__(
+            message,
+            headers={"Retry-After": str(retry_after_seconds)} if retry_after_seconds else None,
+        )
+
 
 class RateLimiterUnavailableError(AppError):
     """SEC-11 (RELEASE_HARDENING_PHASE_3A) — raised when Redis itself is unreachable/times out,
@@ -66,6 +74,7 @@ class RateLimiterUnavailableError(AppError):
 
     code = "RATE_LIMITER_UNAVAILABLE"
     status_code = 503
+    headers = {"Retry-After": "5"}
 
 
 #: SEC-11 — a hung/unreachable Redis must fail fast (and therefore closed, via the 503 above)
@@ -112,9 +121,34 @@ def rate_limit(
             ) from exc
         if count > limit:
             _log_rate_limited(bucket, {"ip": count}, limit, client_ip=client_ip)
-            raise RateLimitExceededError("Too many requests — please try again later")
+            raise RateLimitExceededError(
+                "Too many requests — please try again later", retry_after_seconds=window_seconds
+            )
 
     return _dependency
+
+
+async def enforce_rate_limit(
+    bucket: str, *, subject: str, limit: int, window_seconds: int, **log_fields: object
+) -> None:
+    """One fixed-window counter for `subject` (the caller composes it, e.g. tenant + client IP).
+    Same Redis primitive, failure policy (fail closed with 503) and log-once-per-window behaviour
+    as `rate_limit`, for limiters whose key needs more than the client IP."""
+    key = f"ratelimit:{bucket}:{subject}"
+    client = _get_client()
+    try:
+        count = await client.incr(key)
+        if count == 1:
+            await client.expire(key, window_seconds)
+    except RedisError as exc:
+        raise RateLimiterUnavailableError(
+            "Rate limiter is temporarily unavailable — please try again shortly"
+        ) from exc
+    if count > limit:
+        _log_rate_limited(bucket, {"subject": count}, limit, **log_fields)
+        raise RateLimitExceededError(
+            "Too many requests — please try again later", retry_after_seconds=window_seconds
+        )
 
 
 async def _extract_login_identity(request: Request) -> str:
@@ -172,7 +206,9 @@ def rate_limit_by_ip_and_email(
                 client_ip=client_ip,
                 subject_hash=subject_hash(identity) if identity != "unknown" else None,
             )
-            raise RateLimitExceededError("Too many requests — please try again later")
+            raise RateLimitExceededError(
+                "Too many requests — please try again later", retry_after_seconds=window_seconds
+            )
 
     return _dependency
 

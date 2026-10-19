@@ -4,6 +4,8 @@ from hrms.core.errors.base import AppError
 class UnauthorizedError(AppError):
     code = "UNAUTHORIZED"
     status_code = 401
+    # RFC 9110 §15.5.2: a 401 must say which scheme to authenticate with.
+    headers = {"WWW-Authenticate": "Bearer"}
 
 
 class InvalidCredentialsError(UnauthorizedError):

@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from http import HTTPStatus
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -35,6 +36,7 @@ def _error_response(
     code: str,
     message: str,
     details: list[ErrorDetail] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     request_id = current_request_id() or "unknown"
     body = ErrorEnvelope(
@@ -45,7 +47,62 @@ def _error_response(
             request_id=request_id,
         )
     )
-    return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"))
+    return JSONResponse(
+        status_code=status_code,
+        content=body.model_dump(mode="json"),
+        headers=dict(headers) if headers else None,
+    )
+
+
+#: Stable envelope codes for framework-raised `HTTPException`s (unknown route, wrong method,
+#: a router-level 4xx). Anything not listed gets a code derived from its class so a client can
+#: still branch on it. Domain errors never come through here — they are `AppError`s with their own
+#: codes.
+_HTTP_STATUS_CODES = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    406: "NOT_ACCEPTABLE",
+    408: "REQUEST_TIMEOUT",
+    409: "CONFLICT",
+    410: "GONE",
+    413: "PAYLOAD_TOO_LARGE",
+    415: "UNSUPPORTED_MEDIA_TYPE",
+    422: "UNPROCESSABLE_REQUEST",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_ERROR",
+    502: "BAD_GATEWAY",
+    503: "SERVICE_UNAVAILABLE",
+    504: "GATEWAY_TIMEOUT",
+}
+
+#: Framework headers worth keeping on an `HTTPException` response; everything else the raiser
+#: attached is dropped rather than echoed.
+_PASSTHROUGH_HTTP_HEADERS = frozenset({"allow", "www-authenticate", "retry-after"})
+
+#: Pydantic prefixes messages raised by `ValueError` validators with this; it is noise to a user.
+_VALUE_ERROR_PREFIX = "Value error, "
+
+
+def _http_exception_code(status_code: int) -> str:
+    if status_code in _HTTP_STATUS_CODES:
+        return _HTTP_STATUS_CODES[status_code]
+    return "CLIENT_ERROR" if status_code < 500 else "SERVER_ERROR"
+
+
+def _http_exception_message(status_code: int, detail: object) -> str:
+    """`HTTPException.detail` may be any JSON value; only a plain string is safe to show. For a 5xx
+    the framework's text is never forwarded (it can name internals)."""
+    if status_code >= 500:
+        return "An unexpected error occurred"
+    if isinstance(detail, str) and detail:
+        return detail
+    try:
+        return HTTPStatus(status_code).phrase
+    except ValueError:
+        return "Request failed"
 
 
 #: asyncpg exception class names for "the value you sent cannot be stored" — raised client-side
@@ -71,6 +128,11 @@ def _is_bad_input(exc: DBAPIError) -> bool:
     return str(getattr(cause, "sqlstate", None) or "").startswith("22")
 
 
+def _is_unique_violation(exc: DBAPIError) -> bool:
+    cause = _driver_error(exc)
+    return str(getattr(cause, "sqlstate", None) or "") == "23505"
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Register global exception handlers once in app factory (Document 07 §8)."""
 
@@ -87,7 +149,9 @@ def register_exception_handlers(app: FastAPI) -> None:
             )
             for d in exc.details
         ]
-        return _error_response(exc.status_code, exc.code, exc.message, detail_models)
+        return _error_response(
+            exc.status_code, exc.code, exc.message, detail_models, headers=exc.headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
@@ -99,7 +163,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             ErrorDetail(
                 field=".".join(str(p) for p in err.get("loc", [])),
                 code=err.get("type", "validation_error"),
-                message=err.get("msg", ""),
+                message=str(err.get("msg", "")).removeprefix(_VALUE_ERROR_PREFIX),
             )
             for err in exc.errors()
         ]
@@ -130,6 +194,18 @@ def register_exception_handlers(app: FastAPI) -> None:
             # rather than inviting a retry that could apply a mutation twice.
             _log_db_error(request.scope, exc, status_code=503)
             return _database_busy(request.scope)
+        if _is_unique_violation(exc):
+            # A concurrent request inserted the same natural key between the service's existence
+            # check and its INSERT. Services convert the races they anticipate into specific
+            # codes; this is the net for the rest — the state conflicts with the request, so 409,
+            # not a 500. The constraint name stays in the server log only.
+            _log_db_error(request.scope, exc, status_code=409)
+            note_error_code(request.scope, "DUPLICATE_RESOURCE")
+            return _error_response(
+                409,
+                "DUPLICATE_RESOURCE",
+                "A record with these details already exists",
+            )
         if _is_bad_input(exc):
             note_error_code(request.scope, "INVALID_VALUE")
             return _error_response(
@@ -146,8 +222,27 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request,
         exc: StarletteHTTPException,
     ) -> JSONResponse:
-        note_error_code(request.scope, "HTTP_ERROR")
-        return _error_response(exc.status_code, "HTTP_ERROR", str(exc.detail))
+        code = _http_exception_code(exc.status_code)
+        note_error_code(request.scope, code)
+        if exc.status_code >= 500:
+            safe_log(
+                _logger.error,
+                "http_exception",
+                request_id=current_request_id() or "unknown",
+                http_method=request.scope.get("method"),
+                http_path=route_for_logging(request.scope),
+                status_code=exc.status_code,
+                **tenant_log_fields(),
+            )
+        headers = {
+            k: v for k, v in (exc.headers or {}).items() if k.lower() in _PASSTHROUGH_HTTP_HEADERS
+        }
+        return _error_response(
+            exc.status_code,
+            code,
+            _http_exception_message(exc.status_code, exc.detail),
+            headers=headers,
+        )
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(
@@ -275,7 +370,12 @@ def _log_db_error(
         "error_category": category,
         **tenant_log_fields(),
     }
-    if status_code == 503:
+    if status_code == 409:
+        # An unanticipated duplicate means a service lacks its specific conversion: the client gets
+        # a 409, but the traceback (values masked by the redaction processor) is kept so the gap
+        # can be found. WARNING, not ERROR — the request itself was handled correctly.
+        safe_log(_logger.warning, "db_error", exc_info=exc, **fields)
+    elif status_code == 503:
         # Transient and retryable: one compact WARNING per request, no traceback. The event
         # name stays `db_wait_timeout` for lock/statement timeouts (existing alert queries).
         event = "db_wait_timeout" if category == "db_timeout" else category

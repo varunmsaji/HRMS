@@ -129,12 +129,14 @@ def test_integrity_violation_is_classified_and_its_values_never_logged(
     capfd.readouterr()
     r = client.get("/__t/integrity")
     raw = capfd.readouterr().out
-    assert r.status_code == 500
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "DUPLICATE_RESOURCE"
     assert SENTINEL_EMAIL not in raw and SENTINEL_EMAIL not in r.text
     events = _events(raw)
     (db_error,) = [e for e in events if e["event"] == "db_error"]
     assert db_error["error_category"] == "db_integrity"
     assert db_error["sqlstate"] == "23505"
+    assert db_error["level"] == "warning"
     # Traceback kept for diagnosis, with the constraint's DETAIL values masked.
     assert "Traceback" in db_error["exception"]
 

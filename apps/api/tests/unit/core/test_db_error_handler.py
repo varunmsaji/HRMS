@@ -60,7 +60,6 @@ async def test_unstorable_values_are_422(exc: Exception) -> None:
 @pytest.mark.parametrize(
     "exc",
     [
-        _wrapped(UniqueViolationError("duplicate key")),
         OperationalError("SELECT 1", {}, Exception("connection refused")),
     ],
 )
@@ -70,3 +69,12 @@ async def test_other_database_errors_stay_a_generic_500(exc: Exception) -> None:
     assert r.status_code == 500
     assert r.json()["error"]["code"] == "INTERNAL_ERROR"
     assert "duplicate" not in r.text and "refused" not in r.text
+
+
+async def test_unique_violation_is_a_409_without_constraint_internals() -> None:
+    exc = _wrapped(UniqueViolationError('duplicate key value violates "uq_employee_code"'))
+    async with AsyncClient(transport=ASGITransport(app=_app(exc)), base_url="http://t") as c:
+        r = await c.get("/boom")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "DUPLICATE_RESOURCE"
+    assert "uq_employee_code" not in r.text and "duplicate key" not in r.text
