@@ -91,6 +91,9 @@ class UserProfile(BaseModel):
     # session-wide default the UI falls back to; any screen showing a specific employee's
     # attendance uses that record's own already-resolved timezone instead.
     company_timezone: str
+    # Platform console: the company's lifecycle status (`PENDING_APPROVAL`, `TRIAL`, `ACTIVE`,
+    # `SUSPENDED`, ...). Clients show a read-only banner for `PENDING_APPROVAL` / `SUSPENDED`.
+    company_status: str = "ACTIVE"
 
 
 class MeResponseData(BaseModel):

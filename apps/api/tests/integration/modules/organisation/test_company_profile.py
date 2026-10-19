@@ -383,8 +383,11 @@ async def test_patch_company_profile_suspended_company_blocked(
             headers={**headers, "If-Match": str(version)},
             json={"legal_name": "Blocked"},
         )
-        assert response.status_code == 423
-        assert response.json()["error"]["code"] == "LOCKED"
+        # The platform console's company gate (`core/auth/company_access.py`) refuses writes from a
+        # SUSPENDED company before the service runs, with a specific code; the service's own
+        # `CompanyWriteBlockedError` (423 LOCKED) is the second line of defence behind it.
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "COMPANY_SUSPENDED"
     finally:
         await _cleanup(company_id=company_id, user_id=user_id)
 

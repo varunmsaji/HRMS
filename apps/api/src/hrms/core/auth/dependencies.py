@@ -1,10 +1,11 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hrms.core.auth.company_access import assert_request_allowed
 from hrms.core.auth.jwt import decode_access_token
 from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.db.repositories.identity import IdentityRepository
@@ -16,6 +17,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AuthenticatedUser:
@@ -54,6 +56,14 @@ async def get_current_user(
         _access_rejected("membership_invalid", user_id, company_id)
         raise InvalidTokenError("Company membership is not valid")
 
+    # Company lifecycle (platform console): evaluated on every request, so suspending, rejecting
+    # or terminating a company takes effect immediately instead of when this token expires.
+    company = await repo.get_company_by_id(session, company_id)
+    if company is None:
+        _access_rejected("company_missing", user_id, company_id)
+        raise InvalidTokenError("Company membership is not valid")
+    assert_request_allowed(company.status, method=request.method, path=request.url.path)
+
     return AuthenticatedUser(
         user_id=user_id,
         company_id=company_id,
@@ -72,12 +82,13 @@ def _access_rejected(reason: str, user_id: UUID, company_id: UUID) -> None:
 
 
 async def get_optional_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> AuthenticatedUser | None:
     if credentials is None or not credentials.credentials:
         return None
     try:
-        return await get_current_user(credentials, session)
+        return await get_current_user(request, credentials, session)
     except UnauthorizedError:
         return None

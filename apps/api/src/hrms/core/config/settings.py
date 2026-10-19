@@ -102,6 +102,16 @@ class Settings(BaseSettings):
     jwt_refresh_secret: str = Field(default=_DEV_JWT_REFRESH_SECRET_DEFAULT, min_length=16)
     jwt_refresh_ttl_days: int = 30
 
+    # Platform super-admin console. A newly registered company waits in `PENDING_APPROVAL` (it
+    # can sign in and look around, read-only) until a platform admin approves it; turn this off
+    # to restore the previous "registers straight into TRIAL" behaviour.
+    company_approval_required: bool = True
+    #: Platform tokens are short-lived and not refreshable: a platform admin signs in again.
+    platform_access_ttl_minutes: int = Field(default=30, ge=1, le=240)
+    #: How long a TERMINATED company's data is retained before it becomes eligible for purge.
+    #: The purge itself is a separate, deliberately manual operation (nothing deletes data here).
+    terminated_company_retention_days: int = Field(default=90, ge=1)
+
     # OPS-01 (PLATFORM_READINESS_SECURITY_AUDIT_2026-09-17) — empty outside `development` by
     # design: `_guard_non_development_config` below fails boot rather than silently falling
     # back to `["*"]`/`[]`/localhost. Accepts a comma-separated string from the environment

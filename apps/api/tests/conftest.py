@@ -24,6 +24,10 @@ os.environ.setdefault("JWT_REFRESH_SECRET", "test-refresh-secret-min-16-chars")
 # The Celery broker/result backend go to a dedicated Redis DB (15 by default) so integration
 # tests that enqueue work (employee imports) can never add to — or be mistaken for — the
 # backlog in DB 0. `HRMS_TEST_CELERY_DB` lets a developer pick a different isolated DB.
+# Platform console: production default is "new companies wait for approval". The rest of the suite
+# registers companies and immediately writes to them, so it runs with approval off; the platform
+# suite (tests/integration/modules/platform) switches it on explicitly.
+os.environ["COMPANY_APPROVAL_REQUIRED"] = "false"
 os.environ["EMAIL_PROVIDER"] = "logging"
 os.environ["FACE_VERIFICATION_PROVIDER"] = "disabled"
 os.environ["CELERY_BROKER_URL"] = urlunsplit(

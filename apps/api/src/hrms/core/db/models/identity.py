@@ -68,6 +68,17 @@ class Company(Base, TimestampMixin):
     )
     business_hours_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     business_hours_end: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # Platform console (migration 20261019090000): why/when/by whom `status` last changed, when
+    # the company was approved, and — for TERMINATED — until when its data is retained.
+    status_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status_changed_by_platform_admin_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retention_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )

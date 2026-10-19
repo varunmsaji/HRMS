@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
+from hrms.core.auth.company_access import assert_can_sign_in
 from hrms.core.auth.jwt import create_access_token
 from hrms.core.auth.passwords import hash_password, is_password_strong_enough, verify_password
 from hrms.core.auth.tokens import generate_refresh_token, hash_token
@@ -136,6 +137,13 @@ class IdentityService:
             self._login_failed("company_not_member", user.id, body.email, ip_address)
             raise InvalidCredentialsError("Invalid email or password")
 
+        # Platform console: a REJECTED / TERMINATED company cannot sign in. Checked only here,
+        # after the password and membership are confirmed, so it is never an existence oracle.
+        # PENDING_APPROVAL / SUSPENDED companies may sign in (read-only; see `company_access`).
+        active_company = await self._repo.get_company_by_id(self._session, active_company_id)
+        if active_company is not None:
+            assert_can_sign_in(active_company.status)
+
         # `active_company_id` is now verified (matched against a real membership row above) —
         # set the RLS GUC before issue_tokens_for, which resolves the caller's Employee row
         # (RLS-protected) via _resolve_employee_id. Same GUC-timing shape as the
@@ -213,6 +221,10 @@ class IdentityService:
         if not any(m.company_id == record.company_id for m in memberships):
             self._refresh_rejected("membership_invalid", record.user_id, level="warning")
             raise InvalidTokenError("Company membership is not valid")
+
+        refresh_company = await self._repo.get_company_by_id(self._session, record.company_id)
+        if refresh_company is not None:
+            assert_can_sign_in(refresh_company.status)
 
         if not await self._repo.rotate_refresh_token(self._session, record.id):
             # Another request rotated (or revoked) this token between our read and this write —
@@ -310,6 +322,7 @@ class IdentityService:
                 employee_id=employee_id,
                 permissions=permissions,
                 company_timezone=company.timezone,
+                company_status=company.status,
             )
         )
 

@@ -335,7 +335,10 @@ class OrganisationService:
             # actual backstop for two concurrent registrations with the same email.
             raise ConflictError("An account with this email already exists") from exc
 
-        trial_ends_at = now + timedelta(days=TRIAL_PERIOD_DAYS)
+        # Platform console: with approval required the company starts `PENDING_APPROVAL` with no
+        # trial clock; the clock starts when a platform admin approves it.
+        needs_approval = self._settings.company_approval_required
+        trial_ends_at = None if needs_approval else now + timedelta(days=TRIAL_PERIOD_DAYS)
         company = await self._repo.insert_company(
             self._session,
             data={
@@ -347,7 +350,7 @@ class OrganisationService:
                 "timezone": body.timezone,
                 "fy_start_month": body.fy_start_month,
                 "company_size": body.company_size,
-                "status": "TRIAL",
+                "status": "PENDING_APPROVAL" if needs_approval else "TRIAL",
                 "trial_ends_at": trial_ends_at,
                 "created_by": user_id,
                 "updated_by": user_id,
