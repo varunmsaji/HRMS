@@ -36,7 +36,7 @@ class AuthScaffold extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: [
-                  Text('Staff Spectrum', style: theme.textTheme.headlineSmall),
+                  Text('Krewoxa', style: theme.textTheme.headlineSmall),
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -111,7 +111,7 @@ class AuthScaffold extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '© ${DateTime.now().year} Staff Spectrum HRMS. All rights reserved.',
+                        '© ${DateTime.now().year} Krewoxa. All rights reserved.',
                         style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                         textAlign: TextAlign.center,
                       ),

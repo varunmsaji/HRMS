@@ -143,7 +143,7 @@ function WizardHeader() {
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary-subtle text-primary">
           <Building2 className="h-4 w-4" aria-hidden="true" />
         </span>
-        <span className="text-md font-semibold text-foreground">Spectrum HRMS</span>
+        <span className="text-md font-semibold text-foreground">Krewoxa</span>
       </div>
     </header>
   );
@@ -935,7 +935,7 @@ export default function OnboardingWizardPage() {
           <p className="mt-4 text-center text-xs text-foreground-muted">
             Having trouble? Contact your HR team.{" "}
             <Link href="/" className="underline">
-              Spectrum HRMS
+              Krewoxa
             </Link>
           </p>
         </div>

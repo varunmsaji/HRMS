@@ -17,7 +17,7 @@ export function AuthLayout({ title, description, children, footer }: AuthLayoutP
     <div className="flex min-h-screen flex-col bg-background">
       <header className="border-b border-border bg-surface px-6 py-3">
         <Link href="/" className="inline-flex items-center gap-2">
-          <span className="text-lg font-semibold tracking-tight text-foreground">Spectrum</span>
+          <span className="text-lg font-semibold tracking-tight text-foreground">Krewoxa</span>
           <span className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[11px] font-semibold tracking-wide text-foreground-secondary">
             HRMS
           </span>
@@ -43,7 +43,7 @@ export function AuthLayout({ title, description, children, footer }: AuthLayoutP
           <span>Protected by enterprise grade 256-bit encryption</span>
         </div>
         <span className="text-xs text-foreground-muted">
-          © {new Date().getFullYear()} Spectrum HRMS. All rights reserved.
+          © {new Date().getFullYear()} Krewoxa. All rights reserved.
         </span>
       </footer>
     </div>

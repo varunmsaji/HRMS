@@ -23,7 +23,7 @@ export default function GlobalError({ error, retry, reset }: RouteErrorProps) {
           padding: "16px",
         }}
       >
-        <title>Something went wrong — Spectrum HRMS</title>
+        <title>Something went wrong — Krewoxa</title>
         <main role="alert" style={{ maxWidth: 480, textAlign: "center" }}>
           <h1 style={{ fontSize: 20, margin: "0 0 8px" }}>Something went wrong</h1>
           <p style={{ margin: "0 0 16px", lineHeight: 1.5 }}>
