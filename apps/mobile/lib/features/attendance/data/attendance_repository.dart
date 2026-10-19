@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
+import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
 
 class Shift {
@@ -199,7 +200,8 @@ class FacePunchResult {
   final String direction;
   final String punchTime;
   final double similarity;
-  /// Null when the server accepted the punch without a liveness score.
+  /// The server's own liveness score for the weakest frame (null on punches recorded before
+  /// server-side liveness existed). Informational only — the server already decided.
   final double? livenessScore;
 
   factory FacePunchResult.fromJson(Map<String, dynamic> json) {
@@ -213,6 +215,31 @@ class FacePunchResult {
     );
   }
 }
+
+/// `POST /attendance/face-punches/me/liveness-sessions` — a single-use, short-lived challenge the
+/// next face punch in [direction] must present, with exactly [framesRequired] frames captured
+/// after it was issued.
+class FaceLivenessSession {
+  FaceLivenessSession({required this.sessionId, required this.direction, required this.expiresAt, required this.framesRequired});
+
+  final String sessionId;
+  final String direction;
+  final DateTime expiresAt;
+  final int framesRequired;
+
+  factory FaceLivenessSession.fromJson(Map<String, dynamic> json) => FaceLivenessSession(
+        sessionId: json['session_id'] as String,
+        direction: json['direction'] as String,
+        expiresAt: DateTime.parse(json['expires_at'] as String),
+        framesRequired: json['frames_required'] as int,
+      );
+}
+
+/// True when a face punch's outcome is unknown — no response, or a proxy failure without the
+/// API's own error envelope — so the server may have recorded it. The retry must then reuse
+/// the same idempotency key. Any answer from the API itself settles the attempt.
+bool facePunchOutcomeUnknown(Object error) =>
+    error is ApiError && (error.status == 0 || error.code == 'SERVICE_UNAVAILABLE' || error.code == 'UNKNOWN_ERROR');
 
 /// The signed-in employee's face enrollment state (`GET /attendance/face-enrollment/me`).
 class FaceEnrollmentStatus {
@@ -335,24 +362,42 @@ class AttendanceRepository {
         parse: (_) {},
       );
 
-  /// Self punch gated on a live selfie: the server checks liveness and matches it against
-  /// the caller's enrolled face before recording a punch (server-timed, source `FACE`).
+  /// Step 1 of a face punch: a fresh server-issued liveness challenge. Request one per attempt,
+  /// before opening the camera.
+  Future<FaceLivenessSession> startFaceLivenessSession(String direction) => _client.post(
+        '/attendance/face-punches/me/liveness-sessions',
+        body: {'direction': direction},
+        parse: (d) => FaceLivenessSession.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// Step 2: the frames captured for [livenessSessionId]. The server runs its own liveness
+  /// check on every frame and matches the best one against the enrolled face before recording
+  /// a punch (server-timed, source `FACE`). Nothing the app sends is read as a liveness result.
   ///
-  /// [idempotencyKey]: pass the same key when retrying after a failure with no response (the
-  /// punch may have been recorded); the server then returns the original punch instead of a
-  /// second one. A fresh key is generated when omitted.
-  Future<FacePunchResult> facePunchMe({required String direction, required List<int> photoJpeg, String? idempotencyKey}) {
-    final key = idempotencyKey ?? ApiClient.newIdempotencyKey();
-    return _client.postMultipart(
-      '/attendance/face-punches/me',
-      buildForm: () => FormData.fromMap({
-        'direction': direction,
-        'idempotency_key': key,
-        'photo': MultipartFile.fromBytes(photoJpeg, filename: 'selfie.jpg', contentType: DioMediaType('image', 'jpeg')),
-      }),
-      parse: (d) => FacePunchResult.fromJson(d as Map<String, dynamic>),
-    );
-  }
+  /// [idempotencyKey] identifies the punch operation, not the attempt: when an earlier attempt
+  /// for the same direction ended with an unknown outcome ([facePunchOutcomeUnknown]), retry
+  /// with a NEW challenge and capture but the SAME key; the server then returns the original
+  /// punch instead of recording a second one.
+  Future<FacePunchResult> facePunchMe({
+    required String direction,
+    required String livenessSessionId,
+    required List<List<int>> frames,
+    required String idempotencyKey,
+  }) =>
+      _client.postMultipart(
+        '/attendance/face-punches/me',
+        buildForm: () => FormData()
+          ..fields.addAll([
+            MapEntry('direction', direction),
+            MapEntry('liveness_session_id', livenessSessionId),
+            MapEntry('idempotency_key', idempotencyKey),
+          ])
+          ..files.addAll([
+            for (var i = 0; i < frames.length; i++)
+              MapEntry('frames', MultipartFile.fromBytes(frames[i], filename: 'frame$i.jpg', contentType: DioMediaType('image', 'jpeg'))),
+          ]),
+        parse: (d) => FacePunchResult.fromJson(d as Map<String, dynamic>),
+      );
 
   Future<AttendanceDay> getAttendanceDay(String id) =>
       _client.get('/attendance/days/$id', parse: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>));

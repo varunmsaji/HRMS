@@ -9,6 +9,7 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import '../../../core/api/api_error.dart';
 import '../domain/face_pose_tracker.dart';
 import '../data/attendance_repository.dart' show attendanceRepositoryProvider;
+import 'camera_input_image.dart';
 
 enum _Stage { consent, capturing, review, submitting }
 
@@ -35,13 +36,6 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
   bool _processingFrame = false;
   bool _capturing = false;
   String? _hint;
-
-  static const _orientations = {
-    DeviceOrientation.portraitUp: 0,
-    DeviceOrientation.landscapeLeft: 90,
-    DeviceOrientation.portraitDown: 180,
-    DeviceOrientation.landscapeRight: 270,
-  };
 
   @override
   void dispose() {
@@ -138,7 +132,7 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
     try {
       await controller.stopImageStream();
       final file = await controller.takePicture();
-      _photos[_tracker.current.angle] = await file.readAsBytes();
+      _photos[_tracker.current.angle] = await readAndDeleteCapture(file);
       HapticFeedback.mediumImpact();
       _tracker.advance();
       if (_tracker.isDone) {
@@ -155,42 +149,11 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
     }
   }
 
-  /// Camera frame -> ML Kit input (the plugin's documented conversion: NV21 on Android,
-  /// BGRA8888 on iOS, single plane, rotation from sensor + device orientation).
   InputImage? _toInputImage(CameraImage image) {
     final camera = _cameraDescription;
     final controller = _camera;
     if (camera == null || controller == null) return null;
-    final sensorOrientation = camera.sensorOrientation;
-    InputImageRotation? rotation;
-    if (Platform.isIOS) {
-      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
-    } else {
-      var compensation = _orientations[controller.value.deviceOrientation];
-      if (compensation == null) return null;
-      compensation = camera.lensDirection == CameraLensDirection.front
-          ? (sensorOrientation + compensation) % 360
-          : (sensorOrientation - compensation + 360) % 360;
-      rotation = InputImageRotationValue.fromRawValue(compensation);
-    }
-    if (rotation == null) return null;
-    final format = InputImageFormatValue.fromRawValue(image.format.raw);
-    if (format == null ||
-        (Platform.isAndroid && format != InputImageFormat.nv21) ||
-        (Platform.isIOS && format != InputImageFormat.bgra8888) ||
-        image.planes.length != 1) {
-      return null;
-    }
-    final plane = image.planes.first;
-    return InputImage.fromBytes(
-      bytes: plane.bytes,
-      metadata: InputImageMetadata(
-        size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: rotation,
-        format: format,
-        bytesPerRow: plane.bytesPerRow,
-      ),
-    );
+    return cameraFrameToInputImage(image, camera, controller);
   }
 
   Future<void> _submit() async {

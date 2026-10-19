@@ -372,6 +372,21 @@ class RegularizationInvalidTransitionError(ConflictError):
         )
 
 
+class FaceEnrollmentSelfApprovalNotAllowedError(PermissionDeniedError):
+    """Face enrollment decides which face every later punch is matched against, so the person
+    being enrolled can never be the one who approves or rejects it. Always blocked (same stance as
+    WD-28 regularisation): a second authorised reviewer is required, no policy field permits it."""
+
+    code = "FACE_ENROLLMENT_SELF_APPROVAL_NOT_ALLOWED"
+
+    def __init__(
+        self, message: str = "You cannot approve or reject your own face enrollment"
+    ) -> None:
+        super().__init__(
+            message, details=[{"field": "employee_id", "code": self.code, "message": message}]
+        )
+
+
 class RegularizationSelfApprovalNotAllowedError(PermissionDeniedError):
     """WD-28 decision 5 — self-approval is always blocked; no policy field exists to permit it."""
 
@@ -775,6 +790,22 @@ class WorkOnLeaveNotFlaggedError(ConflictError):
         super().__init__(message)
 
 
+class AttendanceQueueUnavailableError(AppError):
+    """The range calculation could not be handed to the job queue (broker unreachable). Nothing
+    was queued and nothing was changed, so the client may repeat the request; the calculation is
+    idempotent per day."""
+
+    code = "ATTENDANCE_QUEUE_UNAVAILABLE"
+    status_code = 503
+    headers = {"Retry-After": "5"}
+
+    def __init__(
+        self,
+        message: str = "The calculation could not be queued. Try again shortly",
+    ) -> None:
+        super().__init__(message)
+
+
 class AttendanceRangeInFutureError(ValidationError):
     """PAY-001 — a backfill may not run past the company's current business date: a future day
     has no punches yet and would be computed ABSENT/INCOMPLETE."""
@@ -856,10 +887,8 @@ class FaceConsentRequiredError(ValidationError):
 class FaceImageInvalidError(ValidationError):
     code = "FACE_IMAGE_INVALID"
 
-    def __init__(self, message: str) -> None:
-        super().__init__(
-            message, details=[{"field": "photo", "code": self.code, "message": message}]
-        )
+    def __init__(self, message: str, *, field: str = "photo") -> None:
+        super().__init__(message, details=[{"field": field, "code": self.code, "message": message}])
 
 
 class FaceNotDetectedError(ValidationError):
@@ -907,6 +936,18 @@ class FaceEnrollmentWindowNotOpenError(ConflictError):
         super().__init__(message)
 
 
+class FaceEnrollmentInProgressError(ConflictError):
+    """Another submission for this employee is still being processed (its reservation is live)."""
+
+    code = "FACE_ENROLLMENT_IN_PROGRESS"
+
+    def __init__(
+        self,
+        message: str = "A face enrollment submission is already being processed. Please wait.",
+    ) -> None:
+        super().__init__(message)
+
+
 class FaceEnrollmentWindowNotFoundError(NotFoundError):
     code = "FACE_ENROLLMENT_WINDOW_NOT_FOUND"
 
@@ -920,6 +961,7 @@ class FaceEnrollmentAngleMismatchError(ValidationError):
     code = "FACE_ENROLLMENT_ANGLE_MISMATCH"
 
     def __init__(self, angle: str) -> None:
+        self.angle = angle
         message = (
             f"The '{angle}' photo did not clearly show the same face. Retake the photos in good "
             "light, turning your head only part of the way."
@@ -947,18 +989,136 @@ class FaceNotMatchedError(ValidationError):
         )
 
 
-class FaceLivenessFailedError(ValidationError):
-    """The photo looks like a photo of a photo or a screen rather than a live person."""
+def _frames_error(code: str, message: str) -> list[dict[str, str]]:
+    return [{"field": "frames", "code": code, "message": message}]
 
-    code = "FACE_LIVENESS_FAILED"
+
+class FaceSpoofSuspectedError(ValidationError):
+    """Server-side liveness judged a frame to be a presented photo/screen, not a live face.
+    Deliberately says no more than that — the model's scores are not returned to the client."""
+
+    code = "FACE_SPOOF_SUSPECTED"
 
     def __init__(
         self,
-        message: str = "We could not confirm a live face. Face the camera directly and try again.",
+        message: str = (
+            "We could not confirm a live face. Hold the phone yourself, face the camera "
+            "directly in good light, and try again."
+        ),
+    ) -> None:
+        super().__init__(message, details=_frames_error(self.code, message))
+
+
+class FaceLivenessInconclusiveError(ValidationError):
+    """Liveness could not decide (low confidence, or the face was too small to assess). Not a
+    spoof verdict: the user simply retakes the capture."""
+
+    code = "FACE_LIVENESS_INCONCLUSIVE"
+
+    def __init__(
+        self,
+        message: str = (
+            "We could not check your face clearly. Move closer, face the camera directly in "
+            "good light, and try again."
+        ),
+    ) -> None:
+        super().__init__(message, details=_frames_error(self.code, message))
+
+
+class FaceMultipleFacesError(ValidationError):
+    code = "FACE_MULTIPLE_FACES"
+
+    def __init__(
+        self, message: str = "More than one face was detected. Make sure only you are in frame."
+    ) -> None:
+        super().__init__(message, details=_frames_error(self.code, message))
+
+
+class FaceLivenessUnavailableError(AppError):
+    """Server-side liveness is disabled for this deployment, or its model could not be loaded/
+    verified. Face punching fails closed: there is no fallback to "face detected = live"."""
+
+    code = "FACE_LIVENESS_UNAVAILABLE"
+    status_code = 503
+
+    def __init__(
+        self, message: str = "Face attendance is temporarily unavailable; use another punch method"
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceLivenessTimeoutError(AppError):
+    code = "FACE_LIVENESS_TIMEOUT"
+    status_code = 503
+
+    def __init__(
+        self, message: str = "Face check took too long; please try again in a moment"
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceLivenessChallengeRequiredError(ValidationError):
+    """A face punch arrived without a server-issued challenge or without the required frames —
+    typically an outdated app."""
+
+    code = "FACE_LIVENESS_CHALLENGE_REQUIRED"
+
+    def __init__(
+        self,
+        message: str = (
+            "This face punch needs a liveness check from the current app. Update the app and "
+            "try again."
+        ),
     ) -> None:
         super().__init__(
-            message, details=[{"field": "photo", "code": self.code, "message": message}]
+            message,
+            details=[{"field": "liveness_session_id", "code": self.code, "message": message}],
         )
+
+
+class FaceLivenessChallengeInvalidError(ValidationError):
+    """Unknown id, another employee's challenge, a superseded one, or one issued for the other
+    punch direction — deliberately indistinguishable to the caller."""
+
+    code = "FACE_LIVENESS_CHALLENGE_INVALID"
+
+    def __init__(
+        self, message: str = "This face check is not valid. Start the face punch again."
+    ) -> None:
+        super().__init__(
+            message,
+            details=[{"field": "liveness_session_id", "code": self.code, "message": message}],
+        )
+
+
+class FaceLivenessChallengeExpiredError(ConflictError):
+    code = "FACE_LIVENESS_CHALLENGE_EXPIRED"
+
+    def __init__(
+        self, message: str = "This face check expired. Start the face punch again."
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceLivenessChallengeUsedError(ConflictError):
+    code = "FACE_LIVENESS_CHALLENGE_USED"
+
+    def __init__(
+        self, message: str = "This face check was already used. Start the face punch again."
+    ) -> None:
+        super().__init__(message)
+
+
+class FaceCaptureReplayedError(ValidationError):
+    """A submitted frame is byte-identical to one presented in an earlier challenge, or the same
+    frame was sent twice — a replayed capture, not a fresh one."""
+
+    code = "FACE_CAPTURE_REPLAYED"
+
+    def __init__(
+        self, message: str = "These photos were already used. Take a new face capture."
+    ) -> None:
+        super().__init__(message, details=_frames_error(self.code, message))
 
 
 class FacePunchAttemptsExceededError(AppError):
@@ -968,7 +1128,22 @@ class FacePunchAttemptsExceededError(AppError):
     def __init__(self, window_minutes: int) -> None:
         super().__init__(
             f"Too many failed face attempts. Try again in {window_minutes} minutes or ask HR "
-            "to record your punch."
+            "to record your punch.",
+            headers={"Retry-After": str(window_minutes * 60)},
+        )
+
+
+class FaceEnrollmentAttemptsExceededError(AppError):
+    """Too many rejected self-enrollment submissions in one HR-opened window. Carries no detail
+    about why earlier ones were rejected; HR reopening the window starts a fresh count."""
+
+    code = "FACE_ENROLLMENT_ATTEMPTS_EXCEEDED"
+    status_code = 429
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Too many unsuccessful face enrollment attempts. Ask HR to open a new enrollment "
+            "window."
         )
 
 

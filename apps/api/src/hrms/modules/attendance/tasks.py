@@ -304,3 +304,55 @@ def run_incomplete_reminders() -> int:
     refreshed the trailing days, so a day fixed by a late punch is not reminded about."""
     company_ids = asyncio.run(_list_active_company_ids())
     return dispatch_per_company(send_incomplete_reminders_company, company_ids)
+
+
+# ---------------------------------------------------------------------------
+# Face-record retention (`face_cleanup.py`)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="attendance.cleanup_face_records_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def cleanup_face_records_company(company_id: str) -> dict[str, object]:
+    from dataclasses import asdict
+
+    from hrms.core.config.settings import get_settings
+    from hrms.modules.attendance.face_cleanup import cleanup_company
+
+    return dict(asdict(asyncio.run(cleanup_company(UUID(company_id), get_settings()))))
+
+
+@celery_app.task(name="attendance.run_face_cleanup", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def run_face_cleanup() -> int:
+    """Beat-scheduled, daily. A no-op until a retention period is configured — none is defaulted,
+    it needs a privacy/legal decision — and report-only until `FACE_CLEANUP_DRY_RUN=false`."""
+    from hrms.core.config.settings import get_settings
+    from hrms.modules.attendance.face_cleanup import _all_company_ids, retention_configured
+
+    if not retention_configured(get_settings()):
+        return 0
+    return dispatch_per_company(cleanup_face_records_company, asyncio.run(_all_company_ids()))
+
+
+# ---------------------------------------------------------------------------
+# External face-resource deletion outbox (`face_deletion.py`)
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(name="attendance.process_face_deletions_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def process_face_deletions_company(company_id: str) -> dict[str, object]:
+    from dataclasses import asdict
+
+    from hrms.core.config.settings import get_settings
+    from hrms.modules.attendance.face_deletion import process_company
+
+    return dict(asdict(asyncio.run(process_company(UUID(company_id), get_settings()))))
+
+
+@celery_app.task(name="attendance.run_face_deletions", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
+def run_face_deletions() -> int:
+    """Beat-scheduled every few minutes. Deletes the Face++ FaceSets / review photos that approve,
+    reject and revoke (or a compensated enrollment) queued in `face_external_deletion` — only
+    after the transaction that queued them has committed. Idempotent and safe to overlap."""
+    from hrms.modules.attendance.face_cleanup import _all_company_ids
+
+    return dispatch_per_company(process_face_deletions_company, asyncio.run(_all_company_ids()))

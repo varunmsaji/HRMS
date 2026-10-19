@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -15,6 +16,8 @@ from hrms.core.observability.request_context import RequestContextMiddleware
 from hrms.core.security_headers import SecurityHeadersMiddleware
 from hrms.core.tenancy.middleware import TenancyMiddleware
 from hrms.core.uploads import MaxUploadSizeMiddleware
+from hrms.modules.attendance.face_verification import close_face_verification_providers
+from hrms.modules.attendance.liveness import MiniFasNetLivenessEngine, get_liveness_engine
 from hrms.modules.health.router import router as health_router
 from hrms.shared.rate_limit import OnboardingUploadRateLimitMiddleware
 
@@ -43,7 +46,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "(hrms.core.crypto.provisioning.provision_initial_key) before deploying."
             )
 
+    # Face liveness: when enabled, load and checksum-verify the model now so a missing or
+    # tampered asset stops the API from booting instead of surfacing as 503s on the first punch.
+    # Disabled (the default) loads nothing.
+    liveness_engine = get_liveness_engine(settings)
+    if isinstance(liveness_engine, MiniFasNetLivenessEngine):
+        await asyncio.to_thread(liveness_engine.warm_up)
+
     yield
+    await close_face_verification_providers()
     await dispose_engine()
 
 
@@ -114,11 +125,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_bytes=EMPLOYEE_DOCUMENT_MAX_SIZE_BYTES + 2 * 1024 * 1024,
         path_prefixes=("/v1/employees",),
     )
-    from hrms.modules.attendance.schemas import FACE_ENROLLMENT_ANGLES, FACE_IMAGE_MAX_BYTES
+    from hrms.modules.attendance.schemas import (
+        FACE_ENROLLMENT_ANGLES,
+        FACE_IMAGE_MAX_BYTES,
+        FACE_LIVENESS_FRAME_MAX_BYTES,
+        FACE_LIVENESS_MAX_FRAMES,
+    )
 
+    # Face punch: up to FACE_LIVENESS_MAX_FRAMES liveness frames (per-frame cap enforced again
+    # in the route), plus multipart overhead.
     app.add_middleware(
         MaxUploadSizeMiddleware,
-        max_bytes=FACE_IMAGE_MAX_BYTES + 1024 * 1024,
+        max_bytes=FACE_LIVENESS_MAX_FRAMES * FACE_LIVENESS_FRAME_MAX_BYTES + 1024 * 1024,
         path_prefixes=("/v1/attendance/face-punches",),
     )
     app.add_middleware(

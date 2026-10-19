@@ -51,6 +51,12 @@ from hrms.modules.attendance.dependencies import (
     get_regularization_request_service,
     get_shift_roster_service,
 )
+from hrms.modules.attendance.exceptions import FaceImageInvalidError
+from hrms.modules.attendance.face_rate_limit import (
+    face_enrollment_rate_limit,
+    face_punch_rate_limit,
+    face_review_photo_rate_limit,
+)
 from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
 from hrms.modules.attendance.permissions import (
     ATTENDANCE_FACE_ENROLLMENT_MANAGE,
@@ -71,6 +77,8 @@ from hrms.modules.attendance.permissions import (
 )
 from hrms.modules.attendance.schemas import (
     FACE_IMAGE_MAX_BYTES,
+    FACE_LIVENESS_FRAME_MAX_BYTES,
+    FACE_LIVENESS_MAX_FRAMES,
     AttendanceDayRead,
     AttendancePeriodCreate,
     AttendancePeriodRead,
@@ -88,6 +96,8 @@ from hrms.modules.attendance.schemas import (
     AttendanceRangeCalculateQueued,
     FaceEnrollmentStatusRead,
     FaceEnrollmentWindowRead,
+    FaceLivenessSessionCreate,
+    FaceLivenessSessionRead,
     FaceProfileRead,
     FaceProfileRejectInput,
     FacePunchRead,
@@ -1770,7 +1780,9 @@ async def cancel_face_enrollment_window(
 
 @router.get("/attendance/face-profiles/{employee_id}/review-photo")
 async def get_face_review_photo(
+    request: Request,
     employee_id: UUID,
+    _rate_limit: Annotated[None, Depends(face_review_photo_rate_limit)],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
@@ -1779,7 +1791,12 @@ async def get_face_review_photo(
     """The straight-on capture of a profile awaiting approval — the only face image the system
     keeps, and only until HR decides."""
     image, content_type = await service.get_review_photo(
-        tenant.company_id, employee_id, scope=scope, caller_employee_id=user.employee_id
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+        **_client_meta(request),
     )
     return Response(
         content=image, media_type=content_type, headers={"Cache-Control": "no-store, private"}
@@ -1873,6 +1890,7 @@ async def get_my_face_enrollment(
 @router.post("/attendance/face-enrollment/me", status_code=status.HTTP_201_CREATED)
 async def submit_my_face_enrollment(
     request: Request,
+    _rate_limit: Annotated[None, Depends(face_enrollment_rate_limit)],
     front: Annotated[UploadFile, File()],
     left: Annotated[UploadFile, File()],
     right: Annotated[UploadFile, File()],
@@ -1909,31 +1927,68 @@ async def submit_my_face_enrollment(
 # ---------------------------------------------------------------------------
 
 
+@router.post("/attendance/face-punches/me/liveness-sessions", status_code=status.HTTP_201_CREATED)
+async def create_face_liveness_session(
+    body: FaceLivenessSessionCreate,
+    _rate_limit: Annotated[None, Depends(face_punch_rate_limit)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
+    service: Annotated[FacePunchService, Depends(get_face_punch_service)],
+) -> DataEnvelope[FaceLivenessSessionRead]:
+    """Step 1 of a face punch: a short-lived, single-use liveness challenge for the caller's
+    next punch in `direction`. Issuing one invalidates any earlier unused one. The app captures
+    `frames_required` frames only after receiving it and presents its `session_id` with them."""
+    if user.employee_id is None:
+        raise ValidationError("The caller has no linked employee record")
+    data = await service.issue_liveness_session(
+        tenant.company_id,
+        user.employee_id,
+        direction=body.direction,
+        actor_user_id=tenant.user_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
 @router.post("/attendance/face-punches/me", status_code=status.HTTP_201_CREATED)
 async def create_face_punch(
     request: Request,
-    photo: Annotated[UploadFile, File()],
+    _rate_limit: Annotated[None, Depends(face_punch_rate_limit)],
     direction: Annotated[Literal["IN", "OUT"], Form()],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
     service: Annotated[FacePunchService, Depends(get_face_punch_service)],
+    frames: Annotated[list[UploadFile] | None, File()] = None,
+    liveness_session_id: Annotated[UUID | None, Form()] = None,
     idempotency_key: Annotated[str | None, Form()] = None,
 ) -> DataEnvelope[FacePunchRead]:
-    """Same contract as `POST /attendance/punches/me` — no time, source or employee field; the
-    server stamps the instant — plus a live photo that must pass liveness and match the caller's
-    enrolled face profile before any punch is written.
+    """Step 2 of a face punch. Same contract as `POST /attendance/punches/me` — no time, source
+    or employee field; the server stamps the instant — plus `liveness_session_id` (from step 1)
+    and exactly `frames_required` JPEG/PNG `frames` captured after it was issued. The server runs
+    its own liveness model on every frame, then matches the best live frame against the
+    caller's enrolled face; only then is a punch written. No client-side liveness result is
+    accepted. A request without a challenge (an outdated app sending `photo`) is refused.
 
     `idempotency_key` (optional, 16-64 of `[A-Za-z0-9_-]`): resend the same key when retrying
-    after a lost response and the original result is returned instead of a second punch. The
-    same key with a different direction is a 409."""
+    after a lost response (with a fresh challenge and capture) and the original result is
+    returned instead of a second punch. The same key with a different direction is a 409."""
     if user.employee_id is None:
         raise ValidationError("The caller has no linked employee record")
-    image = await read_upload_bounded(photo, max_bytes=FACE_IMAGE_MAX_BYTES)
+    uploads = frames or []
+    if len(uploads) > FACE_LIVENESS_MAX_FRAMES:
+        raise FaceImageInvalidError(
+            f"At most {FACE_LIVENESS_MAX_FRAMES} face frames may be sent", field="frames"
+        )
+    images = [
+        await read_upload_bounded(upload, max_bytes=FACE_LIVENESS_FRAME_MAX_BYTES)
+        for upload in uploads
+    ]
     data = await service.punch_self(
         tenant.company_id,
         user.employee_id,
-        image=image,
+        frames=images,
+        liveness_session_id=liveness_session_id,
         direction=direction,
         idempotency_key=idempotency_key,
         scope=scope,

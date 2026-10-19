@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import urlparse
+from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -220,6 +221,76 @@ class Settings(BaseSettings):
     # the front capture to prove all angles are the same person.
     face_enrollment_angle_min_similarity: float = Field(default=0.80, ge=0.0, le=1.0)
 
+    # Face liveness / presentation-attack detection (`attendance/liveness.py`), run on this
+    # server — never trusted from the client. `"disabled"` (the default) makes face punching and
+    # self-enrollment unavailable even when a face provider is configured: there is deliberately
+    # no fallback to "face detected = live". `"minifasnet"` needs `face_liveness_model_dir`
+    # (the verified `models/liveness/minifasnet-v1` assets) and the `liveness` extra (OpenCV).
+    # The thresholds are UNCALIBRATED engineering defaults (see
+    # docs/audits/FACE_ATTENDANCE_LIVENESS_IMPLEMENTATION_REPORT.md) — do not enable for
+    # production attendance until device/attack calibration has been done and accepted.
+    face_liveness_engine: Literal["disabled", "minifasnet"] = "disabled"
+    face_liveness_model_dir: str = ""
+    # A frame is LIVE when the fused P(real) reaches this; SPOOF_SUSPECTED when P(spoof) reaches
+    # `face_liveness_spoof_threshold`; anything between is INCONCLUSIVE (rejected, retry).
+    face_liveness_live_threshold: float = Field(default=0.90, gt=0.5, le=1.0)
+    face_liveness_spoof_threshold: float = Field(default=0.50, gt=0.0, le=1.0)
+    # Frames per face punch; every one must be LIVE. Upper bound matches FACE_LIVENESS_MAX_FRAMES.
+    face_liveness_frames: int = Field(default=3, ge=1, le=5)
+    # Smallest detected face side (pixels, in the submitted frame) the model is run on.
+    face_liveness_min_face_px: int = Field(default=80, ge=32)
+    face_liveness_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    # Lifetime of a server-issued, single-use liveness challenge.
+    face_liveness_session_ttl_seconds: int = Field(default=120, ge=15, le=600)
+    # Challenges one employee may request per `face_punch_attempt_window_minutes`.
+    face_liveness_sessions_per_window: int = Field(default=20, ge=1)
+    # Rejected self-enrollment submissions allowed per HR-opened window before further tries get a
+    # 429 (`FACE_ENROLLMENT_ATTEMPTS_EXCEEDED`). Reopening the window (an HR action) starts a new
+    # count. Provider/engine outages are not counted; they are not the employee's doing.
+    face_enrollment_max_failed_attempts: int = Field(default=5, ge=1)
+
+    # --- Face provider transport (`attendance/face_verification.py`) --------------------------
+    # One shared, pooled HTTP client per process. These are OUR OWN bounds, not Face++ limits:
+    # the account's real QPS / concurrency / FaceSet quotas are unconfirmed and must be obtained
+    # from the vendor (docs/operations/FACE_ATTENDANCE_BASE_RELEASE_RUNBOOK.md §9).
+    face_provider_connect_timeout_seconds: float = Field(default=5.0, gt=0.0)
+    face_provider_max_concurrency: int = Field(default=4, ge=1, le=64)
+    # Wall-clock ceiling for ALL provider calls of one self-enrollment (about 18 sequential
+    # requests). Past it the submission is abandoned and any provider person created is removed.
+    face_enrollment_provider_budget_seconds: float = Field(default=120.0, gt=0.0)
+    # How long a started enrollment submission reserves its window. Must exceed the budget above
+    # so a live submission is never mistaken for a dead one; a crashed worker's reservation
+    # simply lapses.
+    face_enrollment_lease_seconds: int = Field(default=240, ge=30)
+
+    # --- Face endpoint request-level flood limits (`attendance/face_rate_limit.py`) ------------
+    # Per (tenant, client IP) per minute, on top of the per-employee limits above. Deliberately
+    # generous: they stop a single source flooding the biometric endpoints, they are not an
+    # identity control, and a whole office can share one NAT address. The client IP is
+    # `request.client.host`, which is the real peer unless it is a `trusted_proxy_hosts` entry.
+    face_punch_requests_per_minute_per_ip: int = Field(default=600, ge=1)
+    face_enrollment_requests_per_minute_per_ip: int = Field(default=60, ge=1)
+    face_review_photo_requests_per_minute_per_ip: int = Field(default=120, ge=1)
+
+    # --- External-deletion outbox (`attendance/face_deletion.py`) -----------------------------
+    face_deletion_batch_size: int = Field(default=50, ge=1, le=500)
+    # An outbox row still pending after this many attempts is logged at ERROR every run.
+    face_deletion_alert_after_attempts: int = Field(default=5, ge=1)
+
+    # Biometric-record retention (`attendance/face_cleanup.py`). The periods are a privacy/legal
+    # decision that has NOT been taken, so none is defaulted: `None` means "keep, do nothing".
+    # Even when set, the scheduled run only reports (`face_cleanup_dry_run=True`) until an
+    # operator turns deletion on deliberately.
+    face_liveness_session_retention_days: int | None = Field(default=None, ge=1)
+    face_attempt_detail_retention_days: int | None = Field(default=None, ge=1)
+    face_enrollment_attempt_retention_days: int | None = Field(default=None, ge=1)
+    face_cleanup_dry_run: bool = True
+    face_cleanup_batch_size: int = Field(default=500, ge=1, le=5000)
+    face_cleanup_max_batches: int = Field(default=20, ge=1, le=1000)
+    # Comma-separated company ids whose face records are under a legal/operational hold and are
+    # never touched by cleanup.
+    face_cleanup_hold_company_ids: str = ""
+
     # Bounded waits for attendance calculation (`core/db/timeouts.py`). A lock timeout stops a
     # request or sweep step queuing indefinitely behind another transaction's row lock; a
     # statement timeout stops one runaway SQL statement. They are separate knobs because they guard
@@ -409,7 +480,38 @@ class Settings(BaseSettings):
                 "face_verification_provider='facepp' — refusing to boot without credentials to "
                 "authenticate with."
             )
+        if self.face_liveness_engine != "disabled" and not self.face_liveness_model_dir:
+            raise ValueError(
+                "face_liveness_model_dir must be set explicitly when face_liveness_engine is "
+                "enabled — refusing to boot without the verified model assets."
+            )
+        if self.face_liveness_live_threshold + self.face_liveness_spoof_threshold <= 1.0:
+            raise ValueError(
+                "face_liveness_live_threshold + face_liveness_spoof_threshold must exceed 1.0, "
+                "otherwise one frame could be both LIVE and SPOOF_SUSPECTED."
+            )
+        if self.face_enrollment_lease_seconds <= self.face_enrollment_provider_budget_seconds:
+            raise ValueError(
+                "face_enrollment_lease_seconds must exceed "
+                "face_enrollment_provider_budget_seconds, otherwise a live enrollment could "
+                "lose its reservation to a second submission."
+            )
+        # Parsed at boot so a typo in a hold list fails loudly instead of silently un-holding.
+        _ = self.face_cleanup_hold_company_id_set
         return self
+
+    @property
+    def face_cleanup_hold_company_id_set(self) -> frozenset[UUID]:
+        try:
+            return frozenset(
+                UUID(part.strip())
+                for part in self.face_cleanup_hold_company_ids.split(",")
+                if part.strip()
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "face_cleanup_hold_company_ids must be a comma-separated list of company UUIDs"
+            ) from exc
 
     @model_validator(mode="after")
     def _guard_non_development_config(self) -> "Settings":

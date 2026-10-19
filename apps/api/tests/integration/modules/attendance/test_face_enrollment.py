@@ -2,6 +2,7 @@
 HR opens a one-time window -> the employee self-submits five captures -> HR approves/rejects.
 The face provider and photo storage are in-memory fakes; nothing here contacts Face++ or MinIO."""
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -10,7 +11,13 @@ import pytest
 from entrypoints.api import app
 from httpx import AsyncClient
 from sqlalchemy import text
-from tests.integration.modules.attendance.conftest import FakeFaceProvider, FakePhotoStorage
+from tests.integration.modules.attendance.conftest import (
+    SPOOF_PROBS,
+    FakeFaceProvider,
+    FakeLivenessEngine,
+    FakePhotoStorage,
+    run_deletion_worker,
+)
 from tests.integration.modules.attendance.test_attendance_day import (
     _cleanup_attendance_day,
     _register_tenant,
@@ -25,7 +32,6 @@ from hrms.modules.attendance.dependencies import get_face_provider
 from hrms.modules.attendance.face_verification import (
     FaceMatchResult,
     FaceProviderError,
-    LivenessResult,
 )
 from hrms.modules.attendance.permissions import (
     ATTENDANCE_FACE_ENROLLMENT_MANAGE,
@@ -129,6 +135,7 @@ async def test_full_self_enrollment_with_hr_approval(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
+    fake_liveness_engine: FakeLivenessEngine,
     fake_photo_storage: FakePhotoStorage,
 ) -> None:
     admin, company_id = face_tenant
@@ -151,11 +158,13 @@ async def test_full_self_enrollment_with_hr_approval(
     assert profile["has_review_photo"] is True
     assert "provider_person_id" not in profile and "review_photo_key" not in profile
 
-    # Front must be live and is the anchor; the four turned angles are each checked against it
+    # Every capture must pass server-side liveness (our own engine, not the vendor), one call
+    # per image; the front is the anchor and the four turned angles are each checked against it
     # before any is added. The vendor only ever sees the employee UUID.
-    expected = ["check_liveness", "enroll"] + ["verify"] * 4 + ["add_reference_photo"] * 4
+    assert fake_liveness_engine.calls == [[IMAGES[angle]] for angle in ANGLES]
+    expected = ["enroll"] + ["verify"] * 4 + ["add_reference_photo"] * 4
     assert fake_face_provider.names() == expected
-    assert fake_face_provider.calls[1][1]["label"] == employee_id
+    assert fake_face_provider.calls[0][1]["label"] == employee_id
     assert list(fake_photo_storage.objects.values()) == [IMAGES["front"]]
 
     # The window is single-use.
@@ -165,15 +174,12 @@ async def test_full_self_enrollment_with_hr_approval(
     assert again.status_code == 409
     assert again.json()["error"]["code"] == "FACE_ENROLLMENT_NOT_OPEN"
 
-    # Pending profiles cannot punch.
-    punch = await client.post(
-        "/v1/attendance/face-punches/me",
-        headers=me,
-        files={"photo": ("f.jpg", IMAGES["front"], "image/jpeg")},
-        data={"direction": "IN"},
+    # Pending profiles cannot punch: not even a liveness challenge is issued.
+    challenge = await client.post(
+        "/v1/attendance/face-punches/me/liveness-sessions", headers=me, json={"direction": "IN"}
     )
-    assert punch.status_code == 409
-    assert punch.json()["error"]["code"] == "FACE_NOT_ENROLLED"
+    assert challenge.status_code == 409
+    assert challenge.json()["error"]["code"] == "FACE_NOT_ENROLLED"
 
     photo = await client.get(
         f"/v1/attendance/face-profiles/{employee_id}/review-photo", headers=admin
@@ -189,11 +195,17 @@ async def test_full_self_enrollment_with_hr_approval(
     assert approved.status_code == 200, approved.text
     assert approved.json()["data"]["status"] == "ENROLLED"
     assert approved.json()["data"]["has_review_photo"] is False
+    # Nothing external is touched by the approval itself: the photo is deleted by the
+    # post-commit worker from the outbox row the approval queued.
+    assert list(fake_photo_storage.objects.values()) == [IMAGES["front"]]
+    report = await run_deletion_worker(company_id, fake_face_provider, fake_photo_storage)
+    assert (report.claimed, report.done) == (1, 1)
     assert fake_photo_storage.objects == {}
 
     assert await _audit_actions(company_id) == [
         "FACE_ENROLLMENT_OPENED",
         "FACE_PROFILE_SUBMITTED",
+        "FACE_REVIEW_PHOTO_VIEWED",
         "FACE_PROFILE_APPROVED",
     ]
 
@@ -304,19 +316,21 @@ async def test_spoofed_front_is_rejected_and_window_stays_open(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
+    fake_liveness_engine: FakeLivenessEngine,
     fake_photo_storage: FakePhotoStorage,
 ) -> None:
     admin, company_id = face_tenant
     employee_id = await _employee(client, admin)
     await _open(client, admin, employee_id)
     me = await _self_headers(company_id, employee_id)
-    fake_face_provider.liveness = LivenessResult("SPOOF", Decimal("0.69"), {"result": "fake"})
+    fake_liveness_engine.probs = [SPOOF_PROBS]
 
     response = await _submit(client, me)
 
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "FACE_LIVENESS_FAILED"
-    assert fake_face_provider.names() == ["check_liveness"]
+    assert response.json()["error"]["code"] == "FACE_SPOOF_SUSPECTED"
+    # Rejected before anything reaches (or is enrolled at) the vendor.
+    assert fake_face_provider.names() == []
     assert fake_photo_storage.objects == {}
     # A failed attempt does not burn the window — the employee can retry.
     assert (await _status(client, admin, employee_id))["open_window"] is not None
@@ -332,8 +346,8 @@ async def test_mismatched_angle_discards_everything(
     employee_id = await _employee(client, admin)
     await _open(client, admin, employee_id)
     me = await _self_headers(company_id, employee_id)
-    ok = FaceMatchResult("MATCHED", Decimal("0.93"), {})
-    fake_face_provider.verify_results = [ok, FaceMatchResult("NO_MATCH", None, {}), ok, ok]
+    ok = FaceMatchResult("MATCHED", Decimal("0.93"))
+    fake_face_provider.verify_results = [ok, FaceMatchResult("NO_MATCH", None), ok, ok]
 
     response = await _submit(client, me)
 
@@ -357,7 +371,7 @@ async def test_turned_angle_below_angle_threshold_is_rejected(
     await _open(client, admin, employee_id)
     me = await _self_headers(company_id, employee_id)
     # The provider matched, but with low similarity — below the 0.80 angle floor.
-    fake_face_provider.verify_results = [FaceMatchResult("NO_MATCH", Decimal("0.70"), {})]
+    fake_face_provider.verify_results = [FaceMatchResult("NO_MATCH", Decimal("0.70"))]
 
     response = await _submit(client, me)
 
@@ -410,6 +424,10 @@ async def test_reject_deletes_biometrics_and_allows_retry(
     data = rejected.json()["data"]
     assert data["status"] == "REJECTED"
     assert data["review_note"] == "Not the employee in the photo"
+    # Deferred until after commit: the request itself deletes nothing outside the database.
+    assert "delete_person" not in fake_face_provider.names()
+    assert len(fake_photo_storage.objects) == 1
+    await run_deletion_worker(company_id, fake_face_provider, fake_photo_storage)
     assert fake_face_provider.names()[-1] == "delete_person"
     assert fake_photo_storage.objects == {}
     photo = await client.get(
@@ -462,11 +480,13 @@ async def test_revoke_then_reopen(
     revoked = await client.delete(f"/v1/attendance/face-profiles/{employee_id}", headers=admin)
     assert revoked.status_code == 200
     assert revoked.json()["data"]["status"] == "REVOKED"
+    assert "delete_person" not in fake_face_provider.names()
+    await run_deletion_worker(company_id, fake_face_provider, fake_photo_storage)
     assert fake_face_provider.names()[-1] == "delete_person"
     assert (await _open(client, admin, employee_id)).status_code == 201
 
 
-async def test_revoke_provider_failure_keeps_profile_enrolled(
+async def test_revoke_survives_a_provider_outage_and_the_deletion_is_retried(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
@@ -479,8 +499,39 @@ async def test_revoke_provider_failure_keeps_profile_enrolled(
 
     response = await client.delete(f"/v1/attendance/face-profiles/{employee_id}", headers=admin)
 
-    assert response.status_code == 502
-    assert (await _status(client, admin, employee_id))["profile"]["status"] == "ENROLLED"
+    # The local state change is what authorises the deletion and it is not hostage to the
+    # provider: the profile is revoked (and can no longer punch) at once.
+    assert response.status_code == 200
+    assert (await _status(client, admin, employee_id))["profile"]["status"] == "REVOKED"
+    now = datetime.now(UTC)
+
+    failed = await run_deletion_worker(company_id, fake_face_provider, fake_photo_storage, now=now)
+    # Two rows: the review photo queued by the approval (deleted fine) and the FaceSet.
+    assert (failed.claimed, failed.failed, failed.done) == (2, 1, 1)
+    row = (
+        await _sql(
+            company_id,
+            "SELECT status, attempts, last_error_code FROM face_external_deletion "
+            "WHERE kind = 'PROVIDER_PERSON'",
+        )
+    )[0]
+    assert tuple(row) == ("PENDING", 1, "PROVIDER_ERROR")
+
+    # Backed off: an immediate rerun finds nothing due, a later one (provider back) succeeds.
+    assert (
+        await run_deletion_worker(company_id, fake_face_provider, fake_photo_storage, now=now)
+    ).claimed == 0
+    del fake_face_provider.fail_with["delete_person"]
+    later = await run_deletion_worker(
+        company_id, fake_face_provider, fake_photo_storage, now=now + timedelta(hours=2)
+    )
+    assert (later.claimed, later.done) == (1, 1)
+    assert fake_face_provider.names().count("delete_person") == 2
+    # Duplicate execution after completion does nothing.
+    again = await run_deletion_worker(
+        company_id, fake_face_provider, fake_photo_storage, now=now + timedelta(hours=3)
+    )
+    assert again.claimed == 0
 
 
 async def test_disabled_provider_is_503(client: AsyncClient, face_tenant: Tenant) -> None:
@@ -539,3 +590,36 @@ async def test_cross_tenant_employee_is_404(
     finally:
         await _cleanup_attendance_day(company_id=company_b)
         await _cleanup(company_id=company_b, user_id=user_b)
+
+
+async def test_enrollee_cannot_approve_or_reject_their_own_enrollment(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    """Holding the enrollment-manage permission is not enough to approve your own face: the
+    enrolled face is what every later punch is matched against."""
+    admin, company_id = face_tenant
+    employee_id = await _employee(client, admin, "Self")
+    both, _ = await _create_permission_scoped_user(
+        company_id=company_id,
+        permission_codes=[ATTENDANCE_FACE_ENROLLMENT_MANAGE, ATTENDANCE_PUNCH, ATTENDANCE_VIEW],
+        data_scope="SELF",
+        caller_employee_id=UUID(employee_id),
+    )
+    assert (await _open(client, admin, employee_id)).status_code == 201
+    assert (await _submit(client, both)).status_code == 201
+
+    for action in ("approve", "reject"):
+        response = await client.post(
+            f"/v1/attendance/face-profiles/{employee_id}/{action}",
+            headers=both,
+            json={"note": "ok"} if action == "reject" else None,
+        )
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "FACE_ENROLLMENT_SELF_APPROVAL_NOT_ALLOWED"
+
+    # Still pending; a different reviewer can decide it.
+    assert (await _status(client, admin, employee_id))["profile"]["status"] == "PENDING_APPROVAL"
+    approved = await client.post(
+        f"/v1/attendance/face-profiles/{employee_id}/approve", headers=admin
+    )
+    assert approved.status_code == 200, approved.text

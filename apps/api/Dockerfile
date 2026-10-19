@@ -16,13 +16,20 @@ RUN pip install --no-cache-dir uv
 # local package — this was a real, previously-undiscovered bug in the pre-3B Dockerfile (never
 # actually built via `docker build` before RELEASE_HARDENING_PHASE_3B's own verification).
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --extra liveness --no-install-project
 COPY src ./src
 COPY entrypoints ./entrypoints
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY scripts ./scripts
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra liveness
+
+# Face-liveness model assets (Apache-2.0, see models/liveness/minifasnet-v1/README.md). Shipped in
+# every image but inert unless FACE_LIVENESS_ENGINE=minifasnet. The build fails here if a file is
+# missing, differs from the SHA-256 pinned in liveness.py, or cannot be loaded — it never ships a
+# model it has not verified. Runs in the builder, where the venv is not on PATH.
+COPY models ./models
+RUN /app/.venv/bin/python scripts/liveness/verify_assets.py models/liveness/minifasnet-v1
 
 # Runtime — a fresh stage, not derived from the builder, so uv/pip and apt's package cache never
 # reach the image that actually runs in production (RELEASE_HARDENING_PHASE_3B §2).

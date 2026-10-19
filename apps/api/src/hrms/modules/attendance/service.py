@@ -21,7 +21,7 @@ from hrms.core.config.settings import get_settings
 from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave_dates
 from hrms.core.db.timeouts import bounded_waits, is_wait_timeout
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
-from hrms.core.observability.logging import get_logger
+from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.attendance import calculation as calc
 from hrms.modules.attendance.exceptions import (
@@ -33,6 +33,7 @@ from hrms.modules.attendance.exceptions import (
     AttendancePeriodNotFoundError,
     AttendancePeriodOverlapError,
     AttendancePeriodPayrollFinalisedError,
+    AttendanceQueueUnavailableError,
     AttendanceRangeInFutureError,
     AttendanceSummaryReconciliationError,
     DuplicatePunchIdempotencyKeyError,
@@ -3196,14 +3197,25 @@ class AttendanceDayService:
         employee_ids = (
             [str(e) for e in body.employee_ids] if body.employee_ids is not None else None
         )
-        async_result = calculate_range.delay(
-            str(company_id),
-            body.date_from.isoformat(),
-            body.date_to.isoformat(),
-            employee_ids,
-            str(actor_user_id) if actor_user_id else None,
-            str(body.legal_entity_id) if body.legal_entity_id else None,
-        )
+        try:
+            async_result = calculate_range.delay(
+                str(company_id),
+                body.date_from.isoformat(),
+                body.date_to.isoformat(),
+                employee_ids,
+                str(actor_user_id) if actor_user_id else None,
+                str(body.legal_entity_id) if body.legal_entity_id else None,
+            )
+        except Exception as exc:  # noqa: BLE001 — any broker/publish failure
+            # Nothing has been written yet (the audit row below follows a successful publish), so
+            # a 503 the client can retry — not a bare 500, and never a "queued" success.
+            safe_log(
+                _logger.error,
+                "attendance.range_calculation.enqueue_failed",
+                company_id=str(company_id),
+                **safe_error(exc),
+            )
+            raise AttendanceQueueUnavailableError() from exc
         queued = AttendanceRangeCalculateQueued(
             task_id=str(async_result.id),
             date_from=body.date_from,

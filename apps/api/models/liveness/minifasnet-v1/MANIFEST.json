@@ -1,0 +1,26 @@
+{
+  "model_version": "minifasnet-v1",
+  "upstream": "https://github.com/minivision-ai/Silent-Face-Anti-Spoofing",
+  "upstream_commit": "b6d5f04ad78778917853b25c778acef6d5626d15",
+  "upstream_license": "Apache-2.0",
+  "upstream_sha256": {
+    "resources/anti_spoof_models/2.7_80x80_MiniFASNetV2.pth": "a5eb02e1843f19b5386b953cc4c9f011c3f985d0ee2bb9819eea9a142099bec0",
+    "resources/anti_spoof_models/4_0_0_80x80_MiniFASNetV1SE.pth": "84ee1d37d96894d5e82de5a57df044ef80a58be2b218b5ed7cdfd875ec2f5990",
+    "resources/detection_model/deploy.prototxt": "9fe2f141b4baee039ed9442da2833e216af40a6ff3e639e7b39258812bcda808",
+    "resources/detection_model/Widerface-RetinaFace.caffemodel": "d08338a2c207df16a9c566f767fea67fb43ba6fff76ce11e938fe3fabefb9402",
+    "src/model_lib/MiniFASNet.py": "e498c4ec5e1ddfaba62b941a126c19d65aa564999f3309661fe43ee8bf38acd7",
+    "LICENSE": "daf94bf1dc9cc5700fe5af2c7c0cbd1836e70d509ed78fd0bebef7432edee6fb"
+  },
+  "build": {
+    "python": "3.12.12",
+    "torch": "2.5.1+cpu",
+    "opencv": "4.10.0"
+  },
+  "files": {
+    "LICENSE.upstream": "daf94bf1dc9cc5700fe5af2c7c0cbd1836e70d509ed78fd0bebef7432edee6fb",
+    "minifasnet_v1se_scale4.0_80x80.onnx": "828e4476ac4561c9185c092d173105f30c51f814d93fd71a892c1b67b41e5dd9",
+    "minifasnet_v2_scale2.7_80x80.onnx": "079399882d651cb9126de6444ca0fabce952db7d5792823ef6c4ae004132534f",
+    "retinaface_deploy.prototxt": "9fe2f141b4baee039ed9442da2833e216af40a6ff3e639e7b39258812bcda808",
+    "retinaface_widerface.caffemodel": "d08338a2c207df16a9c566f767fea67fb43ba6fff76ce11e938fe3fabefb9402"
+  }
+}

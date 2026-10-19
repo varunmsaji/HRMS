@@ -45,29 +45,33 @@ void main() {
   );
 
   test(
-    'a face punch always carries an idempotency key, and a retry resends the same one',
+    'a face punch carries its key and challenge, and a retry resends the same key',
     () async {
       final client = _RecordingClient();
       final repo = AttendanceRepository(client);
 
-      for (final key in <String?>[
-        null,
-        'idem_fixed_key_0123456789',
-        'idem_fixed_key_0123456789',
+      for (final (session, key) in [
+        ('session-1', 'idem_first_key_0123456789'),
+        ('session-2', 'idem_fixed_key_0123456789'),
+        ('session-3', 'idem_fixed_key_0123456789'),
       ]) {
         await expectLater(
           repo.facePunchMe(
             direction: 'IN',
-            photoJpeg: const [1, 2, 3],
+            livenessSessionId: session,
+            frames: const [
+              [1, 2, 3],
+            ],
             idempotencyKey: key,
           ),
           throwsA(isA<ApiError>()),
         );
       }
 
-      expect(client.forms[0]['idempotency_key'], startsWith('idem_'));
+      expect(client.forms[0]['idempotency_key'], 'idem_first_key_0123456789');
       expect(client.forms[1]['idempotency_key'], 'idem_fixed_key_0123456789');
       expect(client.forms[2]['idempotency_key'], 'idem_fixed_key_0123456789');
+      expect(client.forms[2]['liveness_session_id'], 'session-3');
       expect(client.forms[0]['direction'], 'IN');
     },
   );

@@ -3,7 +3,7 @@
 import calendar
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -2236,6 +2236,10 @@ FACE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 #: Self-enrollment captures, in order. "front" is the anchor: it must pass liveness and every
 #: other angle must match it.
 FACE_ENROLLMENT_ANGLES = ("front", "left", "right", "up", "down")
+#: Face-punch liveness frames: per-frame byte cap and the most frames one punch may carry
+#: (`Settings.face_liveness_frames` is bounded by the latter). A 720px JPEG is ~100-250 KB.
+FACE_LIVENESS_FRAME_MAX_BYTES = 1024 * 1024
+FACE_LIVENESS_MAX_FRAMES = 5
 
 
 class FaceProfileRead(BaseModel):
@@ -2317,3 +2321,21 @@ class FacePunchRead(BaseModel):
     punch: PunchRead
     similarity: Decimal
     liveness_score: Decimal | None = None
+    """The weakest submitted frame's server-side P(real) (0..1); None only on punches recorded
+    before server-side liveness existed."""
+
+
+class FaceLivenessSessionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    direction: Literal["IN", "OUT"]
+
+
+class FaceLivenessSessionRead(BaseModel):
+    """`POST /attendance/face-punches/me/liveness-sessions` — the single-use challenge the next
+    face punch must present, and how many frames it must carry."""
+
+    session_id: UUID
+    direction: str
+    expires_at: datetime
+    frames_required: int

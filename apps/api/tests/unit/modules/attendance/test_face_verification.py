@@ -14,6 +14,7 @@ from hrms.core.config.settings import Settings
 from hrms.modules.attendance.face_verification import (
     FaceppFaceVerificationProvider,
     FaceProviderError,
+    FaceProviderMultipleFacesError,
     FaceProviderNoFaceError,
     get_face_verification_provider,
 )
@@ -221,20 +222,15 @@ async def test_verify_unknown_error_is_error_not_silent_reject() -> None:
         await _provider(handler).verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
 
 
-# --- liveness (presence-only placeholder, not real anti-spoofing) -------------------------------
+# --- no liveness here ---------------------------------------------------------------------------
 
 
-async def test_liveness_face_present_is_live_with_no_score() -> None:
-    provider = _provider(_respond(_detect([_face()])))
-    result = await provider.check_liveness(image=_IMG, content_type="image/jpeg")
-    assert result.decision == "LIVE"
-    assert result.score is None
-
-
-async def test_liveness_no_face() -> None:
-    provider = _provider(_respond(_detect([])))
-    result = await provider.check_liveness(image=_IMG, content_type="image/jpeg")
-    assert result.decision == "NO_FACE"
+def test_adapter_offers_no_liveness_check() -> None:
+    """Face++ detection is not anti-spoofing. The former presence-only `check_liveness` (LIVE for
+    any detected face) is gone so nothing can mistake it for liveness again; liveness is
+    `attendance/liveness.py`, on our own server."""
+    provider = _provider(_respond({}))
+    assert not hasattr(provider, "check_liveness")
 
 
 # --- delete -----------------------------------------------------------------------------------
@@ -276,10 +272,175 @@ async def test_timeout_raises_provider_error() -> None:
         raise httpx.ReadTimeout("timed out", request=request)
 
     with pytest.raises(FaceProviderError):
-        await _provider(handler).check_liveness(image=_IMG, content_type="image/jpeg")
+        await _provider(handler).verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
 
 
 async def test_non_json_response_raises_provider_error() -> None:
     provider = _provider(lambda _r: httpx.Response(200, text="<html>bad gateway</html>"))
     with pytest.raises(FaceProviderError):
         await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
+
+
+# --- identity-integrity hardening ---------------------------------------------------------------
+
+
+def _search_handler(search_body: object) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        return httpx.Response(200, json=search_body)
+
+    return handler
+
+
+async def test_verify_with_several_faces_is_ambiguous_not_a_guess() -> None:
+    """The adapter used to take `faces[0]`; which of two faces is the employee is unknowable."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200, json=_detect([_face("ft_a"), _face("ft_b")]))
+
+    result = await _provider(handler).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
+
+    assert result.decision == "MULTIPLE_FACES"
+    assert result.similarity is None
+    assert calls == ["/facepp/v3/detect"]  # no search was made with a guessed face
+
+
+async def test_enroll_and_reference_photo_with_several_faces_are_refused() -> None:
+    provider = _provider(_respond(_detect([_face("ft_a"), _face("ft_b")])))
+    with pytest.raises(FaceProviderMultipleFacesError):
+        await provider.enroll(label="x", image=_IMG, content_type="image/jpeg")
+    with pytest.raises(FaceProviderMultipleFacesError):
+        await provider.add_reference_photo(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
+
+
+async def test_verify_uses_the_best_confidence_and_searches_only_the_given_faceset() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/facepp/v3/detect":
+            return httpx.Response(200, json=_detect([_face()]))
+        seen.update(dict(p.split("=") for p in request.content.decode().split("&") if "=" in p))
+        return httpx.Response(
+            200, json={"results": [{"confidence": 40.0}, {"confidence": 93.0}], "request_id": "r-1"}
+        )
+
+    result = await _provider(handler).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
+
+    assert (result.decision, result.similarity) == ("MATCHED", Decimal("0.93"))
+    assert seen["faceset_token"] == _PERSON
+
+
+@pytest.mark.parametrize(
+    "results",
+    [
+        [{"confidence": 97.0}, {"face_token": "no-confidence"}],
+        [{"confidence": 97.0}, "not-a-dict"],
+        [{"confidence": "97"}],
+        [{"confidence": True}],
+        None,
+        {"confidence": 97.0},
+    ],
+)
+async def test_malformed_search_results_fail_closed(results: object) -> None:
+    """One bad entry makes the whole response untrustworthy: it is an error, never a match and
+    never silently skipped."""
+    handler = _search_handler({"results": results})
+    with pytest.raises(FaceProviderError):
+        await _provider(handler).verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
+
+
+async def test_result_carries_no_raw_provider_body() -> None:
+    body = {
+        "request_id": "req-abc_123",
+        "image_id": "img-secret-id",
+        "time_used": 12,
+        "results": [{"confidence": 97.0, "face_token": _FACE_TOKEN, "user_id": "u-1"}],
+        "thresholds": {"1e-3": 62.0},
+        "faces": [{"face_token": _FACE_TOKEN, "face_rectangle": {"top": 1}}],
+    }
+
+    result = await _provider(_search_handler(body)).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
+
+    assert result.provider_request_id == "req-abc_123"
+    rendered = repr(result)
+    for leaked in (_FACE_TOKEN, "img-secret-id", "face_rectangle", "thresholds", "u-1"):
+        assert leaked not in rendered
+    assert not hasattr(result, "provider_response")
+
+
+@pytest.mark.parametrize(
+    "request_id", ["has space", "x" * 65, "<script>", "line\nbreak", 12345, None, ""]
+)
+async def test_untrusted_request_ids_are_dropped(request_id: object) -> None:
+    body = {"request_id": request_id, "results": [{"confidence": 97.0}]}
+    result = await _provider(_search_handler(body)).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
+    assert result.provider_request_id is None
+    assert result.decision == "MATCHED"
+
+
+async def test_provider_error_logs_only_the_error_code_never_echoed_arguments() -> None:
+    echoed = f"INVALID_FACESET_TOKEN:{_PERSON} api_key={_API_KEY} face_token={_FACE_TOKEN}"
+    provider = _provider(_respond({"error_message": echoed}, status=400))
+
+    with capture_logs() as logs, pytest.raises(FaceProviderError) as exc_info:
+        await provider.verify(person_id=_PERSON, image=_IMG, content_type="image/jpeg")
+
+    rendered = json.dumps(logs, default=str) + str(exc_info.value)
+    assert "INVALID_FACESET_TOKEN" in rendered
+    for leaked in (_PERSON, _API_KEY, _API_SECRET, _FACE_TOKEN):
+        assert leaked not in rendered
+
+
+async def test_unrecognisable_error_message_is_logged_as_unknown() -> None:
+    provider = _provider(_respond({"error_message": "secret stuff: " + _API_KEY}, status=400))
+    with capture_logs() as logs, pytest.raises(FaceProviderError):
+        await provider.delete_person(person_id=_PERSON)
+    rendered = json.dumps(logs, default=str)
+    assert '"error_code": "UNKNOWN"' in rendered
+    assert _API_KEY not in rendered
+
+
+# --- retention / limit settings -----------------------------------------------------------------
+
+
+def test_retention_is_unset_and_cleanup_is_report_only_by_default() -> None:
+    settings = Settings(environment="development")
+    assert settings.face_liveness_session_retention_days is None
+    assert settings.face_attempt_detail_retention_days is None
+    assert settings.face_enrollment_attempt_retention_days is None
+    assert settings.face_cleanup_dry_run is True
+    assert settings.face_cleanup_hold_company_id_set == frozenset()
+    assert settings.face_enrollment_max_failed_attempts == 5
+
+
+def test_hold_list_is_parsed_and_a_typo_refuses_to_boot() -> None:
+    a, b = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+    ok = Settings(environment="development", face_cleanup_hold_company_ids=f"{a}, {b} ,")
+    assert {str(u) for u in ok.face_cleanup_hold_company_id_set} == {a, b}
+    with pytest.raises(ValidationError):
+        Settings(environment="development", face_cleanup_hold_company_ids=f"{a},not-a-uuid")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "face_liveness_session_retention_days",
+        "face_attempt_detail_retention_days",
+        "face_enrollment_attempt_retention_days",
+        "face_enrollment_max_failed_attempts",
+    ],
+)
+def test_zero_or_negative_periods_and_limits_are_rejected(name: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(environment="development", **{name: 0})  # type: ignore[arg-type]

@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.modules.attendance.models import (
@@ -26,7 +27,10 @@ from hrms.modules.attendance.models import (
     AttendanceRegularizationRequest,
     AttendanceRegularizationRequestedPunch,
     EmployeeFaceProfile,
+    FaceEnrollmentAttempt,
     FaceEnrollmentWindow,
+    FaceExternalDeletion,
+    FaceLivenessSession,
     FaceVerificationAttempt,
     LeaveDayProjection,
     OvertimeAction,
@@ -2217,6 +2221,27 @@ class FaceProfileRepository:
             stmt = stmt.with_for_update()
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def is_resource_in_use(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        provider_person_id: str | None = None,
+        review_photo_key: str | None = None,
+    ) -> bool:
+        """True when a profile that still needs the resource points at it. Guards the deletion
+        worker: it must never delete a provider person or photo that a live (PENDING_APPROVAL or
+        ENROLLED) profile uses, whatever an older queued row says."""
+        stmt = select(EmployeeFaceProfile.id).where(
+            EmployeeFaceProfile.company_id == company_id,
+            EmployeeFaceProfile.status.in_(("PENDING_APPROVAL", "ENROLLED")),
+        )
+        if provider_person_id is not None:
+            stmt = stmt.where(EmployeeFaceProfile.provider_person_id == provider_person_id)
+        if review_photo_key is not None:
+            stmt = stmt.where(EmployeeFaceProfile.review_photo_key == review_photo_key)
+        return (await session.execute(stmt.limit(1))).first() is not None
+
     async def list_for_company(
         self,
         session: AsyncSession,
@@ -2238,6 +2263,14 @@ class FaceProfileRepository:
         return row
 
 
+#: Attempt decisions that are NOT evidence against the employee: the provider or the liveness
+#: engine failed (outage, timeout, rate limit, malformed reply). They are still stored — they are
+#: audit and alerting data — but they never count towards the failed-attempt lockout, so an
+#: infrastructure outage cannot lock employees out or extend a lockout through app retries.
+#: Every other non-MATCHED decision is a genuine negative outcome and counts.
+INFRASTRUCTURE_FAILURE_DECISIONS = ("PROVIDER_ERROR", "LIVENESS_ERROR")
+
+
 class FaceAttemptRepository:
     async def insert(
         self, session: AsyncSession, *, data: dict[str, Any]
@@ -2256,6 +2289,16 @@ class FaceAttemptRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def exists_for_session(
+        self, session: AsyncSession, *, company_id: UUID, session_id: UUID
+    ) -> bool:
+        """Whether the request that burned this challenge has already recorded its outcome."""
+        stmt = select(FaceVerificationAttempt.id).where(
+            FaceVerificationAttempt.company_id == company_id,
+            FaceVerificationAttempt.liveness_session_id == session_id,
+        )
+        return (await session.execute(stmt.limit(1))).first() is not None
+
     async def count_failed_since(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, since: datetime
     ) -> int:
@@ -2263,6 +2306,7 @@ class FaceAttemptRepository:
             FaceVerificationAttempt.company_id == company_id,
             FaceVerificationAttempt.employee_id == employee_id,
             FaceVerificationAttempt.decision != "MATCHED",
+            FaceVerificationAttempt.decision.not_in(INFRASTRUCTURE_FAILURE_DECISIONS),
             FaceVerificationAttempt.created_at >= since,
         )
         return int((await session.execute(stmt)).scalar_one())
@@ -2287,8 +2331,288 @@ class FaceEnrollmentWindowRepository:
             stmt = stmt.with_for_update()
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_for_update(
+        self, session: AsyncSession, *, company_id: UUID, window_id: UUID
+    ) -> FaceEnrollmentWindow | None:
+        stmt = (
+            select(FaceEnrollmentWindow)
+            .where(
+                FaceEnrollmentWindow.company_id == company_id,
+                FaceEnrollmentWindow.id == window_id,
+            )
+            .with_for_update()
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def release_submission(
+        self, session: AsyncSession, *, company_id: UUID, window_id: UUID, token: UUID
+    ) -> None:
+        """Clears the reservation, but only if it is still this submission's own."""
+        await session.execute(
+            update(FaceEnrollmentWindow)
+            .where(
+                FaceEnrollmentWindow.company_id == company_id,
+                FaceEnrollmentWindow.id == window_id,
+                FaceEnrollmentWindow.submission_token == token,
+            )
+            .values(submission_token=None, submission_started_at=None)
+        )
+
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> FaceEnrollmentWindow:
         row = FaceEnrollmentWindow(**data)
         session.add(row)
         await session.flush()
         return row
+
+
+@dataclass(frozen=True)
+class ClaimedDeletion:
+    """What a deletion worker needs about one claimed outbox row (no ORM object, so it is safe
+    to use after the claiming transaction has ended)."""
+
+    id: UUID
+    kind: str
+    provider: str | None
+    resource_ref: str
+    attempts: int
+
+
+class FaceExternalDeletionRepository:
+    async def enqueue(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        kind: str,
+        provider: str | None,
+        resource_ref: str,
+        reason: str,
+        due_at: datetime | None = None,
+    ) -> None:
+        """Idempotent. A resource already queued is not queued twice; a queued/finished row for
+        the same resource is (re)armed instead — back to PENDING, due at the earlier of its own
+        and the new time — so an earlier SKIPPED / DONE row (or a not-yet-due guard row, see
+        `FaceEnrollmentService._guard_provider_person`) can never swallow a deletion that is
+        genuinely needed now."""
+        now = datetime.now(UTC)
+        due = due_at or now
+        insert = pg_insert(FaceExternalDeletion).values(
+            id=uuid4(),
+            company_id=company_id,
+            kind=kind,
+            provider=provider,
+            resource_ref=resource_ref,
+            reason=reason,
+            status="PENDING",
+            attempts=0,
+            next_attempt_at=due,
+            created_at=now,
+            updated_at=now,
+        )
+        await session.execute(
+            insert.on_conflict_do_update(
+                constraint="face_external_deletion_unique_resource",
+                set_={
+                    "status": "PENDING",
+                    "reason": insert.excluded.reason,
+                    "completed_at": None,
+                    "next_attempt_at": func.least(
+                        FaceExternalDeletion.next_attempt_at, insert.excluded.next_attempt_at
+                    ),
+                    "updated_at": now,
+                },
+            )
+        )
+
+    async def claim_due(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        now: datetime,
+        limit: int,
+        lease: timedelta,
+    ) -> list[ClaimedDeletion]:
+        """Takes up to `limit` due rows (`FOR UPDATE SKIP LOCKED`, so overlapping workers never
+        share a row) and pushes their `next_attempt_at` out by `lease`, so the slow external call
+        runs after this short transaction commits and a crashed worker's rows come back later."""
+        stmt = (
+            select(FaceExternalDeletion)
+            .where(
+                FaceExternalDeletion.company_id == company_id,
+                FaceExternalDeletion.status == "PENDING",
+                FaceExternalDeletion.next_attempt_at <= now,
+            )
+            .order_by(FaceExternalDeletion.next_attempt_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        rows = list((await session.execute(stmt)).scalars().all())
+        claimed: list[ClaimedDeletion] = []
+        for row in rows:
+            row.attempts += 1
+            row.next_attempt_at = now + lease
+            claimed.append(
+                ClaimedDeletion(row.id, row.kind, row.provider, row.resource_ref, row.attempts)
+            )
+        await session.flush()
+        return claimed
+
+    async def finish(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        row_id: UUID,
+        status: str,
+        now: datetime,
+    ) -> None:
+        await session.execute(
+            update(FaceExternalDeletion)
+            .where(
+                FaceExternalDeletion.company_id == company_id,
+                FaceExternalDeletion.id == row_id,
+                FaceExternalDeletion.status == "PENDING",
+            )
+            .values(status=status, completed_at=now, last_error_code=None, updated_at=now)
+        )
+
+    async def retry_later(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        row_id: UUID,
+        error_code: str,
+        next_attempt_at: datetime,
+    ) -> None:
+        await session.execute(
+            update(FaceExternalDeletion)
+            .where(
+                FaceExternalDeletion.company_id == company_id,
+                FaceExternalDeletion.id == row_id,
+                FaceExternalDeletion.status == "PENDING",
+            )
+            .values(
+                last_error_code=error_code[:64],
+                next_attempt_at=next_attempt_at,
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+    async def counts(self, session: AsyncSession, *, company_id: UUID) -> dict[str, int]:
+        rows = await session.execute(
+            select(FaceExternalDeletion.status, func.count())
+            .where(FaceExternalDeletion.company_id == company_id)
+            .group_by(FaceExternalDeletion.status)
+        )
+        return {status: int(n) for status, n in rows.all()}
+
+
+#: Enrollment rejections that count towards the per-window limit. A provider or engine outage is
+#: not the employee's doing, so it is recorded but never locks them out.
+ENROLLMENT_UNCOUNTED_DECISIONS = ("PROVIDER_ERROR", "LIVENESS_ERROR")
+
+
+class FaceEnrollmentAttemptRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> FaceEnrollmentAttempt:
+        row = FaceEnrollmentAttempt(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def count_counted_for_window(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, window_id: UUID
+    ) -> int:
+        stmt = select(func.count()).where(
+            FaceEnrollmentAttempt.company_id == company_id,
+            FaceEnrollmentAttempt.employee_id == employee_id,
+            FaceEnrollmentAttempt.enrollment_window_id == window_id,
+            FaceEnrollmentAttempt.decision.not_in(ENROLLMENT_UNCOUNTED_DECISIONS),
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
+
+class FaceLivenessSessionRepository:
+    async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> FaceLivenessSession:
+        row = FaceLivenessSession(**data)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def supersede_issued(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> None:
+        await session.execute(
+            update(FaceLivenessSession)
+            .where(
+                FaceLivenessSession.company_id == company_id,
+                FaceLivenessSession.employee_id == employee_id,
+                FaceLivenessSession.status == "ISSUED",
+            )
+            .values(status="SUPERSEDED")
+        )
+
+    async def count_issued_since(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, since: datetime
+    ) -> int:
+        stmt = select(func.count()).where(
+            FaceLivenessSession.company_id == company_id,
+            FaceLivenessSession.employee_id == employee_id,
+            FaceLivenessSession.issued_at >= since,
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
+    async def get_for_update(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, session_id: UUID
+    ) -> FaceLivenessSession | None:
+        """Scoped to the employee as well as the tenant: another employee's challenge id reads
+        exactly like one that does not exist."""
+        stmt = (
+            select(FaceLivenessSession)
+            .where(
+                FaceLivenessSession.id == session_id,
+                FaceLivenessSession.company_id == company_id,
+                FaceLivenessSession.employee_id == employee_id,
+            )
+            .with_for_update()
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def get_state(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, session_id: UUID
+    ) -> tuple[str, str, datetime | None] | None:
+        """(status, direction, consumed_at) of a challenge, read WITHOUT a row lock — used only to
+        recognise that an identical request is already being processed."""
+        stmt = select(
+            FaceLivenessSession.status,
+            FaceLivenessSession.direction,
+            FaceLivenessSession.consumed_at,
+        ).where(
+            FaceLivenessSession.id == session_id,
+            FaceLivenessSession.company_id == company_id,
+            FaceLivenessSession.employee_id == employee_id,
+        )
+        row = (await session.execute(stmt)).first()
+        return (row[0], row[1], row[2]) if row is not None else None
+
+    async def any_digest_seen(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        digests: list[str],
+        exclude_id: UUID,
+    ) -> bool:
+        stmt = select(
+            select(FaceLivenessSession.id)
+            .where(
+                FaceLivenessSession.company_id == company_id,
+                FaceLivenessSession.employee_id == employee_id,
+                FaceLivenessSession.id != exclude_id,
+                FaceLivenessSession.frame_digests.overlap(digests),
+            )
+            .exists()
+        )
+        return bool((await session.execute(stmt)).scalar_one())

@@ -37,7 +37,7 @@ from sqlalchemy import (
     Time,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -494,6 +494,12 @@ class FaceEnrollmentWindow(Base, TimestampMixin):
     cancelled_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
+    #: Lease taken (and committed) before a submission's slow provider calls start; see
+    #: migration 20261018090000. Both null when no submission is in flight.
+    submission_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    submission_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class EmployeeFaceProfile(Base, TimestampMixin):
@@ -554,9 +560,84 @@ class FaceVerificationAttempt(Base):
     similarity: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     liveness_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
     provider_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    liveness_session_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("face_liveness_session.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class FaceEnrollmentAttempt(Base):
+    """One rejected self-enrollment submission. Insert-only and minimal on purpose: the decision,
+    the capture angle that failed and who/when — never an image, score or provider body.
+    `enrollment_window_id` is a plain column (no foreign key): see migration 20261017090000."""
+
+    __tablename__ = "face_enrollment_attempt"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    enrollment_window_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    decision: Mapped[str] = mapped_column(String(30))
+    angle: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class FaceExternalDeletion(Base, TimestampMixin):
+    """Outbox row: an external biometric resource (a Face++ FaceSet or a stored review photo)
+    that must be deleted, written in the same transaction that authorises the deletion and acted
+    on only after it commits. Holds the opaque provider id / object key only (migration
+    20261018090000)."""
+
+    __tablename__ = "face_external_deletion"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(20))
+    provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    resource_ref: Mapped[str] = mapped_column(String(300))
+    reason: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(10), default="PENDING")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FaceLivenessSession(Base, TimestampMixin):
+    """A server-issued, single-use liveness challenge for one employee's next face punch in
+    one direction. ISSUED until presented (CONSUMED, whatever the outcome) or replaced by a newer
+    one (SUPERSEDED); past `expires_at` it is unusable. `frame_digests` holds SHA-256 hashes of
+    the frames presented with it — never the frames themselves."""
+
+    __tablename__ = "face_liveness_session"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    direction: Mapped[str] = mapped_column(String(3))
+    status: Mapped[str] = mapped_column(String(20))
+    issued_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frame_digests: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
 
 
 # ---------------------------------------------------------------------------

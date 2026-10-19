@@ -47,6 +47,9 @@ dev = [
     "import-linter>=2.1.0",
     "pre-commit>=4.0.0",
 ]
+liveness = [
+    "opencv-python-headless>=4.10,<5",
+]
 
 [build-system]
 requires = ["hatchling"]

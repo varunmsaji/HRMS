@@ -18,11 +18,14 @@ Face++ (faceplusplus.com) behaviour this adapter relies on:
   regardless of HTTP status — so outcomes are read from that field, not the status code.
 - There is no confirmed single-photo liveness/anti-spoofing endpoint: Face++ markets liveness as
   part of a separate "FaceID" product built on active, multi-frame challenges (blink, turn head)
-  via a client SDK, not a plain REST call on one still image. Until that is wired in,
-  `check_liveness` only confirms a face is present (via `/detect`) and always reports `LIVE` when
-  one is found — this is NOT real anti-spoofing, deliberately, rather than faking a score."""
+  via a client SDK, not a plain REST call on one still image. This adapter therefore does
+  identity only; liveness is decided on our own server by `attendance/liveness.py`. (The former
+  `check_liveness` here reported LIVE for any detected face; it was removed so nothing can treat
+  face detection as anti-spoofing again.)"""
 
-from dataclasses import dataclass, field
+import asyncio
+import re
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol
 
@@ -33,22 +36,19 @@ from hrms.core.observability.logging import get_logger
 
 PROVIDER_FACEPP = "FACEPP"
 
-MatchDecision = Literal["MATCHED", "NO_MATCH", "NO_FACE"]
-LivenessDecision = Literal["LIVE", "SPOOF", "NO_FACE"]
+MatchDecision = Literal["MATCHED", "NO_MATCH", "NO_FACE", "MULTIPLE_FACES"]
 
 
 @dataclass(frozen=True)
 class FaceMatchResult:
+    """The only part of a Face++ search that leaves this adapter. Deliberately minimal: the raw
+    body carries face tokens, rectangles and landmarks that nothing downstream needs, so it is
+    neither returned nor stored. `provider_request_id` is Face++'s own correlation id (for a
+    support ticket); it identifies a request, not a face."""
+
     decision: MatchDecision
     similarity: Decimal | None
-    provider_response: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class LivenessResult:
-    decision: LivenessDecision
-    score: Decimal | None
-    provider_response: dict[str, Any] = field(default_factory=dict)
+    provider_request_id: str | None = None
 
 
 class FaceProviderError(Exception):
@@ -59,6 +59,11 @@ class FaceProviderError(Exception):
 class FaceProviderNoFaceError(FaceProviderError):
     """The enrollment/reference photo has no detectable face — user-correctable, unlike other
     `FaceProviderError`s."""
+
+
+class FaceProviderMultipleFacesError(FaceProviderError):
+    """The photo has more than one detectable face. Which one is the employee is a guess the
+    adapter refuses to make (it used to take the first), so this is ambiguity, not a match."""
 
 
 class FaceVerificationProvider(Protocol):
@@ -74,9 +79,9 @@ class FaceVerificationProvider(Protocol):
         self, *, person_id: str, image: bytes, content_type: str
     ) -> FaceMatchResult: ...
 
-    async def check_liveness(self, *, image: bytes, content_type: str) -> LivenessResult: ...
-
     async def delete_person(self, *, person_id: str) -> None: ...
+
+    async def aclose(self) -> None: ...
 
 
 def _similarity(confidence: object) -> Decimal | None:
@@ -85,6 +90,25 @@ def _similarity(confidence: object) -> Decimal | None:
     if not isinstance(confidence, int | float) or isinstance(confidence, bool):
         return None
     return Decimal(str(round(min(max(float(confidence) / 100.0, 0.0), 1.0), 4)))
+
+
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_ERROR_CODE_PATTERN = re.compile(r"^[A-Z0-9_]{1,64}")
+
+
+def _request_id(body: dict[str, Any]) -> str | None:
+    """Face++'s `request_id`, only when it is a short plain token — it is stored on attempt rows
+    and logged, so provider-controlled text must not reach either unvalidated."""
+    value = body.get("request_id")
+    return value if isinstance(value, str) and _REQUEST_ID_PATTERN.fullmatch(value) else None
+
+
+def _error_code(error_message: str) -> str:
+    """The leading UPPER_SNAKE code of a Face++ `error_message` (e.g. `INVALID_FACESET_TOKEN`
+    from `INVALID_FACESET_TOKEN:fs_...`). Everything after the code can echo a token or an
+    argument, so it is dropped before logging; anything unrecognisable becomes `UNKNOWN`."""
+    match = _ERROR_CODE_PATTERN.match(error_message.strip())
+    return match.group(0) if match else "UNKNOWN"
 
 
 def _is_missing_faceset(error_message: str) -> bool:
@@ -102,8 +126,50 @@ class FaceppFaceVerificationProvider:
         self._api_key = settings.facepp_api_key
         self._api_secret = settings.facepp_api_secret
         self._timeout = settings.face_provider_timeout_seconds
+        self._connect_timeout = settings.face_provider_connect_timeout_seconds
+        self._max_concurrency = settings.face_provider_max_concurrency
         self._min_similarity = Decimal(str(settings.face_match_min_similarity))
         self._transport = transport
+        # One pooled client (keep-alive connections reused across calls) and one concurrency
+        # gate per event loop. Both are created lazily on first use, because an `httpx` client
+        # and an `asyncio.Semaphore` belong to the loop they first run on; a different running
+        # loop (Celery's `asyncio.run`, a test) gets fresh ones instead of sharing state across
+        # loops. The client holds only the connection pool: every request builds its own form
+        # payload, so no mutable request state is shared between concurrent calls.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._client: httpx.AsyncClient | None = None
+        self._gate: asyncio.Semaphore | None = None
+
+    def _pooled(self) -> tuple[httpx.AsyncClient, asyncio.Semaphore]:
+        loop = asyncio.get_running_loop()
+        if self._client is None or self._gate is None or self._loop is not loop:
+            # A client left over from another (finished) loop cannot be closed from this one;
+            # it is dropped and garbage-collected with its loop.
+            self._loop = loop
+            self._gate = asyncio.Semaphore(self._max_concurrency)
+            self._client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=httpx.Timeout(
+                    self._timeout, connect=min(self._connect_timeout, self._timeout)
+                ),
+                limits=httpx.Limits(
+                    max_connections=self._max_concurrency,
+                    max_keepalive_connections=self._max_concurrency,
+                ),
+                transport=self._transport,
+            )
+        return self._client, self._gate
+
+    async def aclose(self) -> None:
+        """Closes the pool (application shutdown, or the end of a one-off task). Safe to call
+        repeatedly and when no call was ever made."""
+        client, self._client, self._gate, self._loop = self._client, None, None, None
+        if client is not None:
+            try:
+                await client.aclose()
+            except RuntimeError:
+                # The client's loop is already closed; there is nothing left to release.
+                pass
 
     async def _request(
         self,
@@ -114,10 +180,9 @@ class FaceppFaceVerificationProvider:
         files: dict[str, tuple[str, bytes, str]] | None = None,
     ) -> dict[str, Any]:
         payload = {"api_key": self._api_key, "api_secret": self._api_secret, **(data or {})}
+        client, gate = self._pooled()
         try:
-            async with httpx.AsyncClient(
-                base_url=self._base_url, timeout=self._timeout, transport=self._transport
-            ) as client:
+            async with gate:
                 response = await client.post(path, data=payload, files=files)
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -152,7 +217,7 @@ class FaceppFaceVerificationProvider:
             "face_provider_request_rejected",
             provider=PROVIDER_FACEPP,
             operation=operation,
-            error_message=body["_error_message"],
+            error_code=_error_code(body["_error_message"]),
         )
         return FaceProviderError(f"Face provider {operation} request failed.")
 
@@ -171,6 +236,8 @@ class FaceppFaceVerificationProvider:
             raise self._unrecognised(operation, body)
         if not faces:
             return None
+        if len(faces) > 1:
+            raise FaceProviderMultipleFacesError("More than one face was detected in the photo.")
         token = faces[0].get("face_token") if isinstance(faces[0], dict) else None
         if not isinstance(token, str) or not token:
             raise self._unrecognised(operation, body)
@@ -205,9 +272,15 @@ class FaceppFaceVerificationProvider:
             raise self._error("add_reference_photo", body)
 
     async def verify(self, *, person_id: str, image: bytes, content_type: str) -> FaceMatchResult:
-        token = await self._detect_face_token(image, content_type, operation="verify")
+        """Searches this one employee's FaceSet (`person_id`) for the face in `image`. Because the
+        FaceSet belongs to a single employee, a result at or above the threshold means "this
+        employee"; it is never a match against some other face in the tenant."""
+        try:
+            token = await self._detect_face_token(image, content_type, operation="verify")
+        except FaceProviderMultipleFacesError:
+            return FaceMatchResult("MULTIPLE_FACES", None)
         if token is None:
-            return FaceMatchResult("NO_FACE", None, {})
+            return FaceMatchResult("NO_FACE", None)
         body = await self._request(
             "/facepp/v3/search",
             operation="verify",
@@ -218,20 +291,20 @@ class FaceppFaceVerificationProvider:
         results = body.get("results")
         if not isinstance(results, list):
             raise self._unrecognised("verify", body)
+        request_id = _request_id(body)
         if not results:
-            return FaceMatchResult("NO_MATCH", None, body)
-        top = results[0]
-        similarity = _similarity(top.get("confidence")) if isinstance(top, dict) else None
-        if similarity is None:
-            raise self._unrecognised("verify", body)
-        decision: MatchDecision = "MATCHED" if similarity >= self._min_similarity else "NO_MATCH"
-        return FaceMatchResult(decision, similarity, body)
-
-    async def check_liveness(self, *, image: bytes, content_type: str) -> LivenessResult:
-        token = await self._detect_face_token(image, content_type, operation="check_liveness")
-        if token is None:
-            return LivenessResult("NO_FACE", None, {})
-        return LivenessResult("LIVE", None, {})
+            return FaceMatchResult("NO_MATCH", None, request_id)
+        # Every entry must be well formed; one malformed entry makes the whole response
+        # untrustworthy rather than silently skipped. The best confidence decides.
+        similarities: list[Decimal] = []
+        for entry in results:
+            similarity = _similarity(entry.get("confidence")) if isinstance(entry, dict) else None
+            if similarity is None:
+                raise self._unrecognised("verify", body)
+            similarities.append(similarity)
+        best = max(similarities)
+        decision: MatchDecision = "MATCHED" if best >= self._min_similarity else "NO_MATCH"
+        return FaceMatchResult(decision, best, request_id)
 
     async def delete_person(self, *, person_id: str) -> None:
         body = await self._request(
@@ -244,7 +317,33 @@ class FaceppFaceVerificationProvider:
         raise self._error("delete_person", body)
 
 
+_shared_providers: dict[tuple[object, ...], FaceVerificationProvider] = {}
+
+
 def get_face_verification_provider(settings: Settings) -> FaceVerificationProvider | None:
-    if settings.face_verification_provider == "facepp":
-        return FaceppFaceVerificationProvider(settings)
-    return None
+    """The process-wide provider for the API: one instance (so one connection pool) per
+    configuration, closed by `close_face_verification_providers` at shutdown. One-off callers
+    (Celery tasks, each on its own event loop) build `FaceppFaceVerificationProvider` directly
+    and `aclose()` it themselves."""
+    if settings.face_verification_provider != "facepp":
+        return None
+    key = (
+        settings.facepp_api_base_url,
+        settings.facepp_api_key,
+        settings.facepp_api_secret,
+        settings.face_provider_timeout_seconds,
+        settings.face_provider_connect_timeout_seconds,
+        settings.face_provider_max_concurrency,
+        settings.face_match_min_similarity,
+    )
+    provider = _shared_providers.get(key)
+    if provider is None:
+        provider = _shared_providers[key] = FaceppFaceVerificationProvider(settings)
+    return provider
+
+
+async def close_face_verification_providers() -> None:
+    providers = list(_shared_providers.values())
+    _shared_providers.clear()
+    for provider in providers:
+        await provider.aclose()

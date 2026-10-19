@@ -17,6 +17,7 @@ from hrms.modules.attendance.face_verification import (
     FaceVerificationProvider,
     get_face_verification_provider,
 )
+from hrms.modules.attendance.liveness import LivenessEngine, get_liveness_engine
 from hrms.modules.attendance.service import (
     AttendanceDayService,
     AttendancePeriodService,
@@ -81,6 +82,10 @@ def get_face_provider() -> FaceVerificationProvider | None:
     return get_face_verification_provider(get_settings())
 
 
+def get_face_liveness_engine() -> LivenessEngine | None:
+    return get_liveness_engine(get_settings())
+
+
 def get_face_photo_storage() -> FacePhotoStorage:
     return DocumentStorageService(get_settings())
 
@@ -89,12 +94,14 @@ def get_face_enrollment_service(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
     storage: Annotated[FacePhotoStorage, Depends(get_face_photo_storage)],
+    liveness: Annotated[LivenessEngine | None, Depends(get_face_liveness_engine)],
 ) -> FaceEnrollmentService:
-    return FaceEnrollmentService(session, provider, get_settings(), storage)
+    return FaceEnrollmentService(session, provider, get_settings(), storage, liveness)
 
 
 def get_face_punch_service(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
+    liveness: Annotated[LivenessEngine | None, Depends(get_face_liveness_engine)],
 ) -> FacePunchService:
-    return FacePunchService(session, provider, get_settings())
+    return FacePunchService(session, provider, get_settings(), liveness)

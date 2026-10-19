@@ -104,6 +104,19 @@ def create_celery_app() -> Celery:
                 "task": "attendance.run_incomplete_reminders",
                 "schedule": crontab(minute=0, hour=10),
             },
+            # Face-record retention. A no-op until retention periods are configured (a privacy/legal
+            # decision, none defaulted) and report-only until FACE_CLEANUP_DRY_RUN=false. Idempotent
+            # and bounded per run, so a missed or repeated firing is harmless.
+            "attendance-run-face-cleanup": {
+                "task": "attendance.run_face_cleanup",
+                "schedule": crontab(minute=15, hour=3),
+            },
+            # Post-commit deletion of Face++ FaceSets / review photos queued by face approve,
+            # reject and revoke. Idempotent; overlapping or repeated runs are harmless.
+            "attendance-run-face-deletions": {
+                "task": "attendance.run_face_deletions",
+                "schedule": crontab(minute="*/2"),
+            },
             # Mission Phase 7 — proves the whole scheduling path (Beat -> broker -> worker) is
             # alive. `python -m hrms.ops.job_health` alerts when its timestamp goes stale, which
             # is how a stopped Beat or a wedged worker becomes visible (nothing else watches

@@ -1,5 +1,8 @@
 """Face-punch idempotency (`idempotency_key` on `POST /v1/attendance/face-punches/me`):
-replay, concurrency, retry after a lost response, failure cleanliness, key misuse, isolation."""
+replay, concurrency, retry after a lost response, failure cleanliness, key misuse, isolation.
+
+Every retry here follows the app's real flow: a fresh liveness challenge and a fresh capture,
+carrying the SAME idempotency key — the key, not the challenge, identifies the punch operation."""
 
 import asyncio
 import logging
@@ -10,13 +13,19 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
-from tests.integration.modules.attendance.conftest import FakeFaceProvider, FakePhotoStorage
-from tests.integration.modules.attendance.test_face_enrollment import IMAGES
+from tests.integration.modules.attendance.conftest import (
+    FakeFaceProvider,
+    FakeLivenessEngine,
+    FakePhotoStorage,
+)
 from tests.integration.modules.attendance.test_face_punch import (
     Tenant,
     _attempts,
     _enrolled_self,
     _punch_count,
+    face_punch,
+    issue,
+    submit,
 )
 
 from hrms.core.db.session import get_session_factory, set_rls_company_id
@@ -25,7 +34,6 @@ from hrms.modules.attendance.repository import PunchRepository
 
 pytestmark = pytest.mark.asyncio
 
-_JPEG = IMAGES["front"]
 KEY = "idem_1700000000000000_abcdef01_12345678"
 
 
@@ -41,15 +49,7 @@ async def _punch(
     direction: str = "IN",
     key: str | None = KEY,
 ) -> Any:
-    data = {"direction": direction}
-    if key is not None:
-        data["idempotency_key"] = key
-    return await client.post(
-        "/v1/attendance/face-punches/me",
-        headers=headers,
-        files={"photo": ("frame.jpg", _JPEG, "image/jpeg")},
-        data=data,
-    )
+    return await face_punch(client, headers, direction, key=key)
 
 
 async def _stored_keys(company_id: UUID) -> list[str | None]:
@@ -62,11 +62,15 @@ async def _stored_keys(company_id: UUID) -> list[str | None]:
 
 
 async def test_same_key_replays_original_without_second_punch_or_verification(
-    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+    client: AsyncClient,
+    face_tenant: Tenant,
+    fake_face_provider: FakeFaceProvider,
+    fake_liveness_engine: FakeLivenessEngine,
 ) -> None:
     _, company_id = face_tenant
     headers, _ = await _enrolled_self(client, face_tenant)
     fake_face_provider.calls.clear()
+    fake_liveness_engine.calls.clear()
 
     first = await _punch(client, headers)
     calls_after_first = list(fake_face_provider.calls)
@@ -79,6 +83,7 @@ async def test_same_key_replays_original_without_second_punch_or_verification(
     assert a["punch"]["punch_time"] == b["punch"]["punch_time"]
     assert (a["similarity"], a["liveness_score"]) == (b["similarity"], b["liveness_score"])
     assert fake_face_provider.calls == calls_after_first  # replay never reaches the provider
+    assert len(fake_liveness_engine.calls) == 1  # ...nor re-runs liveness
     assert await _punch_count(client, headers) == 1
     assert len(await _attempts(company_id)) == 1
     # Stored under the face namespace, so it cannot collide with a self-punch key.
@@ -111,11 +116,15 @@ async def test_different_keys_are_different_punches(
 async def test_concurrent_same_key_creates_exactly_one_punch(
     client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
+    """A double-submitted punch: same challenge, same key, sent six times at once."""
     _, company_id = face_tenant
     headers, _ = await _enrolled_self(client, face_tenant)
+    session_id = await issue(client, headers)
     fake_face_provider.calls.clear()
 
-    results = await asyncio.gather(*[_punch(client, headers) for _ in range(6)])
+    results = await asyncio.gather(
+        *[submit(client, headers, session_id=session_id, key=KEY) for _ in range(6)]
+    )
 
     assert [r.status_code for r in results] == [201] * 6, [r.text for r in results]
     assert len({r.json()["data"]["punch"]["id"] for r in results}) == 1
@@ -123,7 +132,8 @@ async def test_concurrent_same_key_creates_exactly_one_punch(
     matched = [a for a in await _attempts(company_id) if a["decision"] == "MATCHED"]
     assert len(matched) == 1
     # The advisory lock makes the duplicates wait and replay: one provider verification only.
-    assert fake_face_provider.names().count("verify") == 1
+    # One request did the work: every frame verified once, by that request only.
+    assert fake_face_provider.names().count("verify") == 3
 
 
 async def test_retry_after_lost_response_returns_original(
@@ -142,18 +152,38 @@ async def test_retry_after_lost_response_returns_original(
     assert await _punch_count(client, headers) == 1
 
 
+async def test_retry_while_first_is_in_flight_with_a_new_challenge_returns_one_punch(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    """The app timed out mid-request and retried (new challenge, new capture, same key) while
+    the first request was still running on the server: one punch, both get it."""
+    headers, _ = await _enrolled_self(client, face_tenant)
+    first_session = await issue(client, headers)
+    first = asyncio.create_task(submit(client, headers, session_id=first_session, key=KEY))
+    await asyncio.sleep(0)
+    # Issuing the retry's challenge supersedes the first one only if the first has not been
+    # presented yet; either way exactly one punch results and the key settles it.
+    second = await _punch(client, headers)
+    first_result = await first
+
+    ok = [r for r in (first_result, second) if r.status_code == 201]
+    assert ok, (first_result.text, second.text)
+    assert len({r.json()["data"]["punch"]["id"] for r in ok}) == 1
+    assert await _punch_count(client, headers) == 1
+
+
 async def test_rejected_attempt_leaves_key_reusable(
     client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
     _, company_id = face_tenant
     headers, _ = await _enrolled_self(client, face_tenant)
-    fake_face_provider.match = FaceMatchResult("NO_MATCH", None, {"message": "no"})
+    fake_face_provider.match = FaceMatchResult("NO_MATCH", None)
 
     rejected = await _punch(client, headers)
     assert rejected.status_code == 422
     assert await _stored_keys(company_id) == []
 
-    fake_face_provider.match = FaceMatchResult("MATCHED", Decimal("0.97"), {})
+    fake_face_provider.match = FaceMatchResult("MATCHED", Decimal("0.97"))
     retry = await _punch(client, headers)
 
     assert retry.status_code == 201, retry.text

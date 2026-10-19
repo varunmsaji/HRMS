@@ -1,34 +1,32 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../data/attendance_repository.dart';
+import '../domain/face_liveness_capture.dart';
 import 'face_enrollment_screen.dart';
+import 'face_liveness_capture_screen.dart';
 
-/// Opens the front camera and returns the selfie as JPEG bytes, or null if cancelled.
-typedef FaceCapture = Future<List<int>?> Function();
+/// Captures the frames for one server-issued liveness challenge.
+typedef FaceLivenessCapture = Future<FaceCaptureOutcome> Function(BuildContext context, FaceLivenessSession session);
 
-/// `imageQuality` forces a JPEG re-encode (iOS would otherwise hand back HEIC, which the
-/// server rejects); 1280px keeps uploads small while leaving plenty of face detail.
-final faceCaptureProvider = Provider<FaceCapture>((ref) {
-  return () async {
-    final photo = await ImagePicker().pickImage(
-      source: ImageSource.camera,
-      preferredCameraDevice: CameraDevice.front,
-      maxWidth: 1280,
-      maxHeight: 1280,
-      imageQuality: 90,
+final faceLivenessCaptureProvider = Provider<FaceLivenessCapture>((ref) {
+  return (context, session) async {
+    final outcome = await Navigator.of(context).push<FaceCaptureOutcome>(
+      MaterialPageRoute(fullscreenDialog: true, builder: (_) => FaceLivenessCaptureScreen(session: session)),
     );
-    return photo?.readAsBytes();
+    return outcome ?? const FaceCaptureCancelled();
   };
 });
 
+enum _Phase { idle, challenge, capturing, verifying }
+
 /// Face attendance for the signed-in employee. Shows whichever applies: set up (when HR has
 /// opened enrollment), waiting for HR approval, rejected, not set up — or, once enrolled,
-/// selfie punch in/out (server liveness + face match -> server-timed punch). Server messages
-/// are shown as-is.
+/// face punch in/out: server challenge -> guided capture -> server liveness on every frame +
+/// face match -> server-timed punch. The app never decides liveness and offers no way to
+/// override a failed check. Server messages are shown as-is.
 class FacePunchCard extends ConsumerStatefulWidget {
   const FacePunchCard({super.key, this.onPunched});
 
@@ -43,7 +41,7 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
   FaceEnrollmentStatus? _status;
   String? _loadError;
   bool _loading = true;
-  String? _verifyingDirection;
+  _Phase _phase = _Phase.idle;
 
   @override
   void initState() {
@@ -78,41 +76,76 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
     await _load();
   }
 
-  /// The key of a face punch whose outcome is unknown (no response). A retry of the same
-  /// direction reuses it, so a punch the server did record is returned, not recorded twice.
+  /// The key of a face punch whose outcome is unknown ([facePunchOutcomeUnknown]). The next
+  /// attempt in the same direction reuses it — with a fresh challenge and capture — so a punch
+  /// the server did record is returned, not recorded twice.
   ({String direction, String key})? _unconfirmedPunch;
 
-  Future<void> _punch(String direction) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final List<int>? photo;
-    try {
-      photo = await ref.read(faceCaptureProvider)();
-    } catch (_) {
-      messenger.showSnackBar(const SnackBar(
-        content: Text('Could not open the camera. Allow camera access for this app in your phone settings.'),
-      ));
-      return;
-    }
-    if (photo == null || !mounted) return;
+  void _show(String message) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
 
-    setState(() => _verifyingDirection = direction);
-    final pending = _unconfirmedPunch;
-    final key = pending != null && pending.direction == direction ? pending.key : ApiClient.newIdempotencyKey();
+  Future<void> _punch(String direction) async {
+    if (_phase != _Phase.idle) return; // one attempt at a time
+    final repository = ref.read(attendanceRepositoryProvider);
+    setState(() => _phase = _Phase.challenge);
+    List<List<int>>? frames;
     try {
-      final result = await ref.read(attendanceRepositoryProvider).facePunchMe(direction: direction, photoJpeg: photo, idempotencyKey: key);
-      _unconfirmedPunch = null;
-      final label = result.direction == 'IN' ? 'Punched in' : 'Punched out';
-      messenger.showSnackBar(SnackBar(
-        content: Text('$label · face verified (${(result.similarity * 100).round()}% match)'),
-      ));
-      widget.onPunched?.call();
-    } catch (error) {
-      // No response: keep the key for a retry. Any real answer settles this attempt.
-      _unconfirmedPunch = error is ApiError && error.status == 0 ? (direction: direction, key: key) : null;
-      messenger.showSnackBar(SnackBar(content: Text(describeApiError(error))));
-      if (error is ApiError && error.code == 'FACE_NOT_ENROLLED') _load();
+      final FaceLivenessSession session;
+      try {
+        session = await repository.startFaceLivenessSession(direction);
+      } catch (error) {
+        _show(describeApiError(error));
+        if (error is ApiError && error.code == 'FACE_NOT_ENROLLED') _load();
+        return;
+      }
+      if (!mounted) return;
+
+      setState(() => _phase = _Phase.capturing);
+      final outcome = await ref.read(faceLivenessCaptureProvider)(context, session);
+      switch (outcome) {
+        case FaceCaptureFrames(frames: final captured):
+          frames = captured;
+        case FaceCaptureCancelled():
+          return;
+        case FaceCapturePermissionDenied():
+          _show('Camera access is off. Allow camera access for this app in your phone settings, then try again.');
+          return;
+        case FaceCaptureExpired():
+          _show('That took too long. Please try again.');
+          return;
+        case FaceCaptureFailed(message: final message):
+          _show(message);
+          return;
+      }
+      if (!mounted) return;
+
+      setState(() => _phase = _Phase.verifying);
+      final pending = _unconfirmedPunch;
+      final key = pending != null && pending.direction == direction ? pending.key : ApiClient.newIdempotencyKey();
+      try {
+        final result = await repository.facePunchMe(
+          direction: direction,
+          livenessSessionId: session.sessionId,
+          frames: frames,
+          idempotencyKey: key,
+        );
+        _unconfirmedPunch = null;
+        final label = result.direction == 'IN' ? 'Punched in' : 'Punched out';
+        _show('$label · face verified (${(result.similarity * 100).round()}% match)');
+        widget.onPunched?.call();
+      } catch (error) {
+        final unknown = facePunchOutcomeUnknown(error);
+        // Unknown outcome: keep the key for the retry. Any real answer settles this attempt.
+        _unconfirmedPunch = unknown ? (direction: direction, key: key) : null;
+        _show(unknown
+            ? 'No response from the server — your punch may have been recorded. Trying again is safe: it will not be recorded twice.'
+            : describeApiError(error));
+        if (error is ApiError && error.code == 'FACE_NOT_ENROLLED') _load();
+      }
     } finally {
-      if (mounted) setState(() => _verifyingDirection = null);
+      frames?.clear(); // drop the face images as soon as the attempt is over
+      if (mounted) setState(() => _phase = _Phase.idle);
     }
   }
 
@@ -130,10 +163,13 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
       message = _loadError!;
       actions = [OutlinedButton(onPressed: _load, child: const Text('Retry'))];
     } else if (status!.isEnrolled) {
-      final busy = _verifyingDirection != null;
-      message = busy
-          ? 'Verifying your face…'
-          : 'Take a selfie to punch. Face the camera in good light, with no one else in frame.';
+      final busy = _phase != _Phase.idle;
+      message = switch (_phase) {
+        _Phase.challenge => 'Preparing a face check…',
+        _Phase.capturing => 'Look at the camera…',
+        _Phase.verifying => 'Verifying your face…',
+        _Phase.idle => 'Punch with your face. Hold the phone yourself, in good light, with no one else in frame.',
+      };
       actions = [
         if (busy) const LinearProgressIndicator(),
         if (busy) const SizedBox(height: 12),
