@@ -16,6 +16,10 @@ from hrms.modules.platform.schemas import (
     CompanyStatus,
     DashboardData,
     OptionalReasonRequest,
+    PlanItem,
+    PlatformAdminCreate,
+    PlatformAdminItem,
+    PlatformAdminPasswordReset,
     PlatformAuditEntry,
     PlatformLoginRequest,
     PlatformMe,
@@ -216,3 +220,59 @@ async def audit_log(
         pagination=build_pagination_meta(page, total=total),
         meta=_meta(),  # type: ignore[arg-type]
     )
+
+
+@router.get("/plans")
+async def list_plans(_p: Principal, service: Service) -> DataEnvelope[list[PlanItem]]:
+    return DataEnvelope(data=await service.list_plans(), meta=_meta())  # type: ignore[arg-type]
+
+
+@router.post("/companies/{company_id}/admin/resend-verification")
+async def resend_admin_verification(
+    company_id: UUID, request: Request, principal: Principal, service: Service
+) -> DataEnvelope[CompanyDetail]:
+    data = await service.resend_admin_verification(company_id, principal, _info(request))
+    return DataEnvelope(data=data, meta=_meta())  # type: ignore[arg-type]
+
+
+@router.get("/admins")
+async def list_admins(
+    principal: Principal, service: Service
+) -> DataEnvelope[list[PlatformAdminItem]]:
+    return DataEnvelope(data=await service.list_admins(principal), meta=_meta())  # type: ignore[arg-type]
+
+
+@router.post("/admins", status_code=status.HTTP_201_CREATED)
+async def create_admin(
+    body: PlatformAdminCreate, request: Request, principal: Principal, service: Service
+) -> DataEnvelope[PlatformAdminItem]:
+    data = await service.create_admin(body.username, body.password, principal, _info(request))
+    return DataEnvelope(data=data, meta=_meta())  # type: ignore[arg-type]
+
+
+@router.post("/admins/{admin_id}/disable")
+async def disable_admin(
+    admin_id: UUID, request: Request, principal: Principal, service: Service
+) -> DataEnvelope[PlatformAdminItem]:
+    data = await service.set_admin_status(admin_id, "DISABLED", principal, _info(request))
+    return DataEnvelope(data=data, meta=_meta())  # type: ignore[arg-type]
+
+
+@router.post("/admins/{admin_id}/enable")
+async def enable_admin(
+    admin_id: UUID, request: Request, principal: Principal, service: Service
+) -> DataEnvelope[PlatformAdminItem]:
+    data = await service.set_admin_status(admin_id, "ACTIVE", principal, _info(request))
+    return DataEnvelope(data=data, meta=_meta())  # type: ignore[arg-type]
+
+
+@router.post("/admins/{admin_id}/reset-password")
+async def reset_admin_password(
+    admin_id: UUID,
+    body: PlatformAdminPasswordReset,
+    request: Request,
+    principal: Principal,
+    service: Service,
+) -> DataEnvelope[PlatformAdminItem]:
+    data = await service.reset_admin_password(admin_id, body.password, principal, _info(request))
+    return DataEnvelope(data=data, meta=_meta())  # type: ignore[arg-type]

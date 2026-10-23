@@ -90,6 +90,16 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = "development"
     port: int = 8000
     log_level: str = "INFO"
+    # Local per-module log files (docs/operations/LOGGING_GUIDE.md). A relative `LOG_DIR` is
+    # resolved against the API project root (`apps/api`, `/app` in the image), never the cwd.
+    log_to_files: bool = True
+    log_dir: str = "logs"
+    log_file_max_bytes: int = Field(default=10 * 1024 * 1024, ge=0)
+    log_file_backup_count: int = Field(default=5, ge=0, le=100)
+    # Age limit for *rotated* backups, in days; 0 = keep by count only.
+    log_retention_days: int = Field(default=0, ge=0)
+    # true = refuse to start when the log directory is unusable; false = stdout-only fallback.
+    log_files_required: bool = False
 
     database_url: str = Field(
         default="postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev",

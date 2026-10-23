@@ -29,6 +29,12 @@ os.environ.setdefault("JWT_REFRESH_SECRET", "test-refresh-secret-min-16-chars")
 # suite (tests/integration/modules/platform) switches it on explicitly.
 os.environ["COMPANY_APPROVAL_REQUIRED"] = "false"
 os.environ["EMAIL_PROVIDER"] = "logging"
+# Local log files: the suite must never write into (or rotate) a developer's real `logs/`
+# directory. File logging is off by default under test; the file-logging tests turn it on against
+# a temporary directory they own (tests/unit/core/test_file_logging.py). To watch real module
+# traffic land in the files, opt in explicitly with a throwaway directory:
+#   HRMS_TEST_LOG_TO_FILES=true LOG_DIR=/tmp/hrms-test-logs pytest tests/integration/...
+os.environ["LOG_TO_FILES"] = os.environ.get("HRMS_TEST_LOG_TO_FILES", "false")
 os.environ["FACE_VERIFICATION_PROVIDER"] = "disabled"
 os.environ["CELERY_BROKER_URL"] = urlunsplit(
     urlsplit(os.environ["REDIS_URL"])._replace(

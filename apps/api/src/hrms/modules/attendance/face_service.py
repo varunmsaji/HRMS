@@ -29,6 +29,7 @@ from hrms.core.config.settings import Settings
 from hrms.core.db.session import session_scope
 from hrms.core.errors.base import ValidationError
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
+from hrms.core.observability.operations import logged_operation
 from hrms.core.observability.security_events import security_event
 from hrms.core.rbac.types import DataScope
 from hrms.modules.attendance.exceptions import (
@@ -435,6 +436,7 @@ class FaceEnrollmentService:
 
     # --- Employee: self-enrollment -----------------------------------------------------------
 
+    @logged_operation("attendance.face.enroll_submit")
     async def submit_self(
         self,
         company_id: UUID,
@@ -1315,6 +1317,7 @@ class FacePunchService:
             frames_required=self._settings.face_liveness_frames,
         )
 
+    @logged_operation("attendance.face.punch")
     async def punch_self(
         self,
         company_id: UUID,

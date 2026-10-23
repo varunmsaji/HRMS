@@ -21,6 +21,7 @@ from hrms.core.config.settings import get_settings
 from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave_dates
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError
 from hrms.core.observability.logging import get_logger, safe_error
+from hrms.core.observability.operations import logged_operation
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.leave.approval_chain import effective_stage_sequence, next_approval_stage
 from hrms.modules.leave.exceptions import (
@@ -1271,6 +1272,7 @@ class LeaveLedgerService:
             raise LeaveLedgerPayrollFinalisedError(period_start=period_start, period_end=period_end)
         raise LeaveLedgerPeriodClosedError(period_start=period_start, period_end=period_end)
 
+    @logged_operation("leave.ledger.adjust")
     async def create_adjustment(
         self,
         company_id: UUID,
@@ -1343,6 +1345,7 @@ class LeaveLedgerService:
         )
         return read
 
+    @logged_operation("leave.encashment.create")
     async def create_encashment(
         self,
         company_id: UUID,
@@ -1576,6 +1579,7 @@ class LeaveAccrualService:
         self._policy_repo = LeavePolicyRepository()
         self._year_setting_service = LeaveYearSettingService(session)
 
+    @logged_operation("leave.accrual.run_company")
     async def run_for_company(self, company_id: UUID, *, as_of: date) -> int:
         """Accrue for the calendar month before `as_of`, for every employee whose employment
         span overlaps it and every active, balance-backed leave type that resolves to a
@@ -1728,6 +1732,7 @@ class LeaveAccrualService:
                 written += 1
         return written
 
+    @logged_operation("leave.year_end.run_company")
     async def run_year_end_for_company(
         self, company_id: UUID, *, as_of: date, catchup_days: int | None = None
     ) -> int:
@@ -1992,6 +1997,7 @@ class LeaveCompOffService:
         self._ledger_repo = LeaveLedgerRepository()
         self._type_repo = LeaveTypeRepository()
 
+    @logged_operation("leave.comp_off.credit_company")
     async def credit_company(self, company_id: UUID) -> int:
         """Reads Attendance's terminal, comp-off-bearing `OvertimeRecord`s as a read-only fact
         (LD-07 — Leave never writes to Attendance tables) and writes one `COMP_OFF_CREDIT`
@@ -2047,6 +2053,7 @@ class LeaveCompOffService:
                 written += 1
         return written
 
+    @logged_operation("leave.comp_off.expire_company")
     async def expire_company(self, company_id: UUID, *, as_of: date) -> int:
         """LD-14's simple expiry heuristic — no FIFO lot-tracking against the pooled balance
         (LD-03: balance is always a derived `SUM`, with no per-entry "remaining" concept). For
@@ -2324,6 +2331,7 @@ class LeaveApplicationService:
             )
         return breakdown
 
+    @logged_operation("leave.application.submit")
     async def submit(
         self,
         company_id: UUID,
@@ -2704,6 +2712,7 @@ class LeaveApplicationService:
                 )
         return row
 
+    @logged_operation("leave.application.approve")
     async def approve(
         self,
         company_id: UUID,
@@ -2733,6 +2742,7 @@ class LeaveApplicationService:
             user_agent=user_agent,
         )
 
+    @logged_operation("leave.application.reject")
     async def reject(
         self,
         company_id: UUID,
@@ -3225,6 +3235,7 @@ class LeaveApplicationService:
     # Cancel
     # -----------------------------------------------------------------
 
+    @logged_operation("leave.application.cancel")
     async def cancel(
         self,
         company_id: UUID,

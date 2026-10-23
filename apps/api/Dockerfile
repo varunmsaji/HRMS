@@ -47,6 +47,12 @@ RUN groupadd --gid 1000 hrms && useradd --uid 1000 --gid hrms --no-create-home -
 
 COPY --from=builder --chown=hrms:hrms /app /app
 
+# Local per-module log files (docs/operations/LOGGING_GUIDE.md). Created and owned by the
+# runtime user so a named volume mounted here inherits writable ownership on first creation.
+# Persistence across container re-creation needs that volume (docker-compose.prod.yml `api_logs`).
+RUN mkdir -p /app/logs && chown hrms:hrms /app/logs
+ENV LOG_DIR=/app/logs
+
 USER hrms
 
 EXPOSE 8000

@@ -13,7 +13,11 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
-from hrms.core.auth.passwords import verify_password
+from hrms.core.auth.passwords import (
+    hash_password,
+    is_password_strong_enough,
+    verify_password,
+)
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.db.models.identity import Company, User
 from hrms.core.db.session import set_rls_company_id
@@ -25,18 +29,26 @@ from hrms.modules.onboarding.email_sender import get_email_sender, log_email_fai
 from hrms.modules.organisation.service import TRIAL_PERIOD_DAYS
 from hrms.modules.platform.email_templates import build_status_email
 from hrms.modules.platform.exceptions import (
+    AdminAlreadyVerifiedError,
+    CannotRemoveLastAdminError,
     CompanyNotFoundError,
     ConfirmationMismatchError,
     InvalidCompanyTransitionError,
     NoSubscriptionError,
     PlanNotFoundError,
     PlatformAdminLockedError,
+    PlatformAdminNotFoundError,
+    PlatformUsernameTakenError,
+    WeakPlatformPasswordError,
 )
 from hrms.modules.platform.repository import PlatformRepository
 from hrms.modules.platform.schemas import (
     CompanyDetail,
     CompanyListItem,
     DashboardData,
+    DayCount,
+    PlanItem,
+    PlatformAdminItem,
     PlatformAuditEntry,
     PlatformLoginRequest,
     PlatformTokenData,
@@ -154,15 +166,52 @@ class PlatformService:
 
     # ---- queries -------------------------------------------------------------------------
     async def dashboard(self) -> DashboardData:
+        now = datetime.now(UTC)
         counts = await self._repo.status_counts(self._session)
+        since = (now - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+        per_day = dict(await self._repo.registrations_per_day(self._session, since))
+        series = [
+            DayCount(
+                day=(since + timedelta(days=i)).date(),
+                count=per_day.get((since + timedelta(days=i)).date(), 0),
+            )
+            for i in range(30)
+        ]
+        pending_rows, _ = await self._repo.list_companies(
+            self._session,
+            status="PENDING_APPROVAL",
+            query=None,
+            limit=5,
+            offset=0,
+            oldest_first=True,
+        )
+        trial_cutoff = now + timedelta(days=7)
+        trials = await self._repo.list_trials_expiring(self._session, trial_cutoff, 5)
+        retention = await self._repo.list_retention_due(self._session, now + timedelta(days=30), 5)
+        activity, _ = await self.list_audit(company_id=None, action=None, limit=8, offset=0)
         return DashboardData(
             counts_by_status=counts,
+            total_companies=sum(counts.values()),
             pending_count=counts.get("PENDING_APPROVAL", 0),
             oldest_pending_since=await self._repo.oldest_pending_since(self._session),
             trials_expiring_within_7_days=await self._repo.trials_expiring_before(
-                self._session, datetime.now(UTC) + timedelta(days=7)
+                self._session, trial_cutoff
             ),
+            registrations_last_30_days=series,
+            registrations_total_30_days=sum(d.count for d in series),
+            locked_company_admins=await self._repo.count_locked_company_admins(self._session),
+            active_platform_admins=await self._repo.count_active_admins(self._session),
+            pending=[_list_item(c, u) for c, u in pending_rows],
+            trials_expiring=[_list_item(c, u) for c, u in trials],
+            retention_due=[_list_item(c, u) for c, u in retention],
+            recent_activity=activity,
         )
+
+    async def list_plans(self) -> list[PlanItem]:
+        return [
+            PlanItem(code=p.code, name=p.name, description=p.description)
+            for p in await self._repo.list_plans(self._session)
+        ]
 
     async def list_companies(
         self, *, status: str | None, query: str | None, limit: int, offset: int
@@ -387,6 +436,123 @@ class PlatformService:
                 principal.admin_id,
                 principal.username,
                 "COMPANY_ADMIN_UNLOCKED",
+                info=info,
+                company_id=company_id,
+            )
+        return await self.get_company(company_id)
+
+    # ---- platform admin accounts ---------------------------------------------------------
+    async def list_admins(self, principal: PlatformPrincipal) -> list[PlatformAdminItem]:
+        now = datetime.now(UTC)
+        return [
+            PlatformAdminItem(
+                id=a.id,
+                username=a.username,
+                status=a.status,  # type: ignore[arg-type]
+                locked=bool(a.locked_until and a.locked_until > now),
+                last_login_at=a.last_login_at,
+                created_at=a.created_at,
+                is_you=a.id == principal.admin_id,
+            )
+            for a in await self._repo.list_admins(self._session)
+        ]
+
+    async def create_admin(
+        self, username: str, password: str, principal: PlatformPrincipal, info: RequestInfo
+    ) -> PlatformAdminItem:
+        if not is_password_strong_enough(password):
+            raise WeakPlatformPasswordError()
+        if await self._repo.get_admin_by_username(self._session, username) is not None:
+            raise PlatformUsernameTakenError()
+        admin = await self._repo.create_admin(
+            self._session, username=username, password_hash=hash_password(password)
+        )
+        await self._audit(
+            principal.admin_id,
+            principal.username,
+            "PLATFORM_ADMIN_CREATED",
+            info=info,
+            details={"username": username},
+        )
+        return await self._admin_item(admin.id, principal)
+
+    async def set_admin_status(
+        self, admin_id: UUID, status: str, principal: PlatformPrincipal, info: RequestInfo
+    ) -> PlatformAdminItem:
+        admin = await self._repo.get_admin(self._session, admin_id)
+        if admin is None:
+            raise PlatformAdminNotFoundError()
+        if status == "DISABLED" and admin.status == "ACTIVE":
+            if admin.id == principal.admin_id:
+                raise CannotRemoveLastAdminError("You cannot disable your own account")
+            if await self._repo.count_active_admins(self._session) <= 1:
+                raise CannotRemoveLastAdminError("At least one platform admin must stay active")
+        if admin.status != status:
+            admin.status = status
+            admin.updated_at = datetime.now(UTC)
+            if status == "DISABLED":
+                await self._repo.revoke_admin_sessions(self._session, admin.id)
+            await self._audit(
+                principal.admin_id,
+                principal.username,
+                "PLATFORM_ADMIN_DISABLED" if status == "DISABLED" else "PLATFORM_ADMIN_ENABLED",
+                info=info,
+                details={"username": admin.username},
+            )
+        return await self._admin_item(admin.id, principal)
+
+    async def reset_admin_password(
+        self,
+        admin_id: UUID,
+        password: str,
+        principal: PlatformPrincipal,
+        info: RequestInfo,
+    ) -> PlatformAdminItem:
+        admin = await self._repo.get_admin(self._session, admin_id)
+        if admin is None:
+            raise PlatformAdminNotFoundError()
+        if not is_password_strong_enough(password):
+            raise WeakPlatformPasswordError()
+        admin.password_hash = hash_password(password)
+        admin.failed_login_count = 0
+        admin.locked_until = None
+        admin.updated_at = datetime.now(UTC)
+        # Everyone signed in as this admin is signed out — except the caller resetting their own.
+        if admin.id != principal.admin_id:
+            await self._repo.revoke_admin_sessions(self._session, admin.id)
+        await self._audit(
+            principal.admin_id,
+            principal.username,
+            "PLATFORM_ADMIN_PASSWORD_RESET",
+            info=info,
+            details={"username": admin.username},
+        )
+        return await self._admin_item(admin.id, principal)
+
+    async def _admin_item(self, admin_id: UUID, principal: PlatformPrincipal) -> PlatformAdminItem:
+        items = await self.list_admins(principal)
+        return next(i for i in items if i.id == admin_id)
+
+    # ---- support -------------------------------------------------------------------------
+    async def resend_admin_verification(
+        self, company_id: UUID, principal: PlatformPrincipal, info: RequestInfo
+    ) -> CompanyDetail:
+        from hrms.modules.identity.service import IdentityService
+
+        company = await self._repo.get_company(self._session, company_id)
+        if company is None:
+            raise CompanyNotFoundError()
+        admin = await self._repo.get_company_admin(self._session, company)
+        if admin is not None and admin.email:
+            if admin.email_verified_at is not None:
+                raise AdminAlreadyVerifiedError()
+            await IdentityService(self._session, self._settings).send_verification_email(
+                user_id=admin.id, email=admin.email, first_name=admin.first_name
+            )
+            await self._audit(
+                principal.admin_id,
+                principal.username,
+                "COMPANY_ADMIN_VERIFICATION_RESENT",
                 info=info,
                 company_id=company_id,
             )

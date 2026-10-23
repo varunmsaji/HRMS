@@ -15,6 +15,7 @@ from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.locks import lock_employee_leave_dates
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.errors.base import NotFoundError
+from hrms.core.observability.operations import logged_operation
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.core.storage import DocumentStorageService
 from hrms.modules.employee.coverage import EmploymentCoverage, evaluate_employment_coverage
@@ -312,6 +313,7 @@ class EmployeeService:
         if active_count >= summary.seat_limit:
             raise EmployeeSeatLimitExceededError(limit=summary.seat_limit)
 
+    @logged_operation("employees.employee.create")
     async def create_employee(
         self,
         company_id: UUID,
@@ -487,6 +489,7 @@ class EmployeeService:
             raise NotFoundError("Resource not found")
         return employee_to_read(employee)
 
+    @logged_operation("employees.employee.update")
     async def update_employee(
         self,
         company_id: UUID,
@@ -1235,6 +1238,7 @@ class EmploymentService:
         )
         return after_read
 
+    @logged_operation("employees.employment.terminate")
     async def terminate_employment(
         self,
         company_id: UUID,
@@ -3448,6 +3452,7 @@ class EmployeeDocumentService:
         if employee is None:
             raise NotFoundError("Resource not found")
 
+    @logged_operation("documents.employee_document.upload", logger_name="hrms.documents")
     async def upload_document(
         self,
         company_id: UUID,
@@ -3553,6 +3558,7 @@ class EmployeeDocumentService:
             result.append(employee_document_to_read_with_url(document, url))
         return result
 
+    @logged_operation("documents.employee_document.delete", logger_name="hrms.documents")
     async def delete_document(
         self,
         company_id: UUID,
@@ -3589,6 +3595,7 @@ class EmployeeDocumentService:
             user_agent=user_agent,
         )
 
+    @logged_operation("documents.employee_document.review", logger_name="hrms.documents")
     async def review_document(
         self,
         company_id: UUID,

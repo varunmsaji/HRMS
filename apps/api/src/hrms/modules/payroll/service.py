@@ -31,6 +31,7 @@ from hrms.core.db.locks import (
     lock_payroll_finalise,
 )
 from hrms.core.errors.base import NotFoundError
+from hrms.core.observability.operations import logged_operation
 from hrms.core.rbac.types import DataScope
 from hrms.modules.payroll.breakup import (
     ARREARS_PREFIX,
@@ -1695,6 +1696,7 @@ class PayRunService:
 
     # -- create / edit / delete ------------------------------------------------------
 
+    @logged_operation("payroll.pay_run.create")
     async def create(
         self,
         company_id: UUID,
@@ -1786,6 +1788,7 @@ class PayRunService:
         )
         return after
 
+    @logged_operation("payroll.pay_run.delete")
     async def delete(
         self,
         company_id: UUID,
@@ -2465,6 +2468,7 @@ class PayRunService:
             })  # fmt: skip
         return rows
 
+    @logged_operation("payroll.pay_run.lock_inputs")
     async def lock_inputs(
         self,
         company_id: UUID,
@@ -2520,6 +2524,7 @@ class PayRunService:
 
     # -- compute ---------------------------------------------------------------------
 
+    @logged_operation("payroll.pay_run.compute")
     async def compute(
         self,
         company_id: UUID,
@@ -2773,6 +2778,7 @@ class PayRunService:
 
     # -- approve / finalise / paid ---------------------------------------------------
 
+    @logged_operation("payroll.pay_run.approve")
     async def approve(
         self,
         company_id: UUID,
@@ -2824,6 +2830,7 @@ class PayRunService:
         )
         return after
 
+    @logged_operation("payroll.pay_run.finalise")
     async def finalise(
         self,
         company_id: UUID,
@@ -2915,6 +2922,7 @@ class PayRunService:
         )
         return after
 
+    @logged_operation("payroll.pay_run.mark_paid")
     async def mark_paid(
         self,
         company_id: UUID,
@@ -2953,6 +2961,7 @@ class PayRunService:
 
     # -- rollback --------------------------------------------------------------------
 
+    @logged_operation("payroll.pay_run.rollback")
     async def rollback(
         self,
         company_id: UUID,
@@ -3529,6 +3538,7 @@ class PayslipService:
             ],
         )
 
+    @logged_operation("payroll.payslip.generate")
     async def get_for_run(self, company_id: UUID, run_id: UUID, employee_id: UUID) -> PayslipRead:
         """HR view (`PAYROLL.RUN_VIEW`) — any computed run; a preview until finalised."""
         run = await self._repo.get(self._session, company_id=company_id, run_id=run_id)
@@ -3680,6 +3690,7 @@ class PayAdjustmentService:
         )
         return [pay_adjustment_to_read(row) for row in rows]
 
+    @logged_operation("payroll.adjustment.create")
     async def create(
         self,
         company_id: UUID,

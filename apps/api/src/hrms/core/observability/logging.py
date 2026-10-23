@@ -2,6 +2,7 @@ import json
 import logging
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -9,11 +10,20 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 
 from hrms.core.config.settings import get_settings
 from hrms.core.observability.classification import error_category
+from hrms.core.observability.file_sink import (
+    FileLoggingConfig,
+    current_sink,
+    install_file_sink,
+    uninstall_file_sink,
+)
 from hrms.core.observability.redaction import AccessLogPathRedactionFilter, redact_event
 
 #: Marks the root handler `configure_logging(configure_stdlib=True)` installs, so a repeated call
 #: (Celery may signal more than once per process) replaces it instead of stacking duplicates.
 _STDLIB_HANDLER_NAME = "hrms-json"
+
+#: `apps/api` (`/app` in the image) — the anchor for a relative `LOG_DIR`.
+API_ROOT = Path(__file__).resolve().parents[4]
 
 
 class _ResilientStdout:
@@ -80,6 +90,61 @@ def dropped_log_writes() -> int:
     return _ResilientStdout.dropped_writes
 
 
+class _NamedPrintLogger(structlog.PrintLogger):
+    """`PrintLogger` that remembers the name it was created with, so the `logger` field (and with
+    it the per-module file routing) works for native structlog loggers, not just stdlib ones."""
+
+    def __init__(self, file: Any = None, name: str | None = None) -> None:
+        super().__init__(file)
+        self.name = name
+
+
+class _NamedPrintLoggerFactory:
+    def __init__(self, file: Any) -> None:
+        self._file = file
+
+    def __call__(self, *args: Any) -> _NamedPrintLogger:
+        return _NamedPrintLogger(self._file, str(args[0]) if args else None)
+
+
+def _add_logger_name(logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
+    name = getattr(logger, "name", None)
+    if name:
+        event_dict.setdefault("logger", name)
+    return event_dict
+
+
+def _render_and_route(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> str:
+    """Last processor of every pipeline: renders the (already redacted) event to its JSON line,
+    hands the same event to the local file sink, and returns the line for stdout."""
+    renderer = structlog.processors.JSONRenderer()
+    sink = current_sink()
+    if sink is not None:
+        sink.emit(event_dict, lambda e: str(renderer(_logger, _method, dict(e))))
+    return str(renderer(_logger, _method, event_dict))
+
+
+def resolve_log_dir(raw: str) -> Path:
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else API_ROOT / path
+
+
+def _configure_file_sink() -> None:
+    settings = get_settings()
+    if not settings.log_to_files:
+        uninstall_file_sink()
+        return
+    install_file_sink(
+        FileLoggingConfig(
+            directory=resolve_log_dir(settings.log_dir),
+            max_bytes=settings.log_file_max_bytes,
+            backup_count=settings.log_file_backup_count,
+            retention_days=settings.log_retention_days,
+        ),
+        required=settings.log_files_required,
+    )
+
+
 def _static_fields(service: str, environment: str) -> Processor:
     def add(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
         event_dict.setdefault("service", service)
@@ -100,8 +165,11 @@ def configure_logging(service: str = "api", *, configure_stdlib: bool = False) -
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
+    _configure_file_sink()
+
     shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,
+        _add_logger_name,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         _static_fields(service, settings.environment),
@@ -114,11 +182,11 @@ def configure_logging(service: str = "api", *, configure_stdlib: bool = False) -
             structlog.processors.format_exc_info,
             # LOG-08 — after `format_exc_info`, so the rendered traceback is masked too.
             redact_event,
-            structlog.processors.JSONRenderer(),
+            _render_and_route,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=_STDOUT),  # type: ignore[arg-type]
+        logger_factory=_NamedPrintLoggerFactory(_STDOUT),
         cache_logger_on_first_use=True,
     )
 
@@ -138,7 +206,7 @@ def configure_logging(service: str = "api", *, configure_stdlib: bool = False) -
                     structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                     structlog.processors.format_exc_info,
                     redact_event,
-                    structlog.processors.JSONRenderer(),
+                    _render_and_route,
                 ],
             )
         )

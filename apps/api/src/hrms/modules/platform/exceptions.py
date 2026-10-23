@@ -61,3 +61,53 @@ class PlatformAdminLockedError(AppError):
 
     def __init__(self) -> None:
         super().__init__("Account is temporarily locked")
+
+
+class PlatformAdminNotFoundError(NotFoundError):
+    code = "PLATFORM_ADMIN_NOT_FOUND"
+
+    def __init__(self) -> None:
+        super().__init__("Platform admin not found")
+
+
+class PlatformUsernameTakenError(ConflictError):
+    code = "USERNAME_TAKEN"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "That username is already in use",
+            details=[{"field": "username", "code": self.code, "message": "Already in use"}],
+        )
+
+
+class WeakPlatformPasswordError(ValidationError):
+    code = "WEAK_PASSWORD"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Password does not meet minimum strength requirements",
+            details=[
+                {
+                    "field": "password",
+                    "code": self.code,
+                    "message": "Use at least 8 characters with a letter and a digit, "
+                    "and avoid common passwords",
+                }
+            ],
+        )
+
+
+class CannotRemoveLastAdminError(ConflictError):
+    """Disabling yourself, or the last active platform admin, would lock everyone out."""
+
+    code = "CANNOT_DISABLE_ADMIN"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+class AdminAlreadyVerifiedError(ConflictError):
+    code = "ADMIN_ALREADY_VERIFIED"
+
+    def __init__(self) -> None:
+        super().__init__("This admin's email address is already verified")

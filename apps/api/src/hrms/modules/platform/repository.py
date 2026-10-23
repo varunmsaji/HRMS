@@ -94,6 +94,7 @@ class PlatformRepository:
         query: str | None,
         limit: int,
         offset: int,
+        oldest_first: bool = False,
     ) -> tuple[list[tuple[Company, User | None]], int]:
         conditions: list[ColumnElement[bool]] = [Company.deleted_at.is_(None)]
         if status:
@@ -114,7 +115,12 @@ class PlatformRepository:
         ).scalar_one()
         rows = (
             await session.execute(
-                base.order_by(Company.created_at.desc(), Company.id).limit(limit).offset(offset)
+                base.order_by(
+                    Company.created_at.asc() if oldest_first else Company.created_at.desc(),
+                    Company.id,
+                )
+                .limit(limit)
+                .offset(offset)
             )
         ).all()
         return [(c, u) for c, u in rows], int(total)
@@ -263,3 +269,98 @@ class PlatformRepository:
             .all()
         )
         return list(rows), int(total)
+
+    # ---- dashboard extras ----------------------------------------------------------------
+    async def registrations_per_day(
+        self, session: AsyncSession, since: datetime
+    ) -> list[tuple[Any, int]]:
+        day = func.date_trunc("day", Company.created_at)
+        rows = (
+            await session.execute(
+                select(day, func.count())
+                .where(Company.created_at >= since, Company.deleted_at.is_(None))
+                .group_by(day)
+                .order_by(day)
+            )
+        ).all()
+        return [(d.date(), int(n)) for d, n in rows]
+
+    async def list_trials_expiring(
+        self, session: AsyncSession, cutoff: datetime, limit: int
+    ) -> list[tuple[Company, User | None]]:
+        stmt = (
+            select(Company, User)
+            .outerjoin(User, User.id == Company.created_by)
+            .where(
+                Company.status == "TRIAL",
+                Company.trial_ends_at.is_not(None),
+                Company.trial_ends_at <= cutoff,
+                Company.deleted_at.is_(None),
+            )
+            .order_by(Company.trial_ends_at.asc())
+            .limit(limit)
+        )
+        return [(c, u) for c, u in (await session.execute(stmt)).all()]
+
+    async def list_retention_due(
+        self, session: AsyncSession, cutoff: datetime, limit: int
+    ) -> list[tuple[Company, User | None]]:
+        stmt = (
+            select(Company, User)
+            .outerjoin(User, User.id == Company.created_by)
+            .where(
+                Company.status == "TERMINATED",
+                Company.retention_until.is_not(None),
+                Company.retention_until <= cutoff,
+                Company.deleted_at.is_(None),
+            )
+            .order_by(Company.retention_until.asc())
+            .limit(limit)
+        )
+        return [(c, u) for c, u in (await session.execute(stmt)).all()]
+
+    async def count_locked_company_admins(self, session: AsyncSession) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Company)
+            .join(User, User.id == Company.created_by)
+            .where(
+                User.locked_until.is_not(None),
+                User.locked_until > datetime.now(UTC),
+                Company.deleted_at.is_(None),
+            )
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
+    async def list_plans(self, session: AsyncSession) -> list[Plan]:
+        stmt = select(Plan).where(Plan.is_active.is_(True)).order_by(Plan.code)
+        return list((await session.execute(stmt)).scalars().all())
+
+    # ---- platform admin accounts -----------------------------------------------------------
+    async def list_admins(self, session: AsyncSession) -> list[PlatformAdmin]:
+        stmt = select(PlatformAdmin).order_by(PlatformAdmin.created_at, PlatformAdmin.username)
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def count_active_admins(self, session: AsyncSession) -> int:
+        stmt = (
+            select(func.count()).select_from(PlatformAdmin).where(PlatformAdmin.status == "ACTIVE")
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
+    async def create_admin(
+        self, session: AsyncSession, *, username: str, password_hash: str
+    ) -> PlatformAdmin:
+        row = PlatformAdmin(id=uuid4(), username=username, password_hash=password_hash)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def revoke_admin_sessions(self, session: AsyncSession, admin_id: UUID) -> None:
+        await session.execute(
+            update(PlatformSession)
+            .where(
+                PlatformSession.platform_admin_id == admin_id,
+                PlatformSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )

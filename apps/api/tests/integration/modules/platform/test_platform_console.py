@@ -422,3 +422,160 @@ async def test_email_failure_does_not_undo_the_change(
     r = await _action(client, platform_admin, tenant.company_id, "approve")
     assert r.status_code == 200
     assert await _status(tenant.company_id) == "TRIAL"
+
+
+# --- dashboard, plans, admin accounts, support --------------------------------------------------
+
+
+async def test_dashboard_has_queues_trend_and_activity(
+    client: AsyncClient, make_tenant: Any, platform_admin: Any
+) -> None:
+    pending = await make_tenant()
+    trial = await make_tenant()
+    await _action(client, platform_admin, trial.company_id, "approve")
+    async with get_session_factory()() as session:  # make the trial end soon
+        await session.execute(
+            text("UPDATE company SET trial_ends_at = now() + interval '2 days' WHERE id = :i"),
+            {"i": str(trial.company_id)},
+        )
+        await session.commit()
+
+    d = (await client.get(f"{P}/dashboard", headers=platform_admin.headers)).json()["data"]
+    assert d["total_companies"] == sum(d["counts_by_status"].values())
+    assert len(d["registrations_last_30_days"]) == 30
+    assert d["registrations_total_30_days"] >= 2
+    assert str(pending.company_id) in {c["id"] for c in d["pending"]} or d["pending_count"] > 5
+    assert str(trial.company_id) in {c["id"] for c in d["trials_expiring"]}
+    assert d["trials_expiring_within_7_days"] >= 1
+    assert d["active_platform_admins"] >= 1
+    assert any(a["action"] == "COMPANY_APPROVED" for a in d["recent_activity"])
+    assert "password" not in str(d).lower()
+
+
+async def test_plan_catalogue_feeds_plan_changes(
+    client: AsyncClient, make_tenant: Any, platform_admin: Any
+) -> None:
+    tenant = await make_tenant()
+    plans = (await client.get(f"{P}/plans", headers=platform_admin.headers)).json()["data"]
+    assert plans and {"code", "name"} <= set(plans[0])
+    code = plans[-1]["code"]
+    r = await client.patch(
+        f"{P}/companies/{tenant.company_id}/subscription",
+        headers=platform_admin.headers,
+        json={"plan_code": code},
+    )
+    assert r.status_code == 200 and r.json()["data"]["subscription"]["plan_code"] == code
+
+
+async def test_platform_admin_account_management(client: AsyncClient, platform_admin: Any) -> None:
+    username = f"pt-{uuid4().hex[:8]}"
+    created_id = None
+    try:
+        weak = await client.post(
+            f"{P}/admins",
+            headers=platform_admin.headers,
+            json={"username": username, "password": "short"},
+        )
+        assert weak.status_code == 422 and weak.json()["error"]["code"] == "WEAK_PASSWORD"
+
+        ok = await client.post(
+            f"{P}/admins",
+            headers=platform_admin.headers,
+            json={"username": username.upper(), "password": "Another-Pass-7"},
+        )
+        assert ok.status_code == 201, ok.text
+        created_id = ok.json()["data"]["id"]
+        assert ok.json()["data"]["username"] == username  # normalised to lower case
+        assert "password" not in ok.text.lower()
+
+        dup = await client.post(
+            f"{P}/admins",
+            headers=platform_admin.headers,
+            json={"username": username, "password": "Another-Pass-7"},
+        )
+        assert dup.status_code == 409 and dup.json()["error"]["code"] == "USERNAME_TAKEN"
+
+        listing = (await client.get(f"{P}/admins", headers=platform_admin.headers)).json()["data"]
+        assert {a["username"] for a in listing} >= {username, platform_admin.username}
+        assert [a for a in listing if a["is_you"]][0]["username"] == platform_admin.username
+
+        # the new admin signs in; disabling them signs them out at once and blocks sign-in
+        token = (await login_platform(client, username, "Another-Pass-7")).json()["data"][
+            "access_token"
+        ]
+        theirs = {"Authorization": f"Bearer {token}"}
+        assert (await client.get(f"{P}/auth/me", headers=theirs)).status_code == 200
+        off = await client.post(f"{P}/admins/{created_id}/disable", headers=platform_admin.headers)
+        assert off.status_code == 200 and off.json()["data"]["status"] == "DISABLED"
+        assert (await client.get(f"{P}/auth/me", headers=theirs)).status_code == 401
+        assert (await login_platform(client, username, "Another-Pass-7")).status_code == 401
+
+        await client.post(f"{P}/admins/{created_id}/enable", headers=platform_admin.headers)
+        weak_reset = await client.post(
+            f"{P}/admins/{created_id}/reset-password",
+            headers=platform_admin.headers,
+            json={"password": "x"},
+        )
+        assert weak_reset.status_code == 422
+        reset = await client.post(
+            f"{P}/admins/{created_id}/reset-password",
+            headers=platform_admin.headers,
+            json={"password": "Brand-New-Pass-3"},
+        )
+        assert reset.status_code == 200
+        assert (await login_platform(client, username, "Another-Pass-7")).status_code == 401
+        assert (await login_platform(client, username, "Brand-New-Pass-3")).status_code == 200
+
+        # you cannot disable yourself
+        me_id = [a for a in listing if a["is_you"]][0]["id"]
+        own = await client.post(f"{P}/admins/{me_id}/disable", headers=platform_admin.headers)
+        assert own.status_code == 409 and own.json()["error"]["code"] == "CANNOT_DISABLE_ADMIN"
+
+        actions = {
+            e["action"]
+            for e in (
+                await client.get(
+                    f"{P}/audit-log", headers=platform_admin.headers, params={"per_page": 50}
+                )
+            ).json()["data"]
+        }
+        assert {
+            "PLATFORM_ADMIN_CREATED",
+            "PLATFORM_ADMIN_DISABLED",
+            "PLATFORM_ADMIN_PASSWORD_RESET",
+        } <= actions
+    finally:
+        if created_id:
+            async with get_session_factory()() as session:
+                await session.execute(
+                    text("DELETE FROM platform_admin WHERE id = :i"), {"i": created_id}
+                )
+                await session.commit()
+
+
+async def test_resend_verification_only_for_unverified_admins(
+    client: AsyncClient, make_tenant: Any, platform_admin: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[dict[str, str]] = []
+
+    class _Capture:
+        async def send(self, **kwargs: str) -> None:
+            sent.append(kwargs)
+
+    monkeypatch.setattr("hrms.modules.identity.service.get_email_sender", lambda _s: _Capture())
+    unverified = await make_tenant(verified=False)
+    verified = await make_tenant(verified=True)
+    sent.clear()  # registration itself sends a verification email
+    r = await client.post(
+        f"{P}/companies/{unverified.company_id}/admin/resend-verification",
+        headers=platform_admin.headers,
+    )
+    assert r.status_code == 200
+    assert len(sent) == 1 and sent[0]["to"] == unverified.email
+
+    again = await client.post(
+        f"{P}/companies/{verified.company_id}/admin/resend-verification",
+        headers=platform_admin.headers,
+    )
+    assert again.status_code == 409 and again.json()["error"]["code"] == "ADMIN_ALREADY_VERIFIED"
+    assert len(sent) == 1

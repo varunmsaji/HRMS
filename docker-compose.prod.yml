@@ -34,6 +34,9 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  # Per-module application log files, shared by api, worker and beat (multi-process-safe
+  # appends and rotation — see docs/operations/LOGGING_GUIDE.md).
+  api_logs:
   certbot_certs:
   certbot_webroot:
 
@@ -135,6 +138,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    volumes:
+      - api_logs:/app/logs
     networks: [data, edge]
     logging: *default-logging
     # HEALTHCHECK is inherited from the image (apps/api/Dockerfile) — liveness only, deliberately
@@ -175,6 +180,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    volumes:
+      - api_logs:/app/logs
     networks: [data]
     # Overrides the image's inherited HEALTHCHECK (an HTTP GET on :8000 — this container runs
     # Celery, not the API's HTTP server, so that check would fail permanently). `inspect ping`
@@ -216,6 +223,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - api_logs:/app/logs
     networks: [data]
     logging: *default-logging
 

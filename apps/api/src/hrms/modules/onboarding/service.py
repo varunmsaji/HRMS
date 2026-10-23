@@ -19,6 +19,7 @@ from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import AppError, NotFoundError
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
+from hrms.core.observability.operations import logged_operation
 from hrms.core.storage import DocumentStorageService
 from hrms.modules.onboarding.document_validation import (
     content_disposition_attachment,
@@ -318,6 +319,7 @@ class OnboardingCaseService:
             raise InvalidBranchReferenceError() from exc
         return branch.legal_entity_id
 
+    @logged_operation("recruitment.onboarding_case.create")
     async def create_case(
         self,
         company_id: UUID,
@@ -577,6 +579,7 @@ class OnboardingCaseService:
             nominee_info=await self._decrypt_nominee_info(updated),
         )
 
+    @logged_operation("recruitment.onboarding_case.submit")
     async def submit_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
         """`POST /public/onboarding/{token}/submit` (O4) — `IN_PROGRESS`/`CHANGES_REQUESTED` ->
         `SUBMITTED`. No `actor_user_id` to record (this is the candidate's own action, and the
@@ -790,6 +793,7 @@ class OnboardingDocumentService:
         self._storage = DocumentStorageService(self._settings)
         self._audit = AuditService()
 
+    @logged_operation("documents.onboarding_document.upload", logger_name="hrms.documents")
     async def upload_document(
         self,
         company_id: UUID,
@@ -885,6 +889,7 @@ class OnboardingDocumentService:
             result.append(onboarding_document_to_read_with_url(document, url))
         return result
 
+    @logged_operation("documents.onboarding_document.delete", logger_name="hrms.documents")
     async def delete_document(self, company_id: UUID, case_id: UUID, document_id: UUID) -> None:
         case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
         if case is None:
@@ -1205,6 +1210,7 @@ class OnboardingActivationService:
         nominee_info["items"] = decrypted_items
         return nominee_info
 
+    @logged_operation("recruitment.onboarding_case.activate")
     async def activate_case(
         self,
         company_id: UUID,

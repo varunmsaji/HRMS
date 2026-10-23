@@ -22,6 +22,7 @@ from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave
 from hrms.core.db.timeouts import bounded_waits, is_wait_timeout
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
+from hrms.core.observability.operations import logged_operation
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.attendance import calculation as calc
 from hrms.modules.attendance.exceptions import (
@@ -2581,6 +2582,7 @@ class PunchService:
         )
         return read
 
+    @logged_operation("attendance.punch.record", result_fields=lambda r: {"replayed": r[1]})
     async def record_punch_outcome(
         self,
         company_id: UUID,
@@ -2919,6 +2921,7 @@ class AttendanceDayService:
             results.append(attendance_day_to_read(row, breaks))
         return results
 
+    @logged_operation("attendance.day.calculate")
     async def calculate(
         self,
         company_id: UUID,
@@ -4235,6 +4238,7 @@ class RegularizationRequestService:
             },
         )
 
+    @logged_operation("attendance.regularization.submit")
     async def submit(
         self,
         company_id: UUID,
@@ -4499,6 +4503,7 @@ class RegularizationRequestService:
             )
         return read
 
+    @logged_operation("attendance.regularization.cancel")
     async def cancel(
         self,
         company_id: UUID,
@@ -4572,6 +4577,7 @@ class RegularizationRequestService:
             )
         return read
 
+    @logged_operation("attendance.regularization.approve")
     async def approve(
         self,
         company_id: UUID,
@@ -4599,6 +4605,7 @@ class RegularizationRequestService:
             user_agent=user_agent,
         )
 
+    @logged_operation("attendance.regularization.reject")
     async def reject(
         self,
         company_id: UUID,
@@ -5168,6 +5175,7 @@ class OvertimeRecordService:
             current=overtime_record_to_audit_dict(current_read),
         )
 
+    @logged_operation("attendance.overtime.approve")
     async def approve(
         self,
         company_id: UUID,
@@ -5298,6 +5306,7 @@ class OvertimeRecordService:
             )
         return read
 
+    @logged_operation("attendance.overtime.reject")
     async def reject(
         self,
         company_id: UUID,
@@ -6274,6 +6283,7 @@ class AttendancePeriodService:
         )
         return read
 
+    @logged_operation("attendance.period.reopen")
     async def reopen(
         self,
         company_id: UUID,

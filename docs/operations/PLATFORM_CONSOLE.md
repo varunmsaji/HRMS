@@ -44,12 +44,19 @@ until it is, restrict `/v1/platform` and `/platform` at the reverse proxy (IP al
 
 ## Using it
 
-- Web: `/platform/login` → company queue (defaults to *awaiting approval*), company detail with
-  Approve / Reject / Suspend / Reactivate / Terminate, trial extension, unlock admin; `/platform/audit`.
+- Web (`/platform`): **Dashboard** (KPIs, 30-day registrations chart, companies by status, approval
+  queue with inline Approve/Reject, trials ending ≤ 7 days, terminated companies whose retention ends
+  within 30 days, recent activity) · **Companies** (filter by status, search, pagination) · company
+  detail (lifecycle actions with reasons, plan change, seat override, trial extension, unlock admin,
+  resend verification email, per-company history) · **Platform admins** (list, add, disable/enable,
+  reset password) · **Audit log** (filter by action).
 - API (platform token only): `POST /v1/platform/auth/login`, `GET /dashboard`, `GET /companies`,
   `GET /companies/{id}`, `POST /companies/{id}/{approve|reject|suspend|reactivate|terminate}`,
   `PATCH /companies/{id}/subscription` (`plan_code`, `extend_trial_days`, `seat_limit_override`),
-  `POST /companies/{id}/admin/unlock`, `GET /audit-log`.
+  `POST /companies/{id}/admin/unlock`, `POST /companies/{id}/admin/resend-verification`,
+  `GET /plans`, `GET|POST /admins`, `POST /admins/{id}/{disable|enable|reset-password}`, `GET /audit-log`.
+  Disabling or resetting another admin signs them out at once; you cannot disable yourself or the
+  last active admin.
 - Platform tokens: JWT `type=platform`, `aud=platform`, 30 min (`PLATFORM_ACCESS_TTL_MINUTES`), not
   refreshable, backed by a revocable `platform_session`. Tenant tokens are rejected on `/v1/platform`
   and platform tokens on every tenant route (tested).

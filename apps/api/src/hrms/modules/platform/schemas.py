@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -97,11 +97,25 @@ class CompanyDetail(CompanyListItem):
     usage: UsageInfo
 
 
+class DayCount(BaseModel):
+    day: date
+    count: int
+
+
 class DashboardData(BaseModel):
     counts_by_status: dict[str, int]
+    total_companies: int
     pending_count: int
     oldest_pending_since: datetime | None
     trials_expiring_within_7_days: int
+    registrations_last_30_days: list[DayCount]
+    registrations_total_30_days: int
+    locked_company_admins: int
+    active_platform_admins: int
+    pending: list["CompanyListItem"]
+    trials_expiring: list["CompanyListItem"]
+    retention_due: list["CompanyListItem"]
+    recent_activity: list["PlatformAuditEntry"]
 
 
 class PlatformAuditEntry(BaseModel):
@@ -114,3 +128,33 @@ class PlatformAuditEntry(BaseModel):
     before_status: str | None
     after_status: str | None
     request_id: str | None
+
+
+class PlanItem(BaseModel):
+    code: str
+    name: str
+    description: str | None
+
+
+class PlatformAdminItem(BaseModel):
+    id: UUID
+    username: str
+    status: Literal["ACTIVE", "DISABLED"]
+    locked: bool
+    last_login_at: datetime | None
+    created_at: datetime
+    is_you: bool = False
+
+
+class PlatformAdminCreate(_Strict):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+
+    @field_validator("username")
+    @classmethod
+    def _lower(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class PlatformAdminPasswordReset(_Strict):
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
