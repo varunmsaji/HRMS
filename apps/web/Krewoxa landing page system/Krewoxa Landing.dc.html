@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Krewoxa HRMS | Organize Your HR Operations</title>
+<meta name="description" content="Discover how Krewoxa helps businesses organize employee information and everyday HR workflows. Book a demo to explore the product.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet">
+<style>
+html{scroll-behavior:smooth;scroll-padding-top:88px}
+body{margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;color:#172B3A;background:#fff;-webkit-font-smoothing:antialiased}
+a{color:#176B87;text-decoration:none}a:hover{color:#102A43}
+*{box-sizing:border-box}
+:focus-visible{outline:3px solid #167D91;outline-offset:2px;border-radius:6px}
+.k-burger{display:none!important}
+@media(max-width:880px){.k-links,.k-hidem{display:none!important}.k-burger{display:inline-flex!important}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+</style>
+</helmet>
+
+<div style="font-size:16px;line-height:1.6;overflow-x:hidden">
+
+<!-- HEADER -->
+<header style="position:sticky;top:0;z-index:20;background:rgba(255,255,255,.96);border-bottom:1px solid #E2E8EF">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px);height:76px;display:flex;align-items:center;justify-content:space-between;gap:24px">
+    <a href="#top" aria-label="Krewoxa home" style="font-size:25px;font-weight:700;letter-spacing:-.03em;color:#102A43">Krewoxa<span style="color:#167D91">.</span></a>
+    <nav class="k-links" aria-label="Primary" style="display:flex;gap:32px">
+      <a href="#features" style="color:#172B3A;font-weight:500;font-size:15px">Features</a>
+      <a href="#solutions" style="color:#172B3A;font-weight:500;font-size:15px">Solutions</a>
+      <a href="#how" style="color:#172B3A;font-weight:500;font-size:15px">How it works</a>
+      <a href="#faq" style="color:#172B3A;font-weight:500;font-size:15px">FAQ</a>
+    </nav>
+    <div style="display:flex;align-items:center;gap:12px">
+      <a href="#demo" style="display:inline-flex;align-items:center;height:44px;padding:0 20px;border-radius:10px;background:#176B87;color:#fff;font-weight:600;font-size:15px;transition:background .2s" style-hover="background:#102A43;color:#fff">Book a demo</a>
+      <button class="k-burger" onClick="{{ toggleMenu }}" aria-label="Menu" aria-expanded="{{ menuOpen }}" aria-controls="mobnav" style="width:44px;height:44px;border:1px solid #E2E8EF;background:#fff;border-radius:10px;align-items:center;justify-content:center;cursor:pointer;font-size:20px;color:#102A43">{{ menuIcon }}</button>
+    </div>
+  </div>
+  <sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}">
+    <nav id="mobnav" aria-label="Mobile" style="border-top:1px solid #E2E8EF;padding:8px clamp(18px,3vw,40px) 16px;display:flex;flex-direction:column;background:#fff">
+      <a href="#features" onClick="{{ closeMenu }}" style="padding:14px 0;color:#172B3A;font-weight:500;border-bottom:1px solid #E2E8EF">Features</a>
+      <a href="#solutions" onClick="{{ closeMenu }}" style="padding:14px 0;color:#172B3A;font-weight:500;border-bottom:1px solid #E2E8EF">Solutions</a>
+      <a href="#how" onClick="{{ closeMenu }}" style="padding:14px 0;color:#172B3A;font-weight:500;border-bottom:1px solid #E2E8EF">How it works</a>
+      <a href="#faq" onClick="{{ closeMenu }}" style="padding:14px 0;color:#172B3A;font-weight:500">FAQ</a>
+    </nav>
+  </sc-if>
+</header>
+
+<main id="top">
+
+<!-- HERO -->
+<section style="background:linear-gradient(180deg,#F1FAFA 0,#fff 100%);padding:clamp(48px,7vw,96px) 0 clamp(40px,6vw,80px)">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px)">
+    <div style="max-width:880px">
+      <p style="margin:0 0 20px;display:inline-flex;align-items:center;gap:10px;font-size:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#176B87"><span style="width:28px;height:2px;background:#167D91"></span>HR management for growing teams</p>
+      <h1 style="margin:0;font-size:clamp(2.75rem,5.6vw,4.9rem);line-height:1.04;letter-spacing:-.035em;font-weight:700;color:#102A43">Better HR. Clearer workflows. <span style="color:#167D91">Stronger teams.</span></h1>
+      <p style="margin:28px 0 0;max-width:640px;font-size:clamp(1.05rem,1.5vw,1.25rem);color:#5D6B78">Bring your everyday HR operations together with Krewoxa. Organize employee information and simplify workforce workflows in one connected workspace.</p>
+      <div style="margin-top:36px;display:flex;flex-wrap:wrap;gap:12px">
+        <a href="#demo" style="display:inline-flex;align-items:center;justify-content:center;height:52px;padding:0 28px;border-radius:10px;background:#176B87;color:#fff;font-weight:600;transition:background .2s,transform .2s" style-hover="background:#102A43;color:#fff;transform:translateY(-1px)">Book a demo</a>
+        <a href="#features" style="display:inline-flex;align-items:center;justify-content:center;height:52px;padding:0 28px;border-radius:10px;border:1px solid #C9D4DF;background:#fff;color:#102A43;font-weight:600" style-hover="border-color:#176B87;color:#176B87">Explore features</a>
+      </div>
+      <p style="margin:18px 0 0;font-size:14px;color:#5D6B78">See how Krewoxa fits your HR workflow in a guided walkthrough.</p>
+    </div>
+
+    <!-- hero dashboard -->
+    <div role="img" aria-label="Illustrative Krewoxa dashboard showing headcount, attendance and leave requests, using sample data" style="margin-top:clamp(40px,5vw,64px);background:#fff;border:1px solid #E2E8EF;border-radius:20px;box-shadow:0 30px 70px -30px rgba(16,42,67,.35);overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #E2E8EF;background:#F7F9FB">
+        <span style="width:10px;height:10px;border-radius:50%;background:#E2E8EF"></span><span style="width:10px;height:10px;border-radius:50%;background:#E2E8EF"></span><span style="width:10px;height:10px;border-radius:50%;background:#E2E8EF"></span>
+        <span style="margin-left:12px;font-size:12.5px;color:#5D6B78">Illustrative interface · sample data</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));">
+        <aside style="padding:20px 16px;border-right:1px solid #E2E8EF;background:#fff;display:flex;flex-direction:column;gap:4px">
+          <div style="font-weight:700;color:#102A43;font-size:17px;padding:0 10px 14px;letter-spacing:-.02em">Krewoxa<span style="color:#167D91">.</span></div>
+          <sc-for list="{{ sideNav }}" as="n" hint-placeholder-count="6">
+            <div style="padding:9px 10px;border-radius:8px;font-size:14px;font-weight:500;background:{{ n.bg }};color:{{ n.color }}">{{ n.label }}</div>
+          </sc-for>
+        </aside>
+        <div style="grid-column:span 3;min-width:0;padding:clamp(16px,2.4vw,28px);background:#F7F9FB;display:flex;flex-direction:column;gap:16px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:12px">
+            <sc-for list="{{ stats }}" as="s" hint-placeholder-count="4">
+              <div style="background:#fff;border:1px solid #E2E8EF;border-radius:14px;padding:16px">
+                <div style="font-size:13px;color:#5D6B78">{{ s.label }}</div>
+                <div style="font-size:30px;font-weight:700;letter-spacing:-.03em;color:#102A43;margin-top:2px">{{ s.value }}</div>
+                <div style="font-size:12.5px;color:#5D6B78">{{ s.note }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px">
+            <div style="background:#fff;border:1px solid #E2E8EF;border-radius:14px;padding:18px">
+              <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:600;color:#102A43"><span>Attendance this week</span><span style="font-weight:450;color:#5D6B78">% present</span></div>
+              <div style="display:flex;align-items:flex-end;gap:10px;height:130px;margin-top:16px">
+                <sc-for list="{{ week }}" as="d" hint-placeholder-count="5">
+                  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;justify-content:flex-end;height:100%">
+                    <div style="width:100%;border-radius:6px 6px 0 0;background:{{ d.bg }};height:{{ d.h }}"></div>
+                    <span style="font-size:12px;color:#5D6B78">{{ d.day }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #E2E8EF;border-radius:14px;padding:18px">
+              <div style="font-size:14px;font-weight:600;color:#102A43;margin-bottom:8px">Leave requests</div>
+              <sc-for list="{{ leaves }}" as="l" hint-placeholder-count="3">
+                <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid #E2E8EF">
+                  <span style="width:34px;height:34px;border-radius:50%;background:{{ l.tint }};color:#102A43;font-size:12.5px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none">{{ l.ini }}</span>
+                  <div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:500;color:#172B3A">{{ l.name }}</div><div style="font-size:12.5px;color:#5D6B78">{{ l.type }} · {{ l.dates }}</div></div>
+                  <span style="font-size:12.5px;font-weight:600;padding:3px 10px;border-radius:99px;background:{{ l.sbg }};color:{{ l.sc }}">{{ l.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- VALUE -->
+<section id="solutions" style="padding:clamp(56px,7vw,96px) 0;border-top:1px solid #E2E8EF">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:clamp(32px,5vw,72px);align-items:start">
+    <div>
+      <p style="margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#176B87">Why Krewoxa</p>
+      <h2 style="margin:0;font-size:clamp(2rem,3.2vw,3.1rem);line-height:1.12;letter-spacing:-.03em;font-weight:700;color:#102A43">Less chasing. More clarity about your people.</h2>
+    </div>
+    <div style="display:flex;flex-direction:column">
+      <sc-for list="{{ values }}" as="v" hint-placeholder-count="3">
+        <div style="display:grid;grid-template-columns:48px 1fr;gap:16px;padding:24px 0;border-top:1px solid #E2E8EF">
+          <span style="font-size:15px;font-weight:600;color:#167D91;letter-spacing:.04em">{{ v.n }}</span>
+          <div><h3 style="margin:0 0 6px;font-size:1.3rem;letter-spacing:-.015em;color:#102A43">{{ v.t }}</h3><p style="margin:0;color:#5D6B78">{{ v.d }}</p></div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features" style="background:#F7F9FB;padding:clamp(56px,7vw,104px) 0;border-top:1px solid #E2E8EF">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px)">
+    <div style="max-width:720px;margin-bottom:clamp(40px,5vw,72px)">
+      <p style="margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#176B87">Features</p>
+      <h2 style="margin:0;font-size:clamp(2rem,3.2vw,3.1rem);line-height:1.12;letter-spacing:-.03em;font-weight:700;color:#102A43">Everyday HR workflows, in the same workspace.</h2>
+    </div>
+
+    <!-- story 1: employees -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:clamp(28px,5vw,72px);align-items:center;margin-bottom:clamp(56px,7vw,104px)">
+      <div>
+        <p style="margin:0 0 10px;font-weight:600;color:#176B87">Employee records</p>
+        <h3 style="margin:0 0 14px;font-size:clamp(1.5rem,2.4vw,2.1rem);line-height:1.18;letter-spacing:-.025em;color:#102A43">One place for every employee profile.</h3>
+        <p style="margin:0 0 20px;color:#5D6B78;max-width:480px">Keep job details, departments, reporting lines and contact information organized, so HR and managers always look at the same record.</p>
+        <a href="#demo" style="font-weight:600">See employee records in a demo →</a>
+      </div>
+      <div role="img" aria-label="Illustrative employee directory with sample data" style="background:#fff;border:1px solid #E2E8EF;border-radius:18px;padding:20px;box-shadow:0 18px 40px -26px rgba(16,42,67,.3);min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px"><strong style="color:#102A43">Employees</strong><span style="font-size:13px;padding:5px 12px;border:1px solid #E2E8EF;border-radius:8px;color:#5D6B78">Search by name…</span></div>
+        <sc-for list="{{ people }}" as="p" hint-placeholder-count="5">
+          <div style="display:grid;grid-template-columns:36px minmax(0,1.4fr) minmax(0,1fr);gap:12px;align-items:center;padding:11px 0;border-top:1px solid #E2E8EF">
+            <span style="width:36px;height:36px;border-radius:50%;background:{{ p.tint }};font-size:13px;font-weight:600;color:#102A43;display:flex;align-items:center;justify-content:center">{{ p.ini }}</span>
+            <div style="min-width:0"><div style="font-size:14.5px;font-weight:500">{{ p.name }}</div><div style="font-size:12.5px;color:#5D6B78">{{ p.role }}</div></div>
+            <div style="font-size:13px;color:#5D6B78">{{ p.dept }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- story 2: attendance -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:clamp(28px,5vw,72px);align-items:center;margin-bottom:clamp(56px,7vw,104px)">
+      <div role="img" aria-label="Illustrative daily attendance list with sample data" style="order:2;background:#fff;border:1px solid #E2E8EF;border-radius:18px;padding:20px;box-shadow:0 18px 40px -26px rgba(16,42,67,.3);min-width:0">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px"><strong style="color:#102A43">Today's attendance</strong><span style="font-size:13px;color:#5D6B78">Sample data</span></div>
+        <sc-for list="{{ attendance }}" as="a" hint-placeholder-count="5">
+          <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #E2E8EF">
+            <span style="font-size:14.5px;font-weight:500">{{ a.name }}</span>
+            <span style="font-size:13px;color:#5D6B78">{{ a.time }}</span>
+            <span style="font-size:12.5px;font-weight:600;padding:3px 10px;border-radius:99px;background:{{ a.bg }};color:{{ a.c }}">{{ a.status }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="order:1">
+        <p style="margin:0 0 10px;font-weight:600;color:#176B87">Attendance</p>
+        <h3 style="margin:0 0 14px;font-size:clamp(1.5rem,2.4vw,2.1rem);line-height:1.18;letter-spacing:-.025em;color:#102A43">See who's in, who's out, and who needs follow-up.</h3>
+        <p style="margin:0 0 20px;color:#5D6B78;max-width:480px">Track work time and review daily attendance without gathering updates from spreadsheets and messages.</p>
+        <a href="#demo" style="font-weight:600">See attendance in a demo →</a>
+      </div>
+    </div>
+
+    <!-- story 3: leave -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:clamp(28px,5vw,72px);align-items:center;margin-bottom:clamp(56px,7vw,104px)">
+      <div>
+        <p style="margin:0 0 10px;font-weight:600;color:#176B87">Leave management</p>
+        <h3 style="margin:0 0 14px;font-size:clamp(1.5rem,2.4vw,2.1rem);line-height:1.18;letter-spacing:-.025em;color:#102A43">Requests and approvals that don't get lost.</h3>
+        <p style="margin:0 0 20px;color:#5D6B78;max-width:480px">Employees raise requests, managers review them, and HR keeps a clear record of the outcome.</p>
+        <a href="#demo" style="font-weight:600">See leave workflows in a demo →</a>
+      </div>
+      <div role="img" aria-label="Illustrative leave approval card with sample data" style="background:#fff;border:1px solid #E2E8EF;border-radius:18px;padding:22px;box-shadow:0 18px 40px -26px rgba(16,42,67,.3);min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong style="color:#102A43">Leave request</strong><span style="font-size:12.5px;font-weight:600;padding:3px 10px;border-radius:99px;background:#FDF3E3;color:#9A5A12">Pending</span></div>
+        <div style="display:flex;gap:14px;align-items:center;margin:18px 0"><span style="width:44px;height:44px;border-radius:50%;background:#DDF3F3;display:flex;align-items:center;justify-content:center;font-weight:600;color:#102A43">AM</span><div><div style="font-weight:600">Anjali Menon</div><div style="font-size:13px;color:#5D6B78">Design · Reports to R. Nair</div></div></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:12px;padding:14px;background:#F7F9FB;border-radius:12px;font-size:14px">
+          <div><div style="color:#5D6B78;font-size:12.5px">Type</div>Casual leave</div>
+          <div><div style="color:#5D6B78;font-size:12.5px">Dates</div>12–14 Nov</div>
+          <div><div style="color:#5D6B78;font-size:12.5px">Days</div>3</div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:18px">
+          <span style="flex:1;text-align:center;padding:11px;border-radius:10px;background:#176B87;color:#fff;font-weight:600;font-size:14px">Approve</span>
+          <span style="flex:1;text-align:center;padding:11px;border-radius:10px;border:1px solid #C9D4DF;color:#102A43;font-weight:600;font-size:14px">Decline</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- story 4: payroll -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:clamp(28px,5vw,72px);align-items:center;margin-bottom:clamp(48px,6vw,80px)">
+      <div role="img" aria-label="Illustrative payroll workflow checklist with sample data" style="order:2;background:#fff;border:1px solid #E2E8EF;border-radius:18px;padding:22px;box-shadow:0 18px 40px -26px rgba(16,42,67,.3);min-width:0">
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px"><strong style="color:#102A43">Monthly payroll review</strong><span style="font-size:13px;color:#5D6B78">Sample data</span></div>
+        <sc-for list="{{ payroll }}" as="r" hint-placeholder-count="4">
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid #E2E8EF">
+            <span style="width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:{{ r.bg }};color:{{ r.c }};border:{{ r.bd }}">{{ r.mark }}</span>
+            <span style="flex:1;font-size:14.5px">{{ r.label }}</span>
+            <span style="font-size:13px;color:#5D6B78">{{ r.state }}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="order:1">
+        <p style="margin:0 0 10px;font-weight:600;color:#176B87">Payroll workflows</p>
+        <h3 style="margin:0 0 14px;font-size:clamp(1.5rem,2.4vw,2.1rem);line-height:1.18;letter-spacing:-.025em;color:#102A43">Bring payroll-related steps into view.</h3>
+        <p style="margin:0 0 20px;color:#5D6B78;max-width:480px">Connect attendance and leave information to payroll preparation so reviewers can follow what's ready and what's pending. <em style="font-style:normal;font-size:14px">Scope to be confirmed with the team.</em></p>
+        <a href="#demo" style="font-weight:600">Ask about payroll in a demo →</a>
+      </div>
+    </div>
+
+    <!-- secondary modules -->
+    <div style="border-top:1px solid #C9D4DF;padding-top:32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:28px">
+      <sc-for list="{{ modules }}" as="m" hint-placeholder-count="3">
+        <div><h3 style="margin:0 0 6px;font-size:1.1rem;color:#102A43">{{ m.t }}</h3><p style="margin:0;color:#5D6B78;font-size:15px">{{ m.d }}</p></div>
+      </sc-for>
+    </div>
+  </div>
+</section>
+
+<!-- HOW -->
+<section id="how" style="padding:clamp(56px,7vw,104px) 0">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px)">
+    <div style="max-width:720px;margin-bottom:clamp(36px,5vw,64px)">
+      <p style="margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#176B87">How it works</p>
+      <h2 style="margin:0;font-size:clamp(2rem,3.2vw,3.1rem);line-height:1.12;letter-spacing:-.03em;font-weight:700;color:#102A43">From scattered records to one workspace, in three steps.</h2>
+    </div>
+    <ol style="list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0">
+      <sc-for list="{{ steps }}" as="s" hint-placeholder-count="3">
+        <li style="padding:0 32px 8px 0;position:relative">
+          <div style="display:flex;align-items:center;gap:0;margin-bottom:22px"><span style="width:44px;height:44px;border-radius:50%;background:#102A43;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none">{{ s.n }}</span><span style="flex:1;height:2px;background:#DDF3F3"></span></div>
+          <h3 style="margin:0 0 8px;font-size:1.35rem;letter-spacing:-.015em;color:#102A43">{{ s.t }}</h3>
+          <p style="margin:0;color:#5D6B78">{{ s.d }}</p>
+        </li>
+      </sc-for>
+    </ol>
+  </div>
+</section>
+
+<!-- PRODUCT PREVIEW -->
+<section style="background:#102A43;padding:clamp(56px,7vw,104px) 0;color:#fff">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px)">
+    <div style="max-width:720px;margin-bottom:clamp(32px,4vw,56px)">
+      <p style="margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#9ADBDB">Product preview</p>
+      <h2 style="margin:0 0 14px;font-size:clamp(2rem,3.2vw,3.1rem);line-height:1.12;letter-spacing:-.03em;font-weight:700">A workspace your whole HR team can read at a glance.</h2>
+      <p style="margin:0;color:#C5D3E0;font-size:1.1rem">Illustrative mockup with sample data. Not a verified screenshot of the live application.</p>
+    </div>
+    <div role="img" aria-label="Illustrative Krewoxa workforce overview with department headcount, monthly attendance trend and pending actions, using sample data" style="background:#F7F9FB;color:#172B3A;border-radius:20px;padding:clamp(16px,2.4vw,28px);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px">
+      <div style="background:#fff;border:1px solid #E2E8EF;border-radius:14px;padding:20px;min-width:0">
+        <strong style="color:#102A43">Headcount by department</strong>
+        <div style="display:flex;flex-direction:column;gap:14px;margin-top:18px">
+          <sc-for list="{{ depts }}" as="d" hint-placeholder-count="5">
+            <div><div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:5px"><span>{{ d.name }}</span><span style="color:#5D6B78">{{ d.n }}</span></div><div style="height:8px;border-radius:4px;background:#E2E8EF"><div style="height:8px;border-radius:4px;background:#167D91;width:{{ d.w }}"></div></div></div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="background:#fff;border:1px solid #E2E8EF;border-radius:14px;padding:20px;min-width:0">
+        <div style="display:flex;justify-content:space-between"><strong style="color:#102A43">Attendance, last 6 months</strong><span style="font-size:13px;color:#5D6B78">% present</span></div>
+        <div style="display:flex;align-items:flex-end;gap:12px;height:180px;margin-top:18px;border-bottom:1px solid #E2E8EF">
+          <sc-for list="{{ months }}" as="m" hint-placeholder-count="6">
+            <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;gap:4px"><span style="font-size:12px;color:#5D6B78">{{ m.v }}</span><div style="width:100%;border-radius:6px 6px 0 0;background:#176B87;height:{{ m.h }}"></div></div>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:8px"><sc-for list="{{ months }}" as="m" hint-placeholder-count="6"><span style="flex:1;text-align:center;font-size:12px;color:#5D6B78">{{ m.m }}</span></sc-for></div>
+      </div>
+      <div style="background:#fff;border:1px solid #E2E8EF;border-radius:14px;padding:20px;min-width:0">
+        <strong style="color:#102A43">Needs your attention</strong>
+        <sc-for list="{{ actions }}" as="a" hint-placeholder-count="4">
+          <div style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid #E2E8EF;margin-top:0">
+            <span style="margin-top:7px;width:8px;height:8px;border-radius:50%;background:#167D91;flex:none"></span>
+            <div><div style="font-size:14.5px;font-weight:500">{{ a.t }}</div><div style="font-size:13px;color:#5D6B78">{{ a.d }}</div></div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TRUST -->
+<section style="padding:clamp(56px,7vw,104px) 0">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:clamp(32px,5vw,72px)">
+    <div>
+      <p style="margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#176B87">Trust and security</p>
+      <h2 style="margin:0 0 16px;font-size:clamp(2rem,3.2vw,3.1rem);line-height:1.12;letter-spacing:-.03em;font-weight:700;color:#102A43">Employee data deserves careful handling.</h2>
+      <p style="margin:0;color:#5D6B78;max-width:480px">HR records are sensitive. We'll walk you through how access, permissions and data handling work in Krewoxa, and answer security questions directly during your demo.</p>
+    </div>
+    <div style="display:flex;flex-direction:column">
+      <sc-for list="{{ trust }}" as="t" hint-placeholder-count="4">
+        <div style="padding:20px 0;border-top:1px solid #E2E8EF;display:grid;grid-template-columns:28px 1fr;gap:14px">
+          <span style="color:#167D91;font-weight:700" aria-hidden="true">✓</span>
+          <div><h3 style="margin:0 0 4px;font-size:1.1rem;color:#102A43">{{ t.t }}</h3><p style="margin:0;color:#5D6B78;font-size:15px">{{ t.d }}</p></div>
+        </div>
+      </sc-for>
+      <p style="margin:0;padding-top:16px;border-top:1px solid #E2E8EF;font-size:14px;color:#5D6B78">Specific capabilities are confirmed before publishing. No certifications or compliance claims are made on this page.</p>
+    </div>
+  </div>
+</section>
+
+<!-- DEMO -->
+<section id="demo" style="background:#F1FAFA;padding:clamp(56px,7vw,104px) 0;border-top:1px solid #DDF3F3;border-bottom:1px solid #DDF3F3">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:clamp(32px,5vw,80px);align-items:center">
+    <div>
+      <h2 style="margin:0 0 16px;font-size:clamp(2rem,3.4vw,3.3rem);line-height:1.1;letter-spacing:-.03em;font-weight:700;color:#102A43">Ready to bring your HR workflows together?</h2>
+      <p style="margin:0 0 20px;color:#5D6B78;font-size:1.1rem;max-width:480px">Tell us a little about your team and we'll show you whether Krewoxa fits how you work. No pressure, no obligation.</p>
+      <p style="margin:0;font-size:14px;color:#5D6B78">Prefer email? Contact details will appear here once confirmed.</p>
+    </div>
+    <div style="background:#fff;border:1px solid #E2E8EF;border-radius:18px;padding:clamp(20px,3vw,32px);box-shadow:0 18px 40px -28px rgba(16,42,67,.3)">
+      <sc-if value="{{ sent }}" hint-placeholder-val="{{ false }}">
+        <div role="status" style="padding:12px 0">
+          <div style="width:44px;height:44px;border-radius:50%;background:#E6F4EC;color:#247A52;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px">✓</div>
+          <h3 style="margin:16px 0 8px;font-size:1.4rem;color:#102A43">Thanks, {{ form.name }}.</h3>
+          <p style="margin:0;color:#5D6B78">Form preview only. This form isn't connected to a backend yet, so nothing was sent.</p>
+        </div>
+      </sc-if>
+      <sc-if value="{{ notSent }}" hint-placeholder-val="{{ true }}">
+        <form onSubmit="{{ submit }}" noValidate style="display:flex;flex-direction:column;gap:18px">
+          <div>
+            <label for="f-name" style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:#102A43">Full name <span style="color:#B42332">*</span></label>
+            <input id="f-name" name="name" value="{{ form.name }}" onInput="{{ setName }}" autocomplete="name" aria-describedby="e-name" aria-invalid="{{ errors.nameBool }}" style="width:100%;height:46px;padding:0 14px;border:1px solid #C9D4DF;border-radius:10px;font:inherit;color:#172B3A" style-focus="border-color:#176B87;outline:2px solid #DDF3F3">
+            <div id="e-name" style="color:#B42332;font-size:13.5px;margin-top:4px">{{ errors.name }}</div>
+          </div>
+          <div>
+            <label for="f-email" style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:#102A43">Work email <span style="color:#B42332">*</span></label>
+            <input id="f-email" name="email" type="email" value="{{ form.email }}" onInput="{{ setEmail }}" autocomplete="email" aria-describedby="e-email" aria-invalid="{{ errors.emailBool }}" style="width:100%;height:46px;padding:0 14px;border:1px solid #C9D4DF;border-radius:10px;font:inherit;color:#172B3A" style-focus="border-color:#176B87;outline:2px solid #DDF3F3">
+            <div id="e-email" style="color:#B42332;font-size:13.5px;margin-top:4px">{{ errors.email }}</div>
+          </div>
+          <div>
+            <label for="f-size" style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:#102A43">Team size <span style="font-weight:450;color:#5D6B78">(optional)</span></label>
+            <select id="f-size" style="width:100%;height:46px;padding:0 12px;border:1px solid #C9D4DF;border-radius:10px;font:inherit;color:#172B3A;background:#fff"><option>1–25 employees</option><option>26–100 employees</option><option>101–500 employees</option><option>500+ employees</option></select>
+          </div>
+          <button type="submit" style="height:52px;border:0;border-radius:10px;background:#176B87;color:#fff;font:inherit;font-weight:600;cursor:pointer;transition:background .2s" style-hover="background:#102A43">Book a demo</button>
+        </form>
+      </sc-if>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" style="padding:clamp(56px,7vw,104px) 0">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px);display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:clamp(32px,5vw,72px)">
+    <div>
+      <p style="margin:0 0 12px;font-size:14px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#176B87">FAQ</p>
+      <h2 style="margin:0;font-size:clamp(2rem,3.2vw,3.1rem);line-height:1.12;letter-spacing:-.03em;font-weight:700;color:#102A43">Common questions</h2>
+    </div>
+    <div style="grid-column:span 1;border-bottom:1px solid #E2E8EF">
+      <sc-for list="{{ faqs }}" as="q" hint-placeholder-count="6">
+        <div style="border-top:1px solid #E2E8EF">
+          <h3 style="margin:0"><button onClick="{{ q.toggle }}" aria-expanded="{{ q.open }}" style="width:100%;display:flex;justify-content:space-between;align-items:center;gap:16px;text-align:left;padding:20px 0;min-height:44px;background:none;border:0;font:inherit;font-size:1.1rem;font-weight:600;color:#102A43;cursor:pointer">{{ q.q }}<span aria-hidden="true" style="font-size:22px;color:#176B87;flex:none">{{ q.icon }}</span></button></h3>
+          <sc-if value="{{ q.open }}" hint-placeholder-val="{{ false }}"><p style="margin:0 0 20px;color:#5D6B78;max-width:600px">{{ q.a }}</p></sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section style="padding:0 0 clamp(56px,7vw,96px)">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px)">
+    <div style="background:#102A43;border-radius:20px;padding:clamp(32px,5vw,64px);display:flex;flex-wrap:wrap;gap:24px;align-items:center;justify-content:space-between;color:#fff">
+      <div style="max-width:620px"><h2 style="margin:0 0 10px;font-size:clamp(1.7rem,2.8vw,2.5rem);line-height:1.15;letter-spacing:-.025em">Give your HR team one clear place to work.</h2><p style="margin:0;color:#C5D3E0">See Krewoxa with your own workflows in mind.</p></div>
+      <a href="#demo" style="display:inline-flex;align-items:center;height:52px;padding:0 28px;border-radius:10px;background:#fff;color:#102A43;font-weight:600" style-hover="background:#DDF3F3;color:#102A43">Book a demo</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer style="background:#F7F9FB;border-top:1px solid #E2E8EF;padding:clamp(40px,5vw,64px) 0 28px">
+  <div style="max-width:1240px;margin:0 auto;padding:0 clamp(18px,3vw,40px)">
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:32px">
+      <div style="max-width:340px"><div style="font-size:24px;font-weight:700;letter-spacing:-.03em;color:#102A43">Krewoxa<span style="color:#167D91">.</span></div><p style="margin:10px 0 0;color:#5D6B78;font-size:15px">HR management for growing teams. Employee information and everyday workflows in one place.</p></div>
+      <nav aria-label="Footer" style="display:flex;flex-wrap:wrap;gap:12px 32px;align-self:flex-start">
+        <a href="#features" style="color:#172B3A;font-weight:500">Features</a><a href="#solutions" style="color:#172B3A;font-weight:500">Solutions</a><a href="#how" style="color:#172B3A;font-weight:500">How it works</a><a href="#faq" style="color:#172B3A;font-weight:500">FAQ</a><a href="#demo" style="color:#172B3A;font-weight:500">Book a demo</a>
+      </nav>
+    </div>
+    <div style="margin-top:36px;padding-top:20px;border-top:1px solid #E2E8EF;display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;font-size:14px;color:#5D6B78">
+      <span>© 2026 Krewoxa. Legal entity name to be confirmed.</span><span>Privacy policy and terms: links to be added once published.</span>
+    </div>
+  </div>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { menu: false, open: -1, sent: false, name: '', email: '', errors: {} };
+  renderVals() {
+    const s = this.state, T = ['#DDF3F3', '#E4ECF5', '#EEF1D9', '#F5E6E6', '#E9E4F5'];
+    const nav = ['Dashboard', 'Employees', 'Attendance', 'Leave', 'Payroll', 'Recruitment'];
+    const ppl = [['Anjali Menon', 'Product Designer', 'Design'], ['Rahul Nair', 'Operations Manager', 'Operations'], ['Fathima Rasheed', 'HR Executive', 'People'], ['Joseph Thomas', 'Accountant', 'Finance'], ['Meera Pillai', 'Support Lead', 'Customer Care']];
+    const ini = n => n.split(' ').map(w => w[0]).join('');
+    const days = [['Mon', 94], ['Tue', 96], ['Wed', 91], ['Thu', 95], ['Fri', 88]];
+    const lv = [['Anjali Menon', 'Casual leave', '12–14 Nov', 'Pending'], ['Joseph Thomas', 'Sick leave', '10 Nov', 'Approved'], ['Meera Pillai', 'Earned leave', '18–22 Nov', 'Pending']];
+    const st = { Pending: ['#FDF3E3', '#9A5A12'], Approved: ['#E6F4EC', '#247A52'] };
+    const att = [['Rahul Nair', '9:02 AM', 'Present'], ['Fathima Rasheed', '9:15 AM', 'Late'], ['Joseph Thomas', 'Sick leave', 'On leave'], ['Meera Pillai', '8:58 AM', 'Present'], ['Anjali Menon', 'Not checked in', 'Absent']];
+    const as = { Present: ['#E6F4EC', '#247A52'], Late: ['#FDF3E3', '#9A5A12'], 'On leave': ['#DDF3F3', '#176B87'], Absent: ['#FBE9EB', '#B42332'] };
+    const pay = [['Attendance reviewed', 'Done', 2], ['Leave adjustments applied', 'Done', 2], ['Manager review', 'In progress', 1], ['Final approval', 'Waiting', 0]];
+    const mons = [['Jun', 92], ['Jul', 93], ['Aug', 90], ['Sep', 94], ['Oct', 95], ['Nov', 93]];
+    const faqs = [
+      ['What is Krewoxa?', 'Krewoxa is a Human Resource Management System that helps businesses organize employee information and everyday HR workflows in one workspace.'],
+      ['Which HR workflows does it support?', 'Employee records, attendance, and leave are core areas. Payroll workflows, recruitment and documents are discussed in the demo so we can confirm what applies to you.'],
+      ['Is it suitable for a small or growing business?', 'Krewoxa is designed for growing teams that need more structure than spreadsheets. A demo is the best way to judge the fit for your size.'],
+      ['Can employees and managers use it on mobile?', 'Mobile access is part of our plans for employees and managers. Ask during a demo for what is available today.'],
+      ['How does onboarding work?', 'Typically you set up the organization, add employee information, then configure the workflows you need. We will outline your specific steps in the demo.'],
+      ['How can we arrange a demo?', 'Use the Book a demo form on this page and tell us a little about your team.']
+    ];
+    const e = s.errors;
+    return {
+      menuOpen: s.menu, menuIcon: s.menu ? '✕' : '☰',
+      toggleMenu: () => this.setState({ menu: !s.menu }), closeMenu: () => this.setState({ menu: false }),
+      sideNav: nav.map((l, i) => ({ label: l, bg: i ? 'transparent' : '#DDF3F3', color: i ? '#5D6B78' : '#102A43' })),
+      stats: [['Employees', '48', 'Sample headcount'], ['Present today', '41', 'of 48'], ['On leave', '4', 'Approved'], ['Pending approvals', '3', 'Needs review']].map(a => ({ label: a[0], value: a[1], note: a[2] })),
+      week: days.map(d => ({ day: d[0], h: d[1] + '%', bg: d[0] === 'Fri' ? '#9ADBDB' : '#167D91' })),
+      leaves: lv.map((l, i) => ({ name: l[0], ini: ini(l[0]), type: l[1], dates: l[2], status: l[3], tint: T[i], sbg: st[l[3]][0], sc: st[l[3]][1] })),
+      values: [['01', 'More organized employee information', 'Profiles, roles and departments live together instead of across files and chats.'], ['02', 'Clearer HR workflows', 'Requests, approvals and follow-ups move through a defined path.'], ['03', 'Better visibility into daily activity', 'Spot attendance and leave patterns without compiling reports by hand.']].map(v => ({ n: v[0], t: v[1], d: v[2] })),
+      people: ppl.map((p, i) => ({ name: p[0], role: p[1], dept: p[2], ini: ini(p[0]), tint: T[i] })),
+      attendance: att.map(a => ({ name: a[0], time: a[1], status: a[2], bg: as[a[2]][0], c: as[a[2]][1] })),
+      payroll: pay.map(p => ({ label: p[0], state: p[1], mark: p[2] === 2 ? '✓' : p[2] === 1 ? '•' : '', bg: p[2] === 2 ? '#247A52' : '#fff', c: p[2] === 2 ? '#fff' : '#176B87', bd: p[2] === 2 ? '0' : '2px solid ' + (p[2] ? '#176B87' : '#C9D4DF') })),
+      modules: [['Recruitment', 'Track candidates through your hiring stages.'], ['Employee documents', 'Keep employee paperwork attached to the right profile.'], ['Mobile access', 'Let employees and managers handle requests on the go.']].map(m => ({ t: m[0], d: m[1] })),
+      steps: [['1', 'Set up your organization', 'Add your company structure and bring in employee information.'], ['2', 'Configure your workflows', 'Choose how attendance, leave and approvals should run for your team.'], ['3', 'Review and follow up', 'Check activity in one place and act on what needs attention.']].map(x => ({ n: x[0], t: x[1], d: x[2] })),
+      depts: [['Operations', 14], ['Design', 9], ['Customer Care', 11], ['Finance', 6], ['People', 8]].map(d => ({ name: d[0], n: d[1], w: d[1] / 14 * 100 + '%' })),
+      months: mons.map(m => ({ m: m[0], v: m[1] + '%', h: (m[1] - 80) * 9 + '%' })),
+      actions: [['3 leave requests awaiting approval', 'Oldest submitted 2 days ago'], ['2 attendance corrections', 'Submitted by team members'], ['1 new candidate to review', 'Operations Executive role'], ['Payroll review in progress', 'Manager review pending']].map(a => ({ t: a[0], d: a[1] })),
+      trust: [['Role-based access', 'Control what each person can see and do.'], ['Organization data separation', 'Each organization works in its own space.'], ['Activity history', 'Keep a record of important changes.'], ['Secure sign-in', 'Authentication details shared in your demo.']].map(t => ({ t: t[0], d: t[1] })),
+      faqs: faqs.map((f, i) => ({ q: f[0], a: f[1], open: s.open === i, icon: s.open === i ? '−' : '+', toggle: () => this.setState({ open: s.open === i ? -1 : i }) })),
+      sent: s.sent, notSent: !s.sent, form: { name: s.name, email: s.email },
+      errors: { name: e.name || '', email: e.email || '', nameBool: !!e.name, emailBool: !!e.email },
+      setName: ev => this.setState({ name: ev.target.value }), setEmail: ev => this.setState({ email: ev.target.value }),
+      submit: ev => {
+        ev.preventDefault();
+        const er = {};
+        if (!s.name.trim()) er.name = 'Please enter your name.';
+        if (!/^\S+@\S+\.\S+$/.test(s.email)) er.email = 'Please enter a valid work email.';
+        this.setState({ errors: er, sent: !Object.keys(er).length });
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

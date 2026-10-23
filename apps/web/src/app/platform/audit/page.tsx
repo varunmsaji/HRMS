@@ -4,26 +4,39 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { NativeSelect } from "@/components/ui/native-select";
 import type { PaginationMeta } from "@/lib/api/types";
 import { describeApiError } from "@/lib/api/errors";
 import { platformApi, type AuditEntry } from "@/lib/platform/api";
+
+const ACTIONS = [
+  "COMPANY_APPROVED", "COMPANY_REJECTED", "COMPANY_SUSPENDED", "COMPANY_REACTIVATED", "COMPANY_TERMINATED",
+  "SUBSCRIPTION_CHANGED", "COMPANY_ADMIN_UNLOCKED", "COMPANY_ADMIN_VERIFICATION_RESENT",
+  "PLATFORM_ADMIN_CREATED", "PLATFORM_ADMIN_DISABLED", "PLATFORM_ADMIN_ENABLED",
+  "PLATFORM_ADMIN_PASSWORD_RESET", "PLATFORM_LOGIN", "PLATFORM_LOGOUT",
+];
 
 export default function PlatformAuditPage() {
   const [items, setItems] = useState<AuditEntry[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
+  const [action, setAction] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     platformApi
-      .auditLog({ page })
+      .auditLog({ page, action: action || undefined })
       .then((r) => { setItems(r.items); setPagination(r.pagination); })
       .catch((e) => setError(describeApiError(e)));
-  }, [page]);
+  }, [page, action]);
 
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Audit log</h1>
+      <NativeSelect className="w-72" value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }} aria-label="Action filter">
+        <option value="">All actions</option>
+        {ACTIONS.map((a) => (<option key={a} value={a}>{a.replaceAll("_", " ").toLowerCase()}</option>))}
+      </NativeSelect>
       {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
       <Card>
         <CardContent className="p-0">

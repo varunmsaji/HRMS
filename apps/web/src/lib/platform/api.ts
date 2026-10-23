@@ -48,13 +48,6 @@ export interface CompanyDetail extends CompanyListItem {
   usage: { employees: number; active_users: number };
 }
 
-export interface Dashboard {
-  counts_by_status: Record<string, number>;
-  pending_count: number;
-  oldest_pending_since: string | null;
-  trials_expiring_within_7_days: number;
-}
-
 export interface AuditEntry {
   id: string;
   created_at: string;
@@ -65,6 +58,38 @@ export interface AuditEntry {
   before_status: string | null;
   after_status: string | null;
   request_id: string | null;
+}
+
+export interface Dashboard {
+  counts_by_status: Record<string, number>;
+  total_companies: number;
+  pending_count: number;
+  oldest_pending_since: string | null;
+  trials_expiring_within_7_days: number;
+  registrations_last_30_days: { day: string; count: number }[];
+  registrations_total_30_days: number;
+  locked_company_admins: number;
+  active_platform_admins: number;
+  pending: CompanyListItem[];
+  trials_expiring: CompanyListItem[];
+  retention_due: CompanyListItem[];
+  recent_activity: AuditEntry[];
+}
+
+export interface PlanItem {
+  code: string;
+  name: string;
+  description: string | null;
+}
+
+export interface PlatformAdminItem {
+  id: string;
+  username: string;
+  status: "ACTIVE" | "DISABLED";
+  locked: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  is_you: boolean;
 }
 
 interface StoredSession {
@@ -184,9 +209,52 @@ export const platformApi = {
     (await call<CompanyDetail>("PATCH", `/companies/${id}/subscription`, { body })).data,
   unlockAdmin: async (id: string) =>
     (await call<CompanyDetail>("POST", `/companies/${id}/admin/unlock`)).data,
-  async auditLog(query: { company_id?: string; page?: number }) {
+  plans: async () => (await call<PlanItem[]>("GET", "/plans")).data,
+  resendVerification: async (id: string) =>
+    (await call<CompanyDetail>("POST", `/companies/${id}/admin/resend-verification`)).data,
+  listAdmins: async () => (await call<PlatformAdminItem[]>("GET", "/admins")).data,
+  createAdmin: async (username: string, password: string) =>
+    (await call<PlatformAdminItem>("POST", "/admins", { body: { username, password } })).data,
+  setAdminStatus: async (id: string, enabled: boolean) =>
+    (await call<PlatformAdminItem>("POST", `/admins/${id}/${enabled ? "enable" : "disable"}`)).data,
+  resetAdminPassword: async (id: string, password: string) =>
+    (await call<PlatformAdminItem>("POST", `/admins/${id}/reset-password`, { body: { password } })).data,
+  async auditLog(query: { company_id?: string; action?: string; page?: number }) {
     const { raw } = await call<AuditEntry[]>("GET", "/audit-log", { query: { ...query, per_page: 25 } });
     const env = raw as ListEnvelope<AuditEntry>;
     return { items: env.data, pagination: env.pagination as PaginationMeta };
   },
+  logFiles: async () =>
+    (await call<LogFiles>("GET", "/logs/files")).data,
+  logEntries: async (query: {
+    channel: string;
+    level?: string;
+    q?: string;
+    request_id?: string;
+    before?: string;
+    limit?: number;
+  }) => (await call<LogEntries>("GET", "/logs/entries", { query })).data,
 };
+
+export interface LogFileInfo {
+  channel: string;
+  size_bytes: number;
+  modified_at: string | null;
+  backups: number;
+}
+export interface LogFiles {
+  enabled: boolean;
+  files: LogFileInfo[];
+}
+export type LogEntry = Record<string, unknown> & {
+  timestamp?: string;
+  level?: string;
+  event?: string;
+  request_id?: string;
+};
+export interface LogEntries {
+  channel: string;
+  entries: LogEntry[];
+  next_before: string | null;
+  truncated: boolean;
+}

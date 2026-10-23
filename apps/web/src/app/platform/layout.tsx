@@ -26,9 +26,11 @@ export default function PlatformLayout({ children }: { children: ReactNode }) {
     () => null,
   );
 
+  // Read the stored session directly (client-only, after hydration). Using the hydration-time
+  // `username` here would redirect a signed-in user on every full page load.
   useEffect(() => {
-    if (!username && !isLogin) router.replace("/platform/login");
-  }, [username, isLogin, pathname, router]);
+    if (!isLogin && !loadPlatformSession()) router.replace("/platform/login");
+  }, [isLogin, pathname, router]);
 
   if (isLogin) return <>{children}</>;
   if (!username) return null;
@@ -49,8 +51,11 @@ export default function PlatformLayout({ children }: { children: ReactNode }) {
             <ShieldCheck className="h-4 w-4" aria-hidden="true" /> Krewoxa Platform
           </Link>
           <nav className="flex gap-4 text-sm">
-            <Link href="/platform" className="text-foreground hover:underline">Companies</Link>
+            <Link href="/platform" className="text-foreground hover:underline">Dashboard</Link>
+            <Link href="/platform/companies" className="text-foreground hover:underline">Companies</Link>
+            <Link href="/platform/admins" className="text-foreground hover:underline">Platform admins</Link>
             <Link href="/platform/audit" className="text-foreground hover:underline">Audit log</Link>
+            <Link href="/platform/logs" className="text-foreground hover:underline">System logs</Link>
           </nav>
         </div>
         <div className="flex items-center gap-3 text-sm">

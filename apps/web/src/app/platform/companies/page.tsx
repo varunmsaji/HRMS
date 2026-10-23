@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,19 +12,18 @@ import { describeApiError } from "@/lib/api/errors";
 import {
   platformApi,
   type CompanyListItem,
-  type Dashboard,
 } from "@/lib/platform/api";
 import type { PaginationMeta } from "@/lib/api/types";
 
-import { StatusBadge } from "./status-badge";
+import { StatusBadge } from "../status-badge";
 
 const STATUSES = ["PENDING_APPROVAL", "TRIAL", "ACTIVE", "SUSPENDED", "REJECTED", "TERMINATED"];
 
-export default function PlatformHomePage() {
-  const [dash, setDash] = useState<Dashboard | null>(null);
+function CompaniesList() {
   const [items, setItems] = useState<CompanyListItem[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
-  const [status, setStatus] = useState("PENDING_APPROVAL");
+  const searchParams = useSearchParams();
+  const [status, setStatus] = useState(searchParams.get("status") ?? "");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -31,13 +31,10 @@ export default function PlatformHomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      platformApi.dashboard(),
-      platformApi.listCompanies({ status: status || undefined, q: q.trim() || undefined, page }),
-    ])
-      .then(([d, list]) => {
+    platformApi
+      .listCompanies({ status: status || undefined, q: q.trim() || undefined, page })
+      .then((list) => {
         if (cancelled) return;
-        setDash(d);
         setItems(list.items);
         setPagination(list.pagination);
         setError(null);
@@ -56,15 +53,6 @@ export default function PlatformHomePage() {
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-semibold">Companies</h1>
-
-      {dash ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Stat label="Awaiting approval" value={dash.pending_count} />
-          <Stat label="In trial" value={dash.counts_by_status.TRIAL ?? 0} />
-          <Stat label="Active" value={dash.counts_by_status.ACTIVE ?? 0} />
-          <Stat label="Trials ending ≤ 7 days" value={dash.trials_expiring_within_7_days} />
-        </div>
-      ) : null}
 
       <div className="flex flex-wrap gap-3">
         <NativeSelect className="w-52" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="Status filter">
@@ -119,13 +107,10 @@ export default function PlatformHomePage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+export default function CompaniesPage() {
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-2xl font-semibold">{value}</div>
-        <div className="text-xs text-foreground-muted">{label}</div>
-      </CardContent>
-    </Card>
+    <Suspense fallback={null}>
+      <CompaniesList />
+    </Suspense>
   );
 }

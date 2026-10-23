@@ -1,0 +1,52 @@
+.kx{font-size:16px;line-height:1.6;overflow-x:hidden;color:#172B3A;background:#fff;-webkit-font-smoothing:antialiased}
+.kx *{box-sizing:border-box}
+.kx a{color:#1D4ED8;text-decoration:none}
+.kx a:hover{color:#102A43}
+.kx :focus-visible{outline:3px solid #2563EB;outline-offset:2px;border-radius:6px}
+.kx .k-burger{display:none!important}
+@media(max-width:880px){.kx .k-links,.kx .k-hidem{display:none!important}.kx .k-burger{display:inline-flex!important}}
+html:has(.kx){scroll-behavior:smooth;scroll-padding-top:88px}
+
+@keyframes kFadeUp{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:translateY(0)}}
+@keyframes kFloatSlow{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes kFloatReverse{0%,100%{transform:translateY(0)}50%{transform:translateY(7px)}}
+@keyframes kPulseDot{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.65);opacity:.35}}
+@keyframes kBarGrow{from{transform:scaleY(.15);opacity:.3}to{transform:scaleY(1);opacity:1}}
+@keyframes kDashFlow{to{stroke-dashoffset:-28}}
+@keyframes kHubRipple{0%{transform:scale(.88);opacity:.75}70%{transform:scale(1.42);opacity:0}100%{transform:scale(1.42);opacity:0}}
+@keyframes kNodeBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3.5px)}}
+@keyframes kNodeGlow{0%,100%{stroke:#BFDBFE}50%{stroke:#3B82F6}}
+
+.kx .k-anim-up{animation:kFadeUp .75s cubic-bezier(.16,1,.3,1) both}
+.kx .k-delay-1{animation-delay:.12s}
+.kx .k-delay-2{animation-delay:.24s}
+.kx .k-float{animation:kFloatSlow 4.8s ease-in-out infinite}
+.kx .k-float-alt{animation:kFloatReverse 5.4s ease-in-out infinite}
+.kx .k-pulse{animation:kPulseDot 2.2s ease-in-out infinite}
+.kx .k-bar{transform-origin:bottom;animation:kBarGrow .85s cubic-bezier(.16,1,.3,1) both}
+.kx .k-flow-line{stroke-dasharray:6 8;animation:kDashFlow 1.3s linear infinite}
+.kx .k-flow-line-rev{stroke-dasharray:6 8;animation:kDashFlow 1.3s linear infinite reverse}
+.kx .k-hub-ring{transform-origin:220px 102px;animation:kHubRipple 2.8s cubic-bezier(.16,1,.3,1) infinite}
+.kx .k-hub-ring-2{transform-origin:220px 102px;animation:kHubRipple 2.8s cubic-bezier(.16,1,.3,1) 1.4s infinite}
+.kx .k-node-1{animation:kNodeBob 3.6s ease-in-out infinite}
+.kx .k-node-2{animation:kNodeBob 3.6s ease-in-out .9s infinite}
+.kx .k-node-3{animation:kNodeBob 3.6s ease-in-out 1.8s infinite}
+.kx .k-node-4{animation:kNodeBob 3.6s ease-in-out 2.7s infinite}
+.kx .k-node-box{animation:kNodeGlow 3.2s ease-in-out infinite}
+.kx .k-card{transition:transform .3s cubic-bezier(.16,1,.3,1),box-shadow .3s cubic-bezier(.16,1,.3,1),border-color .25s ease}
+.kx .k-card:hover{transform:translateY(-5px);box-shadow:0 26px 54px -24px rgba(29,78,216,.24)!important;border-color:#93C5FD!important}
+.kx .k-img-zoom{overflow:hidden;border-radius:14px}
+.kx .k-img-zoom img{transition:transform .6s cubic-bezier(.16,1,.3,1);display:block;width:100%;height:100%;object-fit:cover}
+.kx .k-img-zoom:hover img{transform:scale(1.04)}
+
+.kx .kx-hover-1:hover{background:#102A43 !important;color:#fff !important}
+.kx .kx-hover-2:hover{background:#102A43 !important;color:#fff !important;transform:translateY(-2px) !important}
+.kx .kx-hover-3:hover{border-color:#1D4ED8 !important;color:#1D4ED8 !important}
+.kx .kx-focus-4:focus{border-color:#1D4ED8 !important;outline:2px solid #DBEAFE !important}
+.kx .kx-hover-5:hover{background:#102A43 !important}
+.kx .kx-hover-6:hover{background:#DBEAFE !important;color:#102A43 !important}
+
+@media(prefers-reduced-motion:reduce){
+  html:has(.kx){scroll-behavior:auto}
+  .kx *,.kx *::before,.kx *::after{animation:none!important;transition:none!important}
+}
