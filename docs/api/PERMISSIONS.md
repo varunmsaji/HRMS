@@ -1,0 +1,77 @@
+# Permission catalogue (generated)
+
+Permission codes registered by each module's `permissions.py`, with the routes that reference them (`*` = resolved inside the handler). Scope levels granted per role (`SELF`, `REPORTEES`, `REPORTEE_TREE`, `BRANCH`, `COMPANY`) are data (`role_permission.data_scope`), not code - see [AUTHENTICATION.md](AUTHENTICATION.md#7-authorization-roles-permissions-data-scope).
+
+| Code | Module | Description | Routes |
+|---|---|---|---|
+| `ATTENDANCE.FACE_ENROLLMENT_MANAGE` | attendance | Enroll, add reference photos for, and revoke employee face profiles | GET /attendance/face-profiles<br>DELETE /attendance/face-profiles/{employee_id}<br>POST /attendance/face-profiles/{employee_id}/approve<br>GET /attendance/face-profiles/{employee_id}/enrollment<br>DELETE /attendance/face-profiles/{employee_id}/enrollment-window<br>POST /attendance/face-profiles/{employee_id}/enrollment-window<br>POST /attendance/face-profiles/{employee_id}/reject<br>GET /attendance/face-profiles/{employee_id}/review-photo |
+| `ATTENDANCE.LEAVE_PROJECTION_SYNC` | attendance | Publish or cancel an approved leave projection (Leave -> Attendance adapter) | POST /leave-projections<br>POST /leave-projections/{projection_id}/cancel |
+| `ATTENDANCE.LOCK` | attendance | Create, validate, and finalize/close attendance periods | POST /attendance-periods<br>POST /attendance-periods/{period_id}/finalize<br>POST /attendance-periods/{period_id}/validate |
+| `ATTENDANCE.OVERTIME_APPROVE` | attendance | Approve or reject system-detected overtime | POST /overtime/{record_id}/approve<br>POST /overtime/{record_id}/reject |
+| `ATTENDANCE.POLICY_MANAGE` | attendance | Manage attendance, overtime, and regularization policies and their assignments | GET /attendance-policies<br>POST /attendance-policies<br>GET /attendance-policies/{policy_id}<br>PATCH /attendance-policies/{policy_id}<br>GET /attendance-policies/{policy_id}/versions<br>POST /attendance-policies/{policy_id}/versions<br>GET /attendance-policies/{policy_id}/versions/resolve<br>DELETE /attendance-policies/{policy_id}/versions/{version_id}<br>(+28 more) |
+| `ATTENDANCE.PUNCH` | attendance | Record own punches | GET /attendance/face-enrollment/me<br>POST /attendance/face-enrollment/me<br>POST /attendance/face-punches/me<br>POST /attendance/face-punches/me/liveness-sessions<br>POST /attendance/punches/me |
+| `ATTENDANCE.PUNCH_ON_BEHALF` | attendance | Record punches on behalf of other employees | POST /attendance/punches |
+| `ATTENDANCE.RECOMPUTE` | attendance | Trigger a privileged recompute of an attendance day | POST /attendance/days/calculate-range<br>POST /attendance/days/{attendance_day_id}/recompute<br>POST /attendance/days/{attendance_day_id}/work-on-leave/keep-leave |
+| `ATTENDANCE.REGULARIZATION_APPROVE` | attendance | Approve or reject regularization requests | POST /regularizations/{request_id}/approve<br>POST /regularizations/{request_id}/reject |
+| `ATTENDANCE.REGULARIZATION_REQUEST` | attendance | Submit a regularization request for own attendance | POST /regularizations<br>POST /regularizations/{request_id}/cancel |
+| `ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF` | attendance | Submit a regularization request on behalf of another employee | POST /regularizations<br>POST /regularizations/{request_id}/cancel |
+| `ATTENDANCE.ROSTER_MANAGE` | attendance | Create, update, publish, and delete shift roster entries | POST /rosters<br>POST /rosters/bulk<br>DELETE /rosters/{roster_id}<br>PATCH /rosters/{roster_id}<br>POST /rosters/{roster_id}/publish |
+| `ATTENDANCE.UNLOCK` | attendance | Reopen a closed/locked attendance period | POST /attendance-periods/{period_id}/reopen |
+| `ATTENDANCE.VIEW` | attendance | View attendance days and punches within scope | GET /attendance-periods<br>GET /attendance-periods/{period_id}<br>GET /attendance-periods/{period_id}/summary<br>GET /attendance/days<br>GET /attendance/days/{attendance_day_id}<br>GET /attendance/punches<br>GET /leave-projections<br>GET /leave-projections/{projection_id}<br>(+6 more) |
+| `ATTENDANCE.VIEW_ALL` | attendance | View attendance company-wide, ignoring reporting tree | POST /attendance/days/calculate |
+| `DASHBOARD.COMPANY.VIEW` | organisation | View company dashboard | GET /dashboards/company |
+| `EMPLOYEE.BULK_IMPORT` | employee | Bulk-import employees from a CSV file | POST /employee-imports<br>GET /employee-imports/reference-data<br>GET /employee-imports/template<br>GET /employee-imports/{batch_id}<br>GET /employee-imports/{batch_id}/errors |
+| `EMPLOYEE.CONFIRM` | employee | Confirm an employee from probation to active | POST /employees/{employee_id}/confirm |
+| `EMPLOYEE.CREATE` | employee | Create employee | POST /employees<br>POST /employees/{employee_id}/employments |
+| `EMPLOYEE.DEACTIVATE` | employee | Deactivate an employee record | DELETE /employees/{employee_id} |
+| `EMPLOYEE.INVITE` | employee | Invite an employee to create their login account | POST /employees/{employee_id}/invite |
+| `EMPLOYEE.PROMOTE` | employee | Promote an employee's designation or grade | POST /employees/{employee_id}/assignments |
+| `EMPLOYEE.TERMINATE` | employee | Terminate an employee's active employment | POST /employees/{employee_id}/employments/{employment_id}/terminate |
+| `EMPLOYEE.TRANSFER` | employee | Transfer an employee's branch, department, or manager | POST /employees/{employee_id}/assignments |
+| `EMPLOYEE.UPDATE` | employee | Edit employee basic details | PATCH /employees/{employee_id}<br>PATCH /employees/{employee_id}/employments/{employment_id} |
+| `EMPLOYEE.UPDATE_COMPENSATION` | employee | Record a new compensation revision | POST /employees/{employee_id}/compensation |
+| `EMPLOYEE.UPDATE_SENSITIVE` | employee | Edit PAN/Aadhaar/bank/statutory | POST /employees/{employee_id}/bank<br>POST /employees/{employee_id}/dependents<br>DELETE /employees/{employee_id}/dependents/{dependent_id}<br>POST /employees/{employee_id}/documents<br>DELETE /employees/{employee_id}/documents/{document_id}<br>POST /employees/{employee_id}/documents/{document_id}/review<br>POST /employees/{employee_id}/education<br>DELETE /employees/{employee_id}/education/{education_id}<br>(+4 more) |
+| `EMPLOYEE.VIEW_ALL` | employee | View all employees in the company | GET /employees |
+| `EMPLOYEE.VIEW_BANKING` | employee | View an employee's bank account details | GET /employees/{employee_id}/bank<br>GET /employees/{employee_id}/bank/{bank_id} |
+| `EMPLOYEE.VIEW_COMPENSATION` | employee | View an employee's compensation history | GET /employees/{employee_id}/compensation<br>GET /employees/{employee_id}/compensation/{compensation_id}<br>GET /employees/{employee_id}/salary<br>GET /employees/{employee_id}/salary/breakup |
+| `EMPLOYEE.VIEW_DOCUMENTS` | employee | View an employee's documents | GET /employees/{employee_id}/documents |
+| `EMPLOYEE.VIEW_EXPERIENCE` | employee | View an employee's previous-employment / education history | GET /employees/{employee_id}/education<br>GET /employees/{employee_id}/education/{education_id}<br>GET /employees/{employee_id}/experience<br>GET /employees/{employee_id}/experience/{experience_id} |
+| `EMPLOYEE.VIEW_NOMINEE` | employee | View an employee's PF/Gratuity nominee and ESI family details | GET /employees/{employee_id}/dependents<br>GET /employees/{employee_id}/dependents/{dependent_id} |
+| `EMPLOYEE.VIEW_SENSITIVE` | employee | View an employee's PAN/Aadhaar/UAN | GET /employees/{employee_id}/identity |
+| `EMPLOYEE.VIEW_STATUTORY` | employee | View an employee's PF/ESI/PT/LWF/tax-regime profile | GET /employees/{employee_id}/statutory<br>GET /employees/{employee_id}/statutory/{statutory_id} |
+| `LEAVE.APPLICATION_APPROVE` | leave | Approve or reject a leave application | POST /leave-applications/{application_id}/approve<br>POST /leave-applications/{application_id}/reject |
+| `LEAVE.APPLICATION_CANCEL_APPROVED` | leave | Cancel an approved leave application, including after it has started | POST /leave-applications/{application_id}/cancel |
+| `LEAVE.APPLICATION_REASSIGN` | leave | Reassign a leave application's current approval stage to another approver | POST /leave-applications/{application_id}/reassign-approver |
+| `LEAVE.APPLICATION_SUBMIT` | leave | Submit a leave application | POST /leave-applications<br>POST /leave-applications/{application_id}/cancel<br>GET /leave-types |
+| `LEAVE.APPLICATION_SUBMIT_ON_BEHALF` | leave | Submit a leave application on behalf of another employee | POST /leave-applications<br>POST /leave-applications/{application_id}/cancel<br>GET /leave-types |
+| `LEAVE.BALANCE_ADJUST` | leave | Manually adjust a leave balance (ledger entry) | POST /leave-ledger/adjustments<br>POST /leave-ledger/encashments |
+| `LEAVE.BALANCE_VIEW` | leave | View own leave balance | GET /leave-applications<br>GET /leave-applications/{application_id}<br>GET /leave-balances<br>GET /leave-ledger |
+| `LEAVE.BALANCE_VIEW_ALL` | leave | View leave balances within scope | GET /leave-applications<br>GET /leave-applications/{application_id}<br>GET /leave-balances<br>GET /leave-ledger |
+| `LEAVE.COMBINATION_RULE_MANAGE` | leave | Manage leave combination (exclusivity) rules | GET /leave-combination-rules<br>POST /leave-combination-rules<br>DELETE /leave-combination-rules/{rule_id} |
+| `LEAVE.POLICY_MANAGE` | leave | Manage leave policies and policy versions | GET /leave-policies<br>POST /leave-policies<br>GET /leave-policies/{policy_id}<br>PATCH /leave-policies/{policy_id}<br>GET /leave-policies/{policy_id}/versions<br>POST /leave-policies/{policy_id}/versions<br>GET /leave-policies/{policy_id}/versions/resolve<br>DELETE /leave-policies/{policy_id}/versions/{version_id}<br>(+3 more) |
+| `LEAVE.STATUTORY_MINIMUM_MANAGE` | leave | Manage statutory leave minimums (compliance) | GET /statutory-leave-minimums<br>POST /statutory-leave-minimums<br>DELETE /statutory-leave-minimums/{minimum_id} |
+| `LEAVE.TYPE_MANAGE` | leave | Manage leave types | GET /leave-types<br>POST /leave-types<br>GET /leave-types/{leave_type_id}<br>PATCH /leave-types/{leave_type_id} |
+| `LEAVE.YEAR_SETTING_MANAGE` | leave | Manage the company's leave year configuration | GET /leave-year-setting<br>PUT /leave-year-setting |
+| `ONBOARDING.ACTIVATE` | onboarding | Activate a verified onboarding case into a real employee | POST /onboarding-cases/{case_id}/activate |
+| `ONBOARDING.CANCEL` | onboarding | Cancel an onboarding case | - |
+| `ONBOARDING.CREATE` | onboarding | Start onboarding for a new hire | POST /onboarding-cases<br>POST /onboarding-cases/{case_id}/send-invite |
+| `ONBOARDING.REVIEW` | onboarding | Verify or reject an onboarding case's sections/documents | POST /onboarding-cases/{case_id}/documents/{document_id}/review<br>POST /onboarding-cases/{case_id}/request-changes<br>POST /onboarding-cases/{case_id}/sections/{section}/review |
+| `ONBOARDING.VIEW` | onboarding | View onboarding cases | GET /onboarding-cases<br>GET /onboarding-cases/{case_id}<br>GET /onboarding-cases/{case_id}/documents |
+| `ORG.BRANCH.MANAGE` | organisation | Manage branches | GET /branches<br>POST /branches<br>DELETE /branches/{branch_id}<br>GET /branches/{branch_id}<br>PATCH /branches/{branch_id} |
+| `ORG.CALENDAR.MANAGE` | organisation | Manage workforce calendars, weekly-off patterns, and calendar assignments | PATCH /calendar-exceptions/{exception_id}<br>GET /calendar-resolution<br>GET /policy-assignments<br>POST /policy-assignments<br>GET /weekly-off-patterns<br>POST /weekly-off-patterns<br>DELETE /weekly-off-patterns/{pattern_id}<br>GET /weekly-off-patterns/{pattern_id}<br>(+9 more) |
+| `ORG.COMPANY.MANAGE` | organisation | Manage company settings | GET /companies/current<br>PATCH /companies/current<br>GET /companies/current/setup-progress<br>GET /companies/current/subscription |
+| `ORG.DEPARTMENT.MANAGE` | organisation | Manage departments | GET /departments<br>POST /departments<br>DELETE /departments/{department_id}<br>GET /departments/{department_id}<br>PATCH /departments/{department_id} |
+| `ORG.DESIGNATION.MANAGE` | organisation | Manage designations | GET /designations<br>POST /designations<br>DELETE /designations/{designation_id}<br>GET /designations/{designation_id}<br>PATCH /designations/{designation_id} |
+| `ORG.GRADE.MANAGE` | organisation | Manage grades | GET /grades<br>POST /grades<br>DELETE /grades/{grade_id}<br>GET /grades/{grade_id}<br>PATCH /grades/{grade_id} |
+| `ORG.HOLIDAY.MANAGE` | organisation | Manage holiday calendars and holidays | GET /holiday-calendars<br>POST /holiday-calendars<br>DELETE /holiday-calendars/{calendar_id}<br>GET /holiday-calendars/{calendar_id}<br>PATCH /holiday-calendars/{calendar_id}<br>GET /holiday-calendars/{calendar_id}/holidays<br>POST /holiday-calendars/{calendar_id}/holidays<br>GET /holidays/{holiday_id}<br>(+1 more) |
+| `ORG.LEGAL_ENTITY.MANAGE` | organisation | Manage legal entities | GET /legal-entities<br>POST /legal-entities<br>DELETE /legal-entities/{entity_id}<br>GET /legal-entities/{entity_id}<br>PATCH /legal-entities/{entity_id} |
+| `ORG.SHIFT.MANAGE` | organisation | Manage shifts | GET /shifts<br>POST /shifts<br>DELETE /shifts/{shift_id}<br>GET /shifts/{shift_id}<br>PATCH /shifts/{shift_id}<br>GET /shifts/{shift_id}/versions<br>POST /shifts/{shift_id}/versions<br>GET /shifts/{shift_id}/versions/resolve<br>(+4 more) |
+| `PAYROLL.BANK_ADVICE_DOWNLOAD` | payroll | Download a finalised pay run's bank advice (full account numbers) | GET /payroll/pay-runs/{run_id}/bank-advice |
+| `PAYROLL.PAYSLIP_VIEW_OWN` | payroll | View one's own payslips from finalised pay runs | GET /me/payslips<br>GET /me/payslips/{run_id} |
+| `PAYROLL.RUN_APPROVE` | payroll | Approve, finalise and mark pay runs paid | POST /payroll/pay-runs/{run_id}/approve<br>POST /payroll/pay-runs/{run_id}/finalise<br>POST /payroll/pay-runs/{run_id}/mark-paid |
+| `PAYROLL.RUN_PROCESS` | payroll | Create pay runs, lock inputs, compute, acknowledge variances and roll back | POST /payroll/adjustments<br>DELETE /payroll/adjustments/{adjustment_id}<br>POST /payroll/pay-runs<br>DELETE /payroll/pay-runs/{run_id}<br>PATCH /payroll/pay-runs/{run_id}<br>POST /payroll/pay-runs/{run_id}/compute<br>POST /payroll/pay-runs/{run_id}/employees/{employee_id}/acknowledge-variance<br>POST /payroll/pay-runs/{run_id}/lock-inputs<br>(+1 more) |
+| `PAYROLL.RUN_VIEW` | payroll | View pay runs and their employee pay | GET /payroll/adjustments<br>GET /payroll/pay-runs<br>GET /payroll/pay-runs/{run_id}<br>GET /payroll/pay-runs/{run_id}/employees<br>GET /payroll/pay-runs/{run_id}/employees/{employee_id}<br>GET /payroll/pay-runs/{run_id}/employees/{employee_id}/payslip |
+| `PAYROLL.SETUP_MANAGE` | payroll | Manage salary components, salary structures and employee salary assignments | POST /employees/{employee_id}/salary<br>POST /payroll/salary-assignments/bulk<br>GET /payroll/salary-components<br>POST /payroll/salary-components<br>PATCH /payroll/salary-components/{component_id}<br>GET /payroll/salary-structures<br>POST /payroll/salary-structures<br>GET /payroll/salary-structures/{structure_id}<br>(+8 more) |
+| `PAYROLL.STATUTORY_MANAGE` | payroll | Manage and verify statutory rates (PF, ESI, professional tax, LWF) | GET /payroll/statutory-rates<br>POST /payroll/statutory-rates<br>PATCH /payroll/statutory-rates/{rate_id}<br>POST /payroll/statutory-rates/{rate_id}/verify |
+
+Codes referenced by routes but not in a module `*_PERMISSIONS` list: `EMPLOYEE.VIEW`, `SETTINGS.ROLE.MANAGE`, `SETTINGS.USER.MANAGE`
