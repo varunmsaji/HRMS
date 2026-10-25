@@ -21,6 +21,7 @@ from hrms.core.errors.auth import (
     InvalidTokenError,
 )
 from hrms.core.errors.base import ValidationError
+from hrms.core.links import mobile_link
 from hrms.core.observability.logging import get_logger, safe_log
 from hrms.core.observability.security_events import security_event, subject_hash
 from hrms.core.rbac.service import RbacService
@@ -448,7 +449,9 @@ class IdentityService:
 
         reset_url = f"{self._settings.web_app_base_url}/reset-password/{raw_token}"
         subject, html_body, text_body = build_password_reset_email(
-            first_name=user.first_name, reset_url=reset_url
+            first_name=user.first_name,
+            reset_url=reset_url,
+            mobile_url=mobile_link(self._settings, "reset-password", raw_token),
         )
         try:
             await get_email_sender(self._settings).send(
@@ -529,7 +532,9 @@ class IdentityService:
 
         verify_url = f"{self._settings.web_app_base_url}/verify-email/{raw_token}"
         subject, html_body, text_body = build_email_verification_email(
-            first_name=first_name, verify_url=verify_url
+            first_name=first_name,
+            verify_url=verify_url,
+            mobile_url=mobile_link(self._settings, "verify-email", raw_token),
         )
         try:
             await get_email_sender(self._settings).send(

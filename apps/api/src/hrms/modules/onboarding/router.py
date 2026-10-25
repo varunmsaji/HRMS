@@ -15,11 +15,20 @@ proposes `SELF`/`REPORTEES`/`REPORTEE_TREE` visibility for onboarding cases, whi
 employee yet to scope against. Tenant isolation is still fully enforced via `company_id` +
 Postgres RLS, same as every other route in this app."""
 
+from collections.abc import Awaitable
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from hrms.core.db.session import get_session
+from hrms.core.idempotency import (
+    mark_replay,
+    optional_idempotency_key,
+    request_fingerprint_fields,
+    run_idempotent,
+)
 from hrms.core.rbac.dependencies import require_permission
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
@@ -70,18 +79,40 @@ router = APIRouter(tags=["onboarding"])
 async def create_onboarding_case(
     body: OnboardingCaseCreate,
     request: Request,
+    response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    idempotency_key: Annotated[str | None, Depends(optional_idempotency_key)],
 ) -> DataEnvelope[OnboardingCaseRead]:
-    data = await service.create_case(
-        tenant.company_id,
-        body,
-        actor_user_id=tenant.user_id,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("User-Agent"),
+    """`Idempotency-Key` is optional (API audit H-4); see `create_employee`."""
+
+    def execute() -> Awaitable[OnboardingCaseRead]:
+        return service.create_case(
+            tenant.company_id,
+            body,
+            actor_user_id=tenant.user_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        )
+
+    if idempotency_key is None:
+        return DataEnvelope(
+            data=await execute(), meta=build_meta(current_request_id() or "unknown")
+        )
+    result = await run_idempotent(
+        session,
+        company_id=tenant.company_id,
+        operation="onboarding.case.create",
+        key=idempotency_key,
+        fingerprint_fields=request_fingerprint_fields(body, tenant.user_id),
+        response_model=OnboardingCaseRead,
+        status_code=status.HTTP_201_CREATED,
+        execute=execute,
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    mark_replay(response, result.replayed, result.status_code)
+    return DataEnvelope(data=result.data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/onboarding-cases", status_code=status.HTTP_200_OK)

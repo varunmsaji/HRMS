@@ -18,6 +18,7 @@ from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import AppError, NotFoundError
+from hrms.core.links import mobile_link
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
 from hrms.core.storage import DocumentStorageService
@@ -756,6 +757,7 @@ class OnboardingTokenService:
             candidate_first_name=case.candidate_first_name,
             company_name=company.name,
             invite_url=invite_url,
+            mobile_url=mobile_link(self._settings, "onboarding", raw_token),
         )
         email_sent = True
         try:

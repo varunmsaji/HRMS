@@ -107,6 +107,7 @@ from hrms.modules.attendance.service import (
     _ensure_employee_visible,
     _resolve_visible_employee_ids,
 )
+from hrms.shared.pagination import PageParams
 
 _logger = get_logger(__name__)
 
@@ -251,15 +252,20 @@ class FaceEnrollmentService:
     # --- reads -------------------------------------------------------------------------------
 
     async def list_profiles(
-        self, company_id: UUID, *, scope: DataScope, caller_employee_id: UUID | None
-    ) -> list[FaceProfileRead]:
+        self,
+        company_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        page: PageParams,
+    ) -> tuple[list[FaceProfileRead], int]:
         visible = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._profiles.list_for_company(
-            self._session, company_id=company_id, visible_employee_ids=visible
+        rows, total = await self._profiles.page_for_company(
+            self._session, company_id=company_id, visible_employee_ids=visible, page=page
         )
-        return [face_profile_to_read(r) for r in rows]
+        return [face_profile_to_read(r) for r in rows], total
 
     async def get_status(
         self,

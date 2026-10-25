@@ -28,6 +28,7 @@ from hrms.modules.payroll.models import (
     SalaryStructureVersion,
     StatutoryRate,
 )
+from hrms.shared.pagination import PageParams, fetch_page
 
 
 class SalaryComponentRepository:
@@ -460,6 +461,28 @@ class PayRunRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def page_for_company(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        page: PageParams,
+        legal_entity_id: UUID | None = None,
+        status: str | None = None,
+    ) -> tuple[list[PayRun], int]:
+        """Bounded variant of `list_for_company` (API audit H-1); `id` makes the order total."""
+        conditions = [PayRun.company_id == company_id]
+        if legal_entity_id is not None:
+            conditions.append(PayRun.legal_entity_id == legal_entity_id)
+        if status is not None:
+            conditions.append(PayRun.status == status)
+        stmt = (
+            select(PayRun)
+            .where(*conditions)
+            .order_by(PayRun.period_month.desc(), PayRun.created_at.desc(), PayRun.id)
+        )
+        return await fetch_page(session, stmt, page)
+
     async def get_previous_finalised(
         self, session: AsyncSession, *, company_id: UUID, legal_entity_id: UUID, before: date
     ) -> PayRun | None:
@@ -544,6 +567,16 @@ class PayRunRepository:
             .order_by(PayRunEmployee.employee_code, PayRunEmployee.employee_name)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_employees(
+        self, session: AsyncSession, *, company_id: UUID, run_id: UUID, page: PageParams
+    ) -> tuple[list[PayRunEmployee], int]:
+        stmt = (
+            select(PayRunEmployee)
+            .where(PayRunEmployee.company_id == company_id, PayRunEmployee.pay_run_id == run_id)
+            .order_by(PayRunEmployee.employee_code, PayRunEmployee.employee_name, PayRunEmployee.id)
+        )
+        return await fetch_page(session, stmt, page)
 
     async def list_final_for_employee(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
@@ -824,6 +857,30 @@ class PayAdjustmentRepository:
             .order_by(PayAdjustment.for_month, PayAdjustment.created_at)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        page: PageParams,
+        legal_entity_id: UUID | None = None,
+        source_pay_run_id: UUID | None = None,
+        status: str | None = None,
+    ) -> tuple[list[PayAdjustment], int]:
+        conditions = [PayAdjustment.company_id == company_id]
+        if legal_entity_id is not None:
+            conditions.append(PayAdjustment.legal_entity_id == legal_entity_id)
+        if source_pay_run_id is not None:
+            conditions.append(PayAdjustment.source_pay_run_id == source_pay_run_id)
+        if status is not None:
+            conditions.append(PayAdjustment.status == status)
+        stmt = (
+            select(PayAdjustment)
+            .where(*conditions)
+            .order_by(PayAdjustment.for_month, PayAdjustment.created_at, PayAdjustment.id)
+        )
+        return await fetch_page(session, stmt, page)
 
     async def delete_pending(
         self, session: AsyncSession, *, company_id: UUID, adjustment_id: UUID

@@ -145,7 +145,13 @@ from hrms.modules.attendance.service import (
 )
 from hrms.modules.identity.schemas import build_meta
 from hrms.shared.if_match import parse_if_match
-from hrms.shared.pagination import DataEnvelope, ListEnvelope
+from hrms.shared.pagination import (
+    DataEnvelope,
+    ListEnvelope,
+    PageParams,
+    bounded_pagination_params,
+    build_pagination_meta,
+)
 
 router = APIRouter(tags=["attendance"])
 
@@ -874,19 +880,25 @@ async def list_punches(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[PunchService, Depends(get_punch_service)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     employee_id: Annotated[UUID | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
 ) -> ListEnvelope[PunchRead]:
-    data = await service.list_punches(
+    data, total = await service.list_punches(
         tenant.company_id,
         scope=scope,
         caller_employee_id=user.employee_id,
         employee_id=employee_id,
         date_from=date_from,
         date_to=date_to,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -900,12 +912,13 @@ async def list_attendance_days(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     employee_id: Annotated[UUID | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     attendance_status: Annotated[str | None, Query()] = None,
 ) -> ListEnvelope[AttendanceDayRead]:
-    data = await service.list_attendance_days(
+    data, total = await service.list_attendance_days(
         tenant.company_id,
         scope=scope,
         caller_employee_id=user.employee_id,
@@ -913,8 +926,13 @@ async def list_attendance_days(
         date_from=date_from,
         date_to=date_to,
         status=attendance_status,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/attendance/days/{attendance_day_id}", status_code=status.HTTP_200_OK)
@@ -1091,12 +1109,13 @@ async def list_roster_entries(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
     service: Annotated[ShiftRosterService, Depends(get_shift_roster_service)],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     employee_id: Annotated[UUID | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     roster_status: Annotated[str | None, Query(alias="status")] = None,
 ) -> ListEnvelope[ShiftRosterRead]:
-    data = await service.list_roster_entries(
+    data, total = await service.list_roster_entries(
         tenant.company_id,
         scope=scope,
         caller_employee_id=user.employee_id,
@@ -1104,8 +1123,13 @@ async def list_roster_entries(
         date_from=date_from,
         date_to=date_to,
         status=roster_status,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/rosters/{roster_id}", status_code=status.HTTP_200_OK)
@@ -1247,13 +1271,14 @@ async def list_regularization_requests(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[RegularizationRequestService, Depends(get_regularization_request_service)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     employee_id: Annotated[UUID | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     request_status: Annotated[str | None, Query()] = None,
     request_type: Annotated[str | None, Query()] = None,
 ) -> ListEnvelope[RegularizationRequestRead]:
-    data = await service.list(
+    data, total = await service.list(
         tenant.company_id,
         scope=scope,
         caller_employee_id=user.employee_id,
@@ -1262,8 +1287,13 @@ async def list_regularization_requests(
         date_to=date_to,
         status=request_status,
         request_type=request_type,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/regularizations/{request_id}", status_code=status.HTTP_200_OK)
@@ -1384,12 +1414,13 @@ async def list_overtime_records(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[OvertimeRecordService, Depends(get_overtime_record_service)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     employee_id: Annotated[UUID | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     record_status: Annotated[str | None, Query()] = None,
 ) -> ListEnvelope[OvertimeRecordRead]:
-    data = await service.list(
+    data, total = await service.list(
         tenant.company_id,
         scope=scope,
         caller_employee_id=user.employee_id,
@@ -1397,8 +1428,13 @@ async def list_overtime_records(
         date_from=date_from,
         date_to=date_to,
         status=record_status,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/overtime/{record_id}", status_code=status.HTTP_200_OK)
@@ -1498,13 +1534,18 @@ async def list_attendance_periods(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
     service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     period_status: Annotated[str | None, Query()] = None,
     legal_entity_id: Annotated[UUID | None, Query()] = None,
 ) -> ListEnvelope[AttendancePeriodRead]:
-    data = await service.list_periods(
-        tenant.company_id, status=period_status, legal_entity_id=legal_entity_id
+    data, total = await service.list_periods(
+        tenant.company_id, status=period_status, legal_entity_id=legal_entity_id, page=page
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/attendance-periods/{period_id}", status_code=status.HTTP_200_OK)
@@ -1632,12 +1673,13 @@ async def list_leave_projections(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
     service: Annotated[LeaveProjectionService, Depends(get_leave_projection_service)],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     employee_id: Annotated[UUID | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     projection_status: Annotated[str | None, Query(alias="status")] = None,
 ) -> ListEnvelope[LeaveDayProjectionRead]:
-    data = await service.list_projections(
+    data, total = await service.list_projections(
         tenant.company_id,
         scope=scope,
         caller_employee_id=user.employee_id,
@@ -1645,8 +1687,13 @@ async def list_leave_projections(
         date_from=date_from,
         date_to=date_to,
         status=projection_status,
+        page=page,
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/leave-projections/{projection_id}", status_code=status.HTTP_200_OK)
@@ -1710,11 +1757,16 @@ async def list_face_profiles(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
     service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
 ) -> ListEnvelope[FaceProfileRead]:
-    data = await service.list_profiles(
-        tenant.company_id, scope=scope, caller_employee_id=user.employee_id
+    data, total = await service.list_profiles(
+        tenant.company_id, scope=scope, caller_employee_id=user.employee_id, page=page
     )
-    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/attendance/face-profiles/{employee_id}/enrollment", status_code=status.HTTP_200_OK)

@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from typing import Annotated, Literal
 from urllib.parse import urlparse
@@ -352,6 +353,17 @@ class Settings(BaseSettings):
     # `https://` plus the same host as compose's `WEB_DOMAIN` (see `.env.production.example`).
     web_app_base_url: str = _DEV_WEB_APP_BASE_URL_DEFAULT
 
+    # API audit H-3 - optional second link in the token emails (verification, password reset,
+    # account invite, onboarding) that opens the MOBILE app:
+    # `<mobile_app_link_base>/<path>/<token>`. Empty (the default) leaves the emails exactly as
+    # before. The shipped Flutter app registers the custom scheme `hrms://app`
+    # (AndroidManifest.xml / Info.plist) and resolves
+    # `hrms://app/<reset-password|verify-email|accept-invite|onboarding>/<token>`
+    # (`apps/mobile/test/deep_link_test.dart`), so `hrms://app` is the value that works today.
+    # An https Universal/App Link base would also be accepted here, but only works once the
+    # association files are hosted on that domain (a deployment task, see docs/api).
+    mobile_app_link_base: str = ""
+
     # PAY-006 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decision 16) — employees with
     # unresolved INCOMPLETE days are reminded daily from this many days before an open attendance
     # period's end until it is closed; HR gets a matching digest.
@@ -397,6 +409,14 @@ class Settings(BaseSettings):
     @classmethod
     def _parse_comma_separated(cls, value: object) -> object:
         return _split_comma_list(value)
+
+    @field_validator("mobile_app_link_base")
+    @classmethod
+    def _validate_mobile_app_link_base(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if value and not re.fullmatch(r"[a-z][a-z0-9+.\-]*://[A-Za-z0-9.\-]+(:[0-9]{1,5})?", value):
+            raise ValueError("mobile_app_link_base must look like 'hrms://app' (scheme://host)")
+        return value
 
     @field_validator("web_app_base_url")
     @classmethod

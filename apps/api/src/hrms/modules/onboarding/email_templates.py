@@ -4,15 +4,18 @@ rendering. `build_invite_email` (O3), `build_changes_requested_email` (O6), and
 `build_activated_email` (O7) — the plan's own three templates, each landing alongside the
 endpoint that first needed it."""
 
+from hrms.core.links import mobile_html as _mobile_html
+from hrms.core.links import mobile_text as _mobile_text
+
 
 def build_invite_email(
-    *, candidate_first_name: str, company_name: str, invite_url: str
+    *, candidate_first_name: str, company_name: str, invite_url: str, mobile_url: str | None = None
 ) -> tuple[str, str, str]:
     subject = f"Complete your onboarding at {company_name}"
     text_body = (
         f"Hi {candidate_first_name},\n\n"
         f"Welcome to {company_name}! Please complete your onboarding details using the secure "
-        f"link below:\n\n{invite_url}\n\n"
+        f"link below:\n\n{invite_url}{_mobile_text(mobile_url)}\n\n"
         "This link is personal to you — please don't forward it. If you weren't expecting this "
         "email, you can safely ignore it."
     )
@@ -20,6 +23,7 @@ def build_invite_email(
         f"<p>Hi {candidate_first_name},</p>"
         f"<p>Welcome to <strong>{company_name}</strong>! Please complete your onboarding details "
         f'using the secure link below:</p><p><a href="{invite_url}">{invite_url}</a></p>'
+        f"{_mobile_html(mobile_url)}"
         "<p>This link is personal to you — please don't forward it. If you weren't expecting this "
         "email, you can safely ignore it.</p>"
     )

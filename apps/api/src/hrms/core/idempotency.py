@@ -76,6 +76,17 @@ def require_idempotency_key(
     return key
 
 
+def optional_idempotency_key(
+    idempotency_key: Annotated[str | None, Header(alias=IDEMPOTENCY_KEY_HEADER)] = None,
+) -> str | None:
+    """For endpoints where the header is opt-in (API audit H-4): absent -> `None` and the route
+    behaves exactly as before; present -> validated like `require_idempotency_key` (a malformed
+    key is a 422, never silently ignored, so a client believing it is protected is not wrong)."""
+    if idempotency_key is None:
+        return None
+    return require_idempotency_key(idempotency_key)
+
+
 def fingerprint(operation: str, fields: dict[str, Any]) -> str:
     """Deterministic digest of the operation and the fields that materially affect it."""
     canonical = json.dumps(
@@ -182,6 +193,7 @@ __all__ = [
     "IdempotentResult",
     "fingerprint",
     "mark_replay",
+    "optional_idempotency_key",
     "request_fingerprint_fields",
     "require_idempotency_key",
     "run_idempotent",

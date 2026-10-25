@@ -458,7 +458,9 @@ class OrganisationService:
         from hrms.modules.attendance.permissions import (
             ATTENDANCE_OVERTIME_APPROVE,
             ATTENDANCE_PERMISSIONS,
+            ATTENDANCE_PUNCH,
             ATTENDANCE_REGULARIZATION_APPROVE,
+            ATTENDANCE_REGULARIZATION_REQUEST,
             ATTENDANCE_VIEW,
         )
 
@@ -789,6 +791,23 @@ class OrganisationService:
                 self._session,
                 role_id=employee_role.id,
                 permission_id=leave_permission_by_code[leave_code].id,
+                data_scope=DataScopeLevel.SELF,
+            )
+        # API audit C-1 — every employee records and reviews their own attendance. All three codes
+        # are SELF-scoped: `/attendance/punches/me`, the face-punch routes and self-submitted
+        # regularizations never take a target employee, and reads are narrowed to the caller's own
+        # record by `resolve_visible_employee_ids`. Deliberately NOT granted: `PUNCH_ON_BEHALF`,
+        # `VIEW_ALL`, `REGULARIZATION_REQUEST_ON_BEHALF` or any approve/manage code. Existing
+        # tenants are backfilled by migration 20261020090000.
+        for attendance_code in (
+            ATTENDANCE_PUNCH,
+            ATTENDANCE_VIEW,
+            ATTENDANCE_REGULARIZATION_REQUEST,
+        ):
+            await self._repo.insert_role_permission(
+                self._session,
+                role_id=employee_role.id,
+                permission_id=attendance_permission_by_code[attendance_code].id,
                 data_scope=DataScopeLevel.SELF,
             )
         # Payroll 5.4 — every employee reads their own finalised payslips.

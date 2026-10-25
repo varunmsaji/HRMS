@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import Select, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,7 @@ from hrms.modules.attendance.models import (
     RegularizationPolicyVersion,
     ShiftRoster,
 )
+from hrms.shared.pagination import PageParams, fetch_page
 
 
 class AttendancePolicyRepository:
@@ -880,7 +881,7 @@ class ShiftRosterRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def list_filtered(
+    def _filtered_stmt(
         self,
         session: AsyncSession,
         *,
@@ -890,13 +891,13 @@ class ShiftRosterRepository:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[ShiftRoster]:
+    ) -> Select[Any] | None:
         """`visible_employee_ids=None` means COMPANY scope (no filter), mirroring
         `PunchRepository.list_filtered`'s convention exactly."""
         conditions = [ShiftRoster.company_id == company_id, ShiftRoster.deleted_at.is_(None)]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
-                return []
+                return None
             conditions.append(ShiftRoster.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(ShiftRoster.employee_id == employee_id)
@@ -906,8 +907,27 @@ class ShiftRosterRepository:
             conditions.append(ShiftRoster.roster_date <= date_to)
         if status is not None:
             conditions.append(ShiftRoster.status == status)
-        stmt = select(ShiftRoster).where(*conditions).order_by(ShiftRoster.roster_date)
+        stmt = (
+            select(ShiftRoster)
+            .where(*conditions)
+            .order_by(ShiftRoster.roster_date, ShiftRoster.employee_id, ShiftRoster.id)
+        )
+        return stmt
+
+    async def list_filtered(self, session: AsyncSession, **filters: Any) -> list[ShiftRoster]:
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return []
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self, session: AsyncSession, *, page: PageParams, **filters: Any
+    ) -> tuple[list[ShiftRoster], int]:
+        """Bounded variant of `list_filtered` (API audit H-1): same filters, total ordering."""
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return [], 0
+        return await fetch_page(session, stmt, page)
 
     async def update(
         self,
@@ -1020,7 +1040,7 @@ class PunchRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
-    async def list_filtered(
+    def _filtered_stmt(
         self,
         session: AsyncSession,
         *,
@@ -1029,7 +1049,7 @@ class PunchRepository:
         employee_id: UUID | None,
         date_from: date | None,
         date_to: date | None,
-    ) -> list[Punch]:
+    ) -> Select[Any] | None:
         """`visible_employee_ids=None` means COMPANY scope (no filter), mirroring
         `EmployeeRepository.list_employees`'s `visible_employee_ids` convention exactly.
         `date_from`/`date_to` are UTC calendar-day bounds on `punch_time` — a coarse listing
@@ -1038,7 +1058,7 @@ class PunchRepository:
         conditions = [Punch.company_id == company_id]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
-                return []
+                return None
             conditions.append(Punch.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(Punch.employee_id == employee_id)
@@ -1048,8 +1068,23 @@ class PunchRepository:
         if date_to is not None:
             end = datetime.combine(date_to, datetime.min.time(), tzinfo=UTC) + timedelta(days=1)
             conditions.append(Punch.punch_time < end)
-        stmt = select(Punch).where(*conditions).order_by(Punch.punch_time.desc())
+        stmt = select(Punch).where(*conditions).order_by(Punch.punch_time.desc(), Punch.id)
+        return stmt
+
+    async def list_filtered(self, session: AsyncSession, **filters: Any) -> list[Punch]:
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return []
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self, session: AsyncSession, *, page: PageParams, **filters: Any
+    ) -> tuple[list[Punch], int]:
+        """Bounded variant of `list_filtered` (API audit H-1): same filters, total ordering."""
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return [], 0
+        return await fetch_page(session, stmt, page)
 
 
 # ---------------------------------------------------------------------------
@@ -1130,7 +1165,7 @@ class AttendanceDayRepository:
         )
         return (await session.execute(stmt)).first() is not None
 
-    async def list_filtered(
+    def _filtered_stmt(
         self,
         session: AsyncSession,
         *,
@@ -1140,11 +1175,11 @@ class AttendanceDayRepository:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[AttendanceDay]:
+    ) -> Select[Any] | None:
         conditions = [AttendanceDay.company_id == company_id]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
-                return []
+                return None
             conditions.append(AttendanceDay.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(AttendanceDay.employee_id == employee_id)
@@ -1157,9 +1192,26 @@ class AttendanceDayRepository:
         stmt = (
             select(AttendanceDay)
             .where(*conditions)
-            .order_by(AttendanceDay.attendance_date.desc(), AttendanceDay.employee_id)
+            .order_by(
+                AttendanceDay.attendance_date.desc(), AttendanceDay.employee_id, AttendanceDay.id
+            )
         )
+        return stmt
+
+    async def list_filtered(self, session: AsyncSession, **filters: Any) -> list[AttendanceDay]:
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return []
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self, session: AsyncSession, *, page: PageParams, **filters: Any
+    ) -> tuple[list[AttendanceDay], int]:
+        """Bounded variant of `list_filtered` (API audit H-1): same filters, total ordering."""
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return [], 0
+        return await fetch_page(session, stmt, page)
 
     async def replace_derived_fields(
         self,
@@ -1439,6 +1491,21 @@ class AttendanceBreakRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def list_for_days(
+        self, session: AsyncSession, *, company_id: UUID, attendance_day_ids: list[UUID]
+    ) -> dict[UUID, list[AttendanceBreak]]:
+        """One query for a whole page of days (the per-day loop was an N+1)."""
+        out: dict[UUID, list[AttendanceBreak]] = {day_id: [] for day_id in attendance_day_ids}
+        if not attendance_day_ids:
+            return out
+        stmt = select(AttendanceBreak).where(
+            AttendanceBreak.company_id == company_id,
+            AttendanceBreak.attendance_day_id.in_(attendance_day_ids),
+        )
+        for row in (await session.execute(stmt)).scalars().all():
+            out[row.attendance_day_id].append(row)
+        return out
+
 
 # ---------------------------------------------------------------------------
 # W6 — AttendanceRegularizationRequest / RequestedPunch / Action (WD-28)
@@ -1524,7 +1591,7 @@ class AttendanceRegularizationRequestRepository:
         )
         return len((await session.execute(stmt)).scalars().all())
 
-    async def list_filtered(
+    def _filtered_stmt(
         self,
         session: AsyncSession,
         *,
@@ -1535,11 +1602,11 @@ class AttendanceRegularizationRequestRepository:
         date_to: date | None,
         status: str | None,
         request_type: str | None,
-    ) -> list[AttendanceRegularizationRequest]:
+    ) -> Select[Any] | None:
         conditions = [AttendanceRegularizationRequest.company_id == company_id]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
-                return []
+                return None
             conditions.append(AttendanceRegularizationRequest.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(AttendanceRegularizationRequest.employee_id == employee_id)
@@ -1554,9 +1621,29 @@ class AttendanceRegularizationRequestRepository:
         stmt = (
             select(AttendanceRegularizationRequest)
             .where(*conditions)
-            .order_by(AttendanceRegularizationRequest.submitted_at.desc())
+            .order_by(
+                AttendanceRegularizationRequest.submitted_at.desc(),
+                AttendanceRegularizationRequest.id,
+            )
         )
+        return stmt
+
+    async def list_filtered(
+        self, session: AsyncSession, **filters: Any
+    ) -> list[AttendanceRegularizationRequest]:
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return []
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self, session: AsyncSession, *, page: PageParams, **filters: Any
+    ) -> tuple[list[AttendanceRegularizationRequest], int]:
+        """Bounded variant of `list_filtered` (API audit H-1): same filters, total ordering."""
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return [], 0
+        return await fetch_page(session, stmt, page)
 
     async def update(
         self,
@@ -1761,7 +1848,7 @@ class OvertimeRecordRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def list_filtered(
+    def _filtered_stmt(
         self,
         session: AsyncSession,
         *,
@@ -1771,11 +1858,11 @@ class OvertimeRecordRepository:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[OvertimeRecord]:
+    ) -> Select[Any] | None:
         conditions = [OvertimeRecord.company_id == company_id]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
-                return []
+                return None
             conditions.append(OvertimeRecord.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(OvertimeRecord.employee_id == employee_id)
@@ -1788,9 +1875,26 @@ class OvertimeRecordRepository:
         stmt = (
             select(OvertimeRecord)
             .where(*conditions)
-            .order_by(OvertimeRecord.attendance_date.desc(), OvertimeRecord.employee_id)
+            .order_by(
+                OvertimeRecord.attendance_date.desc(), OvertimeRecord.employee_id, OvertimeRecord.id
+            )
         )
+        return stmt
+
+    async def list_filtered(self, session: AsyncSession, **filters: Any) -> list[OvertimeRecord]:
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return []
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self, session: AsyncSession, *, page: PageParams, **filters: Any
+    ) -> tuple[list[OvertimeRecord], int]:
+        """Bounded variant of `list_filtered` (API audit H-1): same filters, total ordering."""
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return [], 0
+        return await fetch_page(session, stmt, page)
 
     async def sum_minutes_detected_for_range(
         self,
@@ -1931,14 +2035,14 @@ class AttendancePeriodRepository:
         )
         return (await session.execute(stmt)).first() is not None
 
-    async def list_filtered(
+    def _filtered_stmt(
         self,
         session: AsyncSession,
         *,
         company_id: UUID,
         status: str | None,
         legal_entity_id: UUID | None = None,
-    ) -> list[AttendancePeriod]:
+    ) -> Select[Any] | None:
         conditions = [AttendancePeriod.company_id == company_id]
         if status is not None:
             conditions.append(AttendancePeriod.status == status)
@@ -1947,9 +2051,24 @@ class AttendancePeriodRepository:
         stmt = (
             select(AttendancePeriod)
             .where(*conditions)
-            .order_by(AttendancePeriod.period_start.desc())
+            .order_by(AttendancePeriod.period_start.desc(), AttendancePeriod.id)
         )
+        return stmt
+
+    async def list_filtered(self, session: AsyncSession, **filters: Any) -> list[AttendancePeriod]:
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return []
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self, session: AsyncSession, *, page: PageParams, **filters: Any
+    ) -> tuple[list[AttendancePeriod], int]:
+        """Bounded variant of `list_filtered` (API audit H-1): same filters, total ordering."""
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return [], 0
+        return await fetch_page(session, stmt, page)
 
     async def get_for_range(
         self,
@@ -2150,7 +2269,7 @@ class LeaveDayProjectionRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
-    async def list_filtered(
+    def _filtered_stmt(
         self,
         session: AsyncSession,
         *,
@@ -2160,11 +2279,11 @@ class LeaveDayProjectionRepository:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[LeaveDayProjection]:
+    ) -> Select[Any] | None:
         conditions = [LeaveDayProjection.company_id == company_id]
         if visible_employee_ids is not None:
             if not visible_employee_ids:
-                return []
+                return None
             conditions.append(LeaveDayProjection.employee_id.in_(visible_employee_ids))
         if employee_id is not None:
             conditions.append(LeaveDayProjection.employee_id == employee_id)
@@ -2177,9 +2296,30 @@ class LeaveDayProjectionRepository:
         stmt = (
             select(LeaveDayProjection)
             .where(*conditions)
-            .order_by(LeaveDayProjection.attendance_date)
+            .order_by(
+                LeaveDayProjection.attendance_date,
+                LeaveDayProjection.employee_id,
+                LeaveDayProjection.id,
+            )
         )
+        return stmt
+
+    async def list_filtered(
+        self, session: AsyncSession, **filters: Any
+    ) -> list[LeaveDayProjection]:
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return []
         return list((await session.execute(stmt)).scalars().all())
+
+    async def page_filtered(
+        self, session: AsyncSession, *, page: PageParams, **filters: Any
+    ) -> tuple[list[LeaveDayProjection], int]:
+        """Bounded variant of `list_filtered` (API audit H-1): same filters, total ordering."""
+        stmt = self._filtered_stmt(session, **filters)
+        if stmt is None:
+            return [], 0
+        return await fetch_page(session, stmt, page)
 
     async def update(
         self,
@@ -2255,6 +2395,20 @@ class FaceProfileRepository:
         return list(
             (await session.execute(stmt.order_by(EmployeeFaceProfile.enrolled_at))).scalars()
         )
+
+    async def page_for_company(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        page: PageParams,
+    ) -> tuple[list[EmployeeFaceProfile], int]:
+        stmt = select(EmployeeFaceProfile).where(EmployeeFaceProfile.company_id == company_id)
+        if visible_employee_ids is not None:
+            stmt = stmt.where(EmployeeFaceProfile.employee_id.in_(visible_employee_ids))
+        stmt = stmt.order_by(EmployeeFaceProfile.enrolled_at, EmployeeFaceProfile.id)
+        return await fetch_page(session, stmt, page)
 
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> EmployeeFaceProfile:
         row = EmployeeFaceProfile(**data)

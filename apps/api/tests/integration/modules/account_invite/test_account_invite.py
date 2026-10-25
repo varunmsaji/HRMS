@@ -203,6 +203,10 @@ async def test_invite_employee_accept_and_login_success(
                 # balances.
                 "LEAVE.APPLICATION_SUBMIT",
                 "LEAVE.BALANCE_VIEW",
+                # API audit C-1 - self-service attendance, SELF scope only.
+                "ATTENDANCE.PUNCH",
+                "ATTENDANCE.VIEW",
+                "ATTENDANCE.REGULARIZATION_REQUEST",
             }
             assert refreshed["id"] == employee["id"]
     finally:

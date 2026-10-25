@@ -151,6 +151,7 @@ from hrms.modules.payroll.schemas import (
 )
 from hrms.modules.payroll.words import rupees_in_words
 from hrms.shared.business_time import business_today
+from hrms.shared.pagination import PageParams
 
 if TYPE_CHECKING:
     from hrms.modules.attendance.service import PayrollPeriodInputs
@@ -1505,18 +1506,27 @@ class PayRunService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         legal_entity_id: UUID | None = None,
         status: str | None = None,
-    ) -> list[PayRunRead]:
-        rows = await self._repo.list_for_company(
-            self._session, company_id=company_id, legal_entity_id=legal_entity_id, status=status
+    ) -> tuple[list[PayRunRead], int]:
+        rows, total = await self._repo.page_for_company(
+            self._session,
+            company_id=company_id,
+            page=page,
+            legal_entity_id=legal_entity_id,
+            status=status,
         )
-        return [pay_run_to_read(row) for row in rows]
+        return [pay_run_to_read(row) for row in rows], total
 
-    async def list_employees(self, company_id: UUID, run_id: UUID) -> list[PayRunEmployeeRead]:
+    async def list_employees(
+        self, company_id: UUID, run_id: UUID, *, page: PageParams
+    ) -> tuple[list[PayRunEmployeeRead], int]:
         await self._get_row(company_id, run_id)
-        rows = await self._repo.list_employees(self._session, company_id=company_id, run_id=run_id)
-        return [pay_run_employee_to_read(row) for row in rows]
+        rows, total = await self._repo.page_employees(
+            self._session, company_id=company_id, run_id=run_id, page=page
+        )
+        return [pay_run_employee_to_read(row) for row in rows], total
 
     async def get_employee(
         self, company_id: UUID, run_id: UUID, employee_id: UUID
@@ -3677,18 +3687,20 @@ class PayAdjustmentService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         source_pay_run_id: UUID | None = None,
         legal_entity_id: UUID | None = None,
         status: str | None = None,
-    ) -> list[PayAdjustmentRead]:
-        rows = await self._repo.list_filtered(
+    ) -> tuple[list[PayAdjustmentRead], int]:
+        rows, total = await self._repo.page_filtered(
             self._session,
             company_id=company_id,
+            page=page,
             source_pay_run_id=source_pay_run_id,
             legal_entity_id=legal_entity_id,
             status=status,
         )
-        return [pay_adjustment_to_read(row) for row in rows]
+        return [pay_adjustment_to_read(row) for row in rows], total
 
     @logged_operation("payroll.adjustment.create")
     async def create(

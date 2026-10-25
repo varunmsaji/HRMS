@@ -23,15 +23,35 @@ the target's existence).
 gates it, unchanged.
 """
 
+from collections.abc import Awaitable
 from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
+from hrms.core.db.session import get_session
 from hrms.core.errors.base import PermissionDeniedError
+from hrms.core.idempotency import (
+    mark_replay,
+    optional_idempotency_key,
+    request_fingerprint_fields,
+    run_idempotent,
+)
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
 from hrms.core.rbac.types import DataScope
@@ -147,18 +167,42 @@ async def list_employees(
 async def create_employee(
     body: EmployeeCreate,
     request: Request,
+    response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(EMPLOYEE_CREATE))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    idempotency_key: Annotated[str | None, Depends(optional_idempotency_key)],
 ) -> DataEnvelope[EmployeeRead]:
-    data = await service.create_employee(
-        tenant.company_id,
-        body,
-        actor_user_id=tenant.user_id,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("User-Agent"),
+    """`Idempotency-Key` is optional (API audit H-4): without it every call creates an employee;
+    with it a retry after a lost response replays the first result (header
+    `Idempotent-Replayed: true`) instead of creating a second employee."""
+
+    def execute() -> Awaitable[EmployeeRead]:
+        return service.create_employee(
+            tenant.company_id,
+            body,
+            actor_user_id=tenant.user_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        )
+
+    if idempotency_key is None:
+        return DataEnvelope(
+            data=await execute(), meta=build_meta(current_request_id() or "unknown")
+        )
+    result = await run_idempotent(
+        session,
+        company_id=tenant.company_id,
+        operation="employee.create",
+        key=idempotency_key,
+        fingerprint_fields=request_fingerprint_fields(body, tenant.user_id),
+        response_model=EmployeeRead,
+        status_code=status.HTTP_201_CREATED,
+        execute=execute,
     )
-    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+    mark_replay(response, result.replayed, result.status_code)
+    return DataEnvelope(data=result.data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/employees/{employee_id}", status_code=status.HTTP_200_OK)

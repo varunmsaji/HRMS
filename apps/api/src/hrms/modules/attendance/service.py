@@ -198,6 +198,7 @@ from hrms.modules.attendance.schemas import (
     shift_roster_to_read,
 )
 from hrms.shared.business_time import business_today
+from hrms.shared.pagination import PageParams
 from hrms.shared.timezone import resolve_zoneinfo
 
 _logger = get_logger(__name__)
@@ -2509,18 +2510,20 @@ class ShiftRosterService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         scope: DataScope | None,
         caller_employee_id: UUID | None,
         employee_id: UUID | None,
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[ShiftRosterRead]:
+    ) -> tuple[list[ShiftRosterRead], int]:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._repo.list_filtered(
+        rows, total = await self._repo.page_filtered(
             self._session,
+            page=page,
             company_id=company_id,
             visible_employee_ids=visible_ids,
             employee_id=employee_id,
@@ -2528,7 +2531,7 @@ class ShiftRosterService:
             date_to=date_to,
             status=status,
         )
-        return [shift_roster_to_read(r) for r in rows]
+        return [shift_roster_to_read(r) for r in rows], total
 
 
 def _ensure_same_logical_punch(existing: Punch, *, direction: str, source: str) -> None:
@@ -2822,24 +2825,26 @@ class PunchService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         scope: DataScope | None,
         caller_employee_id: UUID | None,
         employee_id: UUID | None,
         date_from: date | None,
         date_to: date | None,
-    ) -> list[PunchRead]:
+    ) -> tuple[list[PunchRead], int]:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._repo.list_filtered(
+        rows, total = await self._repo.page_filtered(
             self._session,
+            page=page,
             company_id=company_id,
             visible_employee_ids=visible_ids,
             employee_id=employee_id,
             date_from=date_from,
             date_to=date_to,
         )
-        return [punch_to_read(r) for r in rows]
+        return [punch_to_read(r) for r in rows], total
 
 
 class AttendanceDayService:
@@ -2894,18 +2899,20 @@ class AttendanceDayService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         scope: DataScope | None,
         caller_employee_id: UUID | None,
         employee_id: UUID | None,
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[AttendanceDayRead]:
+    ) -> tuple[list[AttendanceDayRead], int]:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._day_repo.list_filtered(
+        rows, total = await self._day_repo.page_filtered(
             self._session,
+            page=page,
             company_id=company_id,
             visible_employee_ids=visible_ids,
             employee_id=employee_id,
@@ -2913,13 +2920,10 @@ class AttendanceDayService:
             date_to=date_to,
             status=status,
         )
-        results = []
-        for row in rows:
-            breaks = await self._break_repo.list_for_day(
-                self._session, company_id=company_id, attendance_day_id=row.id
-            )
-            results.append(attendance_day_to_read(row, breaks))
-        return results
+        breaks_by_day = await self._break_repo.list_for_days(
+            self._session, company_id=company_id, attendance_day_ids=[r.id for r in rows]
+        )
+        return [attendance_day_to_read(row, breaks_by_day[row.id]) for row in rows], total
 
     @logged_operation("attendance.day.calculate")
     async def calculate(
@@ -5005,6 +5009,7 @@ class RegularizationRequestService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         scope: DataScope | None,
         caller_employee_id: UUID | None,
         employee_id: UUID | None = None,
@@ -5012,12 +5017,13 @@ class RegularizationRequestService:
         date_to: date | None = None,
         status: str | None = None,
         request_type: str | None = None,
-    ) -> list[RegularizationRequestRead]:
+    ) -> tuple[list[RegularizationRequestRead], int]:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._repo.list_filtered(
+        rows, total = await self._repo.page_filtered(
             self._session,
+            page=page,
             company_id=company_id,
             visible_employee_ids=visible_ids,
             employee_id=employee_id,
@@ -5026,7 +5032,7 @@ class RegularizationRequestService:
             status=status,
             request_type=request_type,
         )
-        return [await self._read(r, company_id=company_id) for r in rows]
+        return [await self._read(r, company_id=company_id) for r in rows], total
 
 
 # ---------------------------------------------------------------------------
@@ -5113,18 +5119,20 @@ class OvertimeRecordService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         scope: DataScope | None,
         caller_employee_id: UUID | None,
         employee_id: UUID | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
         status: str | None = None,
-    ) -> list[OvertimeRecordRead]:
+    ) -> tuple[list[OvertimeRecordRead], int]:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._repo.list_filtered(
+        rows, total = await self._repo.page_filtered(
             self._session,
+            page=page,
             company_id=company_id,
             visible_employee_ids=visible_ids,
             employee_id=employee_id,
@@ -5132,7 +5140,7 @@ class OvertimeRecordService:
             date_to=date_to,
             status=status,
         )
-        return [await self._read(r, company_id=company_id) for r in rows]
+        return [await self._read(r, company_id=company_id) for r in rows], total
 
     async def _get_reviewable(
         self,
@@ -5553,12 +5561,21 @@ class AttendancePeriodService:
         return read
 
     async def list_periods(
-        self, company_id: UUID, *, status: str | None, legal_entity_id: UUID | None = None
-    ) -> list[AttendancePeriodRead]:
-        rows = await self._repo.list_filtered(
-            self._session, company_id=company_id, status=status, legal_entity_id=legal_entity_id
+        self,
+        company_id: UUID,
+        *,
+        page: PageParams,
+        status: str | None,
+        legal_entity_id: UUID | None = None,
+    ) -> tuple[list[AttendancePeriodRead], int]:
+        rows, total = await self._repo.page_filtered(
+            self._session,
+            page=page,
+            company_id=company_id,
+            status=status,
+            legal_entity_id=legal_entity_id,
         )
-        return [await self._read(row) for row in rows]
+        return [await self._read(row) for row in rows], total
 
     async def get(self, company_id: UUID, period_id: UUID) -> AttendancePeriodRead:
         row = await self._get_or_404(company_id, period_id)
@@ -6639,18 +6656,20 @@ class LeaveProjectionService:
         self,
         company_id: UUID,
         *,
+        page: PageParams,
         scope: DataScope | None,
         caller_employee_id: UUID | None,
         employee_id: UUID | None,
         date_from: date | None,
         date_to: date | None,
         status: str | None,
-    ) -> list[LeaveDayProjectionRead]:
+    ) -> tuple[list[LeaveDayProjectionRead], int]:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
         )
-        rows = await self._repo.list_filtered(
+        rows, total = await self._repo.page_filtered(
             self._session,
+            page=page,
             company_id=company_id,
             visible_employee_ids=visible_ids,
             employee_id=employee_id,
@@ -6658,7 +6677,7 @@ class LeaveProjectionService:
             date_to=date_to,
             status=status,
         )
-        return [leave_day_projection_to_read(r) for r in rows]
+        return [leave_day_projection_to_read(r) for r in rows], total
 
     async def get_projection(
         self,

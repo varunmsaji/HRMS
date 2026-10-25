@@ -1,9 +1,11 @@
 import math
 from datetime import date
-from typing import Annotated, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar
 
 from fastapi import Query
 from pydantic import BaseModel, Field
+from sqlalchemy import Select, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 T = TypeVar("T")
 
@@ -82,3 +84,43 @@ class MoneyAmount(BaseModel):
 class DateRange(BaseModel):
     start: date
     end: date | None = None
+
+
+# API audit H-1 - collections that used to return their whole result set. Retrofitting the
+# standard 25/100 contract onto them would silently truncate existing clients that call them with
+# no paging parameters (the web app does), so these routes keep a deliberately generous default and
+# cap: a single response can never exceed BOUNDED_MAX_PAGE_SIZE rows, `pagination` is always
+# present so a client can detect a partial page, and a client that wants smaller pages just sends
+# `per_page`. Lower the default once every caller pages.
+BOUNDED_DEFAULT_PAGE_SIZE = 500
+BOUNDED_MAX_PAGE_SIZE = 500
+
+
+def bounded_pagination_params(
+    page: Annotated[int, Query(ge=1, description="1-indexed page number")] = 1,
+    per_page: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=BOUNDED_MAX_PAGE_SIZE,
+            description=f"Rows per page (default and maximum {BOUNDED_MAX_PAGE_SIZE})",
+        ),
+    ] = BOUNDED_DEFAULT_PAGE_SIZE,
+) -> PageParams:
+    return PageParams(page=page, per_page=per_page)
+
+
+async def fetch_page(
+    session: AsyncSession, stmt: Select[Any], params: PageParams
+) -> tuple[list[Any], int]:
+    """Runs one `SELECT` bounded to `params` and returns `(rows, total)`.
+
+    The statement must already carry a *total* ordering (a unique tie-breaker last) so pages are
+    stable and never overlap or skip rows. `total` counts the unbounded statement."""
+    total = int(
+        (
+            await session.execute(select(func.count()).select_from(stmt.order_by(None).subquery()))
+        ).scalar_one()
+    )
+    rows = (await session.execute(stmt.limit(params.limit).offset(params.offset))).scalars().all()
+    return list(rows), total

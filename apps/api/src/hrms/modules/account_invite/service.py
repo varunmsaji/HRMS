@@ -19,6 +19,7 @@ from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.auth import AccountLockedError, InvalidCredentialsError
 from hrms.core.errors.base import NotFoundError, ValidationError
+from hrms.core.links import mobile_link
 from hrms.modules.account_invite.email_templates import build_account_invite_email
 from hrms.modules.account_invite.exceptions import (
     AccountCreationConflictError,
@@ -186,7 +187,10 @@ class AccountInviteService:
         company = await organisation.get_company_profile(company_id)
 
         subject, html_body, text_body = build_account_invite_email(
-            first_name=first_name, company_name=company.name, invite_url=invite_url
+            first_name=first_name,
+            company_name=company.name,
+            invite_url=invite_url,
+            mobile_url=mobile_link(self._settings, "accept-invite", raw_token),
         )
         email_sent = True
         try:

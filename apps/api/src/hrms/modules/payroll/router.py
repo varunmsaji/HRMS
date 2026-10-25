@@ -104,7 +104,14 @@ from hrms.modules.payroll.service import (
     StatutoryRateService,
 )
 from hrms.shared.if_match import parse_if_match
-from hrms.shared.pagination import DataEnvelope, ListEnvelope, ResponseMeta
+from hrms.shared.pagination import (
+    DataEnvelope,
+    ListEnvelope,
+    PageParams,
+    ResponseMeta,
+    bounded_pagination_params,
+    build_pagination_meta,
+)
 
 router = APIRouter(tags=["payroll"])
 
@@ -450,13 +457,16 @@ async def list_pay_runs(
     tenant: _Tenant,
     _scope: _RunView,
     service: _Runs,
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     legal_entity_id: Annotated[UUID | None, Query()] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
 ) -> ListEnvelope[PayRunRead]:
-    data = await service.list_runs(
-        tenant.company_id, legal_entity_id=legal_entity_id, status=status_filter
+    data, total = await service.list_runs(
+        tenant.company_id, page=page, legal_entity_id=legal_entity_id, status=status_filter
     )
-    return ListEnvelope(data=data, meta=_meta())
+    return ListEnvelope(
+        data=data, pagination=build_pagination_meta(page, total=total), meta=_meta()
+    )
 
 
 @router.post("/payroll/pay-runs", status_code=status.HTTP_201_CREATED)
@@ -628,9 +638,16 @@ async def rollback_pay_run(
 
 @router.get("/payroll/pay-runs/{run_id}/employees", status_code=status.HTTP_200_OK)
 async def list_pay_run_employees(
-    run_id: UUID, tenant: _Tenant, _scope: _RunView, service: _Runs
+    run_id: UUID,
+    tenant: _Tenant,
+    _scope: _RunView,
+    service: _Runs,
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
 ) -> ListEnvelope[PayRunEmployeeRead]:
-    return ListEnvelope(data=await service.list_employees(tenant.company_id, run_id), meta=_meta())
+    data, total = await service.list_employees(tenant.company_id, run_id, page=page)
+    return ListEnvelope(
+        data=data, pagination=build_pagination_meta(page, total=total), meta=_meta()
+    )
 
 
 @router.get("/payroll/pay-runs/{run_id}/employees/{employee_id}", status_code=status.HTTP_200_OK)
@@ -797,17 +814,21 @@ async def list_pay_adjustments(
     tenant: _Tenant,
     _scope: _RunView,
     service: _Adjustments,
+    page: Annotated[PageParams, Depends(bounded_pagination_params)],
     source_pay_run_id: Annotated[UUID | None, Query()] = None,
     legal_entity_id: Annotated[UUID | None, Query()] = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
 ) -> ListEnvelope[PayAdjustmentRead]:
-    data = await service.list_adjustments(
+    data, total = await service.list_adjustments(
         tenant.company_id,
+        page=page,
         source_pay_run_id=source_pay_run_id,
         legal_entity_id=legal_entity_id,
         status=status_filter,
     )
-    return ListEnvelope(data=data, meta=_meta())
+    return ListEnvelope(
+        data=data, pagination=build_pagination_meta(page, total=total), meta=_meta()
+    )
 
 
 @router.post("/payroll/adjustments", status_code=status.HTTP_201_CREATED)
