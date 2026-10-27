@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -124,7 +125,24 @@ async def seed_b1_foundation(session: AsyncSession) -> None:
 
 
 async def clear_b1_seed(session: AsyncSession) -> None:
-    """Remove demo seed rows (for test isolation)."""
+    """Remove demo seed rows (for test isolation).
+
+    Destructive: TRUNCATEs every company and user. Refuses to run against the persistent
+    developer database (`hrms_dev`) outside CI, because a bare `pytest` run defaults to it and
+    would silently wipe real companies/users created through the app. Use
+    `run_full_tests.py` (isolated `hrms_test`), or set `HRMS_ALLOW_DEV_DB_WIPE=1` to override.
+    """
+    database = session.get_bind().engine.url.database
+    if (
+        database == "hrms_dev"
+        and not os.environ.get("CI")
+        and os.environ.get("HRMS_ALLOW_DEV_DB_WIPE") != "1"
+    ):
+        raise RuntimeError(
+            "Refusing to TRUNCATE company/user on the persistent 'hrms_dev' database. "
+            "Run the suite via run_full_tests.py (uses hrms_test), point DATABASE_URL at a "
+            "throwaway database, or set HRMS_ALLOW_DEV_DB_WIPE=1 if you really mean it."
+        )
     await session.execute(text('TRUNCATE company, "user", audit_log, plan CASCADE;'))
     await session.flush()
 

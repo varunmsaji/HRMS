@@ -128,7 +128,9 @@ The admin-only shape (`GET /onboarding-cases/{id}/documents`) — adds the short
 |---|---|---|---|---|---|
 | `case` | yes | [OnboardingCaseRead](#onboardingcaseread) | no | - | - |
 | `invite_url` | yes | string | no | - | - |
-| `email_sent` | yes | boolean | no | - | - |
+| `email_sent` | yes | boolean | no | - | **Deprecated name.** Since B12 it means the e-mail was *queued*, not that a provider accepted it; identical to `email_queued`. It never reports a delivery failure. |
+| `email_queued` | no | boolean | no | default `true` | The e-mail was stored in the transactional outbox in the same transaction as this request (B13). |
+| `email_delivery_status` | no | string | no | `QUEUED` \| `NOT_QUEUED`; default `QUEUED` | State at response time. Later states (sent / retrying / failed) are tracked server-side in `email_outbox`, not in this response. |
 
 ## OnboardingSectionReviewRead
 <a id="onboardingsectionreviewread"></a>

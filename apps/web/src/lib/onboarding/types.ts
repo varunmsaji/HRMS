@@ -41,8 +41,80 @@ export interface OnboardingCase {
 /** `POST /onboarding-cases/{id}/send-invite` response (O3). */
 export interface OnboardingInvite {
   case: OnboardingCase;
-  invite_url: string;
+  /** `null` only for a replayed duplicate request (the raw link is not retrievable again). */
+  invite_url: string | null;
+  /** DEPRECATED name: means "queued for delivery", NOT "delivered". Use `email_queued`. */
   email_sent: boolean;
+  email_queued: boolean;
+  email_delivery_status: "QUEUED" | "NOT_QUEUED";
+  message_id: string | null;
+  message_status: string | null;
+  replayed: boolean;
+  invitation_expires_at: string | null;
+}
+
+export interface InvitationPlaceholder {
+  key: string;
+  label: string;
+  description: string;
+  required: boolean;
+  example: string;
+}
+
+/** `GET /onboarding-cases/{id}/invitation/compose`. */
+export interface InvitationCompose {
+  case_id: string;
+  recipient_email: string;
+  candidate_name: string;
+  company_name: string;
+  designation: string | null;
+  department: string | null;
+  proposed_joining_date: string;
+  invitable: boolean;
+  has_active_link: boolean;
+  active_link_expires_at: string | null;
+  link_valid_days: number;
+  default_subject: string;
+  default_body: string;
+  subject_max_length: number;
+  body_max_length: number;
+  placeholders: InvitationPlaceholder[];
+}
+
+/** `POST /onboarding-cases/{id}/invitation/preview` — rendered server-side, inert link. */
+export interface InvitationPreview {
+  recipient_email: string;
+  subject: string;
+  html_body: string;
+  text_body: string;
+  link_is_placeholder: boolean;
+}
+
+export type OnboardingMessageStatus =
+  | "NOT_QUEUED"
+  | "QUEUED"
+  | "RETRYING"
+  | "SENDING"
+  | "PROVIDER_ACCEPTED"
+  | "FAILED"
+  | "UNKNOWN";
+
+/** `GET /onboarding-cases/{id}/messages`. */
+export interface OnboardingMessage {
+  id: string;
+  message_type: string;
+  recipient_email: string;
+  subject: string;
+  body_text: string;
+  created_by_user_id: string;
+  created_at: string;
+  queued_at: string | null;
+  status: OnboardingMessageStatus;
+  attempts: number;
+  last_attempt_at: string | null;
+  provider_accepted_at: string | null;
+  failed_at: string | null;
+  failure_class: string | null;
 }
 
 /** Statuses `send-invite` may act on — mirrors `ONBOARDING_CASE_INVITABLE_STATUSES`

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api/api_error.dart';
+import 'ui.dart';
 
 /// Shared list-screen shell (loading / error-with-retry / empty / pull-to-
 /// refresh) used by every simple resource list in the app (branches,
@@ -16,6 +17,7 @@ class AsyncListScreen<T> extends StatefulWidget {
     this.createLabel,
     this.emptyLabel = 'Nothing here yet.',
     this.actions,
+    this.searchText,
   });
 
   final String title;
@@ -29,6 +31,9 @@ class AsyncListScreen<T> extends StatefulWidget {
   final String emptyLabel;
   final List<Widget>? actions;
 
+  /// Enables the search bar; returns the text a row is matched against.
+  final String Function(T item)? searchText;
+
   @override
   State<AsyncListScreen<T>> createState() => AsyncListScreenState<T>();
 }
@@ -37,6 +42,7 @@ class AsyncListScreenState<T> extends State<AsyncListScreen<T>> {
   bool _loading = true;
   List<T> _items = const [];
   ApiError? _error;
+  String _query = '';
 
   @override
   void initState() {
@@ -63,51 +69,84 @@ class AsyncListScreenState<T> extends State<AsyncListScreen<T>> {
 
   @override
   Widget build(BuildContext context) {
+    final query = _query.trim().toLowerCase();
+    final search = widget.searchText;
+    final visible = query.isEmpty || search == null
+        ? _items
+        : _items.where((item) => search(item).toLowerCase().contains(query)).toList();
+
     Widget body;
     if (_loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton();
     } else if (_error != null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _error!.status == 403 ? 'You do not have permission to view this.' : _error!.message,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 16),
-              FilledButton(onPressed: reload, child: const Text('Retry')),
-            ],
-          ),
-        ),
+      final forbidden = _error!.status == 403;
+      body = StateMessage(
+        icon: forbidden ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
+        tone: forbidden ? Tone.warning : Tone.danger,
+        title: forbidden ? 'No access' : 'Couldn\'t load this',
+        message: forbidden ? 'You do not have permission to view this.' : _error!.message,
+        actionLabel: forbidden ? null : 'Try again',
+        onAction: reload,
       );
-    } else if (_items.isEmpty) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(widget.emptyLabel, textAlign: TextAlign.center),
-        ),
+    } else if (visible.isEmpty) {
+      body = StateMessage(
+        icon: query.isEmpty ? Icons.inbox_outlined : Icons.search_off_rounded,
+        title: query.isEmpty ? widget.emptyLabel : 'No matches',
+        message: query.isEmpty
+            ? (widget.onCreate != null ? 'Tap "${widget.createLabel ?? 'New'}" to add the first one.' : null)
+            : 'Nothing matches "$_query".',
       );
     } else {
       body = ListView.separated(
-        itemCount: _items.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) => widget.itemBuilder(context, _items[index]),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+        itemCount: visible.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, index) => _RowShell(child: widget.itemBuilder(context, visible[index])),
       );
     }
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.title), actions: widget.actions),
-      body: RefreshIndicator(onRefresh: reload, child: body),
+      body: Column(
+        children: [
+          if (search != null && !_loading && _error == null && _items.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+              child: AppSearchField(hint: 'Search ${widget.title.toLowerCase()}', onChanged: (v) => setState(() => _query = v)),
+            ),
+          Expanded(child: RefreshIndicator(onRefresh: reload, child: body)),
+        ],
+      ),
       floatingActionButton: widget.onCreate == null
           ? null
           : FloatingActionButton.extended(
               onPressed: widget.onCreate,
-              icon: const Icon(Icons.add),
+              icon: const Icon(Icons.add_rounded),
               label: Text(widget.createLabel ?? 'New'),
             ),
+    );
+  }
+}
+
+/// Gives a plain row (a bare ListTile, say) the same card surface as [AppCard].
+/// Rows that already draw their own card (like [ListRowCard]) pass through untouched.
+class _RowShell extends StatelessWidget {
+  const _RowShell({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (child is AppCard || child is ListRowCard) return child;
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.brightness == Brightness.dark ? scheme.surfaceContainer : scheme.surfaceContainerLowest,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.55)),
+      ),
+      child: child,
     );
   }
 }

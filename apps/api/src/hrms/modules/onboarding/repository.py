@@ -34,6 +34,27 @@ class OnboardingCaseRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def get_case_for_update(
+        self, session: AsyncSession, *, company_id: UUID, case_id: UUID
+    ) -> OnboardingCase | None:
+        """`get_case` with a row lock (`SELECT ... FOR UPDATE`) held until the transaction ends.
+        A concurrent transaction asking for the same row waits here, and when it is released it
+        re-reads the row the winner committed (`populate_existing` refreshes any identity-map
+        copy), so a state-machine check made after this call sees the real current status. This is
+        what makes a one-shot transition such as activation single-winner across requests and
+        across worker processes - the lock is in Postgres, not in Python (B12 / DEF-B11-02)."""
+        stmt = (
+            select(OnboardingCase)
+            .where(
+                OnboardingCase.id == case_id,
+                OnboardingCase.company_id == company_id,
+                OnboardingCase.deleted_at.is_(None),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     def _list_conditions(self, *, company_id: UUID, status: str | None) -> list[Any]:
         """Shared WHERE predicates for `list_cases`/`count_cases` (FINDING-03) — kept identical
         between the two so pagination and the `total` it reports always agree."""
@@ -83,14 +104,24 @@ class OnboardingCaseRepository:
         self, session: AsyncSession, *, company_id: UUID, personal_email: str
     ) -> OnboardingCase | None:
         """The duplicate-prevention check (plan §13 Q5) — a case is "active" for this purpose if
-        it is not yet in one of the terminal statuses."""
-        stmt = select(OnboardingCase).where(
-            OnboardingCase.company_id == company_id,
-            OnboardingCase.personal_email == personal_email,
-            OnboardingCase.deleted_at.is_(None),
-            OnboardingCase.status.not_in(ONBOARDING_CASE_TERMINAL_STATUSES),
+        it is not yet in one of the terminal statuses.
+
+        B12 (DEF-B11-03 / DEF-B11-05): the comparison is case-insensitive (`lower(personal_email)`),
+        so rows stored before e-mails were normalised on write still match, and it returns the
+        oldest match instead of requiring exactly one - a company that already holds duplicate
+        rows must get a controlled "already exists" answer, not a `MultipleResultsFound` 500."""
+        stmt = (
+            select(OnboardingCase)
+            .where(
+                OnboardingCase.company_id == company_id,
+                func.lower(OnboardingCase.personal_email) == personal_email.strip().lower(),
+                OnboardingCase.deleted_at.is_(None),
+                OnboardingCase.status.not_in(ONBOARDING_CASE_TERMINAL_STATUSES),
+            )
+            .order_by(OnboardingCase.created_at, OnboardingCase.id)
+            .limit(1)
         )
-        return (await session.execute(stmt)).scalar_one_or_none()
+        return (await session.execute(stmt)).scalars().first()
 
     async def update_section(
         self,

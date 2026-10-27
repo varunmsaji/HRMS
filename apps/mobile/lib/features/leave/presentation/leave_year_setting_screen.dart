@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_error.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../data/leave_repository.dart' show leaveRepositoryProvider;
+import '../../../core/widgets/ui.dart';
 
 const _leaveYearTypes = ['CALENDAR', 'FINANCIAL', 'CUSTOM', 'ANNIVERSARY'];
 
@@ -71,7 +72,7 @@ class _LeaveYearSettingScreenState extends ConsumerState<LeaveYearSettingScreen>
     return Scaffold(
       appBar: AppBar(title: const Text('Leave Year')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [

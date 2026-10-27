@@ -1,0 +1,223 @@
+ M apps/api/.dockerignore
+ M apps/api/.env.example
+ M apps/api/Dockerfile
+ M apps/api/env/.env.production.example
+ M apps/api/pyproject.toml
+ M apps/api/src/hrms/app.py
+ M apps/api/src/hrms/core/celery_app.py
+ M apps/api/src/hrms/core/config/settings.py
+ M apps/api/src/hrms/core/db/session.py
+ M apps/api/src/hrms/core/errors/handlers.py
+ M apps/api/src/hrms/core/observability/business_events.py
+ M apps/api/src/hrms/core/observability/file_sink.py
+ M apps/api/src/hrms/core/observability/logging.py
+ M apps/api/src/hrms/core/observability/operations.py
+ M apps/api/src/hrms/core/observability/redaction.py
+ M apps/api/src/hrms/core/observability/request_context.py
+ M apps/api/src/hrms/core/observability/security_events.py
+ M apps/api/src/hrms/core/storage.py
+ M apps/api/src/hrms/modules/attendance/face_deletion.py
+ M apps/api/src/hrms/modules/attendance/face_service.py
+ M apps/api/src/hrms/modules/attendance/face_verification.py
+ M apps/api/src/hrms/modules/attendance/models.py
+ M apps/api/src/hrms/modules/attendance/router.py
+ M apps/api/src/hrms/modules/attendance/schemas.py
+ M apps/api/src/hrms/modules/attendance/service.py
+ M apps/api/src/hrms/modules/attendance/tasks.py
+ M apps/api/src/hrms/modules/employee/service.py
+ M apps/api/src/hrms/modules/employee/tasks.py
+ M apps/api/src/hrms/modules/employee_import/exceptions.py
+ M apps/api/src/hrms/modules/employee_import/service.py
+ M apps/api/src/hrms/modules/employee_import/tasks.py
+ M apps/api/src/hrms/modules/leave/router.py
+ M apps/api/src/hrms/modules/leave/service.py
+ M apps/api/src/hrms/modules/leave/tasks.py
+ M apps/api/src/hrms/modules/onboarding/email_sender.py
+ M apps/api/src/hrms/modules/organisation/service.py
+ M apps/api/src/hrms/modules/payroll/exceptions.py
+ M apps/api/src/hrms/modules/payroll/repository.py
+ M apps/api/src/hrms/modules/payroll/service.py
+ M apps/api/src/hrms/modules/platform/models.py
+ M apps/api/src/hrms/seed/bootstrap.py
+ M apps/api/tests/conftest.py
+ M apps/api/tests/integration/core/test_storage.py
+ M apps/api/tests/integration/modules/attendance/conftest.py
+ M apps/api/tests/integration/modules/employee/test_effective_dated_integrity.py
+ M apps/api/tests/integration/modules/employee_import/test_employee_import_upload_bounds.py
+ M apps/api/tests/integration/modules/payroll/test_p1_hardening.py
+ M apps/api/tests/integration/modules/platform/test_platform_console.py
+ M apps/api/tests/security/test_rls_runtime_role.py
+ M apps/api/tests/unit/core/test_file_logging.py
+ M apps/api/tests/unit/core/test_log_redaction.py
+ M apps/api/tests/unit/modules/attendance/test_face_provider_client.py
+ M apps/api/tests/unit/modules/onboarding/test_email_failure_classification.py
+ M apps/api/uv.lock
+ M apps/mobile/android/app/src/main/AndroidManifest.xml
+ M apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+ M apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+ M apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+ M apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+ M apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@1x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@2x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-20x20@3x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@1x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@2x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-29x29@3x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@1x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@2x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-40x40@3x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@2x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-60x60@3x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@1x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-76x76@2x.png
+ M apps/mobile/ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-83.5x83.5@2x.png
+ M apps/mobile/lib/core/forms/spec_form_screen.dart
+ M apps/mobile/lib/core/requests/request_screens.dart
+ M apps/mobile/lib/core/resource/resource_screens.dart
+ M apps/mobile/lib/core/resource/sub_resource_section.dart
+ M apps/mobile/lib/core/theme/app_theme.dart
+ M apps/mobile/lib/core/widgets/async_list_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_day_detail_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_insights_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_month_card.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_period_detail_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_periods_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_self_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_summary.dart
+ M apps/mobile/lib/features/attendance/presentation/attendance_widgets.dart
+ M apps/mobile/lib/features/attendance/presentation/face_enrollment_admin_card.dart
+ M apps/mobile/lib/features/attendance/presentation/face_punch_card.dart
+ M apps/mobile/lib/features/attendance/presentation/policy_assignments_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/policy_resolution_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/roster_calendar_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/rosters_screen.dart
+ M apps/mobile/lib/features/attendance/presentation/team_attendance_screen.dart
+ M apps/mobile/lib/features/auth/presentation/login_screen.dart
+ M apps/mobile/lib/features/auth/presentation/widgets/auth_form_field.dart
+ M apps/mobile/lib/features/auth/presentation/widgets/auth_scaffold.dart
+ M apps/mobile/lib/features/dashboard/presentation/dashboard_screen.dart
+ M apps/mobile/lib/features/employees/presentation/employees_screen.dart
+ M apps/mobile/lib/features/leave/presentation/leave_application_detail_screen.dart
+ M apps/mobile/lib/features/leave/presentation/leave_applications_screen.dart
+ M apps/mobile/lib/features/leave/presentation/leave_balances_screen.dart
+ M apps/mobile/lib/features/leave/presentation/leave_year_setting_screen.dart
+ M apps/mobile/lib/features/onboarding/presentation/onboarding_case_detail_screen.dart
+ M apps/mobile/lib/features/onboarding/presentation/onboarding_cases_screen.dart
+ M apps/mobile/lib/features/onboarding/presentation/public_onboarding_screen.dart
+ M apps/mobile/lib/features/onboarding/presentation/setup_screen.dart
+ M apps/mobile/lib/features/onboarding/presentation/users_screen.dart
+ M apps/mobile/lib/features/organisation/presentation/company_profile_screen.dart
+ M apps/mobile/lib/features/payroll/presentation/employee_salary_panel.dart
+ M apps/mobile/lib/features/payroll/presentation/my_payslips_screen.dart
+ M apps/mobile/lib/features/payroll/presentation/pay_run_detail_screen.dart
+ M apps/mobile/lib/features/payroll/presentation/pay_run_employee_screen.dart
+ M apps/mobile/lib/features/payroll/presentation/pay_runs_screen.dart
+ M apps/mobile/lib/features/payroll/presentation/payslip_screen.dart
+ M apps/mobile/lib/features/payroll/presentation/statutory_rates_screen.dart
+ M apps/mobile/lib/features/profile/presentation/employee_documents_panel.dart
+ M apps/mobile/lib/features/profile/presentation/employee_overview.dart
+ M apps/mobile/lib/features/profile/presentation/employee_record_sections.dart
+ M apps/mobile/lib/features/profile/presentation/profile_screen.dart
+ M apps/mobile/lib/features/shell/app_shell.dart
+ M apps/mobile/lib/features/shell/settings_hub_screen.dart
+ M apps/mobile/lib/features/splash/splash_screen.dart
+ M apps/mobile/pubspec.yaml
+ M apps/mobile/test/leave_applications_test.dart
+ M apps/mobile/test/live/live_contract_test.dart
+ M apps/web/src/app/platform/layout.tsx
+ M apps/web/src/components/landing/landing.tsx
+ M apps/web/src/components/layout/app-shell.tsx
+ M apps/web/src/components/layout/auth-layout.tsx
+ M apps/web/src/lib/platform/api.ts
+ M docker-compose.prod.yml
+ M infra/nginx/conf.d/hrms.conf.template
+ M run_full_tests.py
+?? apps/api/alembic/versions/20261021090000_email_log.py
+?? apps/api/alembic/versions/20261022090000_face_opensource_engine.py
+?? apps/api/alembic/versions/20261026090000_hr_admin_attendance_onboarding_grants.py
+?? apps/api/models/face/
+?? apps/api/scripts/face/
+?? apps/api/src/hrms/core/observability/db_metrics.py
+?? apps/api/src/hrms/core/observability/metrics.py
+?? apps/api/src/hrms/core/observability/metrics_router.py
+?? apps/api/src/hrms/core/observability/scrape.py
+?? apps/api/src/hrms/core/observability/trace_context.py
+?? apps/api/src/hrms/modules/attendance/opensource_face/
+?? apps/api/src/hrms/modules/platform/email_log_router.py
+?? apps/api/tests/integration/core/test_celery_task_event_loop.py
+?? apps/api/tests/integration/core/test_db_metrics.py
+?? apps/api/tests/integration/core/test_runtime_role_grants.py
+?? apps/api/tests/integration/modules/attendance/test_face_opensource_engine.py
+?? apps/api/tests/integration/modules/attendance/test_period_summary_scope.py
+?? apps/api/tests/integration/modules/leave/test_adjustment_scope.py
+?? apps/api/tests/integration/modules/organisation/test_hr_admin_policy_grants.py
+?? apps/api/tests/integration/modules/organisation/test_scope_guard_live_grants.py
+?? apps/api/tests/integration/modules/payroll/test_hr_admin_separation.py
+?? apps/api/tests/isolation_guard.py
+?? apps/api/tests/unit/core/scope_guard.py
+?? apps/api/tests/unit/core/scope_guard_exceptions.toml
+?? apps/api/tests/unit/core/test_celery_metrics.py
+?? apps/api/tests/unit/core/test_metrics.py
+?? apps/api/tests/unit/core/test_metrics_multiprocess.py
+?? apps/api/tests/unit/core/test_observability_config.py
+?? apps/api/tests/unit/core/test_scope_enforcement_guard.py
+?? apps/api/tests/unit/core/test_storage_metrics.py
+?? apps/api/tests/unit/core/test_trace_correlation.py
+?? apps/api/tests/unit/modules/attendance/test_opensource_face.py
+?? apps/api/tests/unit/modules/attendance/test_opensource_face_evaluation.py
+?? apps/api/tests/unit/modules/attendance/test_opensource_face_startup.py
+?? apps/api/tests/unit/test_isolation_guard.py
+?? apps/mobile/android/app/src/main/res/mipmap-anydpi-v26/
+?? apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+?? apps/mobile/android/app/src/main/res/mipmap-hdpi/ic_launcher_monochrome.png
+?? apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png
+?? apps/mobile/android/app/src/main/res/mipmap-mdpi/ic_launcher_monochrome.png
+?? apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png
+?? apps/mobile/android/app/src/main/res/mipmap-xhdpi/ic_launcher_monochrome.png
+?? apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png
+?? apps/mobile/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_monochrome.png
+?? apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+?? apps/mobile/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_monochrome.png
+?? apps/mobile/android/app/src/main/res/values/ic_launcher_background.xml
+?? apps/mobile/assets/
+?? apps/mobile/lib/core/widgets/ui.dart
+?? apps/mobile/web/
+?? apps/web/public/brand/
+?? apps/web/src/app/apple-icon.png
+?? apps/web/src/app/icon.png
+?? apps/web/src/app/platform/emails/
+?? apps/web/src/components/brand/
+?? docker-compose.monitoring.yml
+?? docs/architecture/FACE_ATTENDANCE_ENGINE_ARCHITECTURE.md
+?? docs/architecture/OBSERVABILITY_ARCHITECTURE.md
+?? docs/audits/OBSERVABILITY_VERIFICATION_REPORT.md
+?? docs/audits/OPEN_SOURCE_FACE_ATTENDANCE_AUDIT.md
+?? docs/audits/PRODUCTION_OBSERVABILITY_AUDIT.md
+?? docs/operations/OBSERVABILITY_ALERT_CATALOG.md
+?? docs/operations/OBSERVABILITY_DASHBOARD_CATALOG.md
+?? docs/operations/OBSERVABILITY_RUNBOOK.md
+?? docs/operations/OPEN_SOURCE_FACE_ATTENDANCE_EVALUATION.md
+?? docs/operations/OPEN_SOURCE_FACE_ATTENDANCE_SETUP.md
+?? docs/operations/OPEN_SOURCE_FACE_ATTENDANCE_STAGING_CHECKLIST.md
+?? docs/testing/FUNCTIONAL_QA_REPORT_2026-10-25.md
+?? docs/testing/HR_ADMIN_IMPLEMENTATION_PLAN.md
+?? docs/testing/QA_A1_SAFETY_REVIEW.md
+?? docs/testing/QA_B11_PLAN.md
+?? docs/testing/QA_BASELINE_RESULTS.md
+?? docs/testing/QA_DEFECT_REGISTER.md
+?? docs/testing/QA_EXECUTION_PLAN.md
+?? docs/testing/QA_TEST_CASES.csv
+?? docs/testing/QA_TEST_MAP.csv
+?? docs/testing/QA_TEST_STRATEGY.md
+?? docs/testing/QA_TRACEABILITY_MATRIX.md
+?? docs/testing/qa_catalogue_src/
+?? docs/testing/qa_evidence_b11/
+?? docs/testing/qa_harness/
+?? docs/testing/qa_live_2026-10-25/
+?? docs/testing/qa_live_errata/
+?? infra/monitoring/grafana/
+?? infra/monitoring/prometheus/
+?? start-mobile.sh
+?? start-web.sh

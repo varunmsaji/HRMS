@@ -13,3 +13,7 @@ tests/
 .git/
 *.log
 .dev-logs/
+# Open-source face engine weights are provisioned only by the FACE_OS_ASSETS build step
+# (checksum-pinned), never copied from a developer machine into the build context.
+models/face/**/*.onnx
+models/face/**/*.part

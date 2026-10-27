@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R02",
+  "direction": "MARKER-NORTHWIND-own",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 200,
+  "body": "{\"data\":{\"id\":\"567bc97e-c165-4cc4-a0bc-98f527077f2c\",\"name\":\"QA Northwind MARKER-NORTHWIND\",\"legal_name\":null,\"registration_number\":null,\"subdomain\":null,\"contact\":{\"email\":null,\"phone\":null,\"website\":null},\"address\":{\"line1\":null,\"line2\":null,\"city\":null,\"state\":null,\"postal_code\":null,\"country_code\":null},\"industry_code\":null,\"company_size\":null,\"country_code\":\"IN\",\"currency\":\"INR\",\"timezone\":\"Asia/Kolkata\",\"locale\":{\"language_code\":\"en-IN\",\"date_format\":\"DD/MM/YYYY\"},\"fiscal_year\":{\"start_month\":4},\"working_days\":[{\"day\":\"MON\",\"is_working\":true,\"is_alternate\":false},{\"day\":\"TUE\",\"is_working\":true,\"is_alternate\":false},{\"day\":\"WED\",\"is_working\":true,\"is_alternate\":false},{\"day\":\"THU\",\"is_working\":true,\"is_alternate\":false},{\"day\":\"FRI\",\"is_working\":true,\"is_alternate\":false},{\"day\":\"SAT\",\"is_working\":false,\"is_alternate\":false},{\"day\":\"SUN\",\"is_working\":false,\"is_alternate\":false}],\"business_hours\":null,\"branding\":{\"logo_url\":null,\"theme\":null},\"status\":\"PENDING_APPROVAL\",\"primary_legal_entity\":null,\"onboarded_at\":null,\"trial_ends_at\":null,\"version\":1},\"meta\":{\"request_id\":\"82ce4092-a96d-45da-b9ff-25b44dfee655\",\"server_time\":\"2026-10-26T13:07:01.746146Z\"}}",
+  "verdict": "PASS",
+  "note": "own company profile",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

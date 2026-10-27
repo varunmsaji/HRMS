@@ -10,17 +10,42 @@ from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.refresh_cookie import set_refresh_cookie
 from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.config.settings import get_settings
-from hrms.core.errors.base import PermissionDeniedError
+from hrms.core.errors.base import PermissionDeniedError, ValidationError
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
+from hrms.modules.attendance.permissions import ATTENDANCE_VIEW
 from hrms.modules.identity.schemas import (
     PublicTokenResponseData,
     build_meta,
     to_public_token_response,
 )
+from hrms.modules.organisation.calendar_impact import (
+    HOLIDAY_CHANGE_TYPES,
+    CalendarImpactService,
+    ImpactConfirmed,
+    ImpactConfirmRequest,
+    ImpactPreview,
+    ImpactPreviewRequest,
+    get_calendar_impact_service,
+)
+from hrms.modules.organisation.calendar_setup import (
+    WorkCalendarDaysRead,
+    WorkCalendarSetupConfirmed,
+    WorkCalendarSetupConfirmRequest,
+    WorkCalendarSetupPreview,
+    WorkCalendarSetupPreviewRequest,
+    WorkCalendarSetupService,
+    WorkCalendarSetupStatus,
+    get_work_calendar_setup_service,
+)
 from hrms.modules.organisation.dependencies import get_organisation_service
+from hrms.modules.organisation.employee_calendar import (
+    EmployeeCalendarRead,
+    EmployeeCalendarService,
+    get_employee_calendar_service,
+)
 from hrms.modules.organisation.permissions import (
     DASHBOARD_COMPANY_VIEW,
     ORG_BRANCH_MANAGE,
@@ -1375,4 +1400,176 @@ async def get_calendar_resolution(
     Gated by `ORG.CALENDAR.MANAGE` in W1 — self-service access gated by `ATTENDANCE.VIEW` is
     deferred to W4, since no `ATTENDANCE.*` permission codes exist yet (WD-19)."""
     data = await service.resolve_calendar_for_employee(tenant.company_id, employee_id, date_param)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Work calendar - month/range view and guided setup. All gated by `ORG.CALENDAR.MANAGE`; the
+# company always comes from the authenticated tenant context, never from the request.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/work-calendars/{work_calendar_id}/days", status_code=status.HTTP_200_OK)
+async def get_work_calendar_days(
+    work_calendar_id: UUID,
+    from_date: Annotated[date, Query(alias="from")],
+    to_date: Annotated[date, Query(alias="to")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_CALENDAR_MANAGE))],
+    setup: Annotated[WorkCalendarSetupService, Depends(get_work_calendar_setup_service)],
+) -> DataEnvelope[WorkCalendarDaysRead]:
+    """Classifies a bounded inclusive range (at most 100 days) in a constant number of queries
+    using the same classifier as `/day-type`."""
+    data = await setup.get_calendar_days(tenant.company_id, work_calendar_id, from_date, to_date)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/work-calendar-setup", status_code=status.HTTP_200_OK)
+async def get_work_calendar_setup_status(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_CALENDAR_MANAGE))],
+    setup: Annotated[WorkCalendarSetupService, Depends(get_work_calendar_setup_service)],
+) -> DataEnvelope[WorkCalendarSetupStatus]:
+    """`SETUP_REQUIRED` carries an *unconfirmed* suggestion; nothing is active until confirm."""
+    data = await setup.get_status(tenant.company_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/work-calendar-setup/preview", status_code=status.HTTP_200_OK)
+async def preview_work_calendar_setup(
+    body: WorkCalendarSetupPreviewRequest,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_CALENDAR_MANAGE))],
+    setup: Annotated[WorkCalendarSetupService, Depends(get_work_calendar_setup_service)],
+) -> DataEnvelope[WorkCalendarSetupPreview]:
+    """POST only because the body is structured; performs no writes."""
+    data = await setup.preview(tenant.company_id, body)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/work-calendar-setup/confirm", status_code=status.HTTP_201_CREATED)
+async def confirm_work_calendar_setup(
+    body: WorkCalendarSetupConfirmRequest,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_CALENDAR_MANAGE))],
+    setup: Annotated[WorkCalendarSetupService, Depends(get_work_calendar_setup_service)],
+) -> DataEnvelope[WorkCalendarSetupConfirmed]:
+    data = await setup.confirm(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Employee self-service calendar (read-only). The employee is always the authenticated caller's
+# own linked record (JWT claim); there is deliberately no employee_id/company_id parameter.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/employee-calendar/me", status_code=status.HTTP_200_OK)
+async def get_my_calendar(
+    from_date: Annotated[date, Query(alias="from")],
+    to_date: Annotated[date, Query(alias="to")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[EmployeeCalendarService, Depends(get_employee_calendar_service)],
+) -> DataEnvelope[EmployeeCalendarRead]:
+    """The caller's own day classification (effective calendar via the WD-09 precedence walk) and
+    their own approved/pending leave for a bounded inclusive range (at most 100 days). Leave is
+    included only when the caller holds a leave-balance view grant; unresolved dates are returned
+    with `configured=false` rather than defaulting to a working day."""
+    if user.employee_id is None:
+        raise ValidationError(
+            "The caller has no linked employee record",
+            details=[
+                {
+                    "field": "employee",
+                    "code": "EMPLOYEE_RECORD_REQUIRED",
+                    "message": "No employee record is linked to this account",
+                }
+            ],
+        )
+    from hrms.modules.leave.permissions import LEAVE_BALANCE_VIEW, LEAVE_BALANCE_VIEW_ALL
+
+    own = await rbac.resolve_data_scope(user.user_id, user.company_id, LEAVE_BALANCE_VIEW)
+    broad = await rbac.resolve_data_scope(user.user_id, user.company_id, LEAVE_BALANCE_VIEW_ALL)
+    data = await service.get_my_calendar(
+        tenant.company_id,
+        user.employee_id,
+        from_date,
+        to_date,
+        include_leave=bool(own.levels | broad.levels),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+# ---------------------------------------------------------------------------
+# Work calendar - change-impact preview and safe confirmation. Preview writes nothing. Confirm is
+# not authorised by a preview: it recomputes the impact under a lock and applies the change only
+# if the caller's `impact_digest` still matches.
+# ---------------------------------------------------------------------------
+
+
+async def _require_calendar_change_permission(
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+) -> None:
+    for code in (ORG_CALENDAR_MANAGE, ORG_HOLIDAY_MANAGE):
+        if await rbac.has_permission(user.user_id, user.company_id, code):
+            return
+    raise PermissionDeniedError(
+        f"Permission {ORG_CALENDAR_MANAGE} is required", code="PERMISSION_DENIED"
+    )
+
+
+async def _require_permission_for_change(
+    change_type: str, user: AuthenticatedUser, rbac: RbacService
+) -> None:
+    """Holiday edits need `ORG.HOLIDAY.MANAGE`, everything else `ORG.CALENDAR.MANAGE` - the same
+    codes the ordinary create/update routes require."""
+    code = ORG_HOLIDAY_MANAGE if change_type in HOLIDAY_CHANGE_TYPES else ORG_CALENDAR_MANAGE
+    if not await rbac.has_permission(user.user_id, user.company_id, code):
+        raise PermissionDeniedError(f"Permission {code} is required", code="PERMISSION_DENIED")
+
+
+@router.post("/work-calendar-changes/preview", status_code=status.HTTP_200_OK)
+async def preview_work_calendar_change(
+    body: ImpactPreviewRequest,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _gate: Annotated[None, Depends(_require_calendar_change_permission)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[CalendarImpactService, Depends(get_calendar_impact_service)],
+) -> DataEnvelope[ImpactPreview]:
+    """POST only because the proposed change is structured. Performs no writes."""
+    await _require_permission_for_change(body.change.change_type, user, rbac)
+    data = await service.preview(tenant.company_id, body)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/work-calendar-changes/confirm", status_code=status.HTTP_201_CREATED)
+async def confirm_work_calendar_change(
+    body: ImpactConfirmRequest,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _gate: Annotated[None, Depends(_require_calendar_change_permission)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+    service: Annotated[CalendarImpactService, Depends(get_calendar_impact_service)],
+) -> DataEnvelope[ImpactConfirmed]:
+    await _require_permission_for_change(body.change.change_type, user, rbac)
+    data = await service.confirm(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))

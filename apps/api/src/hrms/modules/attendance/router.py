@@ -956,7 +956,8 @@ async def get_attendance_day(
 async def calculate_attendance_day(
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW_ALL))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW_ALL))],
     service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
     employee_id: Annotated[UUID, Query()],
     date_param: Annotated[date | None, Query(alias="date")] = None,
@@ -975,6 +976,8 @@ async def calculate_attendance_day(
         tenant.company_id,
         employee_id,
         date_param,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
@@ -987,7 +990,8 @@ async def recompute_attendance_day(
     attendance_day_id: UUID,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
     service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
 ) -> DataEnvelope[AttendanceDayRead]:
     """Privileged recompute (`ATTENDANCE.RECOMPUTE`, COMPANY) — architecture §18: backdated
@@ -998,6 +1002,8 @@ async def recompute_attendance_day(
     data = await service.recompute(
         tenant.company_id,
         attendance_day_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
@@ -1010,7 +1016,8 @@ async def calculate_attendance_range(
     body: AttendanceRangeCalculateInput,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
     service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
 ) -> DataEnvelope[AttendanceRangeCalculateQueued]:
     """PAY-001 — queues calculation of every employed day in the range (at most 62 days, not
@@ -1020,6 +1027,8 @@ async def calculate_attendance_range(
     data = await service.queue_range_calculation(
         tenant.company_id,
         body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
@@ -1036,7 +1045,8 @@ async def keep_leave_over_punches(
     body: WorkOnLeaveKeepLeaveInput,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_RECOMPUTE))],
     service: Annotated[AttendanceDayService, Depends(get_attendance_day_service)],
 ) -> DataEnvelope[AttendanceDayRead]:
     """BUS-012 — HR confirms an approved full-day leave stands over punches on the same day
@@ -1047,6 +1057,8 @@ async def keep_leave_over_punches(
         tenant.company_id,
         attendance_day_id,
         body,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
@@ -1559,16 +1571,37 @@ async def get_attendance_period(
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
+async def _attendance_view_scope(
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    rbac: Annotated[RbacService, Depends(get_rbac_service)],
+) -> DataScope:
+    """Unions `ATTENDANCE.VIEW` (its assigned scope) with `ATTENDANCE.VIEW_ALL` (company-wide
+    visibility, "ignoring reporting tree"). Each permission's own grant is honoured as granted:
+    a VIEW_ALL grant below COMPANY stays below COMPANY. Neither held -> 403."""
+    view = await rbac.resolve_data_scope(user.user_id, user.company_id, ATTENDANCE_VIEW)
+    view_all = await rbac.resolve_data_scope(user.user_id, user.company_id, ATTENDANCE_VIEW_ALL)
+    combined = DataScope(levels=view.levels | view_all.levels)
+    if not combined.levels:
+        raise PermissionDeniedError(
+            f"Permission {ATTENDANCE_VIEW} is required", code="PERMISSION_DENIED"
+        )
+    return combined
+
+
 @router.get("/attendance-periods/{period_id}/summary", status_code=status.HTTP_200_OK)
 async def get_attendance_period_summary(
     period_id: UUID,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(_attendance_view_scope)],
     service: Annotated[AttendancePeriodService, Depends(get_attendance_period_service)],
 ) -> ListEnvelope[AttendancePeriodSummaryRead]:
     """A live, unpersisted preview while `OPEN`; the frozen snapshot once `CLOSED`
-    (architecture §4.2 — "regenerated only while unlocked; frozen at lock/snapshot")."""
-    data = await service.get_summary(tenant.company_id, period_id)
+    (architecture §4.2 — "regenerated only while unlocked; frozen at lock/snapshot").
+    Rows are limited to the employees `scope` allows (DEF-B6-02)."""
+    data = await service.get_summary(
+        tenant.company_id, period_id, scope=scope, caller_employee_id=user.employee_id
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

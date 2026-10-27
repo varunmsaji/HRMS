@@ -1,0 +1,45 @@
+{
+  "database": "hrms_qa_20261026",
+  "employees": {
+    "MARKER-FOUNDRY": "eee9f7cc-292c-49f4-aff9-92d490ff6b1f",
+    "MARKER-NORTHWIND": "d265d407-1d86-4947-b147-f1805eb91d21"
+  },
+  "employee_errors": {},
+  "companies": [
+    {
+      "company_id": "a6c1f28f-3c8c-4148-b7f5-e43dbecf91f4",
+      "company_name": "QA Foundry MARKER-FOUNDRY",
+      "company_status": "PENDING_APPROVAL",
+      "memberships": [
+        {
+          "user_id": "dfe01642-db29-4ad6-8645-1fe785791c80",
+          "email": "founder.a@example.com",
+          "email_verified": true,
+          "membership_status": "ACTIVE",
+          "roles": [
+            "COMPANY_ADMIN"
+          ]
+        }
+      ]
+    },
+    {
+      "company_id": "567bc97e-c165-4cc4-a0bc-98f527077f2c",
+      "company_name": "QA Northwind MARKER-NORTHWIND",
+      "company_status": "PENDING_APPROVAL",
+      "memberships": [
+        {
+          "user_id": "0fffc8c9-fbf8-447a-b716-4d6248f495f1",
+          "email": "founder.b@example.com",
+          "email_verified": true,
+          "membership_status": "ACTIVE",
+          "roles": [
+            "COMPANY_ADMIN"
+          ]
+        }
+      ]
+    }
+  ],
+  "email_log_counts": {
+    "logging:LOGGED_ONLY": 6
+  }
+}

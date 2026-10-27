@@ -11,6 +11,7 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../domain/policy_assignment_form.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -98,10 +99,9 @@ class _PolicyResolutionScreenState extends ConsumerState<PolicyResolutionScreen>
     final scheme = Theme.of(context).colorScheme;
     final incomplete = r['config_incomplete'] == true;
     final isCalendar = _resultKind == 'WORK_CALENDAR';
-    return Container(
-      margin: const EdgeInsets.only(top: 16),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: AppCard(
       child: incomplete
           ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('CONFIG_INCOMPLETE', style: TextStyle(fontWeight: FontWeight.w700, color: scheme.error)),
@@ -125,6 +125,7 @@ class _PolicyResolutionScreenState extends ConsumerState<PolicyResolutionScreen>
                   _kv('Resolved through', prettyEnum('${r['resolved_through'] ?? '—'}')),
                   _kv('Policy version', '${r['resolved_version_id'] ?? '—'}'),
                 ]),
+      ),
     );
   }
 

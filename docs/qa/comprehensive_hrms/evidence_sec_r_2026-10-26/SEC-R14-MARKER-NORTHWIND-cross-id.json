@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R14",
+  "direction": "MARKER-NORTHWIND-cross-id",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 404,
+  "body": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Resource not found\",\"details\":[],\"request_id\":\"8545d03b-fc4b-442e-93ee-b47f3ca9e6c4\",\"documentation_url\":null}}",
+  "verdict": "PASS",
+  "note": "other employee id",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

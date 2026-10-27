@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/attendance_repository.dart';
+import '../../../core/widgets/ui.dart';
 
 /// Mirrors `bucketOf` / `BUCKET_LABELS` in `apps/web/src/lib/attendance/dashboard.ts`.
 const attendanceBucketLabels = {
@@ -130,27 +131,27 @@ class AttendanceSummaryCard extends StatelessWidget {
     ];
     final entries = [for (final e in attendanceBucketLabels.entries) if (e.key != 'NOT_EMPLOYED' && summary.count(e.key) > 0) e];
     final total = summary.employed == 0 ? 1 : summary.employed;
-    return Card(
-      margin: EdgeInsets.zero,
+    return AppCard(
+      padding: const EdgeInsets.all(14),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.zero,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Wrap(spacing: 8, runSpacing: 8, children: [
             for (final t in tiles)
               Container(
                 width: 104,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: scheme.surfaceContainerLow, borderRadius: BorderRadius.circular(14)),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(t.$1, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
                   const SizedBox(height: 2),
-                  Text(t.$2, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: t.$3)),
+                  Text(t.$2, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: t.$3)),
                 ]),
               ),
           ]),
           if (entries.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text('Status distribution', style: Theme.of(context).textTheme.labelLarge),
+            Text('Status distribution', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
             for (final e in entries)
               InkWell(
                 onTap: () => onBucketTap(selectedBucket == e.key ? null : e.key),

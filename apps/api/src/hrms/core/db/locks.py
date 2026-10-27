@@ -31,6 +31,12 @@ must not both pass that check on the same total. It is a LEAF lock: it is taken 
 correction request (after the idempotency claim, which is a row, not a lock) and nothing else in
 this list is acquired while holding it, so it cannot take part in a cycle.
 
+`onboarding-case-email` serialises creation of onboarding cases for one normalised candidate e-mail
+within a company (B12 / DEF-B11-03). "No second active case for this e-mail" is a check followed by
+an insert; without a lock, parallel creates all pass the check. It is a LEAF lock - taken, then the
+check and the insert, then the transaction ends - and nothing else in this list is acquired while
+holding it.
+
 Lock order, outermost first — always acquire in this order, never the reverse:
 
     leave-dates  ->  payroll-finalise  ->  attendance-period-close  ->  leave balance
@@ -93,6 +99,29 @@ async def lock_pay_adjustment(
 ) -> None:
     """Held until the transaction ends. A leaf lock; see the module docstring."""
     key = f"pay-adjustment:{company_id}:{pay_run_id}:{employee_id}"
+    async with bounded_lock_wait(
+        session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
+    ):
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
+
+
+async def lock_onboarding_case_email(session: AsyncSession, company_id: UUID, email: str) -> None:
+    """Held until the transaction ends. `email` must already be normalised (stripped, lower-cased)
+    so that spellings of one address share one lock. A leaf lock; see the module docstring."""
+    key = f"onboarding-case-email:{company_id}:{email}"
+    async with bounded_lock_wait(
+        session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
+    ):
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
+
+
+async def lock_calendar_policy_dependencies(session: AsyncSession, company_id: UUID) -> None:
+    """Held until the transaction ends. Serialises, per company, deactivating a work calendar or
+    weekly-off pattern against creating an assignment (or default link) that depends on it, so a
+    dependency cannot slip in between "no active assignment" and the deactivation. Taken after
+    `work-calendar-change:<company>` when both are needed (change-impact confirmation). A leaf
+    lock otherwise."""
+    key = f"calendar-policy-dependencies:{company_id}"
     async with bounded_lock_wait(
         session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
     ):

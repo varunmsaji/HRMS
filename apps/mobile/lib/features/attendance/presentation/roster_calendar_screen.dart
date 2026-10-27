@@ -148,8 +148,8 @@ class _RosterCalendarScreenState extends ConsumerState<RosterCalendarScreen> {
                   margin: const EdgeInsets.all(2),
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    border: Border.all(color: scheme.outlineVariant),
-                    borderRadius: BorderRadius.circular(6),
+                    border: roster == null ? Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)) : null,
+                    borderRadius: BorderRadius.circular(10),
                     color: roster?['status'] == 'PUBLISHED' ? scheme.primaryContainer.withValues(alpha: 0.18) : (roster != null ? Colors.orange.withValues(alpha: 0.12) : null),
                   ),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -164,11 +164,11 @@ class _RosterCalendarScreenState extends ConsumerState<RosterCalendarScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
           child: Row(children: [
-            Container(width: 12, height: 12, color: scheme.primaryContainer.withValues(alpha: 0.4)),
+            Container(width: 12, height: 12, decoration: BoxDecoration(color: scheme.primaryContainer.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(4))),
             const SizedBox(width: 6),
             const Text('Published', style: TextStyle(fontSize: 12)),
             const SizedBox(width: 16),
-            Container(width: 12, height: 12, color: Colors.orange.withValues(alpha: 0.3)),
+            Container(width: 12, height: 12, decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(4))),
             const SizedBox(width: 6),
             const Text('Draft', style: TextStyle(fontSize: 12)),
           ]),

@@ -15,6 +15,7 @@ import '../domain/punch_form.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
 import 'attendance_widgets.dart';
+import '../../../core/widgets/ui.dart';
 
 const attendanceStatuses = ['NOT_JOINED', 'EXITED', 'NOT_EXPECTED', 'PRESENT', 'HALF_DAY', 'ABSENT', 'LEAVE', 'ON_DUTY', 'WFH', 'INCOMPLETE', 'CONFIG_ERROR'];
 
@@ -182,18 +183,9 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
         ),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const ListSkeleton()
               : _error != null
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Text(_error!.message, textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          FilledButton(onPressed: _load, child: const Text('Retry')),
-                        ]),
-                      ),
-                    )
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
@@ -201,7 +193,7 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
                         children: [
                           if (_days.isNotEmpty) AttendanceSummaryCard(summary: summary, selectedBucket: _bucket, onBucketTap: (b) => setState(() => _bucket = b)),
                           const SizedBox(height: 8),
-                          if (visible.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No attendance days match these filters.'))),
+                          if (visible.isEmpty) const SizedBox(height: 300, child: StateMessage(icon: Icons.groups_outlined, title: 'Nothing to show', message: 'No attendance days match these filters.')),
                           for (final d in visible)
                             AttendanceDayTile(
                               day: d,

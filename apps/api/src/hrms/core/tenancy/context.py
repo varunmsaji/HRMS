@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +29,18 @@ def set_tenant(ctx: TenantContext) -> None:
         # Only a membership-verified context (`get_tenant_context` sets `user_id`) is recorded
         # for logging — never the raw, unverified `X-Company-Id` header value.
         holder["verified_tenant"] = ctx
+
+
+@contextmanager
+def tenant_scope(ctx: TenantContext | None) -> Iterator[None]:
+    """Runs a block under `ctx` (or with no tenant) and restores whatever was set before. For code
+    that acts for a tenant outside a request (the e-mail outbox worker): the e-mail ledger reads the
+    tenant from this context."""
+    token = _tenant_var.set(ctx)
+    try:
+        yield
+    finally:
+        _tenant_var.reset(token)
 
 
 def current_tenant() -> TenantContext:

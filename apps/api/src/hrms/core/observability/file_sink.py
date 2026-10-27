@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hrms.core.observability.metrics import LOG_DROPPED, safe_count
+
 try:  # POSIX only; file logging degrades to "unavailable" on platforms without it.
     import fcntl
 except ImportError:  # pragma: no cover
@@ -326,6 +328,7 @@ class RotatingLineFile:
                 if self._fd is None:
                     if now < self._retry_at:
                         self.dropped_writes += 1
+                        safe_count(LOG_DROPPED, "file")
                         return False
                     self._open()
                 fcntl.flock(self._lock_fd, fcntl.LOCK_EX)  # type: ignore[arg-type]
@@ -348,6 +351,7 @@ class RotatingLineFile:
                             fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
             except (OSError, ValueError):
                 self.dropped_writes += 1
+                safe_count(LOG_DROPPED, "file")
                 self._retry_at = time.monotonic() + self._RETRY_OPEN_AFTER_SECONDS
                 self._close()
                 return False

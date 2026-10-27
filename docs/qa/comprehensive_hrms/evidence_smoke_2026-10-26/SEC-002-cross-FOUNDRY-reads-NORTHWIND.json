@@ -1,0 +1,16 @@
+{
+  "case": "SEC-002-cross-FOUNDRY-reads-NORTHWIND",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:16:55+05:30",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "expected": "404. Other tenant marker absent.",
+  "http_status": 404,
+  "headers": {
+    "content-type": "application/json",
+    "x-request-id": "29ac45d3-272c-4ad8-b853-a6176b1059ff"
+  },
+  "body": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Resource not found\",\"details\":[],\"request_id\":\"29ac45d3-272c-4ad8-b853-a6176b1059ff\",\"documentation_url\":null}}",
+  "verdict": "PASS",
+  "note": "cross-tenant GET"
+}

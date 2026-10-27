@@ -1,0 +1,3 @@
+# Provisioned by scripts/face/fetch_opensource_assets.py (checksum-pinned); never committed.
+*.onnx
+*.part

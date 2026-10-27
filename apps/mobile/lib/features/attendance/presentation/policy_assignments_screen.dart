@@ -9,6 +9,7 @@ import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
 import '../../shell/more_action.dart';
 import '../domain/policy_assignment_form.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -119,7 +120,6 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Policy Assignments'), actions: const [MoreAction()]),
       floatingActionButton: FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('New assignment')),
@@ -139,29 +139,29 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
         ),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const ListSkeleton()
               : _error != null
-                  ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [Text(_error!.message, textAlign: TextAlign.center), const SizedBox(height: 16), FilledButton(onPressed: _load, child: const Text('Retry'))])))
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
                         padding: const EdgeInsets.only(top: 8, bottom: 88),
                         children: [
-                          if (_rows.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No policy assignments yet.'))),
+                          if (_rows.isEmpty) const SizedBox(height: 300, child: StateMessage(icon: Icons.rule_folder_outlined, title: 'No policy assignments yet')),
                           for (final a in _rows)
-                            ListTile(
-                              title: Text('${policyKindLabels[a['policy_kind']] ?? a['policy_kind']} → ${scopeTypeLabels[a['scope_type']] ?? a['scope_type']}${a['scope_id'] != null ? ': ${_name(scopeSources[a['scope_type']] ?? '', a['scope_id'] as String?)}' : ''}'),
-                              subtitle: Text([
-                                _name(policySources[a['policy_kind']] ?? '', a['policy_id'] as String?),
-                                if (a['leave_type_id'] != null) _name('leave_types', a['leave_type_id'] as String?),
-                                '${a['effective_from']} – ${a['effective_to'] ?? 'open'}',
-                                if (a['reason'] != null) '${a['reason']}',
-                              ].join(' · ')),
-                              isThreeLine: true,
-                              trailing: Chip(
-                                label: Text(a['effective_to'] == null ? 'Current' : 'Ended ${a['effective_to']}'),
-                                visualDensity: VisualDensity.compact,
-                                backgroundColor: (a['effective_to'] == null ? Colors.green : scheme.onSurfaceVariant).withValues(alpha: 0.15),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                              child: ListRowCard(
+                                leading: const IconBadge(icon: Icons.rule_folder_outlined),
+                                title: '${policyKindLabels[a['policy_kind']] ?? a['policy_kind']} → ${scopeTypeLabels[a['scope_type']] ?? a['scope_type']}${a['scope_id'] != null ? ': ${_name(scopeSources[a['scope_type']] ?? '', a['scope_id'] as String?)}' : ''}',
+                                subtitle: [
+                                  _name(policySources[a['policy_kind']] ?? '', a['policy_id'] as String?),
+                                  if (a['leave_type_id'] != null) _name('leave_types', a['leave_type_id'] as String?),
+                                  '${a['effective_from']} – ${a['effective_to'] ?? 'open'}',
+                                  if (a['reason'] != null) '${a['reason']}',
+                                ].join(' · '),
+                                showChevron: false,
+                                trailing: StatusChip(label: a['effective_to'] == null ? 'Current' : 'Ended ${a['effective_to']}', tone: a['effective_to'] == null ? Tone.success : Tone.neutral),
                               ),
                             ),
                           if (_hasMore) Center(child: TextButton(onPressed: _loadingMore ? null : _more, child: Text(_loadingMore ? 'Loading…' : 'Load more'))),

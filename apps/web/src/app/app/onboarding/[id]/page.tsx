@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { DocumentRejectDialog } from "@/components/onboarding/document-review-dialog";
+import { InvitationComposer } from "@/components/onboarding/invitation-composer";
+import { InvitationHistory } from "@/components/onboarding/invitation-history";
 import { OnboardingStatusBadge } from "@/components/onboarding/onboarding-status-badge";
 import { SectionRejectDialog } from "@/components/onboarding/section-review-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -174,12 +177,14 @@ export default function OnboardingCaseDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const { user } = useAuth();
 
   const [onboardingCase, setOnboardingCase] = useState<OnboardingCaseDetail | null>(null);
   const [refs, setRefs] = useState<ReferenceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
-  const [sendingInvite, setSendingInvite] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [historyKey, setHistoryKey] = useState(0);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [reviewingSection, setReviewingSection] = useState<OnboardingSectionName | null>(null);
   const [verifyingAll, setVerifyingAll] = useState(false);
@@ -236,20 +241,6 @@ export default function OnboardingCaseDetailPage() {
     void load();
     void loadDocuments();
   }, [load, loadDocuments]);
-
-  // TEST-ONLY convenience: auto-fetch the invite link on load instead of requiring a manual
-  // "Get Link"/"Resend Invite" click, so it's visible every time this page is opened. Remove
-  // this effect (and the `autoFetchedInviteRef` it relies on) once no longer needed — it
-  // re-issues a token on every page view, which isn't something a production flow should do
-  // silently.
-  const autoFetchedInviteRef = useRef(false);
-  useEffect(() => {
-    if (!onboardingCase || inviteUrl || autoFetchedInviteRef.current) return;
-    if (!can("ONBOARDING.CREATE")) return;
-    if (!ONBOARDING_CASE_INVITABLE_STATUSES.includes(onboardingCase.status)) return;
-    autoFetchedInviteRef.current = true;
-    void handleSendInvite();
-  }, [onboardingCase, inviteUrl, can]);
 
   async function handleVerifyDocument(document: OnboardingDocumentWithUrl) {
     setReviewingDocumentId(document.id);
@@ -372,30 +363,18 @@ export default function OnboardingCaseDetailPage() {
     }
   }
 
-  async function handleSendInvite() {
-    setSendingInvite(true);
-    try {
-      const result = await apiClient.post<OnboardingInvite>(
-        `/onboarding-cases/${params.id}/send-invite`,
-      );
-      setInviteUrl(result.invite_url);
-      toast({
-        title: result.email_sent ? "Invite sent" : "Invite link created",
-        description: result.email_sent
-          ? `An email was sent to ${result.case.personal_email}.`
-          : "The link is ready to copy — email delivery isn't configured in this environment.",
-        variant: "success",
-      });
-      void load();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        toast({ title: "You don't have permission to send this invite", variant: "danger" });
-        return;
-      }
-      toast({ title: "Could not send invite", description: describeApiError(err), variant: "danger" });
-    } finally {
-      setSendingInvite(false);
-    }
+  function handleInviteQueued(result: OnboardingInvite) {
+    setInviteUrl(result.invite_url);
+    setHistoryKey((k) => k + 1);
+    // "Queued" is all the API can say at this point - never "sent"/"delivered".
+    toast({
+      title: result.email_queued ? "Invitation queued" : "Invitation link created, email not queued",
+      description: result.email_queued
+        ? `The email to ${result.case.personal_email} is queued for delivery. Track its status below.`
+        : "The link is ready to copy, but no email was queued. Send a new invitation to retry.",
+      variant: result.email_queued ? "success" : "danger",
+    });
+    void load();
   }
 
   /** Employee login setup: `POST /employees/{id}/invite` emails a one-time link where the new
@@ -472,10 +451,10 @@ export default function OnboardingCaseDetailPage() {
   const isReviewable = REVIEWABLE_CASE_STATUSES.includes(onboardingCase.status);
   const inviteLabel =
     onboardingCase.status === "DRAFT"
-      ? "Send Invite"
+      ? "Compose Invitation"
       : onboardingCase.status === "ACTIVATED"
-        ? "Get Link"
-        : "Resend Invite";
+        ? "Get New Link"
+        : "Resend Invitation";
   const hasUnverified =
     ONBOARDING_SECTION_NAMES.some((section) => {
       const status = onboardingCase.section_reviews.find((r) => r.section === section)?.status;
@@ -497,6 +476,15 @@ export default function OnboardingCaseDetailPage() {
         }
       />
 
+      {canInvite ? (
+        <InvitationComposer
+          open={composerOpen}
+          onOpenChange={setComposerOpen}
+          caseId={params.id}
+          onSent={handleInviteQueued}
+        />
+      ) : null}
+
       <Card>
         <CardContent className="space-y-6 pt-6">
           <div className="flex items-center justify-between">
@@ -504,8 +492,8 @@ export default function OnboardingCaseDetailPage() {
             <div className="flex items-center gap-3">
               <OnboardingStatusBadge status={onboardingCase.status} />
               {canInvite && isInvitable ? (
-                <Button type="button" size="sm" onClick={() => void handleSendInvite()} disabled={sendingInvite}>
-                  {sendingInvite ? "Sending…" : inviteLabel}
+                <Button type="button" size="sm" onClick={() => setComposerOpen(true)}>
+                  {inviteLabel}
                 </Button>
               ) : null}
               {canReview && isReviewable && hasUnverified ? (
@@ -572,6 +560,16 @@ export default function OnboardingCaseDetailPage() {
                 Copy link
               </Button>
             </div>
+          ) : null}
+
+          {canInvite || can("ONBOARDING.VIEW") ? (
+            <InvitationHistory
+              caseId={onboardingCase.id}
+              currentUserId={user?.id}
+              refreshKey={historyKey}
+              canResend={canInvite && isInvitable}
+              onResend={() => setComposerOpen(true)}
+            />
           ) : null}
 
           <LinkStatus status={onboardingCase.token_status} expiresAt={onboardingCase.token_expires_at} />

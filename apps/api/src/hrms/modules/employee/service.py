@@ -489,6 +489,34 @@ class EmployeeService:
             raise NotFoundError("Resource not found")
         return employee_to_read(employee)
 
+    async def ensure_employee_visible(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
+    ) -> None:
+        """Existence-and-visibility check for cross-module callers that act *on* an employee id
+        taken from a request (B12 / DEF-B11-01, OBS-HRA-01). The employee must belong to
+        `company_id` and, when `scope` is given, be visible under it. Anything else raises the one
+        `NotFoundError` (-> 404) - a nonexistent id, another tenant's id and an out-of-scope id
+        are indistinguishable. `scope=None` is the unscoped internal mode (company ownership
+        only). Does not build an `EmployeeRead`, so it is cheap enough for per-date loops."""
+        visible_ids = (
+            await self.resolve_visible_employee_ids(company_id, scope, caller_employee_id)
+            if scope is not None
+            else None
+        )
+        employee = await self._repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            visible_employee_ids=visible_ids,
+        )
+        if employee is None:
+            raise NotFoundError("Resource not found")
+
     @logged_operation("employees.employee.update")
     async def update_employee(
         self,
@@ -832,6 +860,13 @@ class EmployeeService:
             if scope is not None
             else None
         )
+        # B13: orders confirmation against `EmploymentService.terminate_employment`, which takes
+        # this same per-employee lock before it reads or writes. Without it, a confirm could read
+        # the employments while a termination was still uncommitted, pass the check below, and
+        # commit `ACTIVE` over a just-ended employment. The lock is a Postgres advisory lock, so
+        # it holds across API/worker processes; the reads below then see the committed outcome of
+        # whichever transition went first. It is the first lock taken (see `core/db/locks.py`).
+        await lock_employee_leave_dates(self._session, company_id, employee_id)
         employee = await self._repo.get_employee(
             self._session,
             company_id=company_id,
@@ -842,6 +877,17 @@ class EmployeeService:
             raise NotFoundError("Resource not found")
         if employee.status != "PROBATION":
             raise EmployeeNotOnProbationError()
+        # B12 (DEF-B11-06): `Employee.status` is not moved by terminating an employment (the exit
+        # lifecycle is the future Exit module, CL-20), so a leaver is still `PROBATION` here. The
+        # employment record is the authority on whether the person is still employed: confirming
+        # someone whose every employment has ended is refused. An employee with no employment row
+        # at all cannot be on probation (PROBATION is entered by creating one), so the guard only
+        # engages once employment history exists; a rehire (a new ACTIVE employment) is allowed.
+        employments = await self._employment_repo.list_employments(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if employments and not any(e.status == "ACTIVE" for e in employments):
+            raise EmploymentNotActiveError("This employee's employment has ended")
 
         before_read = employee_to_read(employee)
         now = datetime.now(UTC)
@@ -1846,6 +1892,14 @@ class EmployeeAssignmentService:
             shift_id = body.shift_id
             work_location_type: str | None = body.work_location_type
         else:
+            # A stale If-Match must win over the date check: when two writers race, the loser
+            # re-reads the winner's already-committed row, and the honest answer is 409
+            # STALE_RESOURCE (reload and retry), not a 422 about a date it could not have known.
+            if expected_version is not None and expected_version != current.version:
+                raise StaleResourceError(
+                    "This employee's current assignment has been modified by another request",
+                    current=assignment_to_audit_dict(assignment_to_read(current)),
+                )
             if body.effective_from <= current.effective_from:
                 raise InvalidEffectiveFromError()
             if expected_version is None:
@@ -2151,6 +2205,14 @@ class EmployeeCompensationService:
         )
 
         if current is not None:
+            # A stale If-Match must win over the date check: when two writers race, the loser
+            # re-reads the winner's already-committed row, and the honest answer is 409
+            # STALE_RESOURCE (reload and retry), not a 422 about a date it could not have known.
+            if expected_version is not None and expected_version != current.version:
+                raise StaleResourceError(
+                    "This employee's current compensation has been modified by another request",
+                    current=compensation_to_audit_dict(compensation_to_read(current)),
+                )
             if body.effective_from <= current.effective_from:
                 raise InvalidEffectiveFromError()
             if expected_version is None:
@@ -2371,6 +2433,14 @@ class EmployeeStatutoryService:
         )
 
         if current is not None:
+            # A stale If-Match must win over the date check: when two writers race, the loser
+            # re-reads the winner's already-committed row, and the honest answer is 409
+            # STALE_RESOURCE (reload and retry), not a 422 about a date it could not have known.
+            if expected_version is not None and expected_version != current.version:
+                raise StaleResourceError(
+                    "This employee's current statutory record has been modified by another request",
+                    current=statutory_to_audit_dict(statutory_to_read(current)),
+                )
             if body.effective_from <= current.effective_from:
                 raise InvalidEffectiveFromError()
             if expected_version is None:
@@ -2627,6 +2697,14 @@ class EmployeeBankService:
         )
 
         if current is not None:
+            # A stale If-Match must win over the date check: when two writers race, the loser
+            # re-reads the winner's already-committed row, and the honest answer is 409
+            # STALE_RESOURCE (reload and retry), not a 422 about a date it could not have known.
+            if expected_version is not None and expected_version != current.version:
+                raise StaleResourceError(
+                    "This employee's current bank record has been modified by another request",
+                    current=bank_to_audit_dict(await self._decrypt_bank(current)),
+                )
             if body.effective_from <= current.effective_from:
                 raise InvalidEffectiveFromError()
             if expected_version is None:

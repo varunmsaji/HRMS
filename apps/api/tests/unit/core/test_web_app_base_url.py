@@ -8,7 +8,7 @@ The builders in identity, account invite, onboarding, and attendance reminders a
 - an explicit https origin is the prefix of every affected link
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -247,7 +247,10 @@ async def test_production_onboarding_invite_link_uses_the_configured_origin() ->
         updated_at=now,
     )
     service._case_repo.get_case = AsyncMock(return_value=case)
-    service.issue_token = AsyncMock(return_value="raw-onboarding-token")
+    service._case_repo.get_case_for_update = AsyncMock(return_value=case)
+    service.issue_token_with_expiry = AsyncMock(
+        return_value=("raw-onboarding-token", now + timedelta(days=7))
+    )
     service._audit.record = AsyncMock()
     sent = _Sent()
     company = SimpleNamespace(name="Acme")

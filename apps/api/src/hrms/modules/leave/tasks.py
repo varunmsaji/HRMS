@@ -11,7 +11,6 @@ bridging into this codebase's async session/service layer via `asyncio.run` — 
 async-task precedent here to mirror; `health.ping` takes no arguments and opens no DB session.
 """
 
-import asyncio
 from datetime import date
 from typing import Any
 from uuid import UUID
@@ -23,7 +22,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from hrms.core.celery_app import celery_app
 from hrms.core.config.settings import get_settings
 from hrms.core.db.models.identity import Company
-from hrms.core.db.session import session_scope
+from hrms.core.db.session import run_task, session_scope
 from hrms.core.observability.logging import get_logger, safe_error
 from hrms.shared.business_time import business_today
 
@@ -115,7 +114,7 @@ async def _accrue_company_async(company_id: UUID) -> int:
 
 @celery_app.task(name="leave.accrue_company", **_TASK_OPTIONS, **_COMPANY_LIMITS)  # type: ignore[untyped-decorator]
 def accrue_company(company_id: str) -> int:
-    return asyncio.run(_accrue_company_async(UUID(company_id)))
+    return run_task(_accrue_company_async(UUID(company_id)))
 
 
 @celery_app.task(name="leave.run_monthly_accrual", **_TASK_OPTIONS, **_FANOUT_LIMITS)  # type: ignore[untyped-decorator]
@@ -123,7 +122,7 @@ def run_monthly_accrual() -> int:
     """Beat-scheduled entrypoint (monthly cron, `celery_app.py`'s `beat_schedule`). Fans out one
     `accrue_company` task per active company rather than accruing inline — keeps each tenant's
     run independently retryable."""
-    company_ids = asyncio.run(_list_active_company_ids())
+    company_ids = run_task(_list_active_company_ids())
     return _dispatch(accrue_company, company_ids)
 
 
@@ -136,7 +135,7 @@ async def _credit_comp_off_async(company_id: UUID) -> int:
 
 @celery_app.task(name="leave.credit_comp_off", **_TASK_OPTIONS, **_COMPANY_LIMITS)  # type: ignore[untyped-decorator]
 def credit_comp_off(company_id: str) -> int:
-    return asyncio.run(_credit_comp_off_async(UUID(company_id)))
+    return run_task(_credit_comp_off_async(UUID(company_id)))
 
 
 @celery_app.task(name="leave.run_comp_off_credit_sweep", **_TASK_OPTIONS, **_FANOUT_LIMITS)  # type: ignore[untyped-decorator]
@@ -145,7 +144,7 @@ def run_comp_off_credit_sweep() -> int:
     than monthly accrual — comp-off is earned continuously via approved overtime, not on a
     fixed cycle — but is idempotent per `overtime_record_id` (`LeaveCompOffService.
     credit_company`), so a shorter interval or a re-run never double-credits."""
-    company_ids = asyncio.run(_list_active_company_ids())
+    company_ids = run_task(_list_active_company_ids())
     return _dispatch(credit_comp_off, company_ids)
 
 
@@ -165,7 +164,7 @@ async def _sweep_comp_off_expiry_async(company_id: UUID) -> int:
 
 @celery_app.task(name="leave.sweep_comp_off_expiry", **_TASK_OPTIONS, **_COMPANY_LIMITS)  # type: ignore[untyped-decorator]
 def sweep_comp_off_expiry(company_id: str) -> int:
-    return asyncio.run(_sweep_comp_off_expiry_async(UUID(company_id)))
+    return run_task(_sweep_comp_off_expiry_async(UUID(company_id)))
 
 
 @celery_app.task(name="leave.run_comp_off_expiry_sweep", **_TASK_OPTIONS, **_FANOUT_LIMITS)  # type: ignore[untyped-decorator]
@@ -173,7 +172,7 @@ def run_comp_off_expiry_sweep() -> int:
     """Beat-scheduled entrypoint for L5's expiry sweep (LD-07/LD-14) — daily, since a comp-off
     validity window (e.g. 30/60/90 days) can lapse on any calendar day, unlike accrual's
     calendar-month cadence."""
-    company_ids = asyncio.run(_list_active_company_ids())
+    company_ids = run_task(_list_active_company_ids())
     return _dispatch(sweep_comp_off_expiry, company_ids)
 
 
@@ -201,7 +200,7 @@ def run_year_end_for_company(company_id: str, as_of: str | None = None) -> int:
     `celery -A entrypoints.worker call leave.run_year_end_for_company --args
     '["<company-uuid>", "<YYYY-MM-DD>"]'`, where the date is the day to process "as of" (the
     catch-up window then looks back from it). Safe to repeat."""
-    return asyncio.run(
+    return run_task(
         _run_year_end_async(UUID(company_id), date.fromisoformat(as_of) if as_of else None)
     )
 
@@ -214,5 +213,5 @@ def run_year_end_sweep() -> int:
     every employee's own leave-year-start date and is a no-op for one whose year doesn't start
     today — idempotent either way (`exists_for_cycle`), so a daily cadence costs nothing beyond
     the check itself."""
-    company_ids = asyncio.run(_list_active_company_ids())
+    company_ids = run_task(_list_active_company_ids())
     return _dispatch(run_year_end_for_company, company_ids)

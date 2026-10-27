@@ -1,0 +1,332 @@
+{
+  "environment": "hrms_qa_20261026",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "rls": "not tested; API role hrms_qa bypasses RLS",
+  "stopped_for_foreign_data": false,
+  "business_counts_unchanged": true,
+  "counts_before": {
+    "employee": 2,
+    "email_log": 6,
+    "employment": 0,
+    "employee_assignment": 0,
+    "employee_compensation": 0,
+    "employee_statutory": 0,
+    "employee_bank": 0,
+    "employee_experience": 0,
+    "employee_education": 0,
+    "employee_dependent": 0,
+    "employee_document": 0,
+    "company": 2,
+    "user": 2,
+    "session": 4
+  },
+  "counts_after": {
+    "employee": 2,
+    "email_log": 6,
+    "employment": 0,
+    "employee_assignment": 0,
+    "employee_compensation": 0,
+    "employee_statutory": 0,
+    "employee_bank": 0,
+    "employee_experience": 0,
+    "employee_education": 0,
+    "employee_dependent": 0,
+    "employee_document": 0,
+    "company": 2,
+    "user": 2,
+    "session": 6
+  },
+  "object_count_before": 0,
+  "object_count_after": 0,
+  "results": [
+    {
+      "case": "SEC-R02",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R02",
+      "direction": "MARKER-FOUNDRY-foreign-header",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R04",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R04",
+      "direction": "MARKER-FOUNDRY-foreign-header",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R05",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R05",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R06",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R06",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R07",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R07",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R08",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R08",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R09",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R09",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R10",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R10",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R11",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R11",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R12",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R12",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R13",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R13",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R14",
+      "direction": "MARKER-FOUNDRY-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R14",
+      "direction": "MARKER-FOUNDRY-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R02",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R02",
+      "direction": "MARKER-NORTHWIND-foreign-header",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R04",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R04",
+      "direction": "MARKER-NORTHWIND-foreign-header",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R05",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R05",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R06",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R06",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R07",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R07",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R08",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R08",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R09",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R09",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R10",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R10",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R11",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R11",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R12",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R12",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R13",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R13",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-R14",
+      "direction": "MARKER-NORTHWIND-own",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-R14",
+      "direction": "MARKER-NORTHWIND-cross-id",
+      "verdict": "PASS",
+      "http_status": 404
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 """Pydantic request/response models for the account-invite module."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -17,7 +18,16 @@ class AccountInviteRead(BaseModel):
     role_code: str
     expires_at: datetime
     invite_url: str
+    #: DEPRECATED name, kept for existing clients. Since B12 it means "the e-mail was queued", NOT
+    #: "the provider accepted it" (identical to `email_queued`); it never reports a delivery
+    #: failure.
     email_sent: bool
+    #: True when the e-mail was stored in the transactional outbox with this request.
+    email_queued: bool = True
+    #: Delivery state at response time: `QUEUED`, or `NOT_QUEUED` if the outbox write failed.
+    #: Later states (SENT / retrying / FAILED) live in `email_outbox` and are not part of this
+    #: response.
+    email_delivery_status: Literal["QUEUED", "NOT_QUEUED"] = "QUEUED"
 
 
 class PublicAccountInviteRead(BaseModel):

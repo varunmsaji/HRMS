@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
@@ -50,15 +51,20 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
       createLabel: 'New employee',
       onCreate: canCreate ? _create : null,
       emptyLabel: 'No employees yet.',
-      itemBuilder: (context, employee) => ListTile(
-        title: Text(employee.fullName.isEmpty ? employee.employeeCode : employee.fullName),
-        subtitle: Text([employee.employeeCode, employee.status, if (!employee.isActive) 'Inactive'].join(' · ')),
-        trailing: const Icon(Icons.chevron_right, size: 20),
-        onTap: () async {
-          await Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee)));
-          _listKey.currentState?.reload();
-        },
-      ),
+      searchText: (e) => '${e.fullName} ${e.employeeCode} ${e.status}',
+      itemBuilder: (context, employee) {
+        final name = employee.fullName.isEmpty ? employee.employeeCode : employee.fullName;
+        return ListRowCard(
+          title: name,
+          subtitle: employee.employeeCode,
+          leading: InitialsAvatar(name: name),
+          trailing: employee.isActive ? StatusChip.status(employee.status) : const StatusChip(label: 'Inactive'),
+          onTap: () async {
+            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee)));
+            _listKey.currentState?.reload();
+          },
+        );
+      },
     );
   }
 }

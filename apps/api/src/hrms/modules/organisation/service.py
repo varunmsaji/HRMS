@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.audit.service import AuditService
 from hrms.core.auth.passwords import hash_password, is_password_strong_enough
 from hrms.core.config.settings import Settings, get_settings
+from hrms.core.db.locks import lock_calendar_policy_dependencies
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import ConflictError, NotFoundError, ValidationError
@@ -33,7 +34,10 @@ from hrms.modules.identity.permissions import (
 )
 from hrms.modules.identity.schemas import CompanySummary, TokenResponseData
 from hrms.modules.identity.service import IdentityService
-from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+from hrms.modules.organisation.calendar_resolution import (
+    CalendarResolutionService,
+    reconcile_holiday_is_working,
+)
 from hrms.modules.organisation.exceptions import (
     BranchDeactivationBlockedError,
     CalendarExceptionDateConflictError,
@@ -79,6 +83,7 @@ from hrms.modules.organisation.exceptions import (
     ShiftVersionPreviousVersionRequiredError,
     StaleResourceError,
     TimezoneChangeBlockedError,
+    WeeklyOffPatternDeactivationBlockedError,
     WeeklyOffRuleInvalidError,
     WorkCalendarCompositionInvalidError,
     WorkCalendarDeactivationBlockedError,
@@ -462,6 +467,7 @@ class OrganisationService:
             ATTENDANCE_REGULARIZATION_APPROVE,
             ATTENDANCE_REGULARIZATION_REQUEST,
             ATTENDANCE_VIEW,
+            ATTENDANCE_VIEW_ALL,
         )
 
         attendance_permission_rows = [
@@ -643,6 +649,11 @@ class OrganisationService:
         for perm in (
             attendance_permission_by_code[ATTENDANCE_REGULARIZATION_APPROVE],
             attendance_permission_by_code[ATTENDANCE_OVERTIME_APPROVE],
+            # HR_ADMIN policy - company-wide attendance READ for HR/payroll work (the period
+            # summary and day/punch reads). Read only: policies, shifts, rosters and period
+            # lock/unlock stay with COMPANY_ADMIN.
+            attendance_permission_by_code[ATTENDANCE_VIEW],
+            attendance_permission_by_code[ATTENDANCE_VIEW_ALL],
             leave_permission_by_code[LEAVE_APPLICATION_APPROVE],
             leave_permission_by_code[LEAVE_APPLICATION_CANCEL_APPROVED],
             # Decision 12 - normal company-level Leave administration: see every application and
@@ -653,6 +664,11 @@ class OrganisationService:
             leave_permission_by_code[LEAVE_APPLICATION_SUBMIT_ON_BEHALF],
             leave_permission_by_code[LEAVE_APPLICATION_REASSIGN],
             *(p for p in payroll_permission_rows if p.code in PAYROLL_HR_ADMIN_PERMISSIONS),
+            # HR_ADMIN policy - HR runs onboarding end to end (create, review, activate, cancel).
+            *onboarding_permission_rows,
+            # Work calendar: HR_ADMIN and COMPANY_ADMIN both manage calendars, weekly offs,
+            # exceptions, assignments and holiday calendars (approved decision B).
+            *calendar_permission_rows,
         ):
             await self._repo.insert_role_permission(
                 self._session,
@@ -3341,6 +3357,19 @@ class OrganisationService:
         values = build_holiday_calendar_update_values(patch)
         if not values:
             return before_read
+        merged_from = values["valid_from"] if "valid_from" in values else row.valid_from
+        merged_to = values["valid_to"] if "valid_to" in values else row.valid_to
+        if merged_from is not None and merged_to is not None and merged_from > merged_to:
+            raise ValidationError(
+                "valid_from must not be after valid_to",
+                details=[
+                    {
+                        "field": "valid_from",
+                        "code": "HOLIDAY_CALENDAR_VALIDITY_INVALID",
+                        "message": "valid_from must not be after valid_to",
+                    }
+                ],
+            )
 
         now = datetime.now(UTC)
         try:
@@ -3442,7 +3471,11 @@ class OrganisationService:
                     "is_optional": body.holiday_type == "OPTIONAL",
                     "holiday_type": body.holiday_type,
                     "is_paid": body.is_paid,
-                    "is_working": body.is_working,
+                    "is_working": reconcile_holiday_is_working(
+                        holiday_type=body.holiday_type,
+                        is_working=body.is_working,
+                        explicit="is_working" in body.model_fields_set,
+                    ),
                     "region_note": body.region_note,
                     "replaced_holiday_id": body.replaced_holiday_id,
                     "is_active": True,
@@ -3513,6 +3546,14 @@ class OrganisationService:
         values = build_holiday_update_values(patch)
         if not values:
             return before_read
+        if "is_working" in values or "holiday_type" in values:
+            # Policy C: the flag mirrors the type. A legacy row that already disagrees is left
+            # alone unless this edit touches the type or the flag.
+            values["is_working"] = reconcile_holiday_is_working(
+                holiday_type=values.get("holiday_type") or row.holiday_type,
+                is_working=values.get("is_working", row.is_working),
+                explicit="is_working" in values,
+            )
 
         now = datetime.now(UTC)
         updated = await self._holiday_repo.update(
@@ -3681,6 +3722,9 @@ class OrganisationService:
         )
         if row is None:
             raise NotFoundError("Resource not found")
+        if patch.is_active is False and row.is_active:
+            await lock_calendar_policy_dependencies(self._session, company_id)
+            await self._ensure_weekly_off_pattern_unassigned(company_id, pattern_id)
         current_rules = await self._weekly_off_repo.list_rules(
             self._session, company_id=company_id, pattern_id=pattern_id
         )
@@ -3909,6 +3953,12 @@ class OrganisationService:
         )
         if row is None:
             raise NotFoundError("Resource not found")
+        if patch.is_active is False and row.is_active:
+            # Policy F: serialised against a concurrent assignment, then checked.
+            await lock_calendar_policy_dependencies(self._session, company_id)
+            await self._ensure_work_calendar_unassigned(company_id, work_calendar_id)
+        elif patch.weekly_off_pattern_id is not None:
+            await lock_calendar_policy_dependencies(self._session, company_id)
         current_holiday_ids = await self._work_calendar_holiday_ids(company_id, work_calendar_id)
         before_read = work_calendar_to_read(row, current_holiday_ids)
         was_active_before = row.is_active
@@ -3995,6 +4045,47 @@ class OrganisationService:
         )
         return after_read
 
+    async def _calendar_dependents(
+        self, company_id: UUID, policy_kind: str, policy_id: UUID
+    ) -> tuple[int, list[dict[str, str | None]]]:
+        company = await self._repo.get_company(self._session, company_id=company_id)
+        as_of = business_today(company.timezone) if company is not None else date.today()
+        total, rows = await self._policy_assignment_repo.list_dependents(
+            self._session,
+            company_id=company_id,
+            policy_kind=policy_kind,
+            policy_id=policy_id,
+            as_of=as_of,
+        )
+        return total, [
+            {
+                "scope_type": r.scope_type,
+                "scope_id": str(r.scope_id) if r.scope_id else None,
+                "effective_from": r.effective_from.isoformat(),
+                "effective_to": r.effective_to.isoformat() if r.effective_to else None,
+            }
+            for r in rows
+        ]
+
+    async def _ensure_work_calendar_unassigned(self, company_id: UUID, calendar_id: UUID) -> None:
+        total, items = await self._calendar_dependents(company_id, "WORK_CALENDAR", calendar_id)
+        if total:
+            raise WorkCalendarDeactivationBlockedError(
+                active_assignment_count=total, dependents=items
+            )
+
+    async def _ensure_weekly_off_pattern_unassigned(
+        self, company_id: UUID, pattern_id: UUID
+    ) -> None:
+        total, items = await self._calendar_dependents(company_id, "WEEKLY_OFF", pattern_id)
+        defaults = await self._work_calendar_repo.count_active_with_default_pattern(
+            self._session, company_id=company_id, pattern_id=pattern_id
+        )
+        if total or defaults:
+            raise WeeklyOffPatternDeactivationBlockedError(
+                active_assignment_count=total, dependents=items, default_for_calendars=defaults
+            )
+
     async def deactivate_work_calendar(
         self,
         company_id: UUID,
@@ -4005,19 +4096,8 @@ class OrganisationService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> WorkCalendarRead:
-        """Architecture §4.2: "Blocked if referenced by an open assignment or current branch
-        default." W1 checks for an open `PolicyAssignment` pointing at this WorkCalendar;
-        there is no `branch.work_calendar_id` column (§15.3 — deliberately not built)."""
-        open_assignments = await self._policy_assignment_repo.list_assignments(
-            self._session, company_id=company_id, policy_kind="WORK_CALENDAR"
-        )
-        active_count = sum(
-            1
-            for a in open_assignments
-            if a.policy_id == work_calendar_id and a.is_active and a.effective_to is None
-        )
-        if active_count > 0:
-            raise WorkCalendarDeactivationBlockedError(active_assignment_count=active_count)
+        """Architecture §4.2: "Blocked if referenced by an open assignment". The check itself lives
+        in `update_work_calendar` so the `PATCH is_active=false` route cannot bypass it."""
         return await self.update_work_calendar(
             company_id,
             work_calendar_id,
@@ -4222,7 +4302,7 @@ class OrganisationService:
                 found = None
         else:
             raise PolicyKindNotSupportedError(policy_kind)
-        if found is None:
+        if found is None or getattr(found, "is_active", True) is False:
             raise InvalidPolicyReferenceError()
 
     async def _validate_policy_scope(
@@ -4269,6 +4349,10 @@ class OrganisationService:
         (see architecture doc §15.1: "no overlap at same scope... close the old assignment and
         insert a new one"), keyed on `(policy_kind, scope_type, scope_id)` instead of
         `employee_id` — plus `leave_type_id` (LD-11) when `policy_kind` is `LEAVE_POLICY`."""
+        if body.policy_kind in ("WORK_CALENDAR", "WEEKLY_OFF"):
+            # Policy F: serialised against deactivation; an inactive calendar/pattern is not
+            # assignable, so the dependency cannot be created after the deactivation either.
+            await lock_calendar_policy_dependencies(self._session, company_id)
         await self._validate_policy_reference(
             company_id, body.policy_kind, body.policy_id, body.leave_type_id
         )

@@ -579,3 +579,39 @@ async def test_resend_verification_only_for_unverified_admins(
     )
     assert again.status_code == 409 and again.json()["error"]["code"] == "ADMIN_ALREADY_VERIFIED"
     assert len(sent) == 1
+
+
+async def test_email_log_records_every_send_for_the_platform_console(
+    client: AsyncClient, platform_admin: Any, make_tenant: Any
+) -> None:
+    from hrms.modules.onboarding.email_sender import LoggingEmailSender
+
+    marker = f"mail-{uuid4().hex[:8]}@example.com"
+    link = "http://x/reset-password/abcdefghijklmnopqrstuvwxyz012345"
+    await LoggingEmailSender().send(
+        to=marker, subject="Reset your password", html_body=f"<a>{link}</a>", text_body=link
+    )
+
+    assert (await client.get(f"{P}/emails")).status_code == 401
+    tenant = await make_tenant()
+    assert (
+        await client.get(f"{P}/emails", headers={"Authorization": tenant.headers["Authorization"]})
+    ).status_code == 401
+
+    listed = await client.get(f"{P}/emails", headers=platform_admin.headers, params={"q": marker})
+    assert listed.status_code == 200
+    (item,) = listed.json()["data"]
+    assert item["recipient"] == marker and item["status"] == "LOGGED_ONLY"
+    assert item["kind"].endswith("test_email_log_records_every_send_for_the_platform_console")
+    assert "text_body" not in item
+
+    detail = (await client.get(f"{P}/emails/{item['id']}", headers=platform_admin.headers)).json()[
+        "data"
+    ]
+    assert "[token-hidden]" in detail["text_body"] and "abcdefghijkl" not in detail["text_body"]
+    assert "reset-password/" in detail["html_body"]
+
+    none = await client.get(
+        f"{P}/emails", headers=platform_admin.headers, params={"q": marker, "status": "FAILED"}
+    )
+    assert none.json()["data"] == []

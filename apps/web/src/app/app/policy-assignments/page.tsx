@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dialog";
+import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -79,6 +81,12 @@ const EMPTY_FORM: CreateFormState = {
 
 export default function PolicyAssignmentsPage() {
   const { toast } = useToast();
+  const [impact, setImpact] = useState<{
+    change: ProposedChange;
+    title: string;
+    onDone: () => void | Promise<void>;
+  } | null>(null);
+
   const [filterKind, setFilterKind] = useState<PolicyKind | "">("");
   const [assignments, setAssignments] = useState<PolicyAssignment[] | null>(null);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
@@ -181,6 +189,40 @@ export default function PolicyAssignmentsPage() {
     }
     if (!form.effectiveFrom) {
       setFormError("Effective from is required.");
+      return;
+    }
+    const payload = {
+      policy_kind: form.policyKind,
+      policy_id: form.policyId,
+      leave_type_id: isLeavePolicy ? form.leaveTypeId : undefined,
+      scope_type: form.scopeType,
+      scope_id: form.scopeType === "COMPANY" ? null : form.scopeId,
+      effective_from: form.effectiveFrom,
+      reason: form.reason.trim() || null,
+    };
+    if (form.policyKind === "WORK_CALENDAR" || form.policyKind === "WEEKLY_OFF") {
+      // These change what days mean for employees: review the impact before saving.
+      const current = (assignments ?? []).find(
+        (a) =>
+          a.policy_kind === form.policyKind &&
+          a.scope_type === form.scopeType &&
+          (a.scope_id ?? null) === payload.scope_id &&
+          a.effective_to === null,
+      );
+      setFormError(null);
+      setImpact({
+        change: {
+          change_type: "ASSIGNMENT_CREATE",
+          body: payload,
+          expected_version: current?.version,
+        },
+        title: "Create assignment",
+        onDone: async () => {
+          setCreateOpen(false);
+          toast({ title: "Assignment created", variant: "success" });
+          await loadAssignments(filterKind, page);
+        },
+      });
       return;
     }
     setSaving(true);
@@ -447,6 +489,16 @@ export default function PolicyAssignmentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ChangeImpactDialog
+        change={impact?.change ?? null}
+        title={impact?.title ?? ""}
+        onClose={() => setImpact(null)}
+        onApplied={() => {
+          const done = impact?.onDone;
+          setImpact(null);
+          void done?.();
+        }}
+      />
     </div>
   );
 }

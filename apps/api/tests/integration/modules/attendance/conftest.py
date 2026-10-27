@@ -250,6 +250,7 @@ async def _face_tenant(
     async with factory() as session:
         await set_rls_company_id(session, str(company_id))
         for table in (
+            "face_embedding",
             "face_verification_attempt",
             "face_enrollment_attempt",
             "face_external_deletion",

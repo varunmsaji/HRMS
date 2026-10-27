@@ -1,0 +1,1 @@
+{"ts": "2026-10-26T07:52:54.261305+00:00", "step": "audit failure during terminate", "results": {"http": 500, "audit_hits": 1, "tables_changed": [], "employment": {"status": "ACTIVE", "l": null}, "open_assignments": 1, "open_compensation": 1, "retry_http": 200}}

@@ -68,6 +68,20 @@ class ImportFileEmptyError(ValidationError):
         )
 
 
+class ImportFileUnreadableError(ValidationError):
+    """Raised when the upload is not a UTF-8 CSV (binary content, a different encoding, or a
+    malformed CSV stream) - detected at upload time, before anything reaches S3 or the queue, so
+    the client gets a 422 instead of an unhandled decode error."""
+
+    code = "IMPORT_FILE_UNREADABLE"
+
+    def __init__(self, message: str = "File is not a readable UTF-8 CSV") -> None:
+        super().__init__(
+            message,
+            details=[{"field": "file", "code": "IMPORT_FILE_UNREADABLE", "message": message}],
+        )
+
+
 class ImportQueueUnavailableError(AppError):
     """The batch was stored but could not be handed to the job queue (broker unreachable). The
     batch has been closed as `FAILED`, so nothing is left `PENDING` waiting for a message that was

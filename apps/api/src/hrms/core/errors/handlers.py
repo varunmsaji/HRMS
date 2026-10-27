@@ -16,6 +16,7 @@ from hrms.core.errors.base import AppError
 from hrms.core.errors.envelope import ErrorBody, ErrorDetail, ErrorEnvelope
 from hrms.core.observability.classification import RETRYABLE_DB_CATEGORIES, error_category
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
+from hrms.core.observability.metrics import ERRORS, HTTP_UNHANDLED, safe_count
 from hrms.core.observability.redaction import redact_path
 from hrms.core.tenancy.context import current_request_id, verified_tenant_for_logging
 
@@ -304,6 +305,9 @@ def log_unhandled_exception(
     already started, the exception is re-raised to the server, which prints its own traceback,
     so this record omits it to avoid logging the same traceback twice."""
     note_error_code(scope, "INTERNAL_ERROR")
+    category = error_category(exc)
+    safe_count(HTTP_UNHANDLED, category)
+    safe_count(ERRORS, "http_unhandled", category)
     safe_log(
         _logger.error,
         "unhandled_exception",
@@ -335,6 +339,7 @@ def _log_app_error(scope: Mapping[str, Any], exc: AppError) -> None:
     so an outage produces one compact line per request, not a traceback per request."""
     if exc.status_code < 500:
         return
+    safe_count(ERRORS, "http_app_error", error_category(exc.__cause__ or exc))
     fields: dict[str, Any] = {
         "request_id": current_request_id() or "unknown",
         "http_method": scope.get("method"),
@@ -359,6 +364,7 @@ def _log_db_error(
     bound values, but the statement itself is still only rendered inside the traceback."""
     driver = _driver_error(exc) if isinstance(exc, DBAPIError) else None
     category = error_category(exc)
+    safe_count(ERRORS, "http_db_error", category)
     fields: dict[str, Any] = {
         "request_id": current_request_id() or "unknown",
         "http_method": scope.get("method"),

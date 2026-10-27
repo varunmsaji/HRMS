@@ -247,6 +247,44 @@ async def test_concurrent_revisions_with_the_same_version_have_exactly_one_winne
         await wipe_tenant(company_id=company_id, user_id=user_id)
 
 
+@pytest.mark.parametrize("resource", RESOURCES)
+async def test_a_stale_if_match_is_a_409_even_when_the_date_is_also_invalid(
+    client: AsyncClient, resource: str
+) -> None:
+    """Deterministic form of the race `test_concurrent_revisions_...` only hits by chance (it failed
+    7 runs in 12 before the fix): a writer whose token was already superseded, and whose
+    `effective_from` is also no longer later than the winner's, used to be told 422
+    INVALID_EFFECTIVE_FROM - a complaint about a date it could not have known was wrong. The honest
+    answer is 409 STALE_RESOURCE (reload and retry). No concurrency, no timing."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        ctx = await _setup(client, headers)
+        eid = ctx["employee_id"]
+        make = _resources(ctx["refs"])[resource]
+        first = await _post(client, headers, eid, resource, make(_d(0), 0))
+        v1 = str(first.json()["data"]["version"])
+
+        winner = await _post(client, headers, eid, resource, make(_d(30), 1), v1)
+        assert winner.status_code == 201, winner.text
+
+        # Same consumed token, and a date that is NOT after the winner's row: both rules are
+        # broken, and the stale token must be the one reported.
+        loser = await _post(client, headers, eid, resource, make(_d(20), 2), v1)
+        assert loser.status_code == 409, loser.text
+        assert loser.json()["error"]["code"] == "STALE_RESOURCE"
+
+        # A *current* token still gets the date rule: precedence changed, validation did not.
+        current = str(winner.json()["data"]["version"])
+        bad_date = await _post(client, headers, eid, resource, make(_d(20), 3), current)
+        assert bad_date.status_code == 422, bad_date.text
+        assert bad_date.json()["error"]["code"] == "INVALID_EFFECTIVE_FROM"
+
+        assert len(await _history(client, headers, eid, resource)) == 2
+        _assert_contiguous(await _history(client, headers, eid, resource))
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
 async def test_compensation_and_statutory_need_a_covering_employment(
     client: AsyncClient,
 ) -> None:

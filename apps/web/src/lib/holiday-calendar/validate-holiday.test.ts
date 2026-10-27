@@ -73,10 +73,11 @@ describe("holidayToFormValues / buildHolidayUpdatePayload", () => {
   it("only includes changed fields in the patch", () => {
     const values = holidayToFormValues(holiday);
     values.name = "15th August";
-    values.isWorking = true;
+    values.holidayType = "WORKING_HOLIDAY";
+    // `is_working` is not sent: the API derives it from the type.
     expect(buildHolidayUpdatePayload(values, holiday)).toEqual({
       name: "15th August",
-      is_working: true,
+      holiday_type: "WORKING_HOLIDAY",
     });
   });
 
@@ -84,5 +85,17 @@ describe("holidayToFormValues / buildHolidayUpdatePayload", () => {
     const values = holidayToFormValues(holiday);
     values.date = "2026-08-16";
     expect(buildHolidayUpdatePayload(values, holiday)).toEqual({});
+  });
+});
+
+describe("is_working follows the holiday type", () => {
+  it("is derived from the type on create", () => {
+    const base = { ...EMPTY_HOLIDAY_FORM_VALUES, date: "2026-09-09", name: "Shift" };
+    expect(buildHolidayCreatePayload({ ...base, holidayType: "WORKING_HOLIDAY" })).toMatchObject({
+      is_working: true,
+    });
+    expect(buildHolidayCreatePayload({ ...base, holidayType: "PUBLIC", isWorking: true })).toMatchObject({
+      is_working: false,
+    });
   });
 });

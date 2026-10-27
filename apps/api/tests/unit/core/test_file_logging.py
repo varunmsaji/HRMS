@@ -496,3 +496,17 @@ def test_worker_process_writes_task_logs_to_module_and_background_files(tmp_path
     (celery_error,) = _read(logs, "errors")
     assert "RuntimeError" in str(celery_error["exception"])
     assert structlog is not None  # keep import used for type checkers
+
+
+def test_dropped_file_writes_are_exported_as_a_metric(tmp_path: Path) -> None:
+    """A log directory that cannot be written is visible in Prometheus, not only in the log the
+    failure itself prevents from being written."""
+    from prometheus_client import REGISTRY
+
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x")
+    sink = RotatingLineFile(blocker / "app.log", max_bytes=0, backup_count=1)
+    before = REGISTRY.get_sample_value("hrms_log_dropped_writes_total", {"source": "file"}) or 0.0
+    assert sink.write('{"event": "lost"}') is False
+    after = REGISTRY.get_sample_value("hrms_log_dropped_writes_total", {"source": "file"}) or 0.0
+    assert after == before + 1

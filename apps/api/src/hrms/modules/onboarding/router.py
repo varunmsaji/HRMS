@@ -37,9 +37,18 @@ from hrms.modules.onboarding.dependencies import (
     get_onboarding_activation_service,
     get_onboarding_case_service,
     get_onboarding_document_service,
+    get_onboarding_invitation_service,
     get_onboarding_review_service,
     get_onboarding_token_service,
 )
+from hrms.modules.onboarding.invitation_schemas import (
+    InvitationComposeRead,
+    InvitationPreviewRead,
+    InvitationPreviewRequest,
+    OnboardingInviteSendRequest,
+    OnboardingMessageRead,
+)
+from hrms.modules.onboarding.invitation_service import OnboardingInvitationService
 from hrms.modules.onboarding.permissions import (
     ONBOARDING_ACTIVATE,
     ONBOARDING_CREATE,
@@ -149,6 +158,7 @@ async def send_onboarding_invite(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
     service: Annotated[OnboardingTokenService, Depends(get_onboarding_token_service)],
+    body: OnboardingInviteSendRequest | None = None,
 ) -> DataEnvelope[OnboardingInviteRead]:
     """(Re)issues the candidate's public link and emails it — gated by `ONBOARDING.CREATE`, the
     same code that gates starting the case in the first place (plan §7.1: sending the first
@@ -159,8 +169,48 @@ async def send_onboarding_invite(
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
+        subject=body.subject if body else None,
+        body=body.body if body else None,
+        send_request_id=body.send_request_id if body else None,
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/onboarding-cases/{case_id}/invitation/compose", status_code=status.HTTP_200_OK)
+async def get_invitation_compose(
+    case_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
+    service: Annotated[OnboardingInvitationService, Depends(get_onboarding_invitation_service)],
+) -> DataEnvelope[InvitationComposeRead]:
+    """Defaults, recipient, resolved case facts and the placeholder catalogue for the editor."""
+    data = await service.get_compose(tenant.company_id, case_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/onboarding-cases/{case_id}/invitation/preview", status_code=status.HTTP_200_OK)
+async def preview_invitation(
+    case_id: UUID,
+    body: InvitationPreviewRequest,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CREATE))],
+    service: Annotated[OnboardingInvitationService, Depends(get_onboarding_invitation_service)],
+) -> DataEnvelope[InvitationPreviewRead]:
+    """Renders exactly what `send-invite` would send, with an inert link. No side effects: no
+    token, no outbox row, no history, no audit."""
+    data = await service.preview(tenant.company_id, case_id, subject=body.subject, body=body.body)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/onboarding-cases/{case_id}/messages", status_code=status.HTTP_200_OK)
+async def list_onboarding_messages(
+    case_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    service: Annotated[OnboardingInvitationService, Depends(get_onboarding_invitation_service)],
+) -> ListEnvelope[OnboardingMessageRead]:
+    data = await service.list_messages(tenant.company_id, case_id)
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/onboarding-cases/{case_id}/documents", status_code=status.HTTP_200_OK)

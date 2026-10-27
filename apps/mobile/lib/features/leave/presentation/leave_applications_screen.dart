@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
@@ -156,7 +157,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Leave'), automaticallyImplyLeading: false, actions: const [MoreAction()]),
-      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _apply, icon: const Icon(Icons.add), label: Text(_team ? 'Apply on behalf' : 'Apply for leave')) : null,
+      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _apply, icon: const Icon(Icons.add_rounded), label: Text(_team ? 'Apply on behalf' : 'Apply for leave')) : null,
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -170,11 +171,11 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                   _load();
                 },
               ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Row(children: [
-              Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text(_from.isEmpty ? 'From' : _from))),
+              Expanded(child: OutlinedButton.icon(onPressed: () => _pick(true), icon: const Icon(Icons.event_rounded, size: 18), label: Text(_from.isEmpty ? 'From' : _from))),
               const SizedBox(width: 8),
-              Expanded(child: OutlinedButton(onPressed: () => _pick(false), child: Text(_to.isEmpty ? 'To' : _to))),
+              Expanded(child: OutlinedButton.icon(onPressed: () => _pick(false), icon: const Icon(Icons.event_rounded, size: 18), label: Text(_to.isEmpty ? 'To' : _to))),
               if (_from.isNotEmpty || _to.isNotEmpty) IconButton(tooltip: 'Clear dates', icon: const Icon(Icons.clear), onPressed: () {
                 setState(() {
                   _from = '';
@@ -183,16 +184,30 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                 _load();
               }),
             ]),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              value: _status,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Status', contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
-              items: [const DropdownMenuItem(value: '', child: Text('All statuses')), for (final s in leaveApplicationStatuses) DropdownMenuItem(value: s, child: Text(leaveApplicationStatusLabels[s]!))],
-              onChanged: (v) {
-                setState(() => _status = v ?? '');
-                _load();
-              },
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 38,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final entry in [('', 'All'), for (final st in leaveApplicationStatuses) (st, leaveApplicationStatusLabels[st]!)])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(entry.$2),
+                        selected: _status == entry.$1,
+                        labelStyle: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: _status == entry.$1 ? scheme.primary : scheme.onSurfaceVariant,
+                        ),
+                        onSelected: (_) {
+                          setState(() => _status = entry.$1);
+                          _load();
+                        },
+                      ),
+                    ),
+                ],
+              ),
             ),
             if (_team && _employees.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -211,33 +226,36 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
         ),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const ListSkeleton(count: 5)
               : _error != null
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Text(_error!.message, textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          FilledButton(onPressed: _load, child: const Text('Retry')),
-                        ]),
-                      ),
-                    )
+                  ? StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load leave', message: _error!.message, actionLabel: 'Try again', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
-                        padding: const EdgeInsets.only(top: 8, bottom: 88),
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
                         children: [
-                          if (_rows.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No leave applications match these filters.'))),
+                          if (_rows.isEmpty)
+                            SizedBox(
+                              height: MediaQuery.sizeOf(context).height * 0.4,
+                              child: const StateMessage(
+                                icon: Icons.beach_access_outlined,
+                                title: 'No leave applications',
+                                message: 'Nothing matches these filters.',
+                              ),
+                            ),
                           for (final a in _rows)
-                            ListTile(
-                              title: Text(_title(a)),
-                              subtitle: Text('${a.startDate} → ${a.endDate}${a.totalDays != null ? ' · ${a.totalDays} day(s)' : ''}'),
-                              trailing: _StatusChip(status: a.status),
-                              onTap: () async {
-                                await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LeaveApplicationDetailScreen(applicationId: a.id, initial: a)));
-                                _load();
-                              },
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: ListRowCard(
+                                title: _title(a),
+                                subtitle: '${a.startDate} → ${a.endDate}${a.totalDays != null ? ' · ${a.totalDays} day(s)' : ''}',
+                                leading: IconBadge(icon: _iconFor(a.status), tone: toneForStatus(a.status)),
+                                trailing: _StatusChip(status: a.status),
+                                onTap: () async {
+                                  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LeaveApplicationDetailScreen(applicationId: a.id, initial: a)));
+                                  _load();
+                                },
+                              ),
                             ),
                           if (_hasMore) Center(child: TextButton(onPressed: _loadingMore ? null : _more, child: Text(_loadingMore ? 'Loading…' : 'Load more'))),
                         ],
@@ -245,10 +263,16 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                     ),
         ),
       ]),
-      backgroundColor: scheme.surface,
     );
   }
 }
+
+IconData _iconFor(String status) => switch (status) {
+      'APPROVED' => Icons.check_circle_outline_rounded,
+      'REJECTED' => Icons.cancel_outlined,
+      'CANCELLED' => Icons.block_rounded,
+      _ => Icons.hourglass_top_rounded,
+    };
 
 typedef ListEnvelopeLike = ({List<LeaveApplication> rows, bool hasNext});
 
@@ -257,19 +281,8 @@ class _StatusChip extends StatelessWidget {
   final String status;
 
   @override
-  Widget build(BuildContext context) {
-    final color = switch (status) {
-      'APPROVED' => Colors.green,
-      'REJECTED' => Colors.red,
-      'CANCELLED' => Theme.of(context).colorScheme.onSurfaceVariant,
-      _ => Colors.orange,
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
-      child: Text(leaveApplicationStatusLabels[status] ?? status, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
-    );
-  }
+  Widget build(BuildContext context) =>
+      StatusChip(label: leaveApplicationStatusLabels[status] ?? humanize(status), tone: toneForStatus(status));
 }
 
 /// Shared with the detail screen.

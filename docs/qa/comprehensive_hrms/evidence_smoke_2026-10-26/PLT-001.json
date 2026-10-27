@@ -1,0 +1,16 @@
+{
+  "case": "PLT-001",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:16:55+05:30",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "expected": "200. Body has no email, name, or company list.",
+  "http_status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-request-id": "5d0f9cf4-3edb-4ce0-97b8-ba5d9194386a"
+  },
+  "body": "{\"data\":{\"status\":\"ok\",\"database\":\"ok\",\"redis\":\"skipped\"},\"meta\":{\"request_id\":\"5d0f9cf4-3edb-4ce0-97b8-ba5d9194386a\",\"server_time\":\"2026-10-26T12:46:55.497722Z\"}}",
+  "verdict": "PASS",
+  "note": "anonymous health body has the health fields only"
+}

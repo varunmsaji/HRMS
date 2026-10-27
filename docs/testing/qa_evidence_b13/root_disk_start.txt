@@ -1,0 +1,5 @@
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme0n1p6  560G  528G  3.1G 100% /
+               total        used        free      shared  buff/cache   available
+Mem:           15824        7822        1109         125        6893        7538
+Swap:           2047         519        1528

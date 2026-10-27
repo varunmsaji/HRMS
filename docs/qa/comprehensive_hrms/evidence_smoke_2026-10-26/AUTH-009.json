@@ -1,0 +1,16 @@
+{
+  "case": "AUTH-009",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:16:55+05:30",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "expected": "403 or 404. Zero company B rows.",
+  "http_status": 404,
+  "headers": {
+    "content-type": "application/json",
+    "x-request-id": "a8cd74b9-a7e0-4d2b-b186-fd3b3fa1ebab"
+  },
+  "body": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Resource not found\",\"details\":[],\"request_id\":\"a8cd74b9-a7e0-4d2b-b186-fd3b3fa1ebab\",\"documentation_url\":null}}",
+  "verdict": "PASS",
+  "note": "no employee payload"
+}

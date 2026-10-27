@@ -8,6 +8,7 @@ import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
 import '../../auth/state/auth_controller.dart';
 import '../domain/company_profile_form.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -77,18 +78,9 @@ class _CompanyProfileScreenState extends ConsumerState<CompanyProfileScreen> {
         if (canEdit && !_loading && _error == null) IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined), onPressed: _edit),
       ]),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(_error!.status == 403 ? 'You do not have permission to view the company profile.' : _error!.message, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      FilledButton(onPressed: _load, child: const Text('Retry')),
-                    ]),
-                  ),
-                )
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? 'You do not have permission to view the company profile.' : _error!.message, actionLabel: 'Retry', onAction: _load)
               : RefreshIndicator(onRefresh: _load, child: _view(_profile!)),
     );
   }
@@ -99,7 +91,21 @@ class _CompanyProfileScreenState extends ConsumerState<CompanyProfileScreen> {
     final days = [for (final d in weekDays) if (f['wd_$d'] == true) weekDayLabels[d]!].join(', ');
     final hours = s('bh_start') != null && s('bh_end') != null ? '${s('bh_start')} – ${s('bh_end')}' : null;
     final month = f['fiscal_start_month'] is int ? monthNames[(f['fiscal_start_month'] as int) - 1] : null;
+    final name = s('name') ?? 'Company';
     return ListView(padding: const EdgeInsets.all(16), children: [
+      HeroCard(
+        child: Row(children: [
+          InitialsAvatar(name: name, size: 56),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 19)),
+              if (s('legal_name') != null) Text(s('legal_name')!, style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
+              if (p['status'] != null) Padding(padding: const EdgeInsets.only(top: 8), child: StatusChip.status('${p['status']}')),
+            ]),
+          ),
+        ]),
+      ),
       _Section('Basic information', [
         _Field('Company name', s('name')),
         _Field('Legal name', s('legal_name')),
@@ -147,24 +153,12 @@ class _Section extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: scheme.surfaceContainerLowest, borderRadius: BorderRadius.circular(12), border: Border.all(color: scheme.outlineVariant)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        for (final field in fields)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(field.label, style: TextStyle(color: scheme.onSurfaceVariant)),
-              const SizedBox(width: 12),
-              Flexible(child: Text(field.value ?? 'Not configured', textAlign: TextAlign.right, style: TextStyle(color: field.value != null ? scheme.onSurface : scheme.onSurfaceVariant))),
-            ]),
-          ),
-      ]),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: DetailSection(
+        title: title,
+        children: [for (final field in fields) KeyValueRow(field.label, field.value ?? 'Not configured')],
+      ),
     );
   }
 }

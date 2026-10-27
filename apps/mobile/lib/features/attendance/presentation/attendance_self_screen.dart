@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/widgets/ui.dart';
+
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/time.dart';
@@ -24,6 +26,10 @@ class AttendanceSelfScreen extends ConsumerStatefulWidget {
 class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
   bool _loading = true;
   bool _punching = false;
+
+  /// True once the server says this employee must punch with their face (enrolled). The plain
+  /// buttons are then not offered at all; the server refuses them regardless (403).
+  bool _faceRequired = false;
   List<AttendanceDay> _days = const [];
   ApiError? _error;
 
@@ -77,6 +83,9 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(direction == 'IN' ? 'Punched in.' : 'Punched out.')));
       _load();
     } catch (error) {
+      if (error is ApiError && error.code == 'FACE_VERIFICATION_REQUIRED' && mounted) {
+        setState(() => _faceRequired = true);
+      }
       // No response: keep the key for a retry. Any real answer settles this attempt.
       _unconfirmedPunch =
           error is ApiError && error.status == 0
@@ -94,23 +103,32 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
   Widget build(BuildContext context) {
     final employeeId = ref.watch(authControllerProvider).user?.employeeId;
 
-    Widget body;
+    // The punch controls and the month card load on their own and never wait for the 14-day
+    // list: punching is the reason to open this tab, the history is secondary.
+    Widget history;
+    if (_loading && _days.isEmpty) {
+      history = const Padding(padding: EdgeInsets.symmetric(vertical: 32), child: Center(child: CircularProgressIndicator()));
+    } else if (_error != null && _days.isEmpty) {
+      history = StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load attendance', message: _error!.message, actionLabel: 'Try again', onAction: _load);
+    } else if (_days.isEmpty) {
+      history = const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: StateMessage(icon: Icons.event_busy_outlined, title: 'No attendance yet', message: 'Your punches will show up here.'));
+    } else {
+      history = Column(children: [
+        for (final day in _days)
+          AttendanceDayTile(
+            day: day,
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: day.id, initial: day))),
+          ),
+      ]);
+    }
+
+    final Widget body;
     if (employeeId == null) {
-      body = const Center(
-        child: Padding(padding: EdgeInsets.all(24), child: Text('No employee record is linked to your account.', textAlign: TextAlign.center)),
-      );
-    } else if (_loading) {
-      body = const Center(child: CircularProgressIndicator());
-    } else if (_error != null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!.message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
+      body = const StateMessage(
+        icon: Icons.person_off_outlined,
+        tone: Tone.warning,
+        title: 'No employee record',
+        message: 'No employee record is linked to your account.',
       );
     } else {
       body = RefreshIndicator(
@@ -118,13 +136,21 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            FacePunchCard(onPunched: _load),
+            FacePunchCard(
+              onPunched: _load,
+              onStatus: (status) {
+                if (status.faceVerificationRequired != _faceRequired) {
+                  setState(() => _faceRequired = status.faceVerificationRequired);
+                }
+              },
+            ),
+            if (!_faceRequired) ...[
             const SizedBox(height: 16),
             Row(children: [
               Expanded(
                 child: FilledButton.icon(
                   onPressed: _punching ? null : () => _punch('IN'),
-                  icon: const Icon(Icons.login),
+                  icon: const Icon(Icons.login_rounded),
                   label: const Text('Punch in'),
                 ),
               ),
@@ -132,26 +158,18 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _punching ? null : () => _punch('OUT'),
-                  icon: const Icon(Icons.logout),
+                  icon: const Icon(Icons.logout_rounded),
                   label: const Text('Punch out'),
                 ),
               ),
             ]),
+            ],
             const SizedBox(height: 24),
-            Text('This month', style: Theme.of(context).textTheme.labelMedium),
-            const SizedBox(height: 8),
+            const SectionHeader('This month'),
             AttendanceMonthCard(employeeId: employeeId, zone: ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata'),
             const SizedBox(height: 24),
-            Text('Last 14 days', style: Theme.of(context).textTheme.labelMedium),
-            const SizedBox(height: 8),
-            if (_days.isEmpty)
-              const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Text('No attendance records yet.'))
-            else
-              for (final day in _days)
-                AttendanceDayTile(
-                  day: day,
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: day.id, initial: day))),
-                ),
+            const SectionHeader('Last 14 days'),
+            history,
           ],
         ),
       );

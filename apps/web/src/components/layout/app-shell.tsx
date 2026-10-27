@@ -4,6 +4,7 @@ import { Building2, Menu } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
+import { Logo } from "@/components/brand/logo";
 import { CompanyContext } from "@/components/layout/company-context";
 import { CompanyStatusBanner } from "@/components/layout/company-status-banner";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
@@ -13,14 +14,9 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 function SidebarBrand() {
   return (
-    <Link href="/app/dashboard" className="flex items-center gap-2.5 px-1">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-on-primary">
-        <Building2 className="h-4 w-4" aria-hidden="true" />
-      </div>
-      <div className="flex flex-col leading-tight">
-        <span className="text-sm font-semibold text-primary">Krewoxa</span>
-        <span className="text-[11px] font-medium text-foreground-muted">Enterprise</span>
-      </div>
+    <Link href="/app/dashboard" className="flex items-center gap-2.5 px-1" aria-label="Krewoxa dashboard">
+      <Logo size={28} />
+      <span className="text-[11px] font-medium text-foreground-muted">Enterprise</span>
     </Link>
   );
 }

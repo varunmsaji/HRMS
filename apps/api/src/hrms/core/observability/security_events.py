@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 from hrms.core.config.settings import get_settings
 from hrms.core.observability.logging import get_logger, safe_log
+from hrms.core.observability.metrics import SECURITY_EVENTS, safe_count
 
 _logger = get_logger("hrms.security")
 
@@ -45,5 +46,7 @@ def subject_hash(identifier: str | None) -> str | None:
 def security_event(event: str, *, level: Level = "info", **fields: Any) -> None:
     """Emits `security.<event>` at `level`. `fields` must be identifiers, fixed reason codes,
     counts or the client IP — see the module docstring."""
+    # `event` is always a literal at the call sites (closed set); the level is one of three.
+    safe_count(SECURITY_EVENTS, event, level)
     method = {"info": _logger.info, "warning": _logger.warning, "error": _logger.error}[level]
     safe_log(method, f"security.{event}", **fields)

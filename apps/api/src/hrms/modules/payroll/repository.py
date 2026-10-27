@@ -14,6 +14,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hrms.core.audit.models import AuditLog
 from hrms.modules.payroll.models import (
     EmployeeSalary,
     PayAdjustment,
@@ -1003,3 +1004,21 @@ class PayRunArrearRepository:
             .group_by(PayRunArrear.component_code)
         )
         return {code: int(total) for code, total in (await session.execute(stmt)).all()}
+
+
+class StatutoryAuditReader:
+    """Read-only view of `audit_log` for one statutory rate (separation of duties on verify)."""
+
+    async def list_rate_events(
+        self, session: AsyncSession, *, company_id: UUID, rate_id: UUID
+    ) -> list[AuditLog]:
+        stmt = (
+            select(AuditLog)
+            .where(
+                AuditLog.company_id == company_id,
+                AuditLog.entity_type == "statutory_rate",
+                AuditLog.entity_id == rate_id,
+            )
+            .order_by(AuditLog.occurred_at, AuditLog.id)
+        )
+        return list((await session.execute(stmt)).scalars().all())

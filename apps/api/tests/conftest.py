@@ -29,6 +29,9 @@ os.environ.setdefault("JWT_REFRESH_SECRET", "test-refresh-secret-min-16-chars")
 # suite (tests/integration/modules/platform) switches it on explicitly.
 os.environ["COMPANY_APPROVAL_REQUIRED"] = "false"
 os.environ["EMAIL_PROVIDER"] = "logging"
+# B13: the e-mail outbox delivers in the committing process right after commit under test, so the
+# suites keep observing `email_log` without a Celery worker. The outbox tests choose their own mode.
+os.environ["EMAIL_OUTBOX_DISPATCH"] = "inline"
 # Local log files: the suite must never write into (or rotate) a developer's real `logs/`
 # directory. File logging is off by default under test; the file-logging tests turn it on against
 # a temporary directory they own (tests/unit/core/test_file_logging.py). To watch real module
@@ -42,6 +45,15 @@ os.environ["CELERY_BROKER_URL"] = urlunsplit(
     )
 )
 os.environ["CELERY_RESULT_BACKEND"] = os.environ["CELERY_BROKER_URL"]
+
+# QA Phase 3: refuse to run against the shared dev stack unless explicitly acknowledged (or in
+# CI). Evaluated after the defaults above so an unset DATABASE_URL (-> hrms_dev) is caught too.
+from tests import isolation_guard
+
+try:
+    isolation_guard.check(os.environ)
+except RuntimeError as _isolation_error:  # pragma: no cover - exercised by the unit test
+    raise pytest.UsageError(str(_isolation_error)) from None
 
 from entrypoints.api import app
 

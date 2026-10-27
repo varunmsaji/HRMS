@@ -1,0 +1,10 @@
+== resources 2026-10-26T11:35:04Z
+/dev/nvme0n1p6  560G  528G  3.1G 100% /
+               total        used        free      shared  buff/cache   available
+Mem:           15824        8131        2074         208        5619        7142
+Swap:           2047         729        1318
+qa-b13-20261026a-minio cpu=0.01% mem=91.2MiB / 512MiB
+qa-b13-20261026a-redis cpu=0.22% mem=3.645MiB / 192MiB
+qa-b13-20261026a-pg cpu=0.01% mem=103.4MiB / 512MiB
+qa-b13-20261026a-net cpu=0.00% mem=420KiB / 16MiB
+/dev/nvme0n1p6  560G  528G  3.1G 100% /

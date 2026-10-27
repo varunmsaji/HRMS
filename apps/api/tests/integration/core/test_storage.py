@@ -4,12 +4,21 @@
 tests is that document bytes actually round-trip through S3-compatible storage and back
 (Upload Security Batch A, docs/audits/UPLOAD_BATCH_A_STORAGE_ARCHITECTURE.md).
 
-The restart/persistence test additionally shells out to `docker restart` on the MinIO container
-named in docker-compose.yml — it is skipped when the `docker` CLI or that specific container
-isn't reachable (e.g. a sandboxed CI runner without Docker-in-Docker), rather than failing the
-whole suite; every other test here only needs the container already running, exactly like the
-rest of this repository's integration suite."""
+The restart/persistence test additionally shells out to `docker restart`. It is DESTRUCTIVE and
+therefore opt-in (QA finding ENV-RISK-RESTART): it runs only when ALL of these hold, otherwise it
+is skipped with the reason shown -
 
+* `HRMS_TEST_ALLOW_CONTAINER_RESTART=1`;
+* `HRMS_TEST_MINIO_CONTAINER=<name>` names a running container that is NOT `hrms-minio` (the
+  shared dev container is refused outright);
+* that container carries the label `qa.disposable=true`; and
+* the configured `S3_ENDPOINT_URL` port is one of that container's published host ports, so the
+  restart provably hits the storage the test just wrote to.
+
+Every other test here only needs the storage endpoint to be up, exactly like the rest of this
+repository's integration suite."""
+
+import os
 import shutil
 import subprocess
 import uuid
@@ -23,10 +32,6 @@ from hrms.core.config.settings import get_settings
 from hrms.core.storage import DocumentStorageService
 
 pytestmark = pytest.mark.asyncio
-
-#: Matches docker-compose.yml's `minio` service `container_name` — used only by the
-#: restart/persistence test below.
-_MINIO_CONTAINER_NAME = "hrms-minio"
 
 
 def _s3_client():
@@ -59,16 +64,37 @@ def _cleanup(*, bucket: str, key: str) -> None:
         pass
 
 
-def _minio_container_available() -> bool:
+_SHARED_DEV_CONTAINER = "hrms-minio"
+
+
+def _docker(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=10)
+
+
+def _restart_skip_reason() -> str | None:
+    """None when restarting is verified safe; otherwise why the restart test must be skipped."""
+    from urllib.parse import urlsplit
+
+    if os.environ.get("HRMS_TEST_ALLOW_CONTAINER_RESTART") != "1":
+        return "destructive test: set HRMS_TEST_ALLOW_CONTAINER_RESTART=1 to opt in"
+    name = os.environ.get("HRMS_TEST_MINIO_CONTAINER", "")
+    if not name:
+        return "destructive test: set HRMS_TEST_MINIO_CONTAINER to a disposable container name"
+    if name == _SHARED_DEV_CONTAINER:
+        return f"refusing to restart the shared dev container '{_SHARED_DEV_CONTAINER}'"
     if shutil.which("docker") is None:
-        return False
-    result = subprocess.run(
-        ["docker", "inspect", "--format", "{{.State.Running}}", _MINIO_CONTAINER_NAME],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return result.returncode == 0 and result.stdout.strip() == "true"
+        return "docker CLI is not available"
+    state = _docker("inspect", "--format", "{{.State.Running}}", name)
+    if state.returncode != 0 or state.stdout.strip() != "true":
+        return f"container '{name}' is not running"
+    label = _docker("inspect", "--format", '{{index .Config.Labels "qa.disposable"}}', name)
+    if label.stdout.strip() != "true":
+        return f"container '{name}' lacks the label qa.disposable=true"
+    endpoint_port = urlsplit(get_settings().s3_endpoint_url).port
+    published = _docker("port", name)
+    if f":{endpoint_port}" not in published.stdout:
+        return f"S3_ENDPOINT_URL port {endpoint_port} is not published by container '{name}'"
+    return None
 
 
 async def test_put_get_delete_round_trip() -> None:
@@ -138,15 +164,15 @@ async def test_put_object_fails_closed_against_an_invalid_endpoint() -> None:
         await service.put_object(key="unreachable", body=b"x", content_type="text/plain")
 
 
-@pytest.mark.skipif(
-    not _minio_container_available(),
-    reason=f"docker CLI or the '{_MINIO_CONTAINER_NAME}' container is not reachable here",
-)
 async def test_object_survives_a_minio_container_restart() -> None:
     """Phase 4/9 — proves the `minio_data` named Docker volume (docker-compose.yml), not the
     container's own writable layer, is what actually holds uploaded documents: an object written
     before a `docker restart` of the MinIO container must still be readable after it comes back
     up, with no re-upload."""
+    reason = _restart_skip_reason()
+    if reason is not None:
+        pytest.skip(reason)
+    container = os.environ["HRMS_TEST_MINIO_CONTAINER"]
     settings = get_settings()
     service = DocumentStorageService(settings)
     key = f"test-storage/restart-persistence-{uuid.uuid4()}.txt"
@@ -157,7 +183,7 @@ async def test_object_survives_a_minio_container_restart() -> None:
         assert _object_exists(settings.s3_bucket_documents, key)
 
         subprocess.run(
-            ["docker", "restart", "--time", "10", _MINIO_CONTAINER_NAME],
+            ["docker", "restart", "--time", "10", container],
             check=True,
             capture_output=True,
             timeout=60,

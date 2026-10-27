@@ -1,0 +1,219 @@
+# Reviewed exceptions for the scope-enforcement guard (tests/unit/core/test_scope_enforcement_guard.py).
+# A route that is gated by a permission but never reads the data scope it was granted with must be listed here.
+# Kinds:
+#   company_level   - the protected resource is not a per-employee record; asserted live that no shipped role holds
+#                     the permission below COMPANY.
+#   scope_irrelevant- the handler returns no employee data / acts only on the caller's own record (reviewed).
+#   known_gap       - employee-targeted handler that ignores scope TODAY; tracked in QA_DEFECT_REGISTER. (The five
+#                     OBS-HRA-01 entries were removed in B12 once each handler enforced scope and a regression test
+#                     proved it: tests/integration/modules/attendance/test_scope_enforcement_obs_hra01.py.)
+#                     Not a justification: the guard pins the list so no NEW gap can appear, and asserts no shipped
+#                     role holds the permission below COMPANY. Remove the entry when the handler enforces scope.
+
+[[permission]]
+code = "ATTENDANCE.POLICY_MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ATTENDANCE.LOCK"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ATTENDANCE.UNLOCK"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "LEAVE.COMBINATION_RULE_MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "LEAVE.POLICY_MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "LEAVE.STATUTORY_MINIMUM_MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "LEAVE.TYPE_MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "LEAVE.YEAR_SETTING_MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.BRANCH.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.CALENDAR.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.COMPANY.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.DEPARTMENT.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.DESIGNATION.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.GRADE.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.HOLIDAY.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.LEGAL_ENTITY.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "ORG.SHIFT.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "SETTINGS.ROLE.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "SETTINGS.USER.MANAGE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "DASHBOARD.COMPANY.VIEW"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "EMPLOYEE.BULK_IMPORT"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "EMPLOYEE.CREATE"
+kind = "company_level"
+reason = "Company-level resource or action, not a per-employee record; shipped roles hold it at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[permission]]
+code = "PAYROLL.RUN_PROCESS"
+kind = "company_level"
+reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
+
+[[permission]]
+code = "PAYROLL.RUN_VIEW"
+kind = "company_level"
+reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
+
+[[permission]]
+code = "PAYROLL.RUN_APPROVE"
+kind = "company_level"
+reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
+
+[[permission]]
+code = "PAYROLL.SETUP_MANAGE"
+kind = "company_level"
+reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
+
+[[permission]]
+code = "PAYROLL.STATUTORY_MANAGE"
+kind = "company_level"
+reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
+
+[[permission]]
+code = "PAYROLL.BANK_ADVICE_DOWNLOAD"
+kind = "company_level"
+reason = "Payroll is prepared, processed and approved company-wide (pay runs, structures, statutory rates, bank advice); there is no per-employee payroll scope in the model. Shipped roles hold these at COMPANY only (asserted live). Maker-checker and state-machine rules are tested separately (test_hr_admin_separation.py, test_pay_run.py)."
+
+[[permission]]
+code = "ONBOARDING.ACTIVATE"
+kind = "company_level"
+reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
+
+[[permission]]
+code = "ONBOARDING.CREATE"
+kind = "company_level"
+reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
+
+[[permission]]
+code = "ONBOARDING.REVIEW"
+kind = "company_level"
+reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
+
+[[permission]]
+code = "ONBOARDING.VIEW"
+kind = "company_level"
+reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
+
+[[handler]]
+key = "hrms.modules.attendance.router:list_attendance_periods"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Returns period metadata only (dates, status, version); no employee-level data. Employee rows are served by /summary, which enforces scope (DEF-B6-02)."
+
+[[handler]]
+key = "hrms.modules.attendance.router:get_attendance_period"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Returns one period's metadata only; no employee-level data. Employee rows are served by /summary, which enforces scope (DEF-B6-02)."
+
+[[handler]]
+key = "hrms.modules.attendance.router:get_my_face_enrollment"
+permission = "ATTENDANCE.PUNCH"
+kind = "scope_irrelevant"
+reason = "Self-service route: always acts on the caller's own employee id (user.employee_id), never a client-supplied target."
+
+[[handler]]
+key = "hrms.modules.attendance.router:submit_my_face_enrollment"
+permission = "ATTENDANCE.PUNCH"
+kind = "scope_irrelevant"
+reason = "Self-service route: always acts on the caller's own employee id (user.employee_id), never a client-supplied target."
+
+[[handler]]
+key = "hrms.modules.attendance.router:create_face_liveness_session"
+permission = "ATTENDANCE.PUNCH"
+kind = "scope_irrelevant"
+reason = "Self-service route: always acts on the caller's own employee id (user.employee_id), never a client-supplied target."
+
+[[handler]]
+key = "hrms.modules.payroll.router:list_my_payslips"
+permission = "PAYROLL.PAYSLIP_VIEW_OWN"
+kind = "scope_irrelevant"
+reason = "Own-payslip route: the employee id comes from the caller's identity, not from the request."
+
+[[handler]]
+key = "hrms.modules.payroll.router:get_my_payslip"
+permission = "PAYROLL.PAYSLIP_VIEW_OWN"
+kind = "scope_irrelevant"
+reason = "Own-payslip route: the employee id comes from the caller's identity, not from the request."
+
+[[handler]]
+key = "hrms.modules.organisation.router:get_my_calendar"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Self-service route: always acts on the caller's own employee id (user.employee_id from the JWT claim); there is no employee_id or company_id parameter, so a wider scope grants nothing more."

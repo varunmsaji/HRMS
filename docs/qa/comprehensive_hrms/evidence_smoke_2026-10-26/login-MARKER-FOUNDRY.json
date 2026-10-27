@@ -1,0 +1,16 @@
+{
+  "case": "login-MARKER-FOUNDRY",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:16:55+05:30",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "expected": "200 for own company only; not a scored case",
+  "http_status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-request-id": "f5e95cb5-1bdc-49de-89e7-c8541af33a72"
+  },
+  "body": "{\"data\": {\"access_token\": \"[redacted]\", \"token_type\": \"Bearer\", \"expires_in_minutes\": 15, \"company_id\": \"a6c1f28f-3c8c-4148-b7f5-e43dbecf91f4\", \"companies\": [{\"id\": \"a6c1f28f-3c8c-4148-b7f5-e43dbecf91f4\", \"name\": \"QA Foundry MARKER-FOUNDRY\", \"is_primary\": true}]}, \"meta\": {\"request_id\": \"f5e95cb5-1bdc-49de-89e7-c8541af33a72\", \"server_time\": \"2026-10-26T12:46:55.681457Z\"}}",
+  "verdict": "SETUP",
+  "note": "authentication for the approved GET cases"
+}

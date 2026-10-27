@@ -1,0 +1,16 @@
+2026-10-26 18:06:37 [info     ] email.logged_not_sent          provider=logging
+2026-10-26 18:06:37 [info     ] security.email_verification.completed user_id=dfe01642-db29-4ad6-8645-1fe785791c80
+2026-10-26 18:06:37 [info     ] security.password_reset.requested account_matched=True user_id=dfe01642-db29-4ad6-8645-1fe785791c80
+2026-10-26 18:06:37 [info     ] email.logged_not_sent          provider=logging
+2026-10-26 18:06:37 [info     ] security.password_reset.completed sessions_revoked=True user_id=dfe01642-db29-4ad6-8645-1fe785791c80
+2026-10-26 18:06:37 [info     ] email.logged_not_sent          provider=logging
+2026-10-26 18:06:37 [info     ] security.email_verification.completed user_id=0fffc8c9-fbf8-447a-b716-4d6248f495f1
+2026-10-26 18:06:37 [info     ] security.password_reset.requested account_matched=True user_id=0fffc8c9-fbf8-447a-b716-4d6248f495f1
+2026-10-26 18:06:37 [info     ] email.logged_not_sent          provider=logging
+2026-10-26 18:06:37 [info     ] security.password_reset.completed sessions_revoked=True user_id=0fffc8c9-fbf8-447a-b716-4d6248f495f1
+2026-10-26 18:06:37 [info     ] employees.employee.create      actor_user_id=dfe01642-db29-4ad6-8645-1fe785791c80 company_id=a6c1f28f-3c8c-4148-b7f5-e43dbecf91f4 duration_ms=80.4 outcome=succeeded
+2026-10-26 18:06:37 [info     ] business.audit_recorded        action=EMPLOYEE_CREATED actor_user_id=dfe01642-db29-4ad6-8645-1fe785791c80 company_id=a6c1f28f-3c8c-4148-b7f5-e43dbecf91f4 entity_id=eee9f7cc-292c-49f4-aff9-92d490ff6b1f entity_type=employee from_status=None to_status=PRE_JOINING
+2026-10-26 18:06:37 [info     ] employees.employee.create      actor_user_id=0fffc8c9-fbf8-447a-b716-4d6248f495f1 company_id=567bc97e-c165-4cc4-a0bc-98f527077f2c duration_ms=3.8 outcome=succeeded
+2026-10-26 18:06:37 [info     ] business.audit_recorded        action=EMPLOYEE_CREATED actor_user_id=0fffc8c9-fbf8-447a-b716-4d6248f495f1 company_id=567bc97e-c165-4cc4-a0bc-98f527077f2c entity_id=d265d407-1d86-4947-b147-f1805eb91d21 entity_type=employee from_status=None to_status=PRE_JOINING
+SEED_OK
+{"employees": {"MARKER-FOUNDRY": "eee9f7cc-292c-49f4-aff9-92d490ff6b1f", "MARKER-NORTHWIND": "d265d407-1d86-4947-b147-f1805eb91d21"}, "employee_errors": {}, "email_log_counts": {"logging:LOGGED_ONLY": 6}, "companies": [{"company_id": "a6c1f28f-3c8c-4148-b7f5-e43dbecf91f4", "company_name": "QA Foundry MARKER-FOUNDRY", "company_status": "PENDING_APPROVAL", "memberships": [{"user_id": "dfe01642-db29-4ad6-8645-1fe785791c80", "email": "founder.a@example.com", "email_verified": true, "membership_status": "ACTIVE", "roles": ["COMPANY_ADMIN"]}]}, {"company_id": "567bc97e-c165-4cc4-a0bc-98f527077f2c", "company_name": "QA Northwind MARKER-NORTHWIND", "company_status": "PENDING_APPROVAL", "memberships": [{"user_id": "0fffc8c9-fbf8-447a-b716-4d6248f495f1", "email": "founder.b@example.com", "email_verified": true, "membership_status": "ACTIVE", "roles": ["COMPANY_ADMIN"]}]}]}

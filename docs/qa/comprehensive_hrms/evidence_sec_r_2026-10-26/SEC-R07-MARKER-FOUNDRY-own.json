@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R07",
+  "direction": "MARKER-FOUNDRY-own",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 200,
+  "body": "{\"data\":[],\"pagination\":null,\"meta\":{\"request_id\":\"a6631354-d2b8-4b41-836e-85a0fa76fe35\",\"server_time\":\"2026-10-26T13:07:01.671428Z\"}}",
+  "verdict": "PASS",
+  "note": "own empty list",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

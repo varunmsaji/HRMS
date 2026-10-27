@@ -46,7 +46,13 @@ def redact_path(path: str) -> str:
 _SENSITIVE_KEY = re.compile(
     r"(?:^|_)(?:password|passwd|secret|token|authorization|cookie|set_cookie|api_?key|otp|"
     r"signature|credentials?|private_key|aadhaar|pan|pan_number|account_number|ifsc|salary|"
-    r"ctc|text_body|html_body|body|face_template|embedding)(?:_|$)",
+    r"ctc|text_body|html_body|body|face_template|embedding|"
+    # Contact / identity (not needed to diagnose a failure; `user_id`/`employee_id` identify).
+    r"phone|mobile|dob|date_of_birth|passport|uan|"
+    # Payroll amounts (a payslip or pay-run total is never a diagnostic).
+    r"net_pay|gross_pay|take_home|net_minor|gross_minor|amount_minor|daily_rate_minor|"
+    # Biometric / image material: bytes are already masked, but a base64 string is not bytes.
+    r"image|photo|selfie|frames?|biometric|base64|b64)(?:_|$)",
     re.IGNORECASE,
 )
 _SAFE_KEY_SUFFIXES = ("_id", "_ids", "_type", "_kind", "_count", "_version", "_status", "_reason")
@@ -75,6 +81,9 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(Key \([^)]*\)=\()[^)]*(\))"), rf"\1{REDACTED}\2"),
     # Email addresses — never needed to diagnose a failure; `user_id` identifies the account.
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"), "[EMAIL]"),
+    # Indian mobile numbers in free text: 10 digits starting 6-9, optional `+91`, optional space or
+    # hyphen after the first five. Digit-run lookarounds keep longer numbers (ids, epochs) intact.
+    (re.compile(r"(?<!\d)(?:\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)"), "[PHONE]"),
     # Indian PAN (`ABCDE1234F`).
     (re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"), REDACTED),
     # Token-bearing URL path segments (same prefixes as `redact_path`), but not a route

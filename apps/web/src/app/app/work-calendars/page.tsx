@@ -126,10 +126,17 @@ export default function WorkCalendarsPage() {
         title="Work Calendars"
         description="Composes holiday calendars, a weekly-off pattern, and dated exceptions into what kind of day it is."
         actions={
-          canManage && calendars && calendars.length > 0 ? (
-            <Button type="button" onClick={openCreate}>
-              Add Work Calendar
-            </Button>
+          canManage ? (
+            <div className="flex items-center gap-2">
+              <Button asChild variant="outline">
+                <Link href="/app/work-calendars/setup">Guided setup</Link>
+              </Button>
+              {calendars && calendars.length > 0 ? (
+                <Button type="button" onClick={openCreate}>
+                  Add Work Calendar
+                </Button>
+              ) : null}
+            </div>
           ) : null
         }
       />

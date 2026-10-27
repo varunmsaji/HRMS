@@ -1075,6 +1075,18 @@ class HolidayCalendarRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def list_by_ids(
+        self, session: AsyncSession, *, company_id: UUID, calendar_ids: list[UUID]
+    ) -> list[HolidayCalendar]:
+        if not calendar_ids:
+            return []
+        stmt = select(HolidayCalendar).where(
+            HolidayCalendar.company_id == company_id,
+            HolidayCalendar.id.in_(calendar_ids),
+            HolidayCalendar.deleted_at.is_(None),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def update(
         self,
         session: AsyncSession,
@@ -1310,6 +1322,21 @@ class WorkCalendarRepository:
         await session.flush()
         return row
 
+    async def count_active_with_default_pattern(
+        self, session: AsyncSession, *, company_id: UUID, pattern_id: UUID
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(WorkCalendar)
+            .where(
+                WorkCalendar.company_id == company_id,
+                WorkCalendar.weekly_off_pattern_id == pattern_id,
+                WorkCalendar.is_active.is_(True),
+                WorkCalendar.deleted_at.is_(None),
+            )
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
     async def list_work_calendars(
         self, session: AsyncSession, *, company_id: UUID
     ) -> list[WorkCalendar]:
@@ -1496,6 +1523,46 @@ class PolicyAssignmentRepository:
     scope_id)` rather than `employee_id`: there can be many concurrently-open rows across
     different scope tuples, not one "current" row per key."""
 
+    async def list_dependents(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        policy_kind: str,
+        policy_id: UUID,
+        as_of: date,
+        limit: int = 10,
+    ) -> tuple[int, list[PolicyAssignment]]:
+        """Active assignments of `policy_id` that still depend on it on or after `as_of`: not
+        ended (`effective_to` NULL or >= `as_of`), so a currently effective, a future-dated and an
+        assignment ending exactly on `as_of` all count; an expired one does not."""
+        conditions = (
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.policy_kind == policy_kind,
+            PolicyAssignment.policy_id == policy_id,
+            PolicyAssignment.is_active.is_(True),
+            PolicyAssignment.deleted_at.is_(None),
+            or_(PolicyAssignment.effective_to.is_(None), PolicyAssignment.effective_to >= as_of),
+        )
+        total = (
+            await session.execute(
+                select(func.count()).select_from(PolicyAssignment).where(*conditions)
+            )
+        ).scalar_one()
+        rows = (
+            (
+                await session.execute(
+                    select(PolicyAssignment)
+                    .where(*conditions)
+                    .order_by(PolicyAssignment.effective_from, PolicyAssignment.id)
+                    .limit(limit)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return int(total), list(rows)
+
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> PolicyAssignment:
         row = PolicyAssignment(**data)
         session.add(row)
@@ -1599,6 +1666,38 @@ class PolicyAssignmentRepository:
         )
         stmt = select(func.count()).select_from(PolicyAssignment).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
+
+    async def list_overlapping(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        policy_kinds: list[str],
+        employee_id: UUID,
+        range_start: date,
+        range_end: date,
+    ) -> list[PolicyAssignment]:
+        """Active assignments of the given kinds whose effective window touches
+        `[range_start, range_end]` - one bounded query. `EMPLOYEE`-scope rows are limited to
+        `employee_id`; every other scope is returned unfiltered because whether it applies depends
+        on the employee's placement (resolved by the caller via `resolve_policy_assignment`). Used
+        only to find the dates where the effective assignment can change within a range."""
+        stmt = select(PolicyAssignment).where(
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.policy_kind.in_(policy_kinds),
+            PolicyAssignment.deleted_at.is_(None),
+            PolicyAssignment.is_active.is_(True),
+            PolicyAssignment.effective_from <= range_end,
+            or_(
+                PolicyAssignment.effective_to.is_(None),
+                PolicyAssignment.effective_to >= range_start,
+            ),
+            or_(
+                PolicyAssignment.scope_type != "EMPLOYEE",
+                PolicyAssignment.scope_id == employee_id,
+            ),
+        )
+        return list((await session.execute(stmt)).scalars().all())
 
     async def find_effective(
         self,

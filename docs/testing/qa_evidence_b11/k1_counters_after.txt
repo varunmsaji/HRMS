@@ -1,0 +1,11 @@
+attendance_day|78|212|74|189|0
+attendance_period|17|0|17|0|1
+attendance_period_action|16|0|16|0|0
+attendance_regularization_action|0|0|0|0|0
+attendance_regularization_request|0|0|0|0|0
+audit_log|6762|1|6824|0|0
+leave_application|0|0|0|0|0
+leave_application_action|0|0|0|0|0
+leave_day_projection|0|0|0|0|0
+leave_ledger|0|0|0|0|0
+punch|132|0|132|0|0

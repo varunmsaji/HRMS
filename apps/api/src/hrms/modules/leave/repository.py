@@ -861,6 +861,43 @@ class LeaveApplicationRepository:
 
 
 class LeaveApplicationDayRepository:
+    async def list_calendar_marks(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        range_start: date,
+        range_end: date,
+    ) -> list[tuple[date, str, Decimal, str | None]]:
+        """Employee-calendar read: `(calendar_date, application status, fraction, half)` for one
+        employee's persisted leave days in `[range_start, range_end]`, only for applications that
+        are still live (`SUBMITTED` = pending, `APPROVED`). One join query; deliberately selects
+        no reason, attachment, comment, leave type or reviewer column."""
+        stmt = (
+            select(
+                LeaveApplicationDay.calendar_date,
+                LeaveApplication.status,
+                LeaveApplicationDay.fraction,
+                LeaveApplicationDay.half,
+            )
+            .join(
+                LeaveApplication,
+                (LeaveApplication.id == LeaveApplicationDay.leave_application_id)
+                & (LeaveApplication.company_id == LeaveApplicationDay.company_id),
+            )
+            .where(
+                LeaveApplicationDay.company_id == company_id,
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.employee_id == employee_id,
+                LeaveApplication.status.in_(("SUBMITTED", "APPROVED")),
+                LeaveApplicationDay.calendar_date >= range_start,
+                LeaveApplicationDay.calendar_date <= range_end,
+            )
+            .order_by(LeaveApplicationDay.calendar_date, LeaveApplication.status)
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in (await session.execute(stmt)).all()]
+
     async def insert_many(
         self, session: AsyncSession, *, rows: list[dict[str, Any]]
     ) -> list[LeaveApplicationDay]:

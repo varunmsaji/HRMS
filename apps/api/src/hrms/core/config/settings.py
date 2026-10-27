@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     log_retention_days: int = Field(default=0, ge=0)
     # true = refuse to start when the log directory is unusable; false = stdout-only fallback.
     log_files_required: bool = False
+    # Prometheus scrape endpoint (`GET /metrics`, docs/architecture/OBSERVABILITY_ARCHITECTURE.md).
+    # Unset = the endpoint answers 404. When set it must be a long random bearer token; the
+    # multi-process metrics directory is the standard `PROMETHEUS_MULTIPROC_DIR` environment
+    # variable (read by `core/observability/metrics.py` before any metric exists).
+    metrics_token: str | None = Field(default=None, min_length=24)
 
     database_url: str = Field(
         default="postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev",
@@ -189,6 +194,20 @@ class Settings(BaseSettings):
     # emails are being sent when they are merely being logged.
     email_provider: Literal["logging", "smtp", "mailtrap", "hostinger"] = "logging"
 
+    # B13 — transactional e-mail outbox (`modules/onboarding/email_outbox.py`). `dispatch` is how a
+    # committed message is handed to delivery: `celery` queues a task for the worker (production),
+    # `inline` delivers in the committing process right after commit (tests / single-process
+    # development), `none` leaves it for the Beat sweep alone. The outbox row is durable in every
+    # mode; the sweep (every minute) delivers whatever a lost or skipped dispatch left behind.
+    email_outbox_dispatch: Literal["celery", "inline", "none"] = "celery"
+    email_outbox_max_attempts: int = Field(default=6, ge=1, le=20)
+    email_outbox_backoff_base_seconds: int = Field(default=30, ge=1)
+    email_outbox_backoff_cap_seconds: int = Field(default=3600, ge=1)
+    #: How long a claimed message is reserved for its worker; after this a crashed worker's claim
+    #: is taken over. Must exceed the longest send (the HTTP/SMTP clients time out at 10 s).
+    email_outbox_lease_seconds: int = Field(default=300, ge=30)
+    email_outbox_batch_size: int = Field(default=10, ge=1, le=100)
+
     # Sender identity shown on outgoing email — shared by whichever provider is active (`"smtp"`
     # or `"mailtrap"`); not itself an SMTP protocol detail, despite the field name predating the
     # `"mailtrap"` option.
@@ -226,7 +245,7 @@ class Settings(BaseSettings):
     # Face attendance (`attendance/face_verification.py`). `"disabled"` (the default) rejects every
     # face punch/enrollment as unavailable — there is deliberately no fake always-match provider,
     # since one leaking into a real deployment would let anyone punch as anyone.
-    face_verification_provider: Literal["disabled", "facepp"] = "disabled"
+    face_verification_provider: Literal["disabled", "facepp", "opensource"] = "disabled"
     facepp_api_key: str = ""
     facepp_api_secret: str = ""
     facepp_api_base_url: str = "https://api-us.faceplusplus.com"
@@ -269,6 +288,25 @@ class Settings(BaseSettings):
     # 429 (`FACE_ENROLLMENT_ATTEMPTS_EXCEEDED`). Reopening the window (an HR action) starts a new
     # count. Provider/engine outages are not counted; they are not the employee's doing.
     face_enrollment_max_failed_attempts: int = Field(default=5, ge=1)
+
+    # --- Open-source face engine (`attendance/opensource_face/`) -------------------------------
+    # Selected with `face_verification_provider="opensource"` AND `face_os_enabled=True` (a second,
+    # deliberate key: the engine's training-data provenance and calibration are still open gates -
+    # docs/operations/OPEN_SOURCE_FACE_ATTENDANCE_STAGING_CHECKLIST.md). Local ONNX inference only;
+    # no image or embedding leaves the process. Assets come from `scripts/face/
+    # fetch_opensource_assets.py`, never from a download at startup. Thresholds are cosine
+    # similarities (-1..1), NOT the Face++ 0..1 confidence scale, and are uncalibrated defaults.
+    face_os_enabled: bool = False
+    face_os_model_dir: str = ""
+    face_os_match_threshold: float = Field(default=0.45, ge=0.2, le=0.95)
+    # Each turned enrollment capture must reach this similarity to the front capture.
+    face_os_enrollment_angle_threshold: float = Field(default=0.363, ge=0.1, le=0.95)
+    face_os_detector_score_threshold: float = Field(default=0.9, ge=0.5, le=1.0)
+    face_os_min_face_px: int = Field(default=80, ge=32)
+    # Concurrent inferences per process (one model instance each) and the wait/run deadline.
+    face_os_max_concurrency: int = Field(default=1, ge=1, le=8)
+    face_os_inference_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    face_os_max_samples_per_person: int = Field(default=8, ge=1, le=20)
 
     # --- Face provider transport (`attendance/face_verification.py`) --------------------------
     # One shared, pooled HTTP client per process. These are OUR OWN bounds, not Face++ limits:
@@ -520,6 +558,18 @@ class Settings(BaseSettings):
                 "face_verification_provider='facepp' — refusing to boot without credentials to "
                 "authenticate with."
             )
+        if self.face_verification_provider == "opensource":
+            if not self.face_os_enabled:
+                raise ValueError(
+                    "face_verification_provider='opensource' also requires face_os_enabled=true "
+                    "- the open-source engine is never enabled by the provider switch alone."
+                )
+            if not self.face_os_model_dir:
+                raise ValueError(
+                    "face_os_model_dir must be set explicitly when "
+                    "face_verification_provider='opensource' - refusing to boot without the "
+                    "verified model assets."
+                )
         if self.face_liveness_engine != "disabled" and not self.face_liveness_model_dir:
             raise ValueError(
                 "face_liveness_model_dir must be set explicitly when face_liveness_engine is "

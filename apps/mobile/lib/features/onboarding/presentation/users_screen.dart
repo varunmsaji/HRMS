@@ -8,6 +8,7 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/onboarding_repository.dart';
 import 'onboarding_cases_screen.dart' show onboardingRepositoryProvider;
+import '../../../core/widgets/ui.dart';
 
 /// Known role codes — mirrors the roles seeded for every company
 /// (`apps/api` RBAC bootstrap). Not fetched from an endpoint since there
@@ -122,12 +123,16 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       createLabel: 'Invite user',
       onCreate: canInvite ? _invite : null,
       emptyLabel: 'No users yet.',
-      itemBuilder: (context, user) => ListTile(
-        title: Text([user.firstName, user.lastName].where((s) => s != null && s.isNotEmpty).join(' ').trim().isEmpty ? user.emailLabel : '${user.firstName ?? ''} ${user.lastName ?? ''}'.trim()),
-        subtitle: Text([user.emailLabel, user.roleCodes.isEmpty ? 'No roles' : user.roleCodes.map(roleLabel).join(', ')].join(' · ')),
-        trailing: canManageRoles ? const Icon(Icons.chevron_right, size: 20) : null,
-        onTap: canManageRoles ? () => _editRoles(user) : null,
-      ),
+      itemBuilder: (context, user) {
+        final name = [user.firstName, user.lastName].where((s) => s != null && s.isNotEmpty).join(' ').trim();
+        final display = name.isEmpty ? user.emailLabel : name;
+        return ListRowCard(
+          title: display,
+          subtitle: [user.emailLabel, user.roleCodes.isEmpty ? 'No roles' : user.roleCodes.map(roleLabel).join(', ')].join(' · '),
+          leading: InitialsAvatar(name: display),
+          onTap: canManageRoles ? () => _editRoles(user) : null,
+        );
+      },
     );
   }
 }

@@ -31,6 +31,17 @@ RUN uv sync --frozen --no-dev --extra liveness
 COPY models ./models
 RUN /app/.venv/bin/python scripts/liveness/verify_assets.py models/liveness/minifasnet-v1
 
+# Open-source face engine assets (YuNet MIT + SFace Apache-2.0; docs/operations/
+# OPEN_SOURCE_FACE_ATTENDANCE_SETUP.md). OFF by default: Face++ images do not carry them and nothing
+# downloads at runtime. `--build-arg FACE_OS_ASSETS=true` fetches them once at BUILD time and fails
+# the build unless every file matches the SHA-256 pinned in opensource_face/assets.py. Still inert
+# unless FACE_VERIFICATION_PROVIDER=opensource AND FACE_OS_ENABLED=true.
+ARG FACE_OS_ASSETS=false
+RUN if [ "$FACE_OS_ASSETS" = "true" ]; then \
+      /app/.venv/bin/python scripts/face/fetch_opensource_assets.py models/face/opensource-v1 \
+      && /app/.venv/bin/python -m hrms.modules.attendance.opensource_face.assets models/face/opensource-v1; \
+    fi
+
 # Runtime — a fresh stage, not derived from the builder, so uv/pip and apt's package cache never
 # reach the image that actually runs in production (RELEASE_HARDENING_PHASE_3B §2).
 FROM python:3.12-slim AS runtime
@@ -52,6 +63,11 @@ COPY --from=builder --chown=hrms:hrms /app /app
 # Persistence across container re-creation needs that volume (docker-compose.prod.yml `api_logs`).
 RUN mkdir -p /app/logs && chown hrms:hrms /app/logs
 ENV LOG_DIR=/app/logs
+
+# Prometheus multi-process metric files (docs/architecture/OBSERVABILITY_ARCHITECTURE.md). The
+# directory exists and is writable by the runtime user; it is only *used* when a container sets
+# PROMETHEUS_MULTIPROC_DIR (docker-compose.prod.yml shares one volume across api, worker, beat).
+RUN mkdir -p /app/metrics && chown hrms:hrms /app/metrics
 
 USER hrms
 

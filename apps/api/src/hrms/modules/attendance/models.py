@@ -32,6 +32,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     Time,
@@ -568,6 +569,26 @@ class FaceVerificationAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class FaceEmbedding(Base):
+    """One enrollment capture of an OPENSOURCE-engine person. `embedding_enc` is the face
+    embedding encrypted with the environment data key (never plaintext, never returned by any API);
+    `person_ref` is the random id inside `employee_face_profile.provider_person_id`. See
+    `attendance/opensource_face/` and migration 20261022090000."""
+
+    __tablename__ = "face_embedding"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    person_ref: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    sample_index: Mapped[int] = mapped_column(SmallInteger)
+    model_version: Mapped[str] = mapped_column(String(40))
+    embedding_enc: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class FaceEnrollmentAttempt(Base):

@@ -122,6 +122,10 @@ def test_only_known_routes_pick_permissions_imperatively() -> None:
         - {
             ("GET", "/policy-assignments"),
             ("POST", "/policy-assignments"),
+            # Gated by `_require_calendar_change_permission` plus a per-change-type check
+            # (holiday edits need ORG.HOLIDAY.MANAGE, the rest ORG.CALENDAR.MANAGE); asserted below.
+            ("POST", "/work-calendar-changes/preview"),
+            ("POST", "/work-calendar-changes/confirm"),
         }
     )
     assert not unexpected, f"authenticated-but-ungated routes: {sorted(unexpected)}"
@@ -219,5 +223,17 @@ async def test_imperatively_gated_routes(client: AsyncClient) -> None:
             assert r.status_code in (403, 422), (kind, r.status_code, r.text)
         r = await client.get("/v1/policy-assignments", headers=zero)
         assert r.status_code in (403, 422), r.text
+
+        # work-calendar change preview/confirm: refused before body validation without a grant
+        for path in ("preview", "confirm"):
+            r = await client.post(f"/v1/work-calendar-changes/{path}", headers=zero, json={})
+            assert r.status_code == 403, (path, r.status_code, r.text)
+        # either calendar permission passes the dependency gate (the empty body then fails 422)
+        for code in ("ORG.CALENDAR.MANAGE", "ORG.HOLIDAY.MANAGE"):
+            holder, _ = await _register_second_user(
+                company_id=tenant.company_id, permission_codes=[code]
+            )
+            r = await client.post("/v1/work-calendar-changes/preview", headers=holder, json={})
+            assert r.status_code == 422, (code, r.status_code, r.text)
     finally:
         await teardown(tenant)

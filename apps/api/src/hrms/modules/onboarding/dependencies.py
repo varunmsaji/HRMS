@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
+from hrms.modules.onboarding.invitation_service import OnboardingInvitationService
 from hrms.modules.onboarding.service import (
     OnboardingActivationService,
     OnboardingCaseService,
@@ -39,6 +40,12 @@ def get_onboarding_review_service(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> OnboardingReviewService:
     return OnboardingReviewService(session, get_settings())
+
+
+def get_onboarding_invitation_service(
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+) -> OnboardingInvitationService:
+    return OnboardingInvitationService(session, get_settings())
 
 
 def get_onboarding_token_service(

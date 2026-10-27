@@ -28,7 +28,8 @@ export function buildHolidayCreatePayload(values: HolidayFormValues): Record<str
     name: values.name.trim(),
     holiday_type: values.holidayType,
     is_paid: values.isPaid,
-    is_working: values.isWorking,
+    // Policy C: the stored flag mirrors the type, so it is derived rather than asked for.
+    is_working: values.holidayType === "WORKING_HOLIDAY",
     region_note: values.regionNote.trim() || null,
   };
 }
@@ -69,7 +70,7 @@ export function buildHolidayUpdatePayload(
   if (values.name.trim() !== holiday.name) patch.name = values.name.trim();
   if (values.holidayType !== holiday.holiday_type) patch.holiday_type = values.holidayType;
   if (values.isPaid !== holiday.is_paid) patch.is_paid = values.isPaid;
-  if (values.isWorking !== holiday.is_working) patch.is_working = values.isWorking;
+  // `is_working` is never sent on edit: the API re-derives it when the type changes.
   const regionNote = values.regionNote.trim() || null;
   if (regionNote !== holiday.region_note) patch.region_note = regionNote;
   return patch;

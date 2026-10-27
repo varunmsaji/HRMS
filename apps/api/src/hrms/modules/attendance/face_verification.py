@@ -25,6 +25,7 @@ Face++ (faceplusplus.com) behaviour this adapter relies on:
 
 import asyncio
 import re
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol
@@ -33,6 +34,13 @@ import httpx
 
 from hrms.core.config.settings import Settings
 from hrms.core.observability.logging import get_logger
+from hrms.core.observability.metrics import (
+    DEPENDENCY_CALLS,
+    DEPENDENCY_DURATION,
+    DEPENDENCY_ERRORS,
+    safe_count,
+    safe_observe,
+)
 
 PROVIDER_FACEPP = "FACEPP"
 
@@ -181,13 +189,21 @@ class FaceppFaceVerificationProvider:
     ) -> dict[str, Any]:
         payload = {"api_key": self._api_key, "api_secret": self._api_secret, **(data or {})}
         client, gate = self._pooled()
+        started = time.perf_counter()
         try:
             async with gate:
                 response = await client.post(path, data=payload, files=files)
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
+            safe_count(DEPENDENCY_CALLS, "face_provider", "failure")
+            safe_observe(DEPENDENCY_DURATION, time.perf_counter() - started, "face_provider")
             status_code = (
                 exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            )
+            safe_count(
+                DEPENDENCY_ERRORS,
+                "face_provider",
+                "timeout" if isinstance(exc, httpx.TimeoutException) else "transport",
             )
             get_logger(__name__).error(
                 "face_provider_request_failed",
@@ -197,6 +213,8 @@ class FaceppFaceVerificationProvider:
                 status_code=status_code,
             )
             raise FaceProviderError(f"Face provider {operation} request failed.") from exc
+        safe_observe(DEPENDENCY_DURATION, time.perf_counter() - started, "face_provider")
+        safe_count(DEPENDENCY_CALLS, "face_provider", "success")
         if not isinstance(body, dict):
             raise FaceProviderError(f"Face provider {operation} returned an unexpected payload.")
         error_message = body.get("error_message")
@@ -205,6 +223,7 @@ class FaceppFaceVerificationProvider:
         return body
 
     def _unrecognised(self, operation: str, body: dict[str, Any]) -> FaceProviderError:
+        safe_count(DEPENDENCY_ERRORS, "face_provider", "unrecognised_response")
         get_logger(__name__).error(
             "face_provider_unrecognised_response",
             provider=PROVIDER_FACEPP,
@@ -213,6 +232,7 @@ class FaceppFaceVerificationProvider:
         return FaceProviderError(f"Face provider {operation} returned an unrecognised response.")
 
     def _error(self, operation: str, body: dict[str, Any]) -> FaceProviderError:
+        safe_count(DEPENDENCY_ERRORS, "face_provider", "provider_rejected")
         get_logger(__name__).error(
             "face_provider_request_rejected",
             provider=PROVIDER_FACEPP,
@@ -325,6 +345,8 @@ def get_face_verification_provider(settings: Settings) -> FaceVerificationProvid
     configuration, closed by `close_face_verification_providers` at shutdown. One-off callers
     (Celery tasks, each on its own event loop) build `FaceppFaceVerificationProvider` directly
     and `aclose()` it themselves."""
+    if settings.face_verification_provider == "opensource":
+        return _shared_opensource_provider(settings)
     if settings.face_verification_provider != "facepp":
         return None
     key = (
@@ -342,8 +364,59 @@ def get_face_verification_provider(settings: Settings) -> FaceVerificationProvid
     return provider
 
 
+_shared_opensource: dict[tuple[object, ...], FaceVerificationProvider] = {}
+
+
+def _shared_opensource_provider(settings: Settings) -> FaceVerificationProvider:
+    """The open-source engine (`opensource_face/`), one per configuration so its models load once
+    per process. Imported here because the engine itself imports this module's port types."""
+    from hrms.modules.attendance.opensource_face.engine import OpenSourceFaceVerificationProvider
+
+    key = (
+        settings.face_os_model_dir,
+        settings.face_os_match_threshold,
+        settings.face_os_enrollment_angle_threshold,
+        settings.face_os_detector_score_threshold,
+        settings.face_os_min_face_px,
+        settings.face_os_max_concurrency,
+        settings.face_os_inference_timeout_seconds,
+        settings.face_os_max_samples_per_person,
+    )
+    provider = _shared_opensource.get(key)
+    if provider is None:
+        provider = _shared_opensource[key] = OpenSourceFaceVerificationProvider(settings)
+    return provider
+
+
+def provider_for_stored_name(
+    name: str | None, settings: Settings
+) -> FaceVerificationProvider | None:
+    """A provider able to *delete* what the profile/outbox row named `name` created, independent
+    of which engine is currently selected for new punches (switching engines must not strand the
+    other engine's data). Embedding deletion needs no model or network, so OPENSOURCE is always
+    available. None when that engine cannot run here (no Face++ credentials, or face attendance
+    disabled)."""
+    if name == "OPENSOURCE":
+        from hrms.modules.attendance.opensource_face.engine import (
+            OpenSourceFaceVerificationProvider,
+        )
+
+        return OpenSourceFaceVerificationProvider(settings)
+    if (
+        name == PROVIDER_FACEPP
+        and settings.face_verification_provider != "disabled"
+        and settings.facepp_api_key
+        and settings.facepp_api_secret
+    ):
+        # With face attendance switched off the Face++ deletions stay queued (deferred), exactly
+        # as before; with either engine selected they are carried out by Face++.
+        return FaceppFaceVerificationProvider(settings)
+    return None
+
+
 async def close_face_verification_providers() -> None:
-    providers = list(_shared_providers.values())
+    providers = [*_shared_providers.values(), *_shared_opensource.values()]
     _shared_providers.clear()
+    _shared_opensource.clear()
     for provider in providers:
         await provider.aclose()

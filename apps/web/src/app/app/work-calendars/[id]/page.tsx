@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { DayGrid, DayGridLegend } from "@/components/work-calendar/day-grid";
 import { WorkCalendarForm } from "@/components/work-calendar/work-calendar-form";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -24,13 +25,21 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { describeDeactivationBlocked } from "@/lib/work-calendar/deactivation";
+import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dialog";
+import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { HolidayCalendar } from "@/lib/holiday-calendar/types";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
-import type { CalendarException, DayType, WorkCalendar } from "@/lib/work-calendar/types";
+import type {
+  CalendarException,
+  DayType,
+  WorkCalendar,
+  WorkCalendarDays,
+} from "@/lib/work-calendar/types";
 import { DAY_TYPE_LABELS, EXCEPTION_TYPES } from "@/lib/work-calendar/types";
 import {
   EMPTY_CALENDAR_EXCEPTION_FORM_VALUES,
@@ -47,9 +56,10 @@ import {
   type WorkCalendarFormValues,
 } from "@/lib/work-calendar/validate-work-calendar";
 
-type TabKey = "overview" | "exceptions" | "day-type";
+type TabKey = "overview" | "calendar" | "exceptions" | "day-type";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
+  { key: "calendar", label: "Calendar" },
   { key: "exceptions", label: "Exceptions" },
   { key: "day-type", label: "Day-type lookup" },
 ];
@@ -58,6 +68,12 @@ export default function WorkCalendarDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const [impact, setImpact] = useState<{
+    change: ProposedChange;
+    title: string;
+    onDone: () => void | Promise<void>;
+  } | null>(null);
+
   const canManage = can("ORG.CALENDAR.MANAGE");
 
   const [tab, setTab] = useState<TabKey>("overview");
@@ -86,6 +102,15 @@ export default function WorkCalendarDetailPage() {
   );
   const [exceptionErrors, setExceptionErrors] = useState<CalendarExceptionFormErrors>({});
   const [savingException, setSavingException] = useState(false);
+
+  // Month view: `monthStart` is the first of the displayed month (UTC date parts only).
+  const [monthStart, setMonthStart] = useState(() => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+  });
+  const [monthDays, setMonthDays] = useState<WorkCalendarDays | null>(null);
+  const [monthLoading, setMonthLoading] = useState(false);
+  const [monthError, setMonthError] = useState<ApiError | null>(null);
 
   const [lookupDate, setLookupDate] = useState("");
   const [lookupResult, setLookupResult] = useState<DayType | null>(null);
@@ -131,6 +156,43 @@ export default function WorkCalendarDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exceptionsPage]);
 
+  const loadMonth = useCallback(async () => {
+    setMonthLoading(true);
+    setMonthError(null);
+    try {
+      // Whole Monday-first weeks around the month: at most 42 days, well inside the API's
+      // 100-day limit, in a single request.
+      const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+      const from = new Date(monthStart.getTime() - ((monthStart.getUTCDay() + 6) % 7) * 86_400_000);
+      const to = new Date(monthEnd.getTime() + (6 - ((monthEnd.getUTCDay() + 6) % 7)) * 86_400_000);
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+      setMonthDays(
+        await apiClient.get<WorkCalendarDays>(
+          `/work-calendars/${params.id}/days?from=${iso(from)}&to=${iso(to)}`,
+        ),
+      );
+    } catch (err) {
+      setMonthDays(null);
+      setMonthError(
+        err instanceof ApiError
+          ? err
+          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
+      );
+    } finally {
+      setMonthLoading(false);
+    }
+  }, [monthStart, params.id]);
+
+  useEffect(() => {
+    if (tab === "calendar") void loadMonth();
+  }, [tab, loadMonth]);
+
+  function shiftMonth(delta: number) {
+    setMonthStart(
+      (current) => new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + delta, 1)),
+    );
+  }
+
   function startEditing() {
     if (!calendar) return;
     setFormValues(workCalendarToFormValues(calendar));
@@ -158,6 +220,33 @@ export default function WorkCalendarDetailPage() {
       setEditing(false);
       setFormValues(null);
       toast({ title: "No changes to save" });
+      return;
+    }
+
+    const affectsResolution = [
+      "holiday_calendar_ids",
+      "weekly_off_pattern_id",
+      "restricted_holidays_are_off_by_default",
+    ].some((key) => key in patch);
+    if (affectsResolution) {
+      // Changes what days mean for employees: review the impact before anything is saved.
+      setFormErrors({});
+      setStaleMessage(null);
+      setImpact({
+        change: {
+          change_type: "WORK_CALENDAR_UPDATE",
+          work_calendar_id: calendar.id,
+          expected_version: calendar.version,
+          patch: patch as Record<string, unknown>,
+        },
+        title: "Save work calendar",
+        onDone: async () => {
+          setEditing(false);
+          setFormValues(null);
+          toast({ title: "Work calendar saved", variant: "success" });
+          await load(exceptionsPage);
+        },
+      });
       return;
     }
 
@@ -224,12 +313,9 @@ export default function WorkCalendarDetailPage() {
       }
       setConfirmOpen(false);
     } catch (err) {
-      if (err instanceof ApiError && err.code === "WORK_CALENDAR_HAS_ACTIVE_ASSIGNMENTS") {
-        toast({
-          title: "Cannot deactivate",
-          description: "This calendar still has active assignments. Reassign those first.",
-          variant: "danger",
-        });
+      const blocked = err instanceof ApiError ? describeDeactivationBlocked(err) : null;
+      if (blocked) {
+        toast({ title: "Cannot deactivate", description: blocked, variant: "danger" });
         setConfirmOpen(false);
         return;
       }
@@ -255,57 +341,46 @@ export default function WorkCalendarDetailPage() {
       setExceptionErrors(clientErrors);
       return;
     }
-    setSavingException(true);
     setExceptionErrors({});
-    try {
-      await apiClient.post<CalendarException>(
-        `/work-calendars/${params.id}/exceptions`,
-        buildCalendarExceptionCreatePayload(exceptionValues),
-      );
-      setAddExceptionOpen(false);
-      toast({ title: "Exception added", variant: "success" });
-      // Reloads whichever page the user is currently viewing — exceptions are ordered by
-      // date, not recency, so the newly-added row isn't guaranteed to land on page 1.
-      const { data, pagination: meta } = await apiClient.getList<CalendarException>(
-        `/work-calendars/${params.id}/exceptions`,
-        { page: exceptionsPage },
-      );
-      setExceptions(data);
-      setExceptionsPagination(meta);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setExceptionErrors({
-          exceptionDate: "This calendar already has an active exception on this date.",
-        });
-        return;
-      }
-      toast({
-        title: "Could not add exception",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setSavingException(false);
-    }
+    setImpact({
+      change: {
+        change_type: "EXCEPTION_CREATE",
+        work_calendar_id: params.id,
+        body: buildCalendarExceptionCreatePayload(exceptionValues) as Record<string, unknown>,
+      },
+      title: "Add exception",
+      onDone: async () => {
+        setAddExceptionOpen(false);
+        toast({ title: "Exception added", variant: "success" });
+        await reloadExceptions();
+      },
+    });
   }
 
-  async function toggleExceptionActive(exception: CalendarException) {
-    try {
-      const updated = await apiClient.patch<CalendarException>(
-        `/calendar-exceptions/${exception.id}`,
-        { is_active: !exception.is_active },
-        { ifMatch: String(exception.version) },
-      );
-      setExceptions((prev) =>
-        prev ? prev.map((e) => (e.id === updated.id ? updated : e)) : prev,
-      );
-    } catch (err) {
-      toast({
-        title: "Could not update exception",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    }
+  async function reloadExceptions() {
+    // Exceptions are ordered by date, so reload the page being viewed rather than assuming page 1.
+    const { data, pagination: meta } = await apiClient.getList<CalendarException>(
+      `/work-calendars/${params.id}/exceptions`,
+      { page: exceptionsPage },
+    );
+    setExceptions(data);
+    setExceptionsPagination(meta);
+  }
+
+  function toggleExceptionActive(exception: CalendarException) {
+    setImpact({
+      change: {
+        change_type: "EXCEPTION_UPDATE",
+        exception_id: exception.id,
+        expected_version: exception.version,
+        patch: { is_active: !exception.is_active },
+      },
+      title: exception.is_active ? "Deactivate exception" : "Reactivate exception",
+      onDone: async () => {
+        toast({ title: "Exception updated", variant: "success" });
+        await reloadExceptions();
+      },
+    });
   }
 
   async function handleLookup() {
@@ -493,6 +568,86 @@ export default function WorkCalendarDetailPage() {
                     </dl>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {tab === "calendar" ? (
+            <Card>
+              <CardContent className="space-y-4 pt-6">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => shiftMonth(-1)}
+                      disabled={monthLoading}
+                      aria-label="Previous month"
+                    >
+                      ←
+                    </Button>
+                    <h3 className="min-w-36 text-center text-sm font-medium text-foreground" aria-live="polite">
+                      {monthStart.toLocaleString("en-GB", {
+                        month: "long",
+                        year: "numeric",
+                        timeZone: "UTC",
+                      })}
+                    </h3>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => shiftMonth(1)}
+                      disabled={monthLoading}
+                      aria-label="Next month"
+                    >
+                      →
+                    </Button>
+                  </div>
+                  {!calendar.is_active ? <Badge variant="outline">Inactive calendar</Badge> : null}
+                </div>
+
+                <p className="text-xs text-foreground-muted">
+                  This is how this work calendar classifies each date. A company-wide default only
+                  applies once a calendar is assigned and in effect; check{" "}
+                  <Link href="/app/work-calendars/setup" className="underline">
+                    guided setup
+                  </Link>{" "}
+                  for the activation status. Optional and restricted holidays remain working days
+                  {calendar.restricted_holidays_are_off_by_default
+                    ? " unless this calendar treats them as off (it currently does)."
+                    : " (this calendar does not treat them as off)."}
+                </p>
+
+                <DayGridLegend />
+
+                {monthLoading ? <LoadingState label="Loading calendar…" /> : null}
+                {monthError && !monthLoading ? (
+                  <ErrorState
+                    message={
+                      monthError.status === 403
+                        ? "You do not have permission to view this calendar."
+                        : monthError.message
+                    }
+                    onRetry={() => void loadMonth()}
+                  />
+                ) : null}
+                {!monthLoading && !monthError && monthDays ? (
+                  monthDays.days.length === 0 ? (
+                    <p className="text-sm text-foreground-muted">No data for this date range.</p>
+                  ) : (
+                    <>
+                      <DayGrid days={monthDays.days} highlightMonth={monthStart.getUTCMonth()} />
+                      {monthDays.holiday_calendar_ids.length === 0 ? (
+                        <p className="text-xs text-foreground-muted">
+                          No holiday calendar is linked to this work calendar, so no holidays are
+                          shown.
+                        </p>
+                      ) : null}
+                    </>
+                  )
+                ) : null}
               </CardContent>
             </Card>
           ) : null}
@@ -741,6 +896,16 @@ export default function WorkCalendarDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ChangeImpactDialog
+        change={impact?.change ?? null}
+        title={impact?.title ?? ""}
+        onClose={() => setImpact(null)}
+        onApplied={() => {
+          const done = impact?.onDone;
+          setImpact(null);
+          void done?.();
+        }}
+      />
     </div>
   );
 }

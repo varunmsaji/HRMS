@@ -1,10 +1,10 @@
 "use client";
 
-import { ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 
+import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { loadPlatformSession, platformApi } from "@/lib/platform/api";
 
@@ -48,13 +48,15 @@ export default function PlatformLayout({ children }: { children: ReactNode }) {
       <header className="flex h-14 items-center justify-between border-b border-border bg-surface px-4 sm:px-6">
         <div className="flex items-center gap-6">
           <Link href="/platform" className="flex items-center gap-2 text-sm font-semibold text-primary">
-            <ShieldCheck className="h-4 w-4" aria-hidden="true" /> Krewoxa Platform
+            <Logo size={26} />
+            <span className="text-xs font-medium text-foreground-muted">Platform</span>
           </Link>
           <nav className="flex gap-4 text-sm">
             <Link href="/platform" className="text-foreground hover:underline">Dashboard</Link>
             <Link href="/platform/companies" className="text-foreground hover:underline">Companies</Link>
             <Link href="/platform/admins" className="text-foreground hover:underline">Platform admins</Link>
             <Link href="/platform/audit" className="text-foreground hover:underline">Audit log</Link>
+            <Link href="/platform/emails" className="text-foreground hover:underline">Emails</Link>
             <Link href="/platform/logs" className="text-foreground hover:underline">System logs</Link>
           </nav>
         </div>

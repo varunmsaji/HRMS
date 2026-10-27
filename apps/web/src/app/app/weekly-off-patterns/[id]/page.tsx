@@ -20,6 +20,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { describeDeactivationBlocked } from "@/lib/work-calendar/deactivation";
+import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dialog";
+import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -37,6 +40,12 @@ export default function WeeklyOffPatternDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const [impact, setImpact] = useState<{
+    change: ProposedChange;
+    title: string;
+    onDone: () => void | Promise<void>;
+  } | null>(null);
+
   const canManage = can("ORG.CALENDAR.MANAGE");
 
   const [pattern, setPattern] = useState<WeeklyOffPattern | null>(null);
@@ -99,40 +108,23 @@ export default function WeeklyOffPatternDetailPage() {
       return;
     }
 
-    setSaving(true);
     setFormErrors({});
     setStaleMessage(null);
-    try {
-      const updated = await apiClient.patch<WeeklyOffPattern>(
-        `/weekly-off-patterns/${pattern.id}`,
-        buildUpdatePatch(formValues, pattern),
-        { ifMatch: String(pattern.version) },
-      );
-      setPattern(updated);
-      setEditing(false);
-      setFormValues(null);
-      toast({ title: "Weekly-off pattern saved", variant: "success" });
-    } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 409 && err.code === "STALE_RESOURCE") {
-          setStaleMessage("This pattern was changed by someone else.");
-          return;
-        }
-        if (err.status === 422) {
-          setFormErrors({
-            rules: err.code === "WEEKLY_OFF_RULE_INVALID" ? err.message : undefined,
-          });
-          return;
-        }
-      }
-      toast({
-        title: "Could not save weekly-off pattern",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setSaving(false);
-    }
+    setImpact({
+      change: {
+        change_type: "WEEKLY_OFF_PATTERN_UPDATE",
+        pattern_id: pattern.id,
+        expected_version: pattern.version,
+        patch: buildUpdatePatch(formValues, pattern),
+      },
+      title: "Save weekly-off pattern",
+      onDone: async () => {
+        setEditing(false);
+        setFormValues(null);
+        toast({ title: "Weekly-off pattern saved", variant: "success" });
+        await load();
+      },
+    });
   }
 
   async function reloadLatest() {
@@ -167,6 +159,12 @@ export default function WeeklyOffPatternDetailPage() {
       }
       setConfirmOpen(false);
     } catch (err) {
+      const blocked = err instanceof ApiError ? describeDeactivationBlocked(err) : null;
+      if (blocked) {
+        toast({ title: "Cannot deactivate", description: blocked, variant: "danger" });
+        setConfirmOpen(false);
+        return;
+      }
       toast({
         title: "Could not update status",
         description: describeApiError(err),
@@ -326,6 +324,16 @@ export default function WeeklyOffPatternDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ChangeImpactDialog
+        change={impact?.change ?? null}
+        title={impact?.title ?? ""}
+        onClose={() => setImpact(null)}
+        onApplied={() => {
+          const done = impact?.onDone;
+          setImpact(null);
+          void done?.();
+        }}
+      />
     </div>
   );
 }

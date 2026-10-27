@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/ui.dart';
+
 class _HubItem {
   const _HubItem(this.label, this.icon, this.route);
   final String label;
@@ -73,42 +76,144 @@ const _settingsGroups = [
   ]),
 ];
 
-class SettingsHubScreen extends StatelessWidget {
+class SettingsHubScreen extends StatefulWidget {
   const SettingsHubScreen({super.key});
 
   @override
+  State<SettingsHubScreen> createState() => _SettingsHubScreenState();
+}
+
+class _SettingsHubScreenState extends State<SettingsHubScreen> {
+  String _query = '';
+
+  @override
   Widget build(BuildContext context) {
-    final groups = [_quickLinks, ..._settingsGroups];
+    final theme = Theme.of(context);
+    final query = _query.trim().toLowerCase();
+    final searching = query.isNotEmpty;
+    final matches = [
+      for (final g in [_quickLinks, ..._settingsGroups])
+        for (final item in g.items)
+          if (item.label.toLowerCase().contains(query) || g.label.toLowerCase().contains(query)) (g.label, item),
+    ];
+
     return Scaffold(
       appBar: AppBar(title: const Text('More')),
-      body: ListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: groups.length,
-        itemBuilder: (context, groupIndex) {
-          final group = groups[groupIndex];
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+        children: [
+          AppSearchField(hint: 'Search settings and tools', onChanged: (v) => setState(() => _query = v)),
+          const SizedBox(height: 20),
+          if (searching) ...[
+            if (matches.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(top: 48),
+                child: StateMessage(icon: Icons.search_off_rounded, title: 'No matches', message: 'Try a different word.'),
+              )
+            else
+              _GroupCard(items: [for (final m in matches) m.$2], subtitles: [for (final m in matches) m.$1]),
+          ] else ...[
+            const SectionHeader('Quick links'),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 2.5,
+              children: [for (final item in _quickLinks.items) _QuickTile(item: item)],
+            ),
+            for (final group in _settingsGroups) ...[
+              const SizedBox(height: 20),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
                 child: Text(
                   group.label.toUpperCase(),
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        letterSpacing: 0.6,
-                      ),
+                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, letterSpacing: 0.8),
                 ),
               ),
-              for (final item in group.items)
-                ListTile(
-                  leading: Icon(item.icon),
-                  title: Text(item.label),
-                  trailing: const Icon(Icons.chevron_right, size: 20),
-                  onTap: () => context.push(item.route),
-                ),
+              _GroupCard(items: group.items),
             ],
-          );
-        },
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickTile extends StatelessWidget {
+  const _QuickTile({required this.item});
+
+  final _HubItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      padding: const EdgeInsets.all(12),
+      onTap: () => context.push(item.route),
+      child: Row(
+        children: [
+          IconBadge(icon: item.icon, size: 38),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              item.label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, height: 1.2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GroupCard extends StatelessWidget {
+  const _GroupCard({required this.items, this.subtitles});
+
+  final List<_HubItem> items;
+  final List<String>? subtitles;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AppCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) Divider(height: 1, indent: 62, color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5)),
+            InkWell(
+              borderRadius: i == 0
+                  ? const BorderRadius.vertical(top: Radius.circular(AppRadii.card))
+                  : i == items.length - 1
+                      ? const BorderRadius.vertical(bottom: Radius.circular(AppRadii.card))
+                      : BorderRadius.zero,
+              onTap: () => context.push(items[i].route),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                child: Row(
+                  children: [
+                    IconBadge(icon: items[i].icon, size: 34, tone: Tone.neutral),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(items[i].label, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500)),
+                          if (subtitles != null)
+                            Text(subtitles![i], style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right_rounded, size: 22, color: theme.colorScheme.outline),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

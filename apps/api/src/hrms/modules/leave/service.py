@@ -1272,6 +1272,22 @@ class LeaveLedgerService:
             raise LeaveLedgerPayrollFinalisedError(period_start=period_start, period_end=period_end)
         raise LeaveLedgerPeriodClosedError(period_start=period_start, period_end=period_end)
 
+    async def ensure_can_adjust_balance(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> None:
+        """DEF-B10-01 - the target employee must lie inside the data scope `LEAVE.BALANCE_ADJUST`
+        was granted with (`None` visible set = COMPANY). An out-of-scope, unknown or foreign
+        employee is the same 404. Routers call this before the idempotency wrapper so a denied
+        request leaves no idempotency record; the mutating methods call it again themselves."""
+        await self._ensure_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+
     @logged_operation("leave.ledger.adjust")
     async def create_adjustment(
         self,
@@ -1279,17 +1295,18 @@ class LeaveLedgerService:
         employee_id: UUID,
         body: LeaveLedgerAdjustmentCreate,
         *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> LeaveLedgerEntryRead:
-        """No `scope` narrowing here — deliberately. `LEAVE.BALANCE_ADJUST` is a COMPANY-scoped
-        HR-admin action (mirrors `ATTENDANCE.POLICY_MANAGE`'s posture: the permission grant
-        itself is the gate, not a per-employee visibility check), not a SELF/REPORTEES-scoped
-        read. The target employee still must exist in this company — enforced via the
-        `employee_id` FK at insert time (a nonexistent id raises `IntegrityError`, surfaced as a
-        plain 500 today; a dedicated `EmployeeNotFoundError` translation is a reasonable follow-
-        up but not required for L2's scope)."""
+        """`scope` is the grant of `LEAVE.BALANCE_ADJUST` and is enforced against the target
+        employee before any lock or write (DEF-B10-01). The shipped roles hold the permission
+        at COMPANY, which resolves to "no filter". `scope` is required, never defaulted."""
+        await self.ensure_can_adjust_balance(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         leave_type = await self._type_repo.get(
             self._session, company_id=company_id, leave_type_id=body.leave_type_id
         )
@@ -1352,15 +1369,20 @@ class LeaveLedgerService:
         employee_id: UUID,
         body: LeaveLedgerEncashmentCreate,
         *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> LeaveLedgerEntryRead:
-        """L2.5 — client spec §12 (LD-19). Same COMPANY-scoped, no-`DataScope`-narrowing posture
-        as `create_adjustment` (the permission grant is the gate). Resolves the applicable
+        """L2.5 — client spec §12 (LD-19). Same scope enforcement as `create_adjustment`
+        (DEF-B10-01 sibling): the target employee must be inside `scope`. Resolves the applicable
         published `LeavePolicyVersion` the same way `LeaveApplicationService.submit()` does, and
         validates against it before writing — the one real difference from a plain adjustment,
         which writes unconditionally."""
+        await self.ensure_can_adjust_balance(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         leave_type = await self._type_repo.get(
             self._session, company_id=company_id, leave_type_id=body.leave_type_id
         )
@@ -2277,26 +2299,32 @@ class LeaveApplicationService:
         doesn't resolve — never silently assumes WORKING (mirrors
         `CalendarResolutionService.resolve_for_employee`'s own `config_incomplete` posture).
 
-        WORKING/SPECIAL_WORKING days are leave-consuming by default; WEEKLY_OFF/HOLIDAY/SHUTDOWN
-        are not, unless the sandwich rule brackets one between two consuming days *within this
-        same application's range* (no cross-application look-back — a separate, earlier
-        application on an adjacent date is not consulted here)."""
-        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+        WORKING/SPECIAL_WORKING days (and the working half of a half-day weekly off) are
+        leave-consuming by default; full WEEKLY_OFF/HOLIDAY/SHUTDOWN days are not, unless the
+        sandwich rule brackets one between two consuming days *within this same application's
+        range* (no cross-application look-back — a separate, earlier application on an adjacent
+        date is not consulted here)."""
+        from hrms.modules.organisation.calendar_resolution import (
+            CalendarResolutionService,
+            working_fraction_of,
+        )
 
         resolver = CalendarResolutionService(self._session)
         span_days = (body.end_date - body.start_date).days + 1
         dates = [body.start_date + timedelta(days=i) for i in range(span_days)]
 
-        day_types: dict[date, str] = {}
+        # Work Calendar policy A: how much of each date can be taken as leave is the day's working
+        # share, from the same calendar rule attendance reads - 1.00 on a working day, 0.50 on a
+        # half-day weekly off (the off half is already a paid day off), 0.00 on a full weekly off,
+        # holiday or shutdown.
+        working: dict[date, Decimal] = {}
         for one_date in dates:
             resolved = await resolver.resolve_for_employee(company_id, employee_id, one_date)
             if resolved.config_incomplete or resolved.day_type is None:
                 raise LeaveApplicationCalendarNotResolvedError()
-            day_types[one_date] = resolved.day_type.day_type
+            working[one_date] = working_fraction_of(resolved.day_type)
 
-        consuming: dict[date, bool] = {
-            d: day_types[d] in ("WORKING", "SPECIAL_WORKING") for d in dates
-        }
+        consuming: dict[date, bool] = {d: working[d] > Decimal("0.00") for d in dates}
 
         if sandwich_rule_enabled:
             for i in range(1, len(dates) - 1):
@@ -2310,11 +2338,12 @@ class LeaveApplicationService:
         for d in dates:
             if not consuming[d]:
                 continue
-            is_sandwich = day_types[d] not in ("WORKING", "SPECIAL_WORKING")
-            fraction = Decimal("1.00")
+            is_sandwich = working[d] == Decimal("0.00")
+            # A sandwich-generated off day is a whole day; otherwise the day's working share.
+            fraction = Decimal("1.00") if is_sandwich else working[d]
             half = None
             if body.half_day is not None and d == body.start_date and d == body.end_date:
-                fraction = Decimal("0.50")
+                fraction = min(fraction, Decimal("0.50"))
                 half = body.half_day
             breakdown.append(
                 {
@@ -2322,6 +2351,7 @@ class LeaveApplicationService:
                     "fraction": fraction,
                     "half": half,
                     "is_sandwich_generated": is_sandwich,
+                    "cap": Decimal("1.00") if is_sandwich else working[d],
                 }
             )
 
@@ -2501,8 +2531,7 @@ class LeaveApplicationService:
             end_date=body.end_date,
         )
         if any(
-            booked.get(d["date"], Decimal("0.00")) + d["fraction"] > Decimal("1.00")
-            for d in day_breakdown
+            booked.get(d["date"], Decimal("0.00")) + d["fraction"] > d["cap"] for d in day_breakdown
         ):
             raise LeaveApplicationOverlapError()
 

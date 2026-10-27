@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/forms/choice_sources.dart';
@@ -44,10 +45,12 @@ class _OnboardingCasesScreenState extends ConsumerState<OnboardingCasesScreen> {
       createLabel: 'New case',
       onCreate: _openWizard,
       emptyLabel: 'No onboarding cases yet.',
-      itemBuilder: (context, onboardingCase) => ListTile(
-        title: Text(onboardingCase.candidateName),
-        subtitle: Text([onboardingCase.status.replaceAll('_', ' '), onboardingCase.personalEmail].join(' · ')),
-        trailing: const Icon(Icons.chevron_right, size: 20),
+      searchText: (c) => '${c.candidateName} ${c.personalEmail} ${c.status}',
+      itemBuilder: (context, onboardingCase) => ListRowCard(
+        title: onboardingCase.candidateName,
+        subtitle: onboardingCase.personalEmail,
+        leading: InitialsAvatar(name: onboardingCase.candidateName),
+        trailing: StatusChip.status(onboardingCase.status),
         onTap: () async {
           await Navigator.of(context).push(MaterialPageRoute(builder: (_) => OnboardingCaseDetailScreen(caseSummary: onboardingCase)));
           _listKey.currentState?.reload();

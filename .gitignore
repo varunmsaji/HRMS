@@ -10,6 +10,7 @@ build/
 *.tsbuildinfo
 .next/
 **/.next/
+.next-e2e/
 
 # Python
 __pycache__/
@@ -43,6 +44,8 @@ logs/
 coverage/
 .nyc_output/
 test-results/
+apps/web/e2e/.artifacts/
+apps/web/playwright-report/
 
 # Editor / OS
 .vscode/*
@@ -56,3 +59,4 @@ docker-compose.override.yml
 
 # Local dev process logs
 .dev-logs/
+backups/

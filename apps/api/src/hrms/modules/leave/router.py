@@ -496,13 +496,19 @@ async def create_leave_ledger_adjustment(
     request: Request,
     response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
     service: Annotated[LeaveLedgerService, Depends(get_leave_ledger_service)],
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     idempotency_key: Annotated[str, Depends(require_idempotency_key)],
 ) -> DataEnvelope[LeaveLedgerEntryRead]:
     """Requires an `Idempotency-Key` (LM-03): a retry with the same key and body replays the
     original entry instead of writing a second one."""
+    # DEF-B10-01 - scope check before the idempotency wrapper: a denied request (first attempt
+    # or replay) stores nothing and mutates nothing.
+    await service.ensure_can_adjust_balance(
+        tenant.company_id, body.employee_id, scope=scope, caller_employee_id=user.employee_id
+    )
     result = await run_idempotent(
         session,
         company_id=tenant.company_id,
@@ -515,6 +521,8 @@ async def create_leave_ledger_adjustment(
             tenant.company_id,
             body.employee_id,
             body,
+            scope=scope,
+            caller_employee_id=user.employee_id,
             actor_user_id=tenant.user_id,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("User-Agent"),
@@ -530,7 +538,8 @@ async def create_leave_ledger_encashment(
     request: Request,
     response: Response,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[object, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_BALANCE_ADJUST))],
     service: Annotated[LeaveLedgerService, Depends(get_leave_ledger_service)],
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     idempotency_key: Annotated[str, Depends(require_idempotency_key)],
@@ -539,6 +548,11 @@ async def create_leave_ledger_encashment(
     `create_leave_ledger_adjustment` above, but validated against the applicable policy's
     encashment config rather than writing unconditionally. Requires an `Idempotency-Key`
     (LM-03), so a retried request never encashes twice."""
+    # DEF-B10-01 - scope check before the idempotency wrapper: a denied request (first attempt
+    # or replay) stores nothing and mutates nothing.
+    await service.ensure_can_adjust_balance(
+        tenant.company_id, body.employee_id, scope=scope, caller_employee_id=user.employee_id
+    )
     result = await run_idempotent(
         session,
         company_id=tenant.company_id,
@@ -551,6 +565,8 @@ async def create_leave_ledger_encashment(
             tenant.company_id,
             body.employee_id,
             body,
+            scope=scope,
+            caller_employee_id=user.employee_id,
             actor_user_id=tenant.user_id,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("User-Agent"),

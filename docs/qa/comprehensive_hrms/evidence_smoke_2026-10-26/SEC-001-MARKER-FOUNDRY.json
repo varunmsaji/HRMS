@@ -1,0 +1,16 @@
+{
+  "case": "SEC-001-MARKER-FOUNDRY",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:16:55+05:30",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "expected": "200 with only the caller. Other marker absent.",
+  "http_status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-request-id": "dc45b922-b9a1-4c53-a777-7bef6189cb66"
+  },
+  "body": "{\"data\":[{\"id\":\"eee9f7cc-292c-49f4-aff9-92d490ff6b1f\",\"company_id\":\"a6c1f28f-3c8c-4148-b7f5-e43dbecf91f4\",\"employee_code\":\"EMP-0001\",\"first_name\":\"MARKER-FOUNDRY\",\"middle_name\":null,\"last_name\":\"Employee\",\"display_name\":null,\"date_of_birth\":null,\"gender\":null,\"blood_group\":null,\"marital_status\":null,\"nationality\":null,\"father_or_husband_name\":null,\"personal_email\":null,\"personal_mobile\":null,\"present_address_line1\":null,\"present_address_line2\":null,\"present_city\":null,\"present_state_code\":null,\"present_pincode\":null,\"present_country_code\":null,\"permanent_address_line1\":null,\"permanent_address_line2\":null,\"permanent_city\":null,\"permanent_state_code\":null,\"permanent_pincode\":null,\"permanent_country_code\":null,\"permanent_same_as_present\":true,\"emergency_contact_name\":null,\"emergency_contact_relationship\":null,\"emergency_contact_phone\":null,\"photo_url\":null,\"status\":\"PRE_JOINING\",\"custom_fields\":null,\"is_active\":true,\"version\":1,\"created_at\":\"2026-10-26T12:36:37.569795Z\",\"updated_at\":\"2026-10-26T12:36:37.569795Z\",\"employment_joining_date\":null,\"employment_last_working_day\":null}],\"pagination\":{\"page\":1,\"per_page\":25,\"total\":1,\"total_pages\":1,\"next_cursor\":null},\"meta\":{\"request_id\":\"dc45b922-b9a1-4c53-a777-7bef6189cb66\",\"server_time\":\"2026-10-26T12:46:55.754310Z\"}}",
+  "verdict": "PASS",
+  "note": "own marker present; other tenant absent"
+}

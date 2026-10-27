@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R07",
+  "direction": "MARKER-FOUNDRY-cross-id",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 404,
+  "body": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Resource not found\",\"details\":[],\"request_id\":\"cb27260a-f5fd-43cc-ae8a-5c0049df95f2\",\"documentation_url\":null}}",
+  "verdict": "PASS",
+  "note": "other employee id",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

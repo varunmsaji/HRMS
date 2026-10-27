@@ -8,6 +8,7 @@ import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_widgets.dart';
+import '../../../core/widgets/ui.dart';
 
 /// Mirrors `apps/web/src/app/app/attendance/[id]/page.tsx` — one computed attendance day:
 /// schedule, actuals and breaks, overtime and pay facts, the leave overlay, and the audit trail,
@@ -134,27 +135,14 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     }
   }
 
-  Widget _section(String title, List<Widget> children) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(top: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 8),
-        ...children,
-      ]),
-    );
-  }
+  Widget _section(String title, List<Widget> children, {IconData? icon}) => DetailSection(title: title, icon: icon, children: children);
 
-  Widget _kv(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(flex: 5, child: Text(k, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
-          Expanded(flex: 5, child: Text(v, textAlign: TextAlign.end)),
-        ]),
-      );
+  Widget _kv(String k, String v) => KeyValueRow(k, v == '—' ? null : v);
+
+  Widget _heroStat(String label, String value) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11)),
+        Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      ]);
 
   @override
   Widget build(BuildContext context) {
@@ -165,38 +153,29 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
 
     Widget body;
     if (day == null && _loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton();
     } else if (day == null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error?.status == 404 ? "This attendance day was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
-      );
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error?.status == 404 ? "This attendance day was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Retry', onAction: _load);
     } else {
       final r = day.raw;
       final tz = day.timezone;
       bool flag(String k) => r[k] == true;
       String s(String k) => (r[k] ?? '—').toString();
       String mins(String k) => formatMinutes(r[k] as int?);
-      final badges = <(String, Color)>[
-        if (flag('is_late')) ('Late', Colors.orange),
-        if (flag('is_early_out')) ('Early departure', Colors.orange),
-        if (flag('is_overtime')) ('Overtime', Colors.blue),
-        if (flag('is_regularized')) ('Regularized', scheme.onSurfaceVariant),
-        if (flag('is_pending_approval')) ('Pending approval', Colors.orange),
-        if (flag('worked_on_holiday')) ('Worked on holiday', Colors.blue),
-        if (flag('worked_on_weekly_off')) ('Worked on weekly off', Colors.blue),
-        if (flag('missing_punch')) ('Missing punch', Colors.red),
-        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == null) ('Worked on leave — needs HR decision', Colors.orange),
-        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == 'KEEP_LEAVE') ('Leave kept by HR', scheme.onSurfaceVariant),
-        if (flag('is_core_hours_breach')) ('Core hours breach', Colors.orange),
-        if (flag('on_duty')) ('On duty', Colors.blue),
-        if (day.isLocked) ('Locked', scheme.onSurfaceVariant),
+      final badges = <(String, Tone)>[
+        if (flag('is_late')) ('Late', Tone.warning),
+        if (flag('is_early_out')) ('Early departure', Tone.warning),
+        if (flag('is_overtime')) ('Overtime', Tone.info),
+        if (flag('is_regularized')) ('Regularized', Tone.neutral),
+        if (flag('is_pending_approval')) ('Pending approval', Tone.warning),
+        if (flag('worked_on_holiday')) ('Worked on holiday', Tone.info),
+        if (flag('worked_on_weekly_off')) ('Worked on weekly off', Tone.info),
+        if (flag('missing_punch')) ('Missing punch', Tone.danger),
+        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == null) ('Worked on leave — needs HR decision', Tone.warning),
+        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == 'KEEP_LEAVE') ('Leave kept by HR', Tone.neutral),
+        if (flag('is_core_hours_breach')) ('Core hours breach', Tone.warning),
+        if (flag('on_duty')) ('On duty', Tone.info),
+        if (day.isLocked) ('Locked', Tone.neutral),
       ];
       final breaks = ((r['breaks'] as List?) ?? const []).cast<Map<String, dynamic>>();
       final canKeepLeave = canRecompute && flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == null && !day.isLocked;
@@ -205,17 +184,28 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('${day.attendanceDate} — $tz (${zoneLabel(tz)})', style: TextStyle(color: scheme.onSurfaceVariant)),
-            const SizedBox(height: 8),
-            Wrap(spacing: 6, runSpacing: 6, children: [
-              AttendanceStatusBadge(status: day.attendanceStatus),
-              for (final (label, color) in badges)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(4)),
-                  child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
-                ),
-            ]),
+            HeroCard(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  const Icon(Icons.event_rounded, size: 18, color: Colors.white70),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('${day.attendanceDate} — $tz (${zoneLabel(tz)})', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14))),
+                  const SizedBox(width: 8),
+                  AttendanceStatusBadge(status: day.attendanceStatus),
+                ]),
+                const SizedBox(height: 14),
+                Row(children: [
+                  _heroStat('First in', formatClockTime(day.actualFirstIn, tz)),
+                  const SizedBox(width: 28),
+                  _heroStat('Last out', formatClockTime(day.actualLastOut, tz)),
+                ]),
+              ]),
+            ),
+            if (badges.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Wrap(spacing: 6, runSpacing: 6, children: [for (final (label, tone) in badges) StatusChip(label: label, tone: tone, dot: false)]),
+              ),
             if (canRecompute)
               Padding(
                 padding: const EdgeInsets.only(top: 12),

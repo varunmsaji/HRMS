@@ -1,0 +1,16 @@
+{
+  "case": "login-MARKER-NORTHWIND",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:16:55+05:30",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "expected": "200 for own company only; not a scored case",
+  "http_status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "x-request-id": "a8cc0363-3670-431f-b810-77278da4ddbb"
+  },
+  "body": "{\"data\": {\"access_token\": \"[redacted]\", \"token_type\": \"Bearer\", \"expires_in_minutes\": 15, \"company_id\": \"567bc97e-c165-4cc4-a0bc-98f527077f2c\", \"companies\": [{\"id\": \"567bc97e-c165-4cc4-a0bc-98f527077f2c\", \"name\": \"QA Northwind MARKER-NORTHWIND\", \"is_primary\": true}]}, \"meta\": {\"request_id\": \"a8cc0363-3670-431f-b810-77278da4ddbb\", \"server_time\": \"2026-10-26T12:46:55.736870Z\"}}",
+  "verdict": "SETUP",
+  "note": "authentication for the approved GET cases"
+}

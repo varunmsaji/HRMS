@@ -27,10 +27,12 @@ Q — test fixtures: addressed by design (`_as_runtime_role` restores `hrms` bef
     fixture/cleanup call runs; no existing fixture file is modified).
 """
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import pytest
@@ -60,8 +62,26 @@ from hrms.modules.organisation.models import LegalEntity
 
 pytestmark = pytest.mark.asyncio
 
-ADMIN_ROLE_URL = "postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev"
-RUNTIME_ROLE_URL = "postgresql://hrms_app:hrms_app_dev_password@localhost:5433/hrms_dev"
+
+def _role_urls() -> tuple[str, str]:
+    """(admin, runtime) URLs for the database the suite was pointed at.
+
+    These used to be hard-coded to the shared dev database (`localhost:5433/hrms_dev`), so this
+    module wrote and deleted tenants there no matter what `DATABASE_URL` said (QA finding
+    ENV-ISOL-003). They now follow `DATABASE_URL`: the admin role is whatever the suite runs as,
+    and the runtime role is the same host/port/database with the `hrms_app` credentials -
+    `HRMS_APP_DATABASE_URL` if exported, else the repository-visible dev password. With the CI /
+    docker-compose defaults both values are byte-identical to the old constants."""
+    admin = os.environ["DATABASE_URL"].split("?", 1)[0]
+    explicit = os.environ.get("HRMS_APP_DATABASE_URL")
+    if explicit:
+        return admin, explicit.split("?", 1)[0]
+    parts = urlsplit(admin)
+    host = parts.netloc.rsplit("@", 1)[-1]
+    return admin, parts._replace(netloc=f"hrms_app:hrms_app_dev_password@{host}").geturl()
+
+
+ADMIN_ROLE_URL, RUNTIME_ROLE_URL = _role_urls()
 # `Settings.ensure_asyncpg_driver` rewrites the plain `postgresql://` scheme above to
 # `+asyncpg` when it flows through `DATABASE_URL`/pydantic — raw `create_async_engine()` calls in
 # this file (which never go through `Settings`) need the driver spelled out themselves.

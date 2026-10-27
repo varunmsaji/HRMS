@@ -188,3 +188,30 @@ class OnboardingSectionReview(Base, TimestampMixin):
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class OnboardingMessage(Base, TimestampMixin):
+    """Tenant-owned record of one invitation HR approved and sent (the e-mail outbox blanks its
+    bodies once a message is final, so it cannot be the history). Holds the approved subject and a
+    *credential-redacted* plain-text body - never the raw token or a live link. Delivery state is
+    deliberately NOT stored here: it is read from the linked `email_outbox` row
+    (`outbox_message_key` = `email_outbox.message_id`), so the two can never disagree.
+    `outbox_message_key` is NULL when the outbox write failed (status `NOT_QUEUED`)."""
+
+    __tablename__ = "onboarding_message"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    onboarding_case_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("onboarding_case.id"), index=True
+    )
+    message_type: Mapped[str] = mapped_column(String(30), default="INVITATION")
+    recipient_email: Mapped[str] = mapped_column(String(320))
+    subject: Mapped[str] = mapped_column(String)
+    rendered_text_body: Mapped[str] = mapped_column(String)
+    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("user.id"))
+    outbox_message_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    send_request_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

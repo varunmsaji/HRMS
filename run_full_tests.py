@@ -248,10 +248,18 @@ def stage_setup_test_database(runner: Runner) -> StageResult:
         exists = psql(["-tAc", f"SELECT 1 FROM pg_database WHERE datname='{TEST_DB_NAME}'"], "postgres")
         if exists.returncode != 0:
             return StageResult("db-setup", "infra", "ERROR", time.monotonic() - start, exists.stderr)
-        if exists.stdout.strip() != "1":
-            created = psql(["-c", f"CREATE DATABASE {TEST_DB_NAME} OWNER {PG_ADMIN_USER}"], "postgres")
-            if created.returncode != 0:
-                return StageResult("db-setup", "infra", "ERROR", time.monotonic() - start, created.stderr)
+        # Always start from an empty database. A leftover, already-migrated test DB (an interrupted
+        # earlier run) would get 002_app_role.sh's blanket `GRANT ... ON ALL TABLES` re-applied
+        # AFTER the migrations' REVOKEs, silently handing hrms_app UPDATE/DELETE on append-only
+        # tables such as leave_ledger (reproduced: test_runtime_role_cannot_rewrite_or_erase_
+        # leave_history then fails). Role setup must precede migrations, never follow them.
+        if exists.stdout.strip() == "1":
+            dropped = psql(["-c", f"DROP DATABASE {TEST_DB_NAME} WITH (FORCE)"], "postgres")
+            if dropped.returncode != 0:
+                return StageResult("db-setup", "infra", "ERROR", time.monotonic() - start, dropped.stderr)
+        created = psql(["-c", f"CREATE DATABASE {TEST_DB_NAME} OWNER {PG_ADMIN_USER}"], "postgres")
+        if created.returncode != 0:
+            return StageResult("db-setup", "infra", "ERROR", time.monotonic() - start, created.stderr)
 
         ext = psql(["-f", str(REPO_ROOT / "infra/docker/postgres/init/001_extensions.sql")], TEST_DB_NAME)
         if ext.returncode != 0:

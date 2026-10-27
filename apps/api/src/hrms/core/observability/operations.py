@@ -37,6 +37,13 @@ from uuid import UUID
 
 from hrms.core.errors.base import AppError
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
+from hrms.core.observability.metrics import (
+    ERRORS,
+    OPERATION_DURATION,
+    OPERATIONS,
+    safe_count,
+    safe_observe,
+)
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -94,7 +101,20 @@ def log_operation_outcome(
     """Emits the outcome line. Public so non-decorator call sites (task bodies, loops) share the
     exact same schema and severity rules."""
     logger = get_logger(logger_name)
-    duration_ms = round((time.perf_counter() - started) * 1000, 1)
+    elapsed = time.perf_counter() - started
+    duration_ms = round(elapsed * 1000, 1)
+    # Metric labels are the decorator's fixed operation name and a three-value outcome. A
+    # "rejected" outcome is an expected business/authorization result and is deliberately NOT an
+    # error; only "failed" also feeds hrms_errors_total (an infrastructure/bug signal).
+    outcome = (
+        "succeeded"
+        if exc is None
+        else ("rejected" if isinstance(exc, AppError) and exc.status_code < 500 else "failed")
+    )
+    safe_count(OPERATIONS, operation, outcome)
+    safe_observe(OPERATION_DURATION, elapsed, operation)
+    if outcome == "failed" and exc is not None:
+        safe_count(ERRORS, "operation", safe_error(exc)["error_category"])
     if exc is None:
         safe_log(
             logger.info,

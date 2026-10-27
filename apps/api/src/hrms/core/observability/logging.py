@@ -16,6 +16,7 @@ from hrms.core.observability.file_sink import (
     install_file_sink,
     uninstall_file_sink,
 )
+from hrms.core.observability.metrics import LOG_DROPPED, LOG_EVENTS, safe_count
 from hrms.core.observability.redaction import AccessLogPathRedactionFilter, redact_event
 
 #: Marks the root handler `configure_logging(configure_stdlib=True)` installs, so a repeated call
@@ -48,6 +49,7 @@ class _ResilientStdout:
             written = sys.stdout.write(text)
         except (OSError, ValueError):
             type(self).dropped_writes += 1
+            safe_count(LOG_DROPPED, "stdout")
             return 0
         if text.endswith("\n") and self.dropped_writes > self.reported_drops:
             self._report_drops()
@@ -114,9 +116,18 @@ def _add_logger_name(logger: WrappedLogger, _method: str, event_dict: EventDict)
     return event_dict
 
 
+_LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "critical"})
+
+
+def _level_label(level: object) -> str:
+    text = str(level).lower()
+    return "error" if text == "exception" else (text if text in _LOG_LEVELS else "other")
+
+
 def _render_and_route(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> str:
     """Last processor of every pipeline: renders the (already redacted) event to its JSON line,
     hands the same event to the local file sink, and returns the line for stdout."""
+    safe_count(LOG_EVENTS, _level_label(event_dict.get("level")))
     renderer = structlog.processors.JSONRenderer()
     sink = current_sink()
     if sink is not None:

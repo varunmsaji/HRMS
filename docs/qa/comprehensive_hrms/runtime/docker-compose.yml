@@ -1,0 +1,65 @@
+name: hrms-qa
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hrms-qa-postgres
+    environment:
+      POSTGRES_USER: hrms_qa
+      POSTGRES_PASSWORD: ${QA_POSTGRES_PASSWORD}
+      POSTGRES_DB: hrms_qa_20261026
+    ports:
+      - "127.0.0.1:15433:5432"
+    volumes:
+      - hrms_qa_pg_20261026:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms_qa -d hrms_qa_20261026"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - hrms-qa-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: hrms-qa-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:16380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - hrms-qa-net
+
+  minio:
+    image: pgsty/silo:latest
+    container_name: hrms-qa-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${QA_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${QA_MINIO_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:19000:9000"
+      - "127.0.0.1:19001:9001"
+    volumes:
+      - hrms_qa_minio_20261026:/data
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/9000' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - hrms-qa-net
+
+networks:
+  hrms-qa-net:
+    name: hrms-qa-net
+
+volumes:
+  hrms_qa_pg_20261026:
+    name: hrms_qa_pg_20261026
+  hrms_qa_minio_20261026:
+    name: hrms_qa_minio_20261026

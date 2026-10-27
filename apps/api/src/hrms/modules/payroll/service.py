@@ -75,8 +75,10 @@ from hrms.modules.payroll.exceptions import (
     SalaryStructureVersionNotDraftError,
     SalaryStructureVersionNotFoundError,
     StalePayrollResourceError,
+    StatutoryRateEditorUnverifiableError,
     StatutoryRateInvalidError,
     StatutoryRateNotFoundError,
+    StatutoryRateSelfVerificationError,
 )
 from hrms.modules.payroll.income_tax import financial_year_start
 from hrms.modules.payroll.models import (
@@ -96,6 +98,7 @@ from hrms.modules.payroll.repository import (
     PayRunRepository,
     SalaryComponentRepository,
     SalaryStructureRepository,
+    StatutoryAuditReader,
     StatutoryRateRepository,
 )
 from hrms.modules.payroll.schemas import (
@@ -3138,6 +3141,44 @@ class StatutoryRateService:
         self._session = session
         self._repo = StatutoryRateRepository()
         self._audit = AuditService()
+        self._audit_reader = StatutoryAuditReader()
+
+    async def _ensure_independent_verifier(
+        self, company_id: UUID, row: StatutoryRate, verifier_user_id: UUID | None
+    ) -> None:
+        """Maker-checker on compliance sign-off. The rate row records only who verified, so the
+        editors come from `audit_log` (every create/update/verify writes one row in the same
+        transaction). Fails closed unless the trail provably explains the row:
+
+        * the verifier must be known;
+        * every audited actor needed must be known (no NULL actor on a create/update);
+        * the audited history must reconcile with `row.version` (1 + updates + verifies, +1 when
+          the rate was closed by a successor rate, which changes `effective_to` unaudited);
+        * a rate with no audited create/update is accepted only if it is a seeded default that
+          was never edited (the system, not a person, made it).
+
+        The verifier is refused if they authored any create/update since the last verification."""
+        if verifier_user_id is None:
+            raise StatutoryRateEditorUnverifiableError()
+        events = await self._audit_reader.list_rate_events(
+            self._session, company_id=company_id, rate_id=row.id
+        )
+        edit_actions = ("PAYROLL_STATUTORY_RATE_CREATED", "PAYROLL_STATUTORY_RATE_UPDATED")
+        edits = [e for e in events if e.action in edit_actions]
+        updates = [e for e in edits if e.action == "PAYROLL_STATUTORY_RATE_UPDATED"]
+        verifies = [e for e in events if e.action == "PAYROLL_STATUTORY_RATE_VERIFIED"]
+        expected = 1 + len(updates) + len(verifies)
+        reconciled = row.version == expected or (
+            row.effective_to is not None and row.version == expected + 1
+        )
+        if not reconciled or any(e.actor_user_id is None for e in edits):
+            raise StatutoryRateEditorUnverifiableError()
+        if not edits and not (row.is_seeded and not updates):
+            raise StatutoryRateEditorUnverifiableError()
+        since = verifies[-1].occurred_at if verifies else None
+        recent = [e for e in edits if since is None or e.occurred_at >= since]
+        if any(e.actor_user_id == verifier_user_id for e in recent):
+            raise StatutoryRateSelfVerificationError()
 
     async def ensure_defaults(self, company_id: UUID) -> None:
         existing = {
@@ -3335,6 +3376,7 @@ class StatutoryRateService:
         """Compliance sign-off (FR-PAY-005): the actor confirms the rate matches the law in force
         for its dates."""
         row = await self._get_row(company_id, rate_id)
+        await self._ensure_independent_verifier(company_id, row, actor_user_id)
         before = statutory_rate_to_read(row)
         updated = await self._repo.update(
             self._session,

@@ -8,6 +8,8 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
 import '../../../core/format.dart';
+import '../../../core/theme/app_theme.dart' show AppBrand;
+import '../../../core/widgets/ui.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../organisation/data/organisation_repository.dart' show organisationRepositoryProvider;
@@ -268,13 +270,12 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
 
   Widget _stat(String label, String value) {
     final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(10)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label.toUpperCase(), style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant)),
+    return AppCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+        Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.onSurfaceVariant), maxLines: 1, overflow: TextOverflow.ellipsis),
         const SizedBox(height: 4),
-        Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800), maxLines: 1, overflow: TextOverflow.ellipsis),
       ]),
     );
   }
@@ -290,17 +291,15 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
 
     Widget body;
     if (_loading && run == null) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton(count: 4);
     } else if (_error != null || run == null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error?.status == 403 ? 'You do not have permission to view pay runs.' : (_error?.message ?? 'Pay run not found.'), textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
+      body = StateMessage(
+        icon: _error?.status == 403 ? Icons.lock_outline_rounded : Icons.error_outline_rounded,
+        tone: Tone.danger,
+        title: _error?.status == 403 ? 'No access' : 'Couldn\'t load pay run',
+        message: _error?.status == 403 ? 'You do not have permission to view pay runs.' : (_error?.message ?? 'Pay run not found.'),
+        actionLabel: 'Retry',
+        onAction: _load,
       );
     } else {
       final visible = _employees.where((e) => switch (_filter) {
@@ -314,9 +313,24 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('${_entityName ?? 'Legal entity'} · ${run.periodStart ?? ''} to ${run.periodEnd ?? ''}', style: TextStyle(color: scheme.onSurfaceVariant)),
-            const SizedBox(height: 4),
-            Text(run.status.replaceAll('_', ' '), style: TextStyle(color: scheme.primary, fontWeight: FontWeight.w700)),
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [AppBrand.navy, Color(0xFF1E3A8A)]),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Expanded(child: Text(_entityName ?? 'Legal entity', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16))),
+                  StatusChip.status(run.status),
+                ]),
+                const SizedBox(height: 4),
+                Text('${run.periodStart ?? ''} to ${run.periodEnd ?? ''}', style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
+                const SizedBox(height: 16),
+                const Text('Net pay', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                Text(run.isComputed ? formatInr(run.netMinor ?? 0) : '—', style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800)),
+              ]),
+            ),
             const SizedBox(height: 12),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (canProcess && run.canLockInputs) FilledButton(onPressed: _busy ? null : () => _transition((m) => repo.lockInputs(run.id, ifMatch: m), 'Inputs locked.'), child: const Text('Lock inputs')),
@@ -354,13 +368,12 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
               physics: const NeverScrollableScrollPhysics(),
               mainAxisSpacing: 8,
               crossAxisSpacing: 8,
-              childAspectRatio: 2.4,
+              childAspectRatio: 2.3,
               children: [
                 _stat('Employees', '${run.employeeCount ?? 0}'),
                 _stat('Gross', run.isComputed ? formatInr(run.grossMinor ?? 0) : '—'),
                 _stat('Deductions', run.isComputed ? formatInr(run.deductionsMinor ?? 0) : '—'),
-                _stat('Net pay', run.isComputed ? formatInr(run.netMinor ?? 0) : '—'),
-                _stat('Employer contributions', run.isComputed ? formatInr(run.employerContributionsMinor ?? 0) : '—'),
+                _stat('Employer cost', run.isComputed ? formatInr(run.employerContributionsMinor ?? 0) : '—'),
               ],
             ),
             const SizedBox(height: 12),
@@ -379,35 +392,39 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
               Container(
                 margin: const EdgeInsets.only(top: 12),
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: Colors.orange.withValues(alpha: 0.1), border: Border.all(color: Colors.orange), borderRadius: BorderRadius.circular(8)),
-                child: Text(
-                  'Before approval: ${[
-                    if (run.errorCount > 0) '${run.errorCount} employee(s) with errors to fix',
-                    if (run.varianceOpenCount > 0) '${run.varianceOpenCount} flagged variance(s) to acknowledge',
-                  ].join(', ')}. The user who computed the run cannot approve it.',
-                ),
+                decoration: BoxDecoration(color: toneColors(context, Tone.warning).bg, borderRadius: BorderRadius.circular(12)),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Icon(Icons.warning_amber_rounded, size: 20, color: toneColors(context, Tone.warning).fg),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Before approval: ${[
+                        if (run.errorCount > 0) '${run.errorCount} employee(s) with errors to fix',
+                        if (run.varianceOpenCount > 0) '${run.varianceOpenCount} flagged variance(s) to acknowledge',
+                      ].join(', ')}. The user who computed the run cannot approve it.',
+                    ),
+                  ),
+                ]),
               ),
             if (_employees.isNotEmpty) ...[
               const SizedBox(height: 20),
-              DropdownButtonFormField<_Filter>(
-                value: _filter,
-                decoration: const InputDecoration(labelText: 'Show'),
-                items: [
-                  DropdownMenuItem(value: _Filter.all, child: Text('All employees (${_employees.length})')),
-                  const DropdownMenuItem(value: _Filter.issues, child: Text('With issues')),
-                  const DropdownMenuItem(value: _Filter.variance, child: Text('Flagged variance')),
-                ],
-                onChanged: (v) => setState(() => _filter = v ?? _Filter.all),
-              ),
+              SectionHeader('Employees'),
+              Wrap(spacing: 8, children: [
+                ChoiceChip(label: Text('All (${_employees.length})'), selected: _filter == _Filter.all, onSelected: (_) => setState(() => _filter = _Filter.all)),
+                ChoiceChip(label: const Text('With issues'), selected: _filter == _Filter.issues, onSelected: (_) => setState(() => _filter = _Filter.issues)),
+                ChoiceChip(label: const Text('Flagged variance'), selected: _filter == _Filter.variance, onSelected: (_) => setState(() => _filter = _Filter.variance)),
+              ]),
               const SizedBox(height: 8),
               for (final e in visible) _employeeCard(e, run, canProcess),
             ],
             if (_corrections.isNotEmpty) ...[
               const SizedBox(height: 20),
-              Text('Day corrections for this month', style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 6),
+              const SectionHeader('Day corrections for this month'),
               for (final c in _corrections)
-                Card(
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: AppCard(
+                  padding: EdgeInsets.zero,
                   child: ListTile(
                     title: Text('${_employees.where((x) => x.employeeId == c.employeeId).map((x) => x.displayName).firstOrNull ?? 'Employee'} ${(num.tryParse(c.paidDaysDelta) ?? 0) > 0 ? '+' : ''}${c.paidDaysDelta} day(s)'),
                     subtitle: Text('${c.reason}\n${c.status == 'APPLIED' ? 'Paid as arrears' : 'Pending — next run'}'),
@@ -415,6 +432,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
                     trailing: canProcess && c.status == 'PENDING'
                         ? TextButton(onPressed: _busy ? null : () => _guard(() async => _repo.deleteAdjustment(c.id), success: 'Correction withdrawn.'), child: const Text('Withdraw'))
                         : null,
+                  ),
                   ),
                 ),
             ],
@@ -428,19 +446,21 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
 
   Widget _employeeCard(PayRunEmployee e, PayRun run, bool canProcess) {
     final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.only(top: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: AppCard(
+        padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
+            InitialsAvatar(name: e.displayName, size: 38),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(e.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
                 Text('${e.employeeCode ?? ''}${e.payBasis == 'DAILY_WAGE' ? ' · daily-wage' : ''}', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
               ]),
             ),
-            if (e.isComputed) Text(formatInr(e.netMinor ?? 0), style: const TextStyle(fontWeight: FontWeight.w700)),
+            if (e.isComputed) Text(formatInr(e.netMinor ?? 0), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
           ]),
           const SizedBox(height: 6),
           Text('Paid days ${e.paidDays ?? '—'} · LOP ${e.lopDays ?? '—'}${e.isComputed ? ' · gross ${formatInr(e.grossMinor ?? 0)}' : ''}', style: TextStyle(color: scheme.onSurfaceVariant)),
@@ -459,11 +479,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
                 for (final i in e.issues)
                   Tooltip(
                     message: i.message,
-                    child: Chip(
-                      visualDensity: VisualDensity.compact,
-                      label: Text(i.code.replaceAll('_', ' ').toLowerCase(), style: const TextStyle(fontSize: 11)),
-                      backgroundColor: (i.isError ? scheme.error : Colors.orange).withValues(alpha: 0.12),
-                    ),
+                    child: StatusChip(label: humanize(i.code), tone: i.isError ? Tone.danger : Tone.warning, dot: false),
                   ),
               ]),
             ),

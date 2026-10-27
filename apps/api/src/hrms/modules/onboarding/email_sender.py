@@ -21,15 +21,20 @@ transport differs again. It calls Mailtrap's HTTP Send API directly over `httpx`
 dependency) rather than via Mailtrap's own synchronous Python SDK, so sending stays fully async
 like `SmtpEmailSender` instead of blocking the event loop on a sync HTTP call."""
 
+import re
 import sys
+import time
+from contextvars import ContextVar
 from email.message import EmailMessage
 from typing import Any, Literal, Protocol
+from uuid import UUID
 
 import aiosmtplib
 import httpx
 
 from hrms.core.config.settings import Settings
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
+from hrms.core.observability.metrics import DEPENDENCY_CALLS, DEPENDENCY_ERRORS, safe_count
 
 logger = get_logger(__name__)
 
@@ -79,11 +84,134 @@ def _classify_smtp(exc: aiosmtplib.SMTPException) -> tuple[str, bool, Outcome, i
 def _accepted(provider: str) -> None:
     """The provider *accepted* the request. That is not delivery: bounces and spam filtering
     happen later and are invisible to this application."""
+    safe_count(DEPENDENCY_CALLS, "email", "success")
     safe_log(logger.info, "email.provider.accepted", provider=provider)
 
 
 class EmailSender(Protocol):
     async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None: ...
+
+
+#: Single-use secrets in action links (`<base>/reset-password/<token>`). The platform console shows
+#: the stored email, so the token is masked: the console can read what was sent, not act on it.
+_LINK_TOKEN = re.compile(
+    r"(/(?:reset-password|verify-email|accept-invite|onboarding)/)[A-Za-z0-9_-]{16,}"
+)
+
+
+def _mask_tokens(value: str) -> str:
+    return _LINK_TOKEN.sub(r"\1[token-hidden]", value)
+
+
+#: Set by `queue_email_after_commit` while it delivers, so a deferred email is still named after
+#: the business code that queued it, not after the helper that finally calls `send`.
+_KIND_OVERRIDE: ContextVar[str | None] = ContextVar("email_kind_override", default=None)
+
+
+def _caller_kind() -> str | None:
+    """`module.function` of the code that called `send` — names the email without every caller
+    having to pass a label. Frame 0 is this helper, 1 the sender's `send`, 2 the caller."""
+    override = _KIND_OVERRIDE.get()
+    if override is not None:
+        return override
+    try:
+        frame = sys._getframe(2)
+    except ValueError:
+        return None
+    module = frame.f_globals.get("__name__", "").rsplit(".", 2)
+    return f"{module[-2] if len(module) > 1 else module[-1]}.{frame.f_code.co_name}"[:80]
+
+
+async def record_email(
+    *,
+    kind: str | None,
+    provider: str,
+    status: str,
+    to: str,
+    sender: str | None,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    started: float,
+    error: "EmailDeliveryError | None" = None,
+) -> None:
+    """Appends the platform `email_log` row. Never raises and uses its own session/transaction, so
+    a logging problem cannot fail or roll back the business action that sent the email."""
+    try:
+        from uuid import uuid4
+
+        from hrms.core.db.session import get_session_factory
+        from hrms.core.tenancy.context import current_request_id, current_tenant_company_id
+        from hrms.modules.platform.models import EmailLog
+
+        company_id = current_tenant_company_id()
+        async with get_session_factory()() as session:
+            session.add(
+                EmailLog(
+                    id=uuid4(),
+                    kind=kind,
+                    provider=provider,
+                    status=status,
+                    recipient=to[:320],
+                    sender=sender,
+                    subject=subject,
+                    text_body=_mask_tokens(text_body),
+                    html_body=_mask_tokens(html_body),
+                    company_id=UUID(company_id) if company_id else None,
+                    request_id=current_request_id(),
+                    failure_class=error.failure_class if error else None,
+                    error_type=error.error_type if error else None,
+                    status_code=error.status_code if error else None,
+                    retryable=error.retryable if error else None,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            )
+            await session.commit()
+    except Exception as exc:  # noqa: BLE001 — the email log is best-effort by design
+        safe_log(logger.warning, "email.log.write_failed", **safe_error(exc))
+
+
+class _Recording:
+    """Mixin: `send` = `_deliver` + one `email_log` row (ACCEPTED or FAILED)."""
+
+    provider: str
+
+    def _sender_address(self) -> str | None:
+        return None
+
+    async def _deliver(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
+        raise NotImplementedError
+
+    async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
+        started = time.monotonic()
+        kind = _caller_kind()
+        try:
+            await self._deliver(to=to, subject=subject, html_body=html_body, text_body=text_body)
+        except EmailDeliveryError as exc:
+            await record_email(
+                kind=kind,
+                provider=self.provider,
+                status="FAILED",
+                to=to,
+                sender=self._sender_address(),
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+                started=started,
+                error=exc,
+            )
+            raise
+        await record_email(
+            kind=kind,
+            provider=self.provider,
+            status="ACCEPTED",
+            to=to,
+            sender=self._sender_address(),
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            started=started,
+        )
 
 
 class LoggingEmailSender:
@@ -98,7 +226,17 @@ class LoggingEmailSender:
     logged here."""
 
     async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
-        del html_body  # not useful to a developer; the text body is
+        await record_email(
+            kind=_caller_kind(),
+            provider="logging",
+            status="LOGGED_ONLY",
+            to=to,
+            sender=None,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            started=time.monotonic(),
+        )
         # The structured log pipeline now redacts addresses and token links (LOG-08), which is
         # exactly what this dev-only sender exists to show. So the readable copy goes to stderr,
         # outside the JSON log stream, and the structured event carries no content.
@@ -112,7 +250,7 @@ class LoggingEmailSender:
             pass
 
 
-class SmtpEmailSender:
+class SmtpEmailSender(_Recording):
     """Real delivery via a standard authenticated SMTP transport (RELEASE_HARDENING_PHASE_5A).
     Provider-agnostic by design — any SMTP-compatible relay works (a transactional-email vendor's
     SMTP endpoint, a self-hosted MTA, etc.); nothing here names a specific commercial vendor.
@@ -122,7 +260,12 @@ class SmtpEmailSender:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
+    provider = "smtp"
+
+    def _sender_address(self) -> str | None:
+        return f"{self._settings.smtp_from_name} <{self._settings.smtp_from_email}>"
+
+    async def _deliver(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
         settings = self._settings
         message = EmailMessage()
         message["Subject"] = subject
@@ -149,7 +292,7 @@ class SmtpEmailSender:
         _accepted("smtp")
 
 
-class MailtrapEmailSender:
+class MailtrapEmailSender(_Recording):
     """Real delivery via the Mailtrap Send API (https://send.api.mailtrap.io/api/send). Called
     directly over `httpx.AsyncClient` rather than Mailtrap's own (synchronous) Python SDK — same
     reasoning as `SmtpEmailSender` using `aiosmtplib` instead of a blocking SMTP client.
@@ -161,7 +304,12 @@ class MailtrapEmailSender:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
+    provider = "mailtrap"
+
+    def _sender_address(self) -> str | None:
+        return f"{self._settings.smtp_from_name} <{self._settings.smtp_from_email}>"
+
+    async def _deliver(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
         settings = self._settings
         payload = {
             "from": {"email": settings.smtp_from_email, "name": settings.smtp_from_name},
@@ -186,7 +334,7 @@ class MailtrapEmailSender:
         _accepted("mailtrap")
 
 
-class HostingerEmailSender:
+class HostingerEmailSender(_Recording):
     """Real delivery via the Hostinger Mail API
     (`POST /api/v1/mailboxes/{mailboxResourceId}/send`). The sender is the mailbox named by
     `Settings.hostinger_mail_mailbox_id`; only the display name is settable per message.
@@ -197,7 +345,12 @@ class HostingerEmailSender:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    async def send(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
+    provider = "hostinger"
+
+    def _sender_address(self) -> str | None:
+        return self._settings.smtp_from_name
+
+    async def _deliver(self, *, to: str, subject: str, html_body: str, text_body: str) -> None:
         settings = self._settings
         url = f"{self._API_BASE_URL}/api/v1/mailboxes/{settings.hostinger_mail_mailbox_id}/send"
         payload = {
@@ -265,6 +418,12 @@ def log_email_failure(kind: str, exc: BaseException, **ids: Any) -> None:
     the recipient address. A non-transport failure (template build, misconfiguration, a bug)
     has no provider classification and is logged at ERROR with its traceback, because it will
     keep happening until fixed."""
+    safe_count(DEPENDENCY_CALLS, "email", "failure")
+    safe_count(
+        DEPENDENCY_ERRORS,
+        "email",
+        exc.failure_class if isinstance(exc, EmailDeliveryError) else "internal",
+    )
     if isinstance(exc, EmailDeliveryError):
         safe_log(
             logger.warning, "email.delivery.failed", email_kind=kind, **exc.log_fields(), **ids
@@ -291,3 +450,74 @@ def get_email_sender(settings: Settings) -> EmailSender:
     if settings.email_provider == "hostinger":
         return HostingerEmailSender(settings)
     return LoggingEmailSender()
+
+
+async def queue_email_after_commit(
+    session: Any,
+    sender: EmailSender,
+    *,
+    to: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    failure_kind: str,
+    message_key: str | None = None,
+    **failure_ids: Any,
+) -> bool:
+    """Hands the email to the transactional outbox (B13; `email_outbox.py`) and returns True once it
+    is queued. The outbox row is written in `session`'s own transaction: it commits with the
+    business change, vanishes with a rollback (or a rolled-back SAVEPOINT) and survives a crash
+    right after
+    the commit. Nothing is delivered here and nothing is written to `email_log` until a worker (or,
+    in `inline` dispatch mode, this process after the commit) claims and sends it.
+
+    `message_key` is the stable identity of the logical message; enqueueing the same key twice
+    stores one message. Without one a fresh random key is used (every call is a distinct message).
+    `sender`
+    is only used by `inline` dispatch (tests, single-process development); a worker always builds
+    the configured sender itself. The email keeps the `email_log.kind` of the business code that
+    queued it.
+
+    A `session` that is not a real `AsyncSession` (the service unit tests pass mocks) has no
+    transaction to enqueue into; the email is sent immediately, the only behaviour a mock can
+    observe.
+    """
+    from uuid import uuid4
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    try:
+        frame = sys._getframe(1)
+        module = frame.f_globals.get("__name__", "").rsplit(".", 2)
+        kind: str | None = (
+            f"{module[-2] if len(module) > 1 else module[-1]}.{frame.f_code.co_name}"[:80]
+        )
+    except ValueError:
+        kind = None
+
+    if not isinstance(session, AsyncSession):
+        token = _KIND_OVERRIDE.set(kind)
+        try:
+            await sender.send(to=to, subject=subject, html_body=html_body, text_body=text_body)
+        except Exception as exc:  # noqa: BLE001 - mirrors the best-effort contract
+            log_email_failure(failure_kind, exc, **failure_ids)
+        finally:
+            _KIND_OVERRIDE.reset(token)
+        return True
+
+    from hrms.modules.onboarding.email_outbox import enqueue_email
+
+    await enqueue_email(
+        session,
+        message_id=message_key or f"{failure_kind}:{uuid4()}",
+        kind=kind or failure_kind,
+        failure_kind=failure_kind,
+        to=to,
+        subject=subject,
+        html_body=html_body,
+        text_body=text_body,
+        company_id=failure_ids.get("company_id"),
+        context={k: str(v) for k, v in failure_ids.items()},
+        inline_sender=sender,
+    )
+    return True

@@ -19,10 +19,12 @@ from sqlalchemy.orm.attributes import set_committed_value
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import get_settings
 from hrms.core.db.locks import lock_attendance_period_close, lock_employee_leave_dates
+from hrms.core.db.session import session_scope
 from hrms.core.db.timeouts import bounded_waits, is_wait_timeout
 from hrms.core.errors.base import NotFoundError, PermissionDeniedError, ValidationError
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
+from hrms.core.observability.security_events import security_event
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.attendance import calculation as calc
 from hrms.modules.attendance.exceptions import (
@@ -39,6 +41,7 @@ from hrms.modules.attendance.exceptions import (
     AttendanceSummaryReconciliationError,
     DuplicatePunchIdempotencyKeyError,
     EmployeeTerminatedError,
+    FaceVerificationRequiredError,
     FuturePunchTimeError,
     InvalidPolicyBandError,
     InvalidPolicyRateRowError,
@@ -105,6 +108,7 @@ from hrms.modules.attendance.repository import (
     AttendanceRegularizationRequestedPunchRepository,
     AttendanceRegularizationRequestRepository,
     CompOffFactRow,
+    FaceProfileRepository,
     LeaveDayProjectionRepository,
     OvertimeActionRepository,
     OvertimePolicyRepository,
@@ -2003,7 +2007,7 @@ async def _ensure_employee_visible(
     session: AsyncSession,
     company_id: UUID,
     target_employee_id: UUID,
-    scope: DataScope,
+    scope: DataScope | None,
     caller_employee_id: UUID | None,
 ) -> None:
     """Confirms the caller may act *on* `target_employee_id` — not just that they hold some
@@ -2015,7 +2019,7 @@ async def _ensure_employee_visible(
     from hrms.modules.employee.service import EmployeeService
 
     employee_service = EmployeeService(session)
-    await employee_service.get_employee(
+    await employee_service.ensure_employee_visible(
         company_id, target_employee_id, scope=scope, caller_employee_id=caller_employee_id
     )
 
@@ -2634,6 +2638,14 @@ class PunchService:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
+        if source == "WEB":
+            await self._ensure_plain_punch_allowed(
+                company_id,
+                employee_id,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
         if idempotency_key:
             existing = await self._repo.get_by_idempotency_key(
@@ -2723,6 +2735,48 @@ class PunchService:
             user_agent=user_agent,
         )
         return read, False
+
+    async def _ensure_plain_punch_allowed(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """Mandatory face verification: an employee whose face profile is ENROLLED may not
+        self-punch without it. `WEB` is the source only the plain self-service route assigns;
+        face punches (`FACE`) have already been verified and HR corrections (`ADMIN`) are the
+        approved recovery path. Employees with no profile, PENDING_APPROVAL or a rejected /
+        revoked profile keep the plain punch. The profile is read in the caller's tenant
+        (RLS + explicit company filter), and the refusal is audited in its own transaction
+        because the request transaction rolls back with the error."""
+        profile = await FaceProfileRepository().get_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if profile is None or profile.status != "ENROLLED":
+            return
+        async with session_scope(company_id=str(company_id)) as audit_session:
+            await self._audit.record(
+                audit_session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="PUNCH_REJECTED_FACE_REQUIRED",
+                entity_type="employee",
+                entity_id=employee_id,
+                after={"reason": "FACE_VERIFICATION_REQUIRED", "source": "WEB"},
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+        security_event(
+            "punch.rejected",
+            level="warning",
+            reason="FACE_VERIFICATION_REQUIRED",
+            company_id=str(company_id),
+            employee_id=str(employee_id),
+        )
+        raise FaceVerificationRequiredError()
 
     async def _try_immediate_calculate(
         self,
@@ -2936,12 +2990,24 @@ class AttendanceDayService:
         ip_address: str | None = None,
         user_agent: str | None = None,
         lock_timeout_ms: int | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> AttendanceDayRead:
         """Runs `_calculate` with bounded lock and statement waits (`core/db/timeouts.py`): a
         calculation queued behind another transaction's row lock, or running unexpectedly long,
         fails with a database timeout (rolled back cleanly) instead of waiting indefinitely.
         `lock_timeout_ms` lets a best-effort caller (the punch's immediate calculation) give up
-        sooner than the configured default."""
+        sooner than the configured default.
+
+        B12 (DEF-B11-01, OBS-HRA-01): `employee_id` is client-supplied on the HTTP path, so it is
+        proven to belong to `company_id` - and, when the route passes the caller's `scope`, to be
+        visible under it - before anything is read for calculation or written. Every caller
+        (route, punch, sweep, range task) goes through this one guard; a foreign, unknown or
+        out-of-scope id raises the same `NotFoundError` and leaves no row and no audit event.
+        `scope=None` is the internal mode (company ownership only)."""
+        await _ensure_employee_visible(
+            self._session, company_id, employee_id, scope, caller_employee_id
+        )
         settings = get_settings()
         async with bounded_waits(
             self._session,
@@ -3168,12 +3234,17 @@ class AttendanceDayService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> AttendanceDayRead:
         row = await self._day_repo.get(
             self._session, company_id=company_id, attendance_day_id=attendance_day_id
         )
         if row is None:
             raise NotFoundError("Resource not found")
+        await _ensure_employee_visible(
+            self._session, company_id, row.employee_id, scope, caller_employee_id
+        )
         return await self.calculate(
             company_id,
             row.employee_id,
@@ -3181,6 +3252,8 @@ class AttendanceDayService:
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            scope=scope,
+            caller_employee_id=caller_employee_id,
         )
 
     async def queue_range_calculation(
@@ -3191,19 +3264,36 @@ class AttendanceDayService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> AttendanceRangeCalculateQueued:
         """PAY-001 — queues `attendance.calculate_range` for the range (see
         `tasks._calculate_range_async`). Refuses a range ending after the company's current
-        business date."""
+        business date.
+
+        B12 (OBS-HRA-01): under a below-COMPANY `scope` the target set is the caller's visible
+        employees. An explicit `employee_ids` list must be a subset of it - any other id (another
+        tenant's, unknown, or out of scope) rejects the whole request with the one `NotFoundError`
+        before anything is queued - and an omitted list is narrowed to the visible set, never
+        widened to the company. A caller who can see nobody gets the same `NotFoundError`."""
         from hrms.modules.attendance.tasks import calculate_range
         from hrms.modules.organisation.service import OrganisationService
 
         company = await OrganisationService(self._session).get_company_profile(company_id)
         if body.date_to > business_today(company.timezone):
             raise AttendanceRangeInFutureError()
-        employee_ids = (
-            [str(e) for e in body.employee_ids] if body.employee_ids is not None else None
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
         )
+        target_ids = body.employee_ids
+        if visible_ids is not None:
+            if target_ids is None:
+                target_ids = sorted(visible_ids, key=str)
+                if not target_ids:
+                    raise NotFoundError("Resource not found")
+            elif any(e not in visible_ids for e in target_ids):
+                raise NotFoundError("Resource not found")
+        employee_ids = [str(e) for e in target_ids] if target_ids is not None else None
         try:
             async_result = calculate_range.delay(
                 str(company_id),
@@ -3227,7 +3317,7 @@ class AttendanceDayService:
             task_id=str(async_result.id),
             date_from=body.date_from,
             date_to=body.date_to,
-            employee_ids=body.employee_ids,
+            employee_ids=target_ids,
             legal_entity_id=body.legal_entity_id,
         )
         await self._audit.record(
@@ -3253,6 +3343,8 @@ class AttendanceDayService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        scope: DataScope | None = None,
+        caller_employee_id: UUID | None = None,
     ) -> AttendanceDayRead:
         """BUS-012 (`PAYROLL_BUSINESS_DECISIONS.md` #5) — HR confirms the approved full-day leave
         stands over the punches recorded on the same day. The day is already paid as leave
@@ -3264,6 +3356,9 @@ class AttendanceDayService:
         )
         if row is None:
             raise NotFoundError("Resource not found")
+        await _ensure_employee_visible(
+            self._session, company_id, row.employee_id, scope, caller_employee_id
+        )
         if row.is_locked:
             raise AttendanceDayLockedError()
         if not row.work_on_leave_flagged:
@@ -3474,7 +3569,10 @@ class AttendanceDayService:
         # (module docstring; mirrors `PolicyResolutionService.resolve`,
         # `CalendarResolutionService._scope_candidates`, `EmployeeService._check_seat_limit`).
         from hrms.modules.employee.service import EmployeeAssignmentService, EmploymentService
-        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+        from hrms.modules.organisation.calendar_resolution import (
+            CalendarResolutionService,
+            weekly_off_fraction_of,
+        )
         from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
         from hrms.modules.organisation.service import OrganisationService
 
@@ -3620,8 +3718,9 @@ class AttendanceDayService:
             calendar_day_type = calendar_result.day_type.day_type
             holiday_name = calendar_result.day_type.holiday_name
             holiday_on_weekly_off = calendar_result.day_type.holiday_on_weekly_off
-            if calendar_result.day_type.weekly_off_fraction is not None:
-                weekly_off_fraction = str(calendar_result.day_type.weekly_off_fraction)
+            if calendar_result.day_type.day_type == "WEEKLY_OFF":
+                # Shared interpretation (policy A): the OFF share, 1.00 when unset.
+                weekly_off_fraction = str(weekly_off_fraction_of(calendar_result.day_type))
             holiday_type = calendar_result.day_type.holiday_type
             if calendar_result.day_type.holiday_is_paid is not None:
                 holiday_is_paid = calendar_result.day_type.holiday_is_paid
@@ -6017,17 +6116,33 @@ class AttendancePeriodService:
                 )
 
     async def get_summary(
-        self, company_id: UUID, period_id: UUID
+        self,
+        company_id: UUID,
+        period_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
     ) -> list[AttendancePeriodSummaryRead]:
         """ "Regenerated only while unlocked; frozen at lock/snapshot" (architecture §4.2) — an
         `OPEN` period computes a live, unpersisted preview on every call; a `CLOSED` period
-        returns the frozen rows `finalize` wrote once and only once."""
+        returns the frozen rows `finalize` wrote once and only once.
+
+        DEF-B6-02 — each row is one employee's attendance, so the caller sees only the
+        employees their data scope allows (`None` = COMPANY, no filter). `scope` is required
+        and has no default so a caller can never skip the narrowing by omission."""
         period = await self._get_or_404(company_id, period_id)
+        visible_ids = await _resolve_visible_employee_ids(
+            self._session, company_id, scope, caller_employee_id
+        )
         if period.status == "CLOSED":
             rows = await self._summary_repo.list_for_period(
                 self._session, company_id=company_id, attendance_period_id=period_id
             )
-            return [attendance_period_summary_to_read(row, frozen=True) for row in rows]
+            return [
+                attendance_period_summary_to_read(row, frozen=True)
+                for row in rows
+                if visible_ids is None or row.employee_id in visible_ids
+            ]
 
         scope = await self._scope(company_id, period)
         day_rows = await self._owned_day_rows(company_id, period, scope)
@@ -6060,6 +6175,7 @@ class AttendancePeriodService:
                 frozen=False,
             )
             for employee_id, agg in aggregates.items()
+            if visible_ids is None or employee_id in visible_ids
         ]
 
     # -- payroll seams (payroll plan Phase 5.2) ---------------------------------------

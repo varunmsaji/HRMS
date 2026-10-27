@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
@@ -28,10 +29,14 @@ enum _Phase { idle, challenge, capturing, verifying }
 /// face match -> server-timed punch. The app never decides liveness and offers no way to
 /// override a failed check. Server messages are shown as-is.
 class FacePunchCard extends ConsumerStatefulWidget {
-  const FacePunchCard({super.key, this.onPunched});
+  const FacePunchCard({super.key, this.onPunched, this.onStatus});
 
   /// Called after a successful punch so the parent can refresh its attendance list.
   final VoidCallback? onPunched;
+
+  /// Reports the loaded enrollment status so the parent can hide the plain punch controls while
+  /// [FaceEnrollmentStatus.faceVerificationRequired] is true.
+  final ValueChanged<FaceEnrollmentStatus>? onStatus;
 
   @override
   ConsumerState<FacePunchCard> createState() => _FacePunchCardState();
@@ -56,7 +61,10 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
     });
     try {
       final status = await ref.read(attendanceRepositoryProvider).getMyFaceEnrollment();
-      if (mounted) setState(() => _status = status);
+      if (mounted) {
+        setState(() => _status = status);
+        widget.onStatus?.call(status);
+      }
     } catch (error) {
       if (mounted) setState(() => _loadError = describeApiError(error));
     } finally {
@@ -213,24 +221,18 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
       message = 'Face attendance is not set up yet. Ask HR to open face enrollment for you.';
     }
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
+    return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(children: [
-            Icon(Icons.face_retouching_natural, color: scheme.primary),
-            const SizedBox(width: 8),
-            Text('Face attendance', style: text.titleSmall),
+            const IconBadge(icon: Icons.face_retouching_natural, size: 36),
+            const SizedBox(width: 12),
+            Text('Face attendance', style: text.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
           ]),
-          const SizedBox(height: 4),
-          Text(message, style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
-          if (actions.isNotEmpty) const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          Text(message, style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant, height: 1.4)),
+          if (actions.isNotEmpty) const SizedBox(height: 14),
           ...actions,
         ],
       ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:cookie_jar/cookie_jar.dart';
@@ -11,6 +12,7 @@ import '../auth/auth_types.dart';
 import '../auth/token_storage.dart';
 import '../diagnostics/app_diagnostics.dart';
 import 'api_error.dart';
+import 'cookie_storage.dart';
 import 'envelope.dart';
 
 /// The mobile equivalent of `NEXT_PUBLIC_API_URL` — pass with
@@ -60,14 +62,16 @@ class ApiClient {
   // Held for the client's lifetime; the `CookieManager` interceptor does the reads and writes.
   // ignore: unused_field
   final CookieJar _cookieJar;
-  Completer<bool>? _refreshInFlight;
+  Completer<bool?>? _refreshInFlight;
 
   static ApiClient? _instance;
 
   static Future<ApiClient> getInstance() async {
     if (_instance != null) return _instance!;
     final dir = await getApplicationSupportDirectory();
-    final cookieJar = PersistCookieJar(storage: FileStorage('${dir.path}/.cookies/'));
+    final cookieDir = Directory('${dir.path}/.cookies/');
+    await prepareCookieDirectory(cookieDir);
+    final cookieJar = PersistCookieJar(storage: FileStorage(cookieDir.path));
     final dio = Dio(
       BaseOptions(
         baseUrl: '$_apiBaseUrl/v1',
@@ -194,7 +198,14 @@ class ApiClient {
     return parseData!(envelope['data']);
   }
 
-  Future<bool> _refreshSession() async {
+  /// Exchanges the refresh cookie for a new access token. The outcome is three-valued because
+  /// the two failures need opposite handling:
+  /// - `true`: refreshed and saved;
+  /// - `false`: the server *rejected* the refresh (the session is genuinely over) — sign out;
+  /// - `null`: unknown (timeout, no network, 5xx, 429). The refresh may even have succeeded
+  ///   server-side with only the response lost, so the session is kept and the caller reports a
+  ///   connectivity error instead of signing the user out over a blip.
+  Future<bool?> _refreshSession() async {
     if (await TokenStorage.instance.load() == null) return false;
     try {
       final response = await _dio.request<dynamic>(
@@ -202,23 +213,29 @@ class ApiClient {
         options: Options(method: 'POST', headers: {'X-Request-Id': _requestId()}),
       );
       if (response.statusCode == null || response.statusCode! < 200 || response.statusCode! >= 300) {
-        return false;
+        return _isRefreshRejection(response.statusCode) ? false : null;
       }
       final data = TokenResponseData.fromJson(
         (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
       );
       await TokenStorage.instance.save(StoredSession.fromTokenResponse(data));
       return true;
+    } on DioException catch (e) {
+      return _isRefreshRejection(e.response?.statusCode) ? false : null;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 
+  /// 400/401/403 mean the server looked at the refresh token and refused it (invalid, rotated,
+  /// revoked, company rejected). Anything else says nothing about the session.
+  bool _isRefreshRejection(int? status) => status == 400 || status == 401 || status == 403;
+
   /// Ensures concurrent 401s during one screen trigger a single refresh call,
   /// not one per request.
-  Future<bool> _refreshOnce() {
+  Future<bool?> _refreshOnce() {
     if (_refreshInFlight == null) {
-      _refreshInFlight = Completer<bool>();
+      _refreshInFlight = Completer<bool?>();
       _refreshSession().then((result) {
         _refreshInFlight!.complete(result);
         _refreshInFlight = null;
@@ -257,6 +274,12 @@ class ApiClient {
 
       if (shouldAttemptRefresh) {
         final refreshed = await _refreshOnce();
+        if (refreshed == null) {
+          // Could not reach a verdict — keep the session; the user can simply try again.
+          final unreachable = NetworkError(requestId: error.requestId);
+          AppDiagnostics.instance.recordFailedRequest(unreachable);
+          throw unreachable;
+        }
         if (refreshed) {
           return _rawRequest<T>(
             path,

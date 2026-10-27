@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R04",
+  "direction": "MARKER-FOUNDRY-own",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 200,
+  "body": "{\"data\":[{\"user_id\":\"dfe01642-db29-4ad6-8645-1fe785791c80\",\"email\":\"founder.a@example.com\",\"first_name\":\"MARKER-FOUNDRY\",\"last_name\":\"Admin\",\"is_primary\":true,\"status\":\"ACTIVE\",\"role_codes\":[\"COMPANY_ADMIN\"]}],\"pagination\":{\"page\":1,\"per_page\":25,\"total\":1,\"total_pages\":1,\"next_cursor\":null},\"meta\":{\"request_id\":\"f42afce3-87fa-421c-ab32-e3455e21f348\",\"server_time\":\"2026-10-26T13:07:01.644857Z\"}}",
+  "verdict": "PASS",
+  "note": "own user list",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

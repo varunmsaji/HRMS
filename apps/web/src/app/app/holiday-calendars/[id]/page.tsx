@@ -24,6 +24,8 @@ import {
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dialog";
+import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -50,6 +52,12 @@ import {
 export default function HolidayCalendarDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
+  const [impact, setImpact] = useState<{
+    change: ProposedChange;
+    title: string;
+    onDone: () => void | Promise<void>;
+  } | null>(null);
+
   const { can } = usePermissions();
   const canManage = can("ORG.HOLIDAY.MANAGE");
 
@@ -147,6 +155,28 @@ export default function HolidayCalendarDetailPage() {
       return;
     }
 
+    if ("valid_from" in patch || "valid_to" in patch) {
+      // Validity dates decide which holidays apply to employees, so review the impact first.
+      setFormErrors({});
+      setStaleMessage(null);
+      setImpact({
+        change: {
+          change_type: "HOLIDAY_CALENDAR_UPDATE",
+          holiday_calendar_id: calendar.id,
+          expected_version: calendar.version,
+          patch: patch as Record<string, unknown>,
+        },
+        title: "Save holiday calendar",
+        onDone: async () => {
+          setEditing(false);
+          setFormValues(null);
+          toast({ title: "Holiday calendar saved", variant: "success" });
+          await load(holidaysPage);
+        },
+      });
+      return;
+    }
+
     setSaving(true);
     setFormErrors({});
     setStaleMessage(null);
@@ -239,43 +269,30 @@ export default function HolidayCalendarDetailPage() {
       setHolidayErrors(clientErrors);
       return;
     }
-    setSavingHoliday(true);
     setHolidayErrors({});
-    try {
-      await apiClient.post<Holiday>(
-        `/holiday-calendars/${params.id}/holidays`,
-        buildHolidayCreatePayload(holidayValues),
-      );
-      setAddHolidayOpen(false);
-      toast({ title: "Holiday added", variant: "success" });
-      // Reloads whichever page the user is currently viewing — holidays are ordered by date,
-      // not recency, so the newly-added row isn't guaranteed to land on page 1.
-      const { data, pagination: meta } = await apiClient.getList<Holiday>(
-        `/holiday-calendars/${params.id}/holidays`,
-        { page: holidaysPage },
-      );
-      setHolidays(data);
-      setHolidaysPagination(meta);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 422) {
-        setHolidayErrors({
-          date: getFieldError(err.details, "date"),
-          name: getFieldError(err.details, "name"),
-        });
-        return;
-      }
-      if (err instanceof ApiError && err.status === 409) {
-        setHolidayErrors({ date: "This calendar already has an active holiday on this date." });
-        return;
-      }
-      toast({
-        title: "Could not add holiday",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setSavingHoliday(false);
-    }
+    setImpact({
+      change: {
+        change_type: "HOLIDAY_CREATE",
+        holiday_calendar_id: params.id,
+        body: buildHolidayCreatePayload(holidayValues) as Record<string, unknown>,
+      },
+      title: "Add holiday",
+      onDone: async () => {
+        setAddHolidayOpen(false);
+        toast({ title: "Holiday added", variant: "success" });
+        await reloadHolidays();
+      },
+    });
+  }
+
+  async function reloadHolidays() {
+    // Holidays are ordered by date, so reload the page being viewed rather than assuming page 1.
+    const { data, pagination: meta } = await apiClient.getList<Holiday>(
+      `/holiday-calendars/${params.id}/holidays`,
+      { page: holidaysPage },
+    );
+    setHolidays(data);
+    setHolidaysPagination(meta);
   }
 
   function openEditHoliday(holiday: Holiday) {
@@ -297,54 +314,38 @@ export default function HolidayCalendarDetailPage() {
       toast({ title: "No changes to save" });
       return;
     }
-    setSavingEditHoliday(true);
     setEditHolidayErrors({});
-    try {
-      const updated = await apiClient.patch<Holiday>(`/holidays/${editingHoliday.id}`, patch, {
-        ifMatch: String(editingHoliday.version),
-      });
-      setHolidays((prev) => (prev ? prev.map((h) => (h.id === updated.id ? updated : h)) : prev));
-      setEditingHoliday(null);
-      toast({ title: "Holiday saved", variant: "success" });
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && err.code === "STALE_RESOURCE") {
-        setEditHolidayErrors({});
-        toast({
-          title: "This holiday was changed by someone else",
-          description: "Close the dialog and reopen it to see the latest version.",
-          variant: "danger",
-        });
-        return;
-      }
-      if (err instanceof ApiError && err.status === 422) {
-        setEditHolidayErrors({ name: getFieldError(err.details, "name") });
-        return;
-      }
-      toast({
-        title: "Could not save holiday",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setSavingEditHoliday(false);
-    }
+    const target = editingHoliday;
+    setImpact({
+      change: {
+        change_type: "HOLIDAY_UPDATE",
+        holiday_id: target.id,
+        expected_version: target.version,
+        patch: patch as Record<string, unknown>,
+      },
+      title: "Save holiday",
+      onDone: async () => {
+        setEditingHoliday(null);
+        toast({ title: "Holiday saved", variant: "success" });
+        await reloadHolidays();
+      },
+    });
   }
 
-  async function toggleHolidayActive(holiday: Holiday) {
-    try {
-      const updated = await apiClient.patch<Holiday>(
-        `/holidays/${holiday.id}`,
-        { is_active: !holiday.is_active },
-        { ifMatch: String(holiday.version) },
-      );
-      setHolidays((prev) => (prev ? prev.map((h) => (h.id === updated.id ? updated : h)) : prev));
-    } catch (err) {
-      toast({
-        title: "Could not update holiday",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    }
+  function toggleHolidayActive(holiday: Holiday) {
+    setImpact({
+      change: {
+        change_type: "HOLIDAY_UPDATE",
+        holiday_id: holiday.id,
+        expected_version: holiday.version,
+        patch: { is_active: !holiday.is_active },
+      },
+      title: holiday.is_active ? "Deactivate holiday" : "Reactivate holiday",
+      onDone: async () => {
+        toast({ title: "Holiday updated", variant: "success" });
+        await reloadHolidays();
+      },
+    });
   }
 
   return (
@@ -627,18 +628,13 @@ export default function HolidayCalendarDetailPage() {
                 />
                 Paid
               </label>
-              <label className="flex items-center gap-2 text-sm text-foreground">
-                <input
-                  type="checkbox"
-                  className="rounded border-border"
-                  checked={holidayValues.isWorking}
-                  onChange={(e) =>
-                    setHolidayValues({ ...holidayValues, isWorking: e.target.checked })
-                  }
-                />
-                Working holiday (operations continue)
-              </label>
             </div>
+            <p className="text-xs text-foreground-secondary">
+              Pick the type <strong>Working holiday</strong> for a named day on which operations
+              continue and employees are expected to work. Any other type is a day off (Optional and
+              Restricted days stay working unless the work calendar treats them as off). The stored
+              &ldquo;is working&rdquo; flag always follows the type.
+            </p>
           </div>
           <DialogFooter>
             <Button
@@ -719,18 +715,13 @@ export default function HolidayCalendarDetailPage() {
                 />
                 Paid
               </label>
-              <label className="flex items-center gap-2 text-sm text-foreground">
-                <input
-                  type="checkbox"
-                  className="rounded border-border"
-                  checked={editHolidayValues.isWorking}
-                  onChange={(e) =>
-                    setEditHolidayValues({ ...editHolidayValues, isWorking: e.target.checked })
-                  }
-                />
-                Working holiday (operations continue)
-              </label>
             </div>
+            <p className="text-xs text-foreground-secondary">
+              Pick the type <strong>Working holiday</strong> for a named day on which operations
+              continue and employees are expected to work. Any other type is a day off (Optional and
+              Restricted days stay working unless the work calendar treats them as off). The stored
+              &ldquo;is working&rdquo; flag always follows the type.
+            </p>
           </div>
           <DialogFooter>
             <Button
@@ -751,6 +742,16 @@ export default function HolidayCalendarDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ChangeImpactDialog
+        change={impact?.change ?? null}
+        title={impact?.title ?? ""}
+        onClose={() => setImpact(null)}
+        onApplied={() => {
+          const done = impact?.onDone;
+          setImpact(null);
+          void done?.();
+        }}
+      />
     </div>
   );
 }

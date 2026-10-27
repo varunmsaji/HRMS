@@ -1,0 +1,436 @@
+{
+ "run": "b11-20261026a",
+ "hold_container_id": "72edd731384e520fa47446ede15df176a6a9f92737d7e7fcca2927b77bfff9c3",
+ "effective": {
+  "database": "127.0.0.1:15432/hrms_qa_b11_20261026a",
+  "redis": "127.0.0.1:16379",
+  "celery_broker": "127.0.0.1:16379",
+  "s3": "127.0.0.1:19000",
+  "email_provider": "logging",
+  "face_provider": "disabled"
+ },
+ "probes": 67,
+ "checks": [
+  {
+   "check": "strict allow-list (db names, loopback private ports, providers, empty .env)",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "Settings (after .env + env) resolve to the same private targets",
+   "ok": true,
+   "detail": "{'database': '127.0.0.1:15432/hrms_qa_b11_20261026a', 'redis': '127.0.0.1:16379', 'celery_broker': '127.0.0.1:16379', 's3': '127.0.0.1:19000', 'email_provider': 'logging', 'face_provider': 'disabled'}"
+  },
+  {
+   "check": "email provider logging, face disabled",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "only the loopback interface exists",
+   "ok": true,
+   "detail": "['lo']"
+  },
+  {
+   "check": "routing table is empty (no gateway, no egress)",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "every non-example .env* file in the repo is masked (size 0)",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "no docker socket in the sandbox",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "no proxy variables",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "no docker.sock / host root mounted",
+   "ok": true,
+   "detail": "[]"
+  },
+  {
+   "check": "reach own postgres on 127.0.0.1:15432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "reach own redis on 127.0.0.1:16379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "reach own minio on 127.0.0.1:19000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:9001",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:3306",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:631",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 127.0.0.1:3000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.3:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.3:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.3:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.4:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.4:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.4:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.2:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.2:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.2:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.31.34:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.31.34:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.31.34:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.31.34:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.31.34:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.31.34:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.122.1:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.122.1:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.122.1:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.122.1:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.122.1:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 192.168.122.1:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.18.0.1:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.18.0.1:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.18.0.1:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.18.0.1:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.18.0.1:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.18.0.1:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.1:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.1:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.1:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.1:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.1:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.19.0.1:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:2620:a6a4:47aa:4852:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:2620:a6a4:47aa:4852:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:2620:a6a4:47aa:4852:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:2620:a6a4:47aa:4852:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:2620:a6a4:47aa:4852:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:2620:a6a4:47aa:4852:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:eda6:c593:7226:1890:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:eda6:c593:7226:1890:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:eda6:c593:7226:1890:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:eda6:c593:7226:1890:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:eda6:c593:7226:1890:5432",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 2409:4091:b012:a01:eda6:c593:7226:1890:6379",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:5433",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:6380",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:9000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 172.17.0.1:8000",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 1.1.1.1:443",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "UNREACHABLE 8.8.8.8:53",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "name does not resolve: hrms-postgres",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "name does not resolve: hrms-redis",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "name does not resolve: hrms-minio",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "name does not resolve: host.docker.internal",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "check": "name does not resolve: github.com",
+   "ok": true,
+   "detail": ""
+  }
+ ],
+ "all_ok": true
+}

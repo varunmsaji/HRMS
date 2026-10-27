@@ -1510,6 +1510,16 @@ class HolidayCalendarCreate(BaseModel):
             raise ValueError(f"kind must be one of {_HOLIDAY_CALENDAR_KINDS}")
         return value
 
+    @model_validator(mode="after")
+    def validate_window(self) -> "HolidayCalendarCreate":
+        if (
+            self.valid_from is not None
+            and self.valid_to is not None
+            and self.valid_from > self.valid_to
+        ):
+            raise ValueError("valid_from must not be after valid_to")
+        return self
+
 
 class HolidayCalendarUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")

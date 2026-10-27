@@ -14,6 +14,7 @@ import '../domain/attendance_insights.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
 import 'insight_charts.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef _Rec = Map<String, dynamic>;
 
@@ -114,14 +115,13 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
 
   String _name(String id) => _names[id] ?? 'Employee ${id.substring(0, id.length < 8 ? id.length : 8)}';
 
-  Widget _card(String title, Widget child, {String? subtitle}) => Card(
-        margin: const EdgeInsets.only(bottom: 12),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
+  Widget _card(String title, Widget child, {String? subtitle}) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: AppCard(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
             if (subtitle != null) Text(subtitle, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             child,
           ]),
         ),
@@ -129,11 +129,12 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
 
   Widget _stat(String label, String value, [String? hint]) => Container(
         width: 150,
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.outlineVariant), borderRadius: BorderRadius.circular(8)),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerLow, borderRadius: BorderRadius.circular(14)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          Text(label, style: TextStyle(fontSize: 11.5, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
           if (hint != null && hint.isNotEmpty) Text(hint, style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ]),
       );
@@ -342,18 +343,9 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   Widget build(BuildContext context) {
     Widget body;
     if (_loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton();
     } else if (_error != null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
-      );
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!, actionLabel: 'Retry', onAction: _load);
     } else {
       body = RefreshIndicator(
         onRefresh: _load,

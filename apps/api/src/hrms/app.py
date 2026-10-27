@@ -12,11 +12,15 @@ from hrms.core.crypto.registry import EncryptionKeyRegistry
 from hrms.core.db.session import dispose_engine, get_engine, session_scope
 from hrms.core.errors.handlers import register_exception_handlers
 from hrms.core.observability.logging import configure_logging
+from hrms.core.observability.metrics_router import router as metrics_router
 from hrms.core.observability.request_context import RequestContextMiddleware
 from hrms.core.security_headers import SecurityHeadersMiddleware
 from hrms.core.tenancy.middleware import TenancyMiddleware
 from hrms.core.uploads import MaxUploadSizeMiddleware
-from hrms.modules.attendance.face_verification import close_face_verification_providers
+from hrms.modules.attendance.face_verification import (
+    close_face_verification_providers,
+    get_face_verification_provider,
+)
 from hrms.modules.attendance.liveness import MiniFasNetLivenessEngine, get_liveness_engine
 from hrms.modules.health.router import router as health_router
 from hrms.shared.rate_limit import OnboardingUploadRateLimitMiddleware
@@ -52,6 +56,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     liveness_engine = get_liveness_engine(settings)
     if isinstance(liveness_engine, MiniFasNetLivenessEngine):
         await asyncio.to_thread(liveness_engine.warm_up)
+
+    # Open-source face engine: same fail-at-boot rule for its detector/embedding assets. Only
+    # runs when explicitly selected; Face++ mode never touches these assets.
+    if settings.face_verification_provider == "opensource":
+        face_engine = get_face_verification_provider(settings)
+        warm = getattr(face_engine, "warm_up", None)
+        if warm is not None:
+            await asyncio.to_thread(warm)
 
     yield
     await close_face_verification_providers()
@@ -197,10 +209,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from hrms.modules.onboarding.router import router as onboarding_router
     from hrms.modules.organisation.router import router as organisation_router
     from hrms.modules.payroll.router import router as payroll_router
+    from hrms.modules.platform.email_log_router import router as platform_email_log_router
     from hrms.modules.platform.log_router import router as platform_log_router
     from hrms.modules.platform.router import router as platform_router
 
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(identity_router, prefix="/v1")
     app.include_router(organisation_router, prefix="/v1")
     app.include_router(employee_router, prefix="/v1")
@@ -214,5 +228,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(account_invite_public_router, prefix="/v1")
     app.include_router(platform_router, prefix="/v1")
     app.include_router(platform_log_router, prefix="/v1")
+    app.include_router(platform_email_log_router, prefix="/v1")
 
     return app

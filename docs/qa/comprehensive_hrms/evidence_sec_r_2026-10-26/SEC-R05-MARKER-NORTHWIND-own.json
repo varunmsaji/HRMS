@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R05",
+  "direction": "MARKER-NORTHWIND-own",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 200,
+  "body": "{\"data\":{\"employee_id\":\"d265d407-1d86-4947-b147-f1805eb91d21\",\"pan_number\":null,\"aadhaar_number\":null,\"uan_number\":null,\"father_or_husband_name\":null,\"version\":1},\"meta\":{\"request_id\":\"2b86ef2a-96d5-4295-a182-11e76ad63f8f\",\"server_time\":\"2026-10-26T13:07:01.761077Z\"}}",
+  "verdict": "PASS",
+  "note": "own identity",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

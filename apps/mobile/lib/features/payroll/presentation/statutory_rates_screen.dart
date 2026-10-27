@@ -9,6 +9,7 @@ import '../../../core/providers.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../domain/payroll_resources.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -169,18 +170,9 @@ class _StatutoryRatesScreenState extends ConsumerState<StatutoryRatesScreen> {
       appBar: AppBar(title: const Text('Statutory Rates'), actions: const [MoreAction()]),
       floatingActionButton: canManage ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('New rate')) : null,
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(_error!.message, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      FilledButton(onPressed: _load, child: const Text('Retry')),
-                    ]),
-                  ),
-                )
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
@@ -191,26 +183,27 @@ class _StatutoryRatesScreenState extends ConsumerState<StatutoryRatesScreen> {
                         for (final s in statutorySchemeLabels.keys) ChoiceChip(label: Text(s), selected: _scheme == s, onSelected: (_) => setState(() => _scheme = s)),
                       ]),
                       SwitchListTile(contentPadding: EdgeInsets.zero, dense: true, title: const Text('Show past rates'), value: _showHistory, onChanged: (v) => setState(() => _showHistory = v)),
-                      if (visible.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No statutory rates yet.'))),
+                      if (visible.isEmpty) const SizedBox(height: 300, child: StateMessage(icon: Icons.percent_rounded, title: 'No statutory rates yet')),
                       for (final r in visible)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: AppCard(
                             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                               Row(children: [
-                                Expanded(child: Text('${statutorySchemeLabels[r['scheme']] ?? r['scheme']}${r['state_code'] != null ? ' · ${r['state_code']}' : ''}', style: const TextStyle(fontWeight: FontWeight.w700))),
+                                Expanded(child: Text('${statutorySchemeLabels[r['scheme']] ?? r['scheme']}${r['state_code'] != null ? ' · ${r['state_code']}' : ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15))),
                                 if (r['verified'] == true)
-                                  const Chip(label: Text('Verified'), visualDensity: VisualDensity.compact)
+                                  const StatusChip(label: 'Verified', tone: Tone.success)
                                 else
-                                  Chip(label: const Text('Unverified'), visualDensity: VisualDensity.compact, backgroundColor: Colors.orange.withValues(alpha: 0.2)),
+                                  const StatusChip(label: 'Unverified', tone: Tone.warning),
                               ]),
+                              const SizedBox(height: 2),
                               Text('${r['effective_from']} → ${r['effective_to'] ?? 'open'}${r['is_seeded'] == true ? ' · seeded' : ''}', style: TextStyle(color: scheme.onSurfaceVariant)),
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 6),
                               Text(summariseStatutoryRate(r)),
                               if (r['notes'] != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('${r['notes']}', style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12))),
                               if (canManage)
                                 Padding(
-                                  padding: const EdgeInsets.only(top: 6),
+                                  padding: const EdgeInsets.only(top: 10),
                                   child: Wrap(spacing: 8, children: [
                                     OutlinedButton(onPressed: () => _edit(r), child: const Text('Edit')),
                                     if (r['verified'] != true) FilledButton.tonal(onPressed: () => _verify(r), child: const Text('Mark verified')),

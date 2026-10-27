@@ -13,11 +13,10 @@ already succeeded. A stuck/failed batch is inspected via `GET /employee-imports/
 the remaining rows re-submitted as a fresh, smaller import.
 """
 
-import asyncio
 from uuid import UUID
 
 from hrms.core.celery_app import celery_app
-from hrms.core.db.session import session_scope
+from hrms.core.db.session import run_task, session_scope
 
 
 async def _process_batch_async(
@@ -36,4 +35,4 @@ async def _process_batch_async(
 @celery_app.task(name="employee_import.process_batch", queue="reports_exports", time_limit=3600)  # type: ignore[untyped-decorator]
 def process_batch(company_id: str, batch_id: str, actor_user_id: str | None) -> None:
     resolved_actor_id = UUID(actor_user_id) if actor_user_id is not None else None
-    asyncio.run(_process_batch_async(UUID(company_id), UUID(batch_id), resolved_actor_id))
+    run_task(_process_batch_async(UUID(company_id), UUID(batch_id), resolved_actor_id))

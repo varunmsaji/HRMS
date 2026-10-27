@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
+import '../../../core/widgets/ui.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../employees/presentation/employees_screen.dart' show EmployeeDetailScreen;
@@ -162,26 +163,13 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
     }
   }
 
-  Widget _statusChip(String status) {
-    final (label, color) = switch (status) {
-      'VERIFIED' => ('Verified', Colors.green),
-      'REJECTED' => ('Rejected', Theme.of(context).colorScheme.error),
-      _ => ('Pending', Theme.of(context).colorScheme.onSurfaceVariant),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(border: Border.all(color: color), borderRadius: BorderRadius.circular(12)),
-      child: Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
-    );
-  }
+  Widget _statusChip(String status) => switch (status) {
+        'VERIFIED' => const StatusChip(label: 'Verified', tone: Tone.success),
+        'REJECTED' => const StatusChip(label: 'Rejected', tone: Tone.danger),
+        _ => const StatusChip(label: 'Pending', tone: Tone.warning),
+      };
 
-  Widget _kv(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(flex: 4, child: Text(k, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
-          Expanded(flex: 5, child: Text(v, textAlign: TextAlign.end)),
-        ]),
-      );
+  Widget _kv(String k, String v) => KeyValueRow(k, v);
 
   Widget _sectionBody(FormSpec spec, Map<String, dynamic> wire) {
     if (spec.repeatable) {
@@ -193,7 +181,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
             width: double.infinity,
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(border: Border.all(color: Theme.of(context).colorScheme.outlineVariant), borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerLow, borderRadius: BorderRadius.circular(12)),
             child: Column(children: [for (final (k, v) in displayRows(spec, Map<String, dynamic>.from(items[i] as Map))) _kv(k, v)]),
           ),
       ]);
@@ -214,17 +202,15 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
 
     Widget body;
     if (_loading && detail == null) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton(count: 4);
     } else if (_error != null || detail == null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error?.status == 403 ? 'You do not have permission to view this onboarding case.' : (_error?.message ?? 'Something went wrong.'), textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
+      body = StateMessage(
+        icon: _error?.status == 403 ? Icons.lock_outline_rounded : Icons.error_outline_rounded,
+        tone: Tone.danger,
+        title: _error?.status == 403 ? 'No access' : 'Couldn\'t load case',
+        message: _error?.status == 403 ? 'You do not have permission to view this onboarding case.' : (_error?.message ?? 'Something went wrong.'),
+        actionLabel: 'Retry',
+        onAction: _load,
       );
     } else {
       final status = detail.status;
@@ -235,13 +221,27 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(detail.candidateName, style: Theme.of(context).textTheme.headlineSmall),
-            Text(status.replaceAll('_', ' '), style: TextStyle(color: scheme.primary, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            _kv('Email', detail.personalEmail),
-            if (detail.personalMobile != null) _kv('Mobile', detail.personalMobile!),
-            if (detail.proposedJoiningDate != null) _kv('Proposed joining', detail.proposedJoiningDate!),
-            if (detail.tokenStatus != null) _kv('Invite link', '${detail.tokenStatus}${detail.tokenExpiresAt != null ? ' · expires ${detail.tokenExpiresAt}' : ''}'),
+            HeroCard(
+              child: Row(children: [
+                InitialsAvatar(name: detail.candidateName, size: 52),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(detail.candidateName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
+                    const SizedBox(height: 2),
+                    Text(detail.personalEmail, style: const TextStyle(color: Colors.white70, fontSize: 12.5), overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 8),
+                    StatusChip.status(status),
+                  ]),
+                ),
+              ]),
+            ),
+            DetailSection(title: 'Candidate', icon: Icons.person_outline_rounded, children: [
+              _kv('Email', detail.personalEmail),
+              if (detail.personalMobile != null) _kv('Mobile', detail.personalMobile!),
+              if (detail.proposedJoiningDate != null) _kv('Proposed joining', detail.proposedJoiningDate!),
+              if (detail.tokenStatus != null) _kv('Invite link', '${detail.tokenStatus}${detail.tokenExpiresAt != null ? ' · expires ${detail.tokenExpiresAt}' : ''}'),
+            ]),
             const SizedBox(height: 12),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (canInvite && _invitableStatuses.contains(status))
@@ -256,7 +256,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: scheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(8)),
+                decoration: BoxDecoration(color: scheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(12)),
                 child: Row(children: [
                   Expanded(child: SelectableText(_inviteUrl!, style: const TextStyle(fontSize: 12))),
                   IconButton(
@@ -272,15 +272,14 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
             ],
             const SizedBox(height: 20),
             for (final spec in onboardingSections) ...[
-              Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: AppCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(children: [
-                        Expanded(child: Text(spec.label, style: Theme.of(context).textTheme.titleSmall)),
+                        Expanded(child: Text(spec.label, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700))),
                         _statusChip(detail.reviewStatus(spec.name)),
                       ]),
                       const SizedBox(height: 8),
@@ -304,20 +303,21 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
                 ),
               ),
             ],
-            Text('Documents', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 8),
+            const SectionHeader('Documents'),
             if (_documents == null)
               Text('You do not have permission to view documents, or none have been uploaded yet.', style: TextStyle(color: scheme.onSurfaceVariant))
             else if (_documents!.isEmpty)
               Text('No documents uploaded yet.', style: TextStyle(color: scheme.onSurfaceVariant))
             else
               for (final d in _documents!)
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: AppCard(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(children: [
-                        Expanded(child: Text(onboardingDocumentTypes[d.documentType] ?? d.documentType, style: Theme.of(context).textTheme.titleSmall)),
+                        const IconBadge(icon: Icons.description_outlined, size: 34),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(onboardingDocumentTypes[d.documentType] ?? d.documentType, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700))),
                         _statusChip(d.status),
                       ]),
                       TextButton.icon(

@@ -9,6 +9,7 @@ import '../forms/spec_form_screen.dart';
 import '../providers.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/shell/more_action.dart';
+import '../widgets/ui.dart';
 import 'resource_config.dart';
 import 'versions_section.dart';
 
@@ -116,41 +117,65 @@ class _ResourceListScreenState extends ConsumerState<ResourceListScreen> {
       appBar: AppBar(title: Text(_c.title), actions: [if (canManage && _c.listActions != null) ..._c.listActions!(context, _rows, _load), const MoreAction()]),
       floatingActionButton: canManage ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: Text('New ${_c.singular.toLowerCase()}')) : null,
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(_error!.status == 403 ? 'You do not have permission to view ${_c.title.toLowerCase()}.' : _error!.message, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      FilledButton(onPressed: _load, child: const Text('Retry')),
-                    ]),
-                  ),
+              ? StateMessage(
+                  icon: _error!.status == 403 ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
+                  tone: _error!.status == 403 ? Tone.warning : Tone.danger,
+                  title: _error!.status == 403 ? 'No access' : 'Couldn\'t load this',
+                  message: _error!.status == 403 ? 'You do not have permission to view ${_c.title.toLowerCase()}.' : _error!.message,
+                  actionLabel: _error!.status == 403 ? null : 'Try again',
+                  onAction: _load,
                 )
               : RefreshIndicator(
                   onRefresh: _load,
-                  child: ListView(
-                    padding: const EdgeInsets.only(bottom: 88),
-                    children: [
-                      if (_c.hasActive && inactiveCount > 0)
-                        SwitchListTile(dense: true, title: Text('Show inactive ($inactiveCount)'), value: _showInactive, onChanged: (v) => setState(() => _showInactive = v)),
-                      if (visible.isEmpty) Padding(padding: const EdgeInsets.all(32), child: Center(child: Text(_c.emptyLabel ?? 'No ${_c.title.toLowerCase()} yet.'))),
-                      for (final row in visible)
-                        ListTile(
-                          title: Text(_c.rowTitle(row)),
-                          subtitle: _c.rowSubtitle == null || _c.rowSubtitle!(row) == null ? null : Text(_c.rowSubtitle!(row)!),
-                          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                            if (_c.hasActive && row['is_active'] == false) const Chip(label: Text('Inactive'), visualDensity: VisualDensity.compact),
-                            const Icon(Icons.chevron_right, size: 20),
-                          ]),
-                          onTap: () async {
-                            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ResourceDetailScreen(config: _c, initial: row)));
-                            _load();
-                          },
+                  child: visible.isEmpty
+                      ? ListView(children: [
+                          SizedBox(
+                            height: MediaQuery.sizeOf(context).height * 0.6,
+                            child: StateMessage(
+                              icon: Icons.inbox_outlined,
+                              title: _c.emptyLabel ?? 'No ${_c.title.toLowerCase()} yet',
+                              message: canManage ? 'Tap "New ${_c.singular.toLowerCase()}" to add the first one.' : null,
+                            ),
+                          ),
+                        ])
+                      : ListView(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+                          children: [
+                            if (_c.hasActive && inactiveCount > 0)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: AppCard(
+                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+                                  child: SwitchListTile(
+                                    dense: true,
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text('Show inactive ($inactiveCount)'),
+                                    value: _showInactive,
+                                    onChanged: (v) => setState(() => _showInactive = v),
+                                  ),
+                                ),
+                              ),
+                            for (final row in visible)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: ListRowCard(
+                                  title: _c.rowTitle(row),
+                                  subtitle: _c.rowSubtitle == null ? null : _c.rowSubtitle!(row),
+                                  leading: IconBadge(
+                                    icon: Icons.folder_outlined,
+                                    tone: _c.hasActive && row['is_active'] == false ? Tone.neutral : Tone.accent,
+                                  ),
+                                  trailing: _c.hasActive && row['is_active'] == false ? const StatusChip(label: 'Inactive') : null,
+                                  onTap: () async {
+                                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ResourceDetailScreen(config: _c, initial: row)));
+                                    _load();
+                                  },
+                                ),
+                              ),
+                          ],
                         ),
-                    ],
-                  ),
                 ),
     );
   }

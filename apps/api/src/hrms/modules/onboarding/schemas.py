@@ -485,8 +485,24 @@ class OnboardingInviteRead(BaseModel):
     delivery must not block HR from getting the link some other way."""
 
     case: OnboardingCaseRead
-    invite_url: str
+    #: `None` only for a replayed duplicate request (the raw link is not retrievable after the
+    #: first response).
+    invite_url: str | None
+    #: DEPRECATED name, kept for existing clients. Since B12 it means "the e-mail was queued", NOT
+    #: "the provider accepted it" (identical to `email_queued`); it never reports a delivery
+    #: failure.
     email_sent: bool
+    #: True when the e-mail was stored in the transactional outbox with this request.
+    email_queued: bool = True
+    #: Delivery state at response time: `QUEUED`, or `NOT_QUEUED` if the outbox write failed.
+    email_delivery_status: Literal["QUEUED", "NOT_QUEUED"] = "QUEUED"
+    #: The `onboarding_message` history row for this send.
+    message_id: UUID | None = None
+    message_status: str | None = None
+    #: True when this response repeats an earlier request with the same `send_request_id`.
+    replayed: bool = False
+    #: When the newly issued link expires (absent on a replay).
+    invitation_expires_at: datetime | None = None
 
 
 def onboarding_section_review_to_read(

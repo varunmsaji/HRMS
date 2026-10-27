@@ -262,6 +262,33 @@ class StatutoryRateInvalidError(ValidationError):
         super().__init__(message, details=_detail(field, self.code, message))
 
 
+class StatutoryRateSelfVerificationError(PermissionDeniedError):
+    """Separation of duties - whoever created or edited a rate cannot also verify it."""
+
+    code = "STATUTORY_RATE_SELF_VERIFICATION"
+
+    def __init__(
+        self, message: str = "You changed this statutory rate, so someone else must verify it"
+    ) -> None:
+        super().__init__(message)
+
+
+class StatutoryRateEditorUnverifiableError(PermissionDeniedError):
+    """Fail closed - the audit trail cannot show who last changed the rate, so independent
+    verification cannot be proven and the sign-off is refused."""
+
+    code = "STATUTORY_RATE_EDITOR_UNVERIFIABLE"
+
+    def __init__(
+        self,
+        message: str = (
+            "The audit history of this statutory rate is incomplete or ambiguous, "
+            "so it cannot be verified"
+        ),
+    ) -> None:
+        super().__init__(message)
+
+
 # ---------------------------------------------------------------------------
 # Phase 5.5 — arrears
 # ---------------------------------------------------------------------------

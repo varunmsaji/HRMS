@@ -1,0 +1,121 @@
+requirement_id,requirement,source,case_id,priority,test_type,execution_status
+REQ-AUTH,"Session, lockout, and company context",identity auth router; apps/web login page,AUTH-001,P0,UI,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",2026-10-25 AUTH checks; identity login,AUTH-002,P0,security,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",register AUTH lockout 429,AUTH-003,P1,security,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",auth dependency on company routers,AUTH-004,P0,security,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",identity user status,AUTH-005,P0,security,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",onboarding email sender sandbox; forgot-password route,AUTH-006,P1,integration,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",reset token expiry,AUTH-007,P1,security,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",company context dependency,AUTH-008,P0,security,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",membership check,AUTH-009,P0,security,NOT_RUN
+REQ-AUTH,"Session, lockout, and company context",OrganisationService.register_company,AUTH-010,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",default grants; LEAVE.TYPE_MANAGE is not in the HR_ADMIN loop,LEV-C01,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",LeavePolicyVersion fields; publish path in leave service,LEV-C02,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",leave service publish validation around allow_negative_balance,LEV-C03,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",_compute_day_breakdown,LEV-C04,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",_compute_day_breakdown sandwich loop; OPEN_BUSINESS_RULES BR-01,LEV-C05,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",same sandwich loop,LEV-C06,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",fraction 0.50 when half_day set and start==end,LEV-C07,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",LeaveApplicationCalendarNotResolvedError,LEV-C08,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",submit check requested_span > max_consecutive_days,LEV-C09,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",balance floor 0 when allow_negative_balance is false,LEV-C10,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",allow_negative_balance false,LEV-C11,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",set_lop_days and debit amount -(total_days-lop_days) in leave service,LEV-C12,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",submit comment and reserve flag,LEV-C13,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",reserve_balance_on_submission branch,LEV-C14,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",overlap rule in submit,LEV-C15,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",overlap statuses,LEV-C16,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",date validation and empty breakdown error,LEV-C17,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",reason_required on the snapshotted version,LEV-C18,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger","idempotency on submit where the router exposes a key; if no key exists, two rapid submits of the same date must still leave at most one open application because of the overlap rule",LEV-C19,P0,concurrency,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",approval_chain identity match on resolved_approver_manager_id,LEV-C20,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",manager stage requires caller employee id = snapshotted manager,LEV-C21,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",caller employee id must equal the manager id,LEV-C22,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",company_id filter and RLS,LEV-C23,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",approval_chain.effective_stage_sequence,LEV-C24,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",STAGE_APPROVED versus final APPROVED,LEV-C25,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",reject transition,LEV-C26,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",version / If-Match,LEV-C27,P0,concurrency,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",version check; live QA double-approve result,LEV-C28,P0,concurrency,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",approve requires SUBMITTED,LEV-C29,P0,concurrency,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",reject only from SUBMITTED,LEV-C30,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",cancel allows SUBMITTED or APPROVED,LEV-C31,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",cancel of APPROVED before start by the employee,LEV-C32,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",cancel rules in leave service,LEV-C33,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",LEAVE.APPLICATION_CANCEL_APPROVED,LEV-C34,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",status must be SUBMITTED or APPROVED,LEV-C35,P0,concurrency,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",self scope on cancel,LEV-C36,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",balance is the sum of the append-only ledger,LEV-C37,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",LEAVE.BALANCE_ADJUST,LEV-C38,P0,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",HR grant includes adjust; reporting manager grant includes view all at tree scope but the adjust code is on HR,LEV-C39,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",year-end mode on the policy version,LEV-C40,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",functional gap G-L4; accrual service window,LEV-C41,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",encashment_allowed and related policy fields,LEV-C42,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",LeaveCompOffService,LEV-C43,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",data scope; out of scope is NotFound,LEV-C44,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",data scope REPORTEE_TREE,LEV-C45,P0,security,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",policy version id stored on the application,LEV-C46,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger",probation flag on the policy version; employee probation state,LEV-C47,P1,functional,NOT_RUN
+REQ-LEAVE,"Leave day count, state machine, and ledger","status guards in approve, reject, cancel",LEV-C48,P0,functional,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",ATTENDANCE.PUNCH on EMPLOYEE SELF; attendance day calculation,ATT-001,P0,UI,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",punch idempotency noted in the attendance service,ATT-002,P0,concurrency,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",scope enforcement,ATT-003,P0,security,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",RLS and company filter,ATT-004,P0,security,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock","shift and attendance policy evaluation that is actually implemented; if the stored grace field is not evaluated, record BLOCKED against BR-04",ATT-005,P1,functional,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",shift overnight handling in the attendance day builder,ATT-006,P1,functional,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",day status for a missing punch,ATT-007,P0,functional,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",regularisation approve writes punches once,ATT-008,P0,functional,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",attendance period lock,ATT-009,P0,functional,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",ATTENDANCE.LEAVE_PROJECTION_SYNC,ATT-010,P0,integration,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",decision D11; live QA ATT-15 FAIL,ATT-011,P0,security,NOT_RUN
+REQ-ATT,"Punches, regularisation, and period lock",organisation/service.py EMPLOYEE grants; migration 20261020090000,ATT-012,P0,functional,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",payroll permissions on HR_ADMIN versus EMPLOYEE,PAY-001,P0,security,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",payroll.engine.compute_employee,PAY-002,P0,functional,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",PayRunMakerCheckerError when actor_user_id == computed_by_user_id,PAY-003,P0,security,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",same guard,PAY-004,P0,security,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",finalise requires APPROVED; ADR-0005 immutability,PAY-005,P0,functional,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",PAYROLL.PAYSLIP_VIEW_OWN,PAY-006,P0,security,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",payslips only from finalised runs,PAY-007,P0,functional,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",mark_paid; no payment gateway,PAY-008,P1,functional,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",payroll inputs from attendance and leave; exact formula is the engine's,PAY-009,P0,integration,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",run version and status guard,PAY-010,P1,concurrency,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",bank advice grant on COMPANY_ADMIN,PAY-011,P0,security,NOT_RUN
+REQ-PAY,"Payroll compute, maker-checker, and payslips",approve() reasons VARIANCE_UNACKNOWLEDGED,PAY-012,P1,functional,NOT_RUN
+REQ-EMP,"Employee master, scope, and termination",employee service create,EMP-001,P0,UI,NOT_RUN
+REQ-EMP,"Employee master, scope, and termination",employee email uniqueness; confirm whether the constraint is case-insensitive in this schema,EMP-002,P0,functional,NOT_RUN
+REQ-EMP,"Employee master, scope, and termination",employee create idempotency is optional,EMP-003,P1,concurrency,NOT_RUN
+REQ-EMP,"Employee master, scope, and termination",data scope BRANCH,EMP-004,P0,security,NOT_RUN
+REQ-EMP,"Employee master, scope, and termination",employee terminate; G-E1 says status flags ON_NOTICE and EXITED may be unused,EMP-005,P0,functional,NOT_RUN
+REQ-EMP,"Employee master, scope, and termination","rehire behaviour; if rehire is not a distinct operation, mark BLOCKED and cite the missing API",EMP-006,P1,functional,NOT_RUN
+REQ-EMP,"Employee master, scope, and termination",approver id snapshotted on the application,EMP-007,P1,integration,NOT_RUN
+REQ-ONB,Invitation token and activation,onboarding public token wizard; captured email sender,ONB-001,P0,UI,NOT_RUN
+REQ-ONB,Invitation token and activation,token single use and expiry,ONB-002,P0,security,NOT_RUN
+REQ-ONB,Invitation token and activation,token consume transaction,ONB-003,P0,concurrency,NOT_RUN
+REQ-ONB,Invitation token and activation,email sender failure classification,ONB-004,P1,recovery,NOT_RUN
+REQ-ONB,Invitation token and activation,gap G-ON1,ONB-005,P2,functional,NOT_RUN
+REQ-ORG,Company masters and default roles,organisation routers and web org pages,ORG-001,P0,UI,NOT_RUN
+REQ-ORG,Company masters and default roles,register_company grant loops,ORG-002,P1,security,NOT_RUN
+REQ-ORG,Company masters and default roles,work calendar resolution,ORG-003,P0,functional,NOT_RUN
+REQ-ORG,Company masters and default roles,no permission editor in the product,ORG-004,P2,functional,NOT_RUN
+REQ-DOC,Scoped document storage,document panel and storage service,DOC-001,P1,UI,NOT_RUN
+REQ-DOC,Scoped document storage,storage and DB transaction,DOC-002,P1,recovery,NOT_RUN
+REQ-DOC,Scoped document storage,auth plus document scope,DOC-003,P1,security,NOT_RUN
+REQ-TENANT,Cross-tenant and scope denial,RLS,SEC-001,P0,security,NOT_RUN
+REQ-TENANT,Cross-tenant and scope denial,company filter,SEC-002,P0,security,NOT_RUN
+REQ-TENANT,Cross-tenant and scope denial,gap G-W1 web nav is not permission filtered,SEC-003,P0,security,NOT_RUN
+REQ-TENANT,Cross-tenant and scope denial,employee update schema,SEC-004,P0,security,NOT_RUN
+REQ-TENANT,Cross-tenant and scope denial,task company id,SEC-005,P0,security,NOT_RUN
+REQ-TENANT,Cross-tenant and scope denial,any export endpoint discovered at execution; employee import is API-only,SEC-006,P1,security,NOT_RUN
+REQ-PLAT,"Health, import, and jobs",health router,PLT-001,P1,functional,NOT_RUN
+REQ-PLAT,"Health, import, and jobs",DEF-03 fixed; employee import,PLT-002,P2,functional,NOT_RUN
+REQ-PLAT,"Health, import, and jobs",DEF-02; celery task event loop test,PLT-003,P1,integration,NOT_RUN
+REQ-JRN,End-to-end business journeys,"composition of AUTH-010, ORG-001, ORG-003, LEV-C02, EMP-001",JRN-001,P0,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,ONB-001,JRN-002,P0,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,ATT-001,JRN-003,P0,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,ATT-008,JRN-004,P0,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,"LEV-C13, LEV-C20, ATT-010, LEV-C37",JRN-005,P0,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,PAY-002 through PAY-007,JRN-006,P0,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,EMP-005,JRN-007,P1,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,DOC-001,JRN-008,P1,UI,NOT_RUN
+REQ-JRN,End-to-end business journeys,"SEC-001, SEC-002",JRN-009,P0,security,NOT_RUN
+REQ-JRN,End-to-end business journeys,"ONB-004, DOC-002",JRN-010,P1,recovery,NOT_RUN

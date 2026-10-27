@@ -44,6 +44,8 @@ from hrms.core.errors.handlers import (
     unhandled_error_response,
 )
 from hrms.core.observability.logging import get_logger, safe_log
+from hrms.core.observability.metrics import record_http
+from hrms.core.observability.trace_context import TRACEPARENT_HEADER, start_context
 from hrms.core.security_headers import SecurityHeadersMiddleware
 from hrms.core.tenancy.context import (
     reset_request_context,
@@ -61,6 +63,8 @@ REQUEST_ID_HEADER = "x-request-id"
 
 #: Liveness/readiness probes hit these every few seconds; a successful probe is not logged.
 _QUIET_PATHS = frozenset({"/health", "/health/live", "/health/ready"})
+#: Successful scrapes are neither logged nor measured; rejected ones are both (see `_log_access`).
+METRICS_PATH = "/metrics"
 
 _logger = get_logger("hrms.http")
 
@@ -94,7 +98,12 @@ class RequestContextMiddleware:
         snapshot = snapshot_request_context()
         _set_request_id_var(request_id)
         scope.setdefault("state", {})["request_id"] = request_id
-        log_tokens = structlog.contextvars.bind_contextvars(request_id=request_id)
+        # Continues a valid inbound `traceparent`, else starts a trace; the ids ride in the log
+        # context (and on Celery messages) so logs of one operation can be joined across processes.
+        trace = start_context(_header(scope, TRACEPARENT_HEADER.encode()))
+        log_tokens = structlog.contextvars.bind_contextvars(
+            request_id=request_id, trace_id=trace.trace_id, span_id=trace.span_id
+        )
         response_started = False
         status_code = 500
         started = time.perf_counter()
@@ -127,7 +136,19 @@ class RequestContextMiddleware:
 
     @staticmethod
     def _log_access(scope: Scope, status_code: int, started: float) -> None:
-        if status_code < 400 and scope.get("path") in _QUIET_PATHS:
+        duration = time.perf_counter() - started
+        # Successful scrapes are not measured (they would dominate a quiet system's own numbers),
+        # but a rejected one is: a token mismatch after rotation, or a probe of /metrics, must show
+        # up in hrms_http_denials_total rather than disappear.
+        if scope.get("path") != METRICS_PATH or status_code >= 400:
+            matched = scope.get("route") is not None
+            record_http(
+                scope.get("method"),
+                route_for_logging(scope) if matched else "unmatched",
+                status_code,
+                duration,
+            )
+        if status_code < 400 and scope.get("path") in (*_QUIET_PATHS, METRICS_PATH):
             return
         state = scope.get("state") or {}
         safe_log(
@@ -136,7 +157,7 @@ class RequestContextMiddleware:
             http_method=scope.get("method"),
             http_path=route_for_logging(scope),
             status_code=status_code,
-            duration_ms=round((time.perf_counter() - started) * 1000, 1),
+            duration_ms=round(duration * 1000, 1),
             error_code=state.get("error_code") if isinstance(state, dict) else None,
             **tenant_log_fields(),
         )

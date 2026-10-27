@@ -10,6 +10,7 @@ import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../employees/domain/employee_forms.dart';
+import '../../../core/widgets/ui.dart';
 
 enum RecordFormat { text, yesNo, money }
 
@@ -481,22 +482,8 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!.message, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              FilledButton(onPressed: _load, child: const Text('Retry')),
-            ],
-          ),
-        ),
-      );
-    }
+    if (_loading) return const ListSkeleton(count: 3);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load);
     final scheme = Theme.of(context).colorScheme;
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final actions = [
@@ -521,10 +508,7 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
               ]),
             ),
           if (_items.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(32),
-              child: Text('No ${widget.section.title.toLowerCase()} records yet.', textAlign: TextAlign.center, style: TextStyle(color: scheme.onSurfaceVariant)),
-            ),
+            SizedBox(height: 280, child: StateMessage(icon: Icons.folder_open_outlined, title: 'Nothing here yet', message: 'No ${widget.section.title.toLowerCase()} records yet.')),
           for (final item in _items) ...[
             _RecordCard(
               section: widget.section,
@@ -594,29 +578,14 @@ class _RecordCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Container(
+    return AppCard(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(section.cardTitle(item), style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 12),
-          for (final field in section.fields)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 5),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(flex: 4, child: Text(field.label, style: TextStyle(color: scheme.onSurfaceVariant))),
-                  Expanded(flex: 5, child: Text(formatRecordValue(field, item[field.key]), textAlign: TextAlign.end)),
-                ],
-              ),
-            ),
+          Text(section.cardTitle(item), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          for (final field in section.fields) KeyValueRow(field.label, formatRecordValue(field, item[field.key])),
           if (rowActions.isNotEmpty)
             Align(
               alignment: Alignment.centerRight,

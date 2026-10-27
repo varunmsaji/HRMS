@@ -11,6 +11,7 @@ import '../../../core/providers.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import 'salary_breakup_view.dart';
+import '../../../core/widgets/ui.dart';
 
 /// Assign a salary structure — or, for a daily-wage employee, a daily rate (D5). The `rate_kind`
 /// toggle is UI-only and is dropped before the request (the backend forbids unknown fields).
@@ -128,19 +129,8 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final scheme = Theme.of(context).colorScheme;
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!.status == 403 ? "You do not have permission to view this employee's salary." : _error!.message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
-      );
-    }
+    if (_loading) return const ListSkeleton(count: 3);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? "You do not have permission to view this employee's salary." : _error!.message, actionLabel: 'Retry', onAction: _load);
     final b = _breakup;
     final inner = b?['breakup'] as Map<String, dynamic>?;
     return RefreshIndicator(
@@ -164,15 +154,16 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
             if (inner != null) Padding(padding: const EdgeInsets.only(top: 10), child: SalaryBreakupView(breakup: inner)),
           ],
           const SizedBox(height: 18),
-          Text('Assignment history', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 6),
+          const SectionHeader('Assignment history'),
           if (_history.isEmpty) Text('No salary assigned yet.', style: TextStyle(color: scheme.onSurfaceVariant)),
           for (final h in _history)
-            Card(
-              child: ListTile(
-                title: Text(h['daily_rate_minor'] != null ? 'Daily rate ${formatInr(h['daily_rate_minor'] as num)}' : _structure(h['salary_structure_id'] as String?)),
-                subtitle: Text('${h['effective_from']} → ${h['effective_to'] ?? 'present'}${h['reason'] != null ? '\n${h['reason']}' : ''}'),
-                isThreeLine: h['reason'] != null,
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ListRowCard(
+                leading: const IconBadge(icon: Icons.payments_outlined, size: 38),
+                title: h['daily_rate_minor'] != null ? 'Daily rate ${formatInr(h['daily_rate_minor'] as num)}' : _structure(h['salary_structure_id'] as String?),
+                subtitle: '${h['effective_from']} → ${h['effective_to'] ?? 'present'}${h['reason'] != null ? '\n${h['reason']}' : ''}',
+                showChevron: false,
               ),
             ),
         ],

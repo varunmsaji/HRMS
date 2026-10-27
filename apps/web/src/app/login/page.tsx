@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowRight, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -84,18 +85,18 @@ export default function LoginPage() {
 
   return (
     <AuthLayout
-      title="Sign in"
-      description="Welcome back — enter your details to continue."
+      title="Welcome back"
+      description="Sign in to your Krewoxa workspace to continue."
       footer={
         <>
           Setting up a new company?{" "}
-          <Link href="/register" className="font-medium text-primary hover:underline">
-            Register
+          <Link href="/register" className="font-semibold text-primary hover:underline">
+            Create your workspace
           </Link>
         </>
       }
     >
-      <form onSubmit={handleSubmit} noValidate className="space-y-4">
+      <form onSubmit={handleSubmit} noValidate className="space-y-5">
         {formError ? (
           <div role="alert" className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger">
             {formError}
@@ -131,6 +132,8 @@ export default function LoginPage() {
               setErrors((current) => ({ ...current, email: undefined }));
             }}
             autoComplete="email"
+            placeholder="you@company.com"
+            className="h-11 bg-background px-3.5 md:text-base"
             disabled={submitting}
           />
         </FormField>
@@ -143,18 +146,34 @@ export default function LoginPage() {
               setErrors((current) => ({ ...current, password: undefined }));
             }}
             autoComplete="current-password"
+            placeholder="Enter your password"
+            className="h-11 bg-background px-3.5 md:text-base"
             disabled={submitting}
           />
         </FormField>
 
-        <div className="text-right text-sm">
+        <div className="-mt-2 text-right text-sm">
           <Link href="/forgot-password" className="font-medium text-primary hover:underline">
             Forgot password?
           </Link>
         </div>
 
-        <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? "Signing in…" : "Sign in"}
+        <Button
+          type="submit"
+          className="group h-11 w-full text-base font-semibold hover:bg-primary-hover"
+          disabled={submitting}
+        >
+          {submitting ? (
+            <>
+              <Loader2 className="animate-spin" aria-hidden="true" />
+              Signing in…
+            </>
+          ) : (
+            <>
+              Sign in
+              <ArrowRight className="transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+            </>
+          )}
         </Button>
       </form>
     </AuthLayout>

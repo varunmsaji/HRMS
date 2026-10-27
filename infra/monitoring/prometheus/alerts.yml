@@ -1,0 +1,367 @@
+# Krewoxa HRMS - Prometheus alert rules (OPTIONAL component; delivery is NOT configured).
+# Every threshold is PROVISIONAL: a conservative starting point, not a calibrated value.
+# Rationale, owner, false-positive risk and tuning: docs/operations/OBSERVABILITY_ALERT_CATALOG.md
+# Validate: docker run --rm --entrypoint promtool -v $PWD/infra/monitoring/prometheus:/p prom/prometheus check rules /p/alerts.yml
+groups:
+  - name: hrms-critical
+    rules:
+      - alert: HrmsApiDown
+        expr: 'up{job="hrms-api"} == 0'
+        for: 2m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'API metrics endpoint unreachable'
+          description: 'The scrape failed. Either the API is down or METRICS_TOKEN changed; check /health/live from outside.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#api-5xx-503'
+      - alert: HrmsDatabaseDown
+        expr: 'hrms_dependency_up{dependency="database"} == 0'
+        for: 2m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'API cannot reach PostgreSQL'
+          description: 'SELECT 1 failed or exceeded 2 s from the API.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#database-exhaustion'
+      - alert: HrmsSchedulerHeartbeatStale
+        expr: 'hrms_celery_scheduler_heartbeat_age_seconds > 300'
+        for: 5m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'Celery Beat/worker path is not running'
+          description: 'health.scheduler_heartbeat has not run for over 5 minutes: Beat stopped, broker not delivering, or no worker consuming.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#worker-unavailable'
+      - alert: HrmsSchedulerHeartbeatMissing
+        expr: 'absent(hrms_celery_scheduler_heartbeat_age_seconds) and on() hrms_jobs_probe_up == 1'
+        for: 15m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'Scheduler heartbeat key has never been written'
+          description: 'Redis is reachable but no heartbeat exists (fresh deploy, flushed Redis, or Beat never started).'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#worker-unavailable'
+      - alert: HrmsPayrollRunFailing
+        expr: 'sum(increase(hrms_operations_total{operation=~"payroll\\.pay_run\\.(compute|finalise|approve|lock_inputs)|payroll\\.payslip\\.generate",outcome="failed"}[30m])) >= 2'
+        for: 0m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'Payroll operations are failing repeatedly'
+          description: 'outcome=failed excludes business rejections (validation/permission/conflict): these are server-side failures.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#payroll-failing'
+      - alert: HrmsLeaveRunMonthlyAccrualMissed
+        expr: 'time() - hrms_celery_task_last_success_timestamp_seconds{task="leave.run_monthly_accrual"} > 93600'
+        for: 30m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'leave.run_monthly_accrual has not succeeded in over 26 h'
+          description: 'Scheduled daily 01:00. Fires only after the task has succeeded at least once since the metrics volume was created; see the absent() rule below for the never-ran case.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed'
+      - alert: HrmsLeaveRunCompOffExpirySweepMissed
+        expr: 'time() - hrms_celery_task_last_success_timestamp_seconds{task="leave.run_comp_off_expiry_sweep"} > 93600'
+        for: 30m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'leave.run_comp_off_expiry_sweep has not succeeded in over 26 h'
+          description: 'Scheduled daily 01:30. Fires only after the task has succeeded at least once since the metrics volume was created; see the absent() rule below for the never-ran case.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed'
+      - alert: HrmsLeaveRunYearEndSweepMissed
+        expr: 'time() - hrms_celery_task_last_success_timestamp_seconds{task="leave.run_year_end_sweep"} > 93600'
+        for: 30m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'leave.run_year_end_sweep has not succeeded in over 26 h'
+          description: 'Scheduled daily 02:00. Fires only after the task has succeeded at least once since the metrics volume was created; see the absent() rule below for the never-ran case.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed'
+      - alert: HrmsAttendanceRunDailyCalculationMissed
+        expr: 'time() - hrms_celery_task_last_success_timestamp_seconds{task="attendance.run_daily_calculation"} > 93600'
+        for: 30m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'attendance.run_daily_calculation has not succeeded in over 26 h'
+          description: 'Scheduled daily 09:30. Fires only after the task has succeeded at least once since the metrics volume was created; see the absent() rule below for the never-ran case.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed'
+      - alert: HrmsScheduledTaskNeverSucceeded
+        expr: '(hrms_celery_scheduler_heartbeat_age_seconds < 300) and on() absent(hrms_celery_task_last_success_timestamp_seconds{task="attendance.run_daily_calculation"})'
+        for: 26h
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Daily attendance calculation has never succeeded'
+          description: 'Beat is alive but the daily attendance task has no success on record (after the metrics volume is created/wiped, expect this for up to 24 h).'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed'
+      - alert: HrmsDiskCritical
+        expr: 'hrms_log_filesystem_free_ratio < 0.10'
+        for: 10m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'Log volume under 10% free'
+          description: 'Log rotation is bounded (see LOGGING_GUIDE) but other data may share the filesystem.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#disk-nearly-full'
+      - alert: HrmsObjectStorageRejectingCalls
+        expr: 'sum by (category) (increase(hrms_dependency_errors_total{dependency="storage",category=~"storage_full|storage_auth|storage_config"}[10m])) > 0'
+        for: 0m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'Object storage is refusing calls (full disk, bad credentials or missing bucket)'
+          description: 'These answers are deterministic, not transient: nothing retries its way out of a full MinIO volume (XMinioStorageFull), rejected credentials or a missing bucket. Document uploads and bulk imports fail until an operator acts. Missing objects (NoSuchKey) never count.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#external-provider'
+      - alert: HrmsLogWritesFailing
+        expr: 'sum(rate(hrms_log_dropped_writes_total{source="file"}[10m])) > 0'
+        for: 15m
+        labels:
+          severity: critical
+          service: hrms
+        annotations:
+          summary: 'Operational log files are not being written'
+          description: 'Log directory unwritable or full. stdout (Docker) logging may still work.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#missing-logs'
+  - name: hrms-high
+    rules:
+      - alert: HrmsHigh5xxRate
+        expr: '(sum(rate(hrms_http_requests_total{status_class="5xx"}[5m])) / sum(rate(hrms_http_requests_total[5m]))) > 0.05 and sum(rate(hrms_http_requests_total[5m])) > 0.05'
+        for: 10m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'More than 5% of API responses are 5xx'
+          description: 'Traffic floor of ~3 req/min avoids firing on a single failed request at night.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#api-5xx-503'
+      - alert: HrmsUnhandledExceptions
+        expr: 'sum(increase(hrms_http_unhandled_exceptions_total[10m])) > 0'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Unhandled exception reached the generic 500'
+          description: 'Always a bug until proven otherwise. Find it with the request_id in errors.log.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#api-5xx-503'
+      - alert: HrmsLatencyP99High
+        expr: 'histogram_quantile(0.99, sum by (le) (rate(hrms_http_request_duration_seconds_bucket{route!~"/health.*"}[5m]))) > 10'
+        for: 15m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'API p99 latency above 10 s'
+          description: 'PROVISIONAL. Gunicorn kills requests at 60 s.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#slow-requests'
+      - alert: HrmsQueueBacklog
+        expr: 'hrms_celery_queue_depth > 100'
+        for: 10m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Celery queue backlog above 100 messages'
+          description: 'Provisional threshold; same default as hrms.ops.job_health.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#queue-backlog'
+      - alert: HrmsQueueOldestMessageOld
+        expr: 'hrms_celery_queue_oldest_message_age_seconds > 600'
+        for: 10m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Oldest queued message older than 10 minutes'
+          description: 'Work is waiting longer than expected: consumers stuck/slow.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#queue-backlog'
+      - alert: HrmsTaskFailures
+        expr: 'sum by (task) (increase(hrms_celery_task_failures_total[30m])) >= 3'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Celery task failing repeatedly'
+          description: 'Three exhausted-retry failures of one task in 30 minutes.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed'
+      - alert: HrmsRedisDown
+        expr: 'hrms_dependency_up{dependency="redis"} == 0'
+        for: 2m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'API cannot reach Redis'
+          description: 'Rate limiting, idempotency and the Celery broker depend on Redis.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#redis-outage'
+      - alert: HrmsRedisMemoryHigh
+        expr: 'hrms_redis_memory_max_bytes > 0 and hrms_redis_memory_used_bytes / hrms_redis_memory_max_bytes > 0.85'
+        for: 10m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Redis above 85% of maxmemory'
+          description: 'Only meaningful when maxmemory is set.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#redis-outage'
+      - alert: HrmsDbPoolExhausted
+        expr: 'sum(increase(hrms_errors_total{category="db_pool_exhausted"}[10m])) > 0'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Requests timed out waiting for a database connection'
+          description: 'Exact count over all workers.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#database-exhaustion'
+      - alert: HrmsDbPoolSaturated
+        expr: 'hrms_db_pool_checked_out / hrms_db_pool_capacity > 0.9'
+        for: 10m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Connection pool above 90% (sampled worker)'
+          description: 'Samples only the worker that served the scrape.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#database-exhaustion'
+      - alert: HrmsAttendanceInfrastructureFailures
+        expr: 'sum(increase(hrms_operations_total{operation=~"attendance\\..*",outcome="failed"}[15m])) >= 3'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Attendance operations failing for server-side reasons'
+          description: 'Policy rejections are outcome=rejected and never counted here.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#attendance-punch'
+      - alert: HrmsLeaveOperationFailures
+        expr: 'sum(increase(hrms_operations_total{operation=~"leave\\..*",outcome="failed"}[15m])) >= 3'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Leave operations failing for server-side reasons'
+          description: 'Includes accrual, comp-off and year-end per-company runs.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#leave-failure'
+      - alert: HrmsExternalProviderErrors
+        expr: 'sum by (dependency) (increase(hrms_dependency_errors_total[15m])) >= 5'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'External provider errors (email / face provider)'
+          description: 'Only relevant for providers that are enabled.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#external-provider'
+      - alert: HrmsTaskPublishFailures
+        expr: 'sum(increase(hrms_celery_publish_failures_total[10m])) > 0'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Tasks could not be handed to the broker'
+          description: 'Distinguishes ''never submitted'' from ''submitted but delayed''.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#redis-outage'
+      - alert: HrmsUnroutableTaskMessages
+        expr: 'sum(increase(hrms_celery_messages_unroutable_total[30m])) > 0'
+        for: 0m
+        labels:
+          severity: high
+          service: hrms
+        annotations:
+          summary: 'Worker discarded a task message'
+          description: 'Version skew between API and worker images, or a renamed task.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#worker-unavailable'
+  - name: hrms-warning
+    rules:
+      - alert: HrmsDiskLow
+        expr: 'hrms_log_filesystem_free_ratio < 0.20'
+        for: 30m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'Log volume under 20% free'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#disk-nearly-full'
+      - alert: HrmsLatencyP95Degraded
+        expr: 'histogram_quantile(0.95, sum by (le) (rate(hrms_http_request_duration_seconds_bucket{route!~"/health.*"}[5m]))) > 2'
+        for: 20m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'API p95 latency above 2 s'
+          description: 'PROVISIONAL: tune from a 2-4 week baseline.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#slow-requests'
+      - alert: HrmsRetryRateRising
+        expr: 'sum(rate(hrms_celery_task_retries_total[15m])) > 0.05'
+        for: 30m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'Celery retries are elevated'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed'
+      - alert: HrmsLoginFailuresElevated
+        expr: 'sum(increase(hrms_security_events_total{event=~"login\\.failed|platform\\.login\\.failed"}[15m])) > 50'
+        for: 0m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'Elevated login failures'
+          description: 'Credential stuffing or a broken client. Threshold provisional.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#auth-failures'
+      - alert: HrmsAccountLockouts
+        expr: 'sum(increase(hrms_security_events_total{event=~"account\\.locked|platform\\.account_locked"}[30m])) >= 5'
+        for: 0m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'Several account lockouts'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#auth-failures'
+      - alert: HrmsRateLimitingActive
+        expr: 'sum(increase(hrms_security_events_total{event="rate_limited"}[15m])) >= 10'
+        for: 0m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'Rate limits are tripping'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#auth-failures'
+      - alert: HrmsErrorLogRateHigh
+        expr: 'sum(rate(hrms_log_events_total{level=~"error|critical"}[10m])) > 0.1'
+        for: 15m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'Sustained ERROR log rate'
+          description: 'Catch-all for failures without a dedicated metric.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#api-5xx-503'
+      - alert: HrmsProbeBlind
+        expr: 'hrms_jobs_probe_up == 0'
+        for: 10m
+        labels:
+          severity: warning
+          service: hrms
+        annotations:
+          summary: 'Queue/heartbeat probe cannot read Redis'
+          description: 'Queue and heartbeat alerts are blind while this fires.'
+          runbook: 'docs/operations/OBSERVABILITY_RUNBOOK.md#redis-outage'

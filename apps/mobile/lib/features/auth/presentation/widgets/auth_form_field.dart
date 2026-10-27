@@ -27,14 +27,14 @@ class AuthFormField extends StatelessWidget {
       children: [
         RichText(
           text: TextSpan(
-            style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurface),
+            style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
             children: [
               TextSpan(text: label),
               if (required) TextSpan(text: ' *', style: TextStyle(color: scheme.error)),
             ],
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         child,
         if (errorText != null) ...[
           const SizedBox(height: 4),
@@ -56,6 +56,9 @@ class AuthPasswordField extends StatefulWidget {
     required this.controller,
     this.enabled = true,
     this.autofillHints,
+    this.hintText,
+    this.prefixIcon,
+    this.textInputAction,
     this.onChanged,
     this.onSubmitted,
   });
@@ -63,6 +66,9 @@ class AuthPasswordField extends StatefulWidget {
   final TextEditingController controller;
   final bool enabled;
   final Iterable<String>? autofillHints;
+  final String? hintText;
+  final Widget? prefixIcon;
+  final TextInputAction? textInputAction;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
@@ -80,10 +86,14 @@ class _AuthPasswordFieldState extends State<AuthPasswordField> {
       enabled: widget.enabled,
       obscureText: _obscured,
       autofillHints: widget.autofillHints,
+      textInputAction: widget.textInputAction,
       onChanged: widget.onChanged,
       onSubmitted: widget.onSubmitted,
       decoration: InputDecoration(
+        hintText: widget.hintText,
+        prefixIcon: widget.prefixIcon,
         suffixIcon: IconButton(
+          tooltip: _obscured ? 'Show password' : 'Hide password',
           icon: Icon(_obscured ? Icons.visibility_outlined : Icons.visibility_off_outlined),
           onPressed: () => setState(() => _obscured = !_obscured),
         ),
@@ -107,17 +117,29 @@ class InlineAlert extends StatelessWidget {
       liveRegion: true,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: scheme.errorContainer,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(color: scheme.error.withValues(alpha: 0.3)),
         ),
-        child: Column(
+        child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(message, style: TextStyle(color: scheme.onErrorContainer, fontSize: 13)),
-            if (trailing != null) trailing!,
+            Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: DefaultTextStyle.merge(
+                style: TextStyle(color: scheme.onErrorContainer, fontSize: 13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(message),
+                    if (trailing != null) trailing!,
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),

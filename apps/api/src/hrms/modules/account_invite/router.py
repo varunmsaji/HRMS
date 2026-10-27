@@ -7,6 +7,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
 
+from hrms.core.auth.dependencies import get_current_user
+from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.rbac.dependencies import require_permission
 from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
@@ -38,12 +40,15 @@ async def invite_employee(
     employee_id: UUID,
     request: Request,
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
-    _scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_INVITE))],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_INVITE))],
     service: Annotated[AccountInviteService, Depends(get_account_invite_service)],
 ) -> DataEnvelope[AccountInviteRead]:
     data = await service.issue_for_employee(
         tenant.company_id,
         employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),

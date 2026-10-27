@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R04",
+  "direction": "MARKER-NORTHWIND-own",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 200,
+  "body": "{\"data\":[{\"user_id\":\"0fffc8c9-fbf8-447a-b716-4d6248f495f1\",\"email\":\"founder.b@example.com\",\"first_name\":\"MARKER-NORTHWIND\",\"last_name\":\"Admin\",\"is_primary\":true,\"status\":\"ACTIVE\",\"role_codes\":[\"COMPANY_ADMIN\"]}],\"pagination\":{\"page\":1,\"per_page\":25,\"total\":1,\"total_pages\":1,\"next_cursor\":null},\"meta\":{\"request_id\":\"54610736-6c4a-4d6a-ad52-bfe21be012e5\",\"server_time\":\"2026-10-26T13:07:01.754230Z\"}}",
+  "verdict": "PASS",
+  "note": "own user list",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

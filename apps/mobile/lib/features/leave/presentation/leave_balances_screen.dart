@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
+import '../../../core/widgets/ui.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../profile/data/employee_repository.dart';
@@ -203,7 +204,7 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Leave Balances')),
       body: _loadingEmployees
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton(count: 4)
           : Column(
               children: [
                 if (_employees.length > 1)
@@ -221,18 +222,16 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
                     ),
                   ),
                 if (_loading)
-                  const Expanded(child: Center(child: CircularProgressIndicator()))
+                  const Expanded(child: ListSkeleton(count: 4))
                 else if (_error != null)
                   Expanded(
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Text(_error!.message, textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          FilledButton(onPressed: _load, child: const Text('Retry')),
-                        ]),
-                      ),
+                    child: StateMessage(
+                      icon: Icons.error_outline_rounded,
+                      tone: Tone.danger,
+                      title: 'Couldn\'t load balances',
+                      message: _error!.message,
+                      actionLabel: 'Retry',
+                      onAction: _load,
                     ),
                   )
                 else
@@ -242,45 +241,59 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
                       child: ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
-                          if (_balances.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No balance-backed leave types configured yet.'))),
+                          if (_balances.isEmpty)
+                            const SizedBox(
+                              height: 320,
+                              child: StateMessage(icon: Icons.beach_access_outlined, title: 'No balances yet', message: 'No balance-backed leave types configured yet.'),
+                            ),
                           for (final balance in _balances)
-                            Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(color: scheme.surfaceContainerLowest, borderRadius: BorderRadius.circular(10), border: Border.all(color: scheme.outlineVariant)),
-                              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Expanded(child: Text('${balance.leaveTypeName} (${balance.leaveTypeCode})')),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: AppCard(
+                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                  Row(children: [
+                                    const IconBadge(icon: Icons.beach_access_rounded, size: 40),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                        Text(balance.leaveTypeName, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                                        Text(balance.leaveTypeCode, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                                      ]),
+                                    ),
                                     Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                                      Text('${balance.balance}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                                      Text('${balance.balance}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22)),
                                       if (balance.reservedBalance != 0) Text('${balance.reservedBalance} reserved', style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
                                     ]),
-                                  ],
-                                ),
-                                if (canAdjust)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: Row(children: [
-                                      OutlinedButton(onPressed: () => _entryDialog(balance, encash: true), child: const Text('Encash')),
-                                      const SizedBox(width: 8),
-                                      OutlinedButton(onPressed: () => _entryDialog(balance, encash: false), child: const Text('Adjust')),
-                                    ]),
-                                  ),
-                              ]),
+                                  ]),
+                                  if (canAdjust)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 12),
+                                      child: Row(children: [
+                                        OutlinedButton(onPressed: () => _entryDialog(balance, encash: true), child: const Text('Encash')),
+                                        const SizedBox(width: 8),
+                                        OutlinedButton(onPressed: () => _entryDialog(balance, encash: false), child: const Text('Adjust')),
+                                      ]),
+                                    ),
+                                ]),
+                              ),
                             ),
                           const SizedBox(height: 16),
-                          Text(canAdjust ? 'Ledger (append-only — a correction is always a new entry)' : 'Ledger', style: Theme.of(context).textTheme.titleSmall),
-                          const SizedBox(height: 8),
+                          SectionHeader(canAdjust ? 'Ledger (append-only — a correction is always a new entry)' : 'Ledger'),
                           if (_ledger.isEmpty) Text('No ledger activity yet.', style: TextStyle(color: scheme.onSurfaceVariant)),
                           for (final e in _ledger)
-                            ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              title: Text('${e.entryType.replaceAll('_', ' ')} · ${_typeName(e.leaveTypeId)}'),
-                              subtitle: Text('${e.effectiveDate}${e.reason != null ? ' · ${e.reason}' : ''}'),
-                              trailing: Text(e.amount > 0 ? '+${e.amount}' : '${e.amount}', style: TextStyle(fontWeight: FontWeight.w700, color: e.amount < 0 ? scheme.error : null)),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: ListRowCard(
+                                leading: IconBadge(
+                                  icon: e.amount < 0 ? Icons.remove_rounded : Icons.add_rounded,
+                                  tone: e.amount < 0 ? Tone.danger : Tone.success,
+                                  size: 36,
+                                ),
+                                title: '${humanize(e.entryType)} · ${_typeName(e.leaveTypeId)}',
+                                subtitle: '${e.effectiveDate}${e.reason != null ? ' · ${e.reason}' : ''}',
+                                showChevron: false,
+                                trailing: Text(e.amount > 0 ? '+${e.amount}' : '${e.amount}', style: TextStyle(fontWeight: FontWeight.w800, color: e.amount < 0 ? scheme.error : null)),
+                              ),
                             ),
                           if (_hasMore)
                             Center(

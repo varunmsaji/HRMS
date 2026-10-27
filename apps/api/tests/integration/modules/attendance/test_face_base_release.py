@@ -939,25 +939,27 @@ async def test_rate_limited_requests_do_no_provider_work(
     assert fake_face_provider.calls == []
 
 
-# --- H. base-release attendance policy: face verification is OPTIONAL -------------------------
+# --- H. attendance policy: face verification is MANDATORY once ENROLLED ------------------------
 
 
-async def test_ordinary_punch_remains_available_to_a_face_enrolled_employee(
+async def test_plain_punch_is_refused_for_a_face_enrolled_employee(
     client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
-    """Release mode A. Nothing server-side requires a face punch: an enrolled employee can still
-    use `POST /attendance/punches/me`, and the two kinds are distinguishable by `source`."""
+    """An ENROLLED employee can only self-punch through `POST /attendance/face-punches/me`;
+    `POST /attendance/punches/me` is a 403 for both directions and writes nothing."""
     me, _ = await _enrolled_self(client, face_tenant)
 
-    ordinary = await client.post("/v1/attendance/punches/me", headers=me, json={"direction": "IN"})
+    for direction in ("IN", "OUT"):
+        plain = await client.post(
+            "/v1/attendance/punches/me", headers=me, json={"direction": direction}
+        )
+        assert plain.status_code == 403, plain.text
+        assert plain.json()["error"]["code"] == "FACE_VERIFICATION_REQUIRED"
     face = await face_punch(client, me, "OUT")
 
-    assert ordinary.status_code == 201, ordinary.text
     assert face.status_code == 201, face.text
-    sources = {
-        p["source"] for p in (await client.get("/v1/attendance/punches", headers=me)).json()["data"]
-    }
-    assert "FACE" in sources and len(sources) == 2
+    punches = (await client.get("/v1/attendance/punches", headers=me)).json()["data"]
+    assert [p["source"] for p in punches] == ["FACE"]
 
 
 # --- lifecycle: client disconnect, worker crash, stuck deletions, trusted proxy ----------------

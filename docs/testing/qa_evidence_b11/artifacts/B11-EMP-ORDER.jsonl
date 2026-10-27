@@ -1,0 +1,1 @@
+{"ts": "2026-10-26T07:53:01.969537+00:00", "step": "confirm after termination", "employee_before": {"status": "PROBATION", "is_active": true, "version": 2, "first_name": "Left", "deleted_at": null}, "confirm_http": 200, "employee_after": {"status": "ACTIVE", "is_active": true, "version": 3, "first_name": "Left", "deleted_at": null}, "audit": ["EMPLOYEE_CONFIRMED"]}

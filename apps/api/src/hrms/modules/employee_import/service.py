@@ -41,6 +41,7 @@ from hrms.modules.employee_import.exceptions import (
     ImportBatchNotFoundError,
     ImportFileEmptyError,
     ImportFileTooLargeError,
+    ImportFileUnreadableError,
     ImportHeaderInvalidError,
     ImportQueueUnavailableError,
     ImportRowLimitExceededError,
@@ -206,15 +207,21 @@ class EmployeeImportService:
         return batch_to_read(batch)
 
     def _parse_and_validate_shape(self, file_bytes: bytes) -> list[dict[str, str]]:
-        text_content = file_bytes.decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(text_content))
-        header = reader.fieldnames or []
+        try:
+            text_content = file_bytes.decode("utf-8-sig")
+            reader = csv.DictReader(io.StringIO(text_content))
+            header = reader.fieldnames or []
+        except (UnicodeDecodeError, csv.Error) as exc:
+            raise ImportFileUnreadableError() from exc
         missing = [c for c in REQUIRED_COLUMNS if c not in header]
         unexpected = [c for c in header if c not in ALL_COLUMNS]
         if missing or unexpected:
             raise ImportHeaderInvalidError(missing=missing, unexpected=unexpected)
 
-        rows = [_sanitize_raw_row(row) for row in reader]
+        try:
+            rows = [_sanitize_raw_row(row) for row in reader]
+        except csv.Error as exc:
+            raise ImportFileUnreadableError() from exc
         if not rows:
             raise ImportFileEmptyError()
         if len(rows) > MAX_IMPORT_ROWS:

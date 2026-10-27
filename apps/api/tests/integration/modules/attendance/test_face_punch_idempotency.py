@@ -275,15 +275,18 @@ async def test_face_key_does_not_collide_with_self_punch_key(
         json={"direction": "IN", "idempotency_key": KEY},
     )
 
-    assert plain.status_code == 201, plain.text
-    assert plain.json()["data"]["source"] == "WEB"
-    assert await _punch_count(client, headers) == 2
+    # Mandatory face verification: the plain request is refused outright (never replayed as, or
+    # collided with, the face punch that used the same key), and nothing extra is written.
+    assert plain.status_code == 403, plain.text
+    assert plain.json()["error"]["code"] == "FACE_VERIFICATION_REQUIRED"
+    assert await _punch_count(client, headers) == 1
 
 
 async def test_self_punch_key_reused_with_other_direction_is_a_conflict(
     client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
-    headers, _ = await _enrolled_self(client, face_tenant)
+    # Plain self-punches are only available to employees who are not face-enrolled.
+    headers, _ = await _enrolled_self(client, face_tenant, enroll=False)
     body = {"direction": "IN", "idempotency_key": KEY}
     assert (
         await client.post("/v1/attendance/punches/me", headers=headers, json=body)

@@ -8,6 +8,7 @@ import '../forms/form_spec.dart';
 import '../forms/spec_form_screen.dart';
 import '../providers.dart';
 import '../../features/auth/state/auth_controller.dart';
+import '../widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -136,17 +137,12 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canManage = widget.manage == null || permissions.contains(widget.manage);
     final scheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(top: 16),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Expanded(child: Text(widget.title, style: Theme.of(context).textTheme.titleSmall)),
-          if (canManage) TextButton.icon(onPressed: _add, icon: const Icon(Icons.add, size: 18), label: const Text('Add')),
-        ]),
+    return DetailSection(
+      title: widget.title,
+      trailing: canManage ? TextButton.icon(onPressed: _add, icon: const Icon(Icons.add, size: 18), label: const Text('Add')) : null,
+      children: [
         if (_loading)
-          const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
+          const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
         else if (_error != null)
           Column(children: [Text(_error!.message), TextButton(onPressed: _load, child: const Text('Retry'))])
         else if (_rows.isEmpty)
@@ -156,7 +152,7 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
-              title: Text(widget.rowTitle(row), style: TextStyle(decoration: widget.hasActive && row['is_active'] == false ? TextDecoration.lineThrough : null)),
+              title: Text(widget.rowTitle(row), style: TextStyle(fontWeight: FontWeight.w600, decoration: widget.hasActive && row['is_active'] == false ? TextDecoration.lineThrough : null)),
               subtitle: widget.rowSubtitle == null || widget.rowSubtitle!(row) == null ? null : Text(widget.rowSubtitle!(row)!),
               trailing: canManage
                   ? PopupMenuButton<String>(
@@ -168,7 +164,7 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
                     )
                   : null,
             ),
-      ]),
+      ],
     );
   }
 }

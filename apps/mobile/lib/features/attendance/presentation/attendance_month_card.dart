@@ -6,6 +6,7 @@ import '../../../core/time.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
+import '../../../core/widgets/ui.dart';
 
 Color _bucketColor(String bucket) => switch (bucket) {
       'PRESENT' => Colors.green,
@@ -84,18 +85,18 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
     final present = _byDate.values.where((d) => const {'PRESENT', 'REMOTE', 'ON_DUTY'}.contains(attendanceBucketOf(d))).length;
     final absent = _byDate.values.where((d) => attendanceBucketOf(d) == 'ABSENT').length;
     final leave = _byDate.values.where((d) => attendanceBucketOf(d) == 'LEAVE').length;
-    return Card(
-      margin: EdgeInsets.zero,
+    return AppCard(
+      padding: const EdgeInsets.all(12),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.zero,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             IconButton(onPressed: () => _shift(-1), icon: const Icon(Icons.chevron_left)),
-            Expanded(child: Text('${_monthNames[_month.month - 1]} ${_month.year}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600))),
+            Expanded(child: Text('${_monthNames[_month.month - 1]} ${_month.year}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16))),
             IconButton(onPressed: () => _shift(1), icon: const Icon(Icons.chevron_right)),
           ]),
           if (_loading)
-            const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator()))
+            const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
           else if (_error != null)
             Padding(
               padding: const EdgeInsets.all(12),
@@ -121,10 +122,10 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
         margin: const EdgeInsets.all(2),
         decoration: BoxDecoration(
           color: color?.withValues(alpha: 0.22),
-          borderRadius: BorderRadius.circular(6),
-          border: record == null ? Border.all(color: Theme.of(context).colorScheme.outlineVariant) : Border.all(color: color!),
+          borderRadius: BorderRadius.circular(10),
+          border: record == null ? null : Border.all(color: color!.withValues(alpha: 0.5)),
         ),
-        child: Center(child: Text('$day', style: const TextStyle(fontSize: 12))),
+        child: Center(child: Text('$day', style: TextStyle(fontSize: 12, fontWeight: record == null ? FontWeight.w400 : FontWeight.w700))),
       ),
     );
   }

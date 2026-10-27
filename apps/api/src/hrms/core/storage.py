@@ -21,9 +21,70 @@ a short-lived presigned GET URL does (plan §8.3), so `presigned_get_url` remain
 onboarding-facing read path. `get_object` was added for employee_import's Celery task, which has
 no browser to hand a presigned URL to and needs the raw CSV bytes server-side to parse."""
 
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import aioboto3
 
 from hrms.core.config.settings import Settings
+from hrms.core.observability.classification import error_category
+from hrms.core.observability.metrics import (
+    DEPENDENCY_CALLS,
+    DEPENDENCY_DURATION,
+    DEPENDENCY_ERRORS,
+    safe_count,
+    safe_observe,
+)
+
+_MISSING_OBJECT_CODES = frozenset({"NoSuchKey", "404", "NotFound"})
+
+#: Deterministic, operator-actionable store answers. Each gets its own bounded category so an alert
+#: can tell "the disk is full" or "the credentials are wrong" from a transient provider hiccup
+#: (a full MinIO volume answers every write with `XMinioStorageFull` until space is freed).
+_STORAGE_FULL_CODES = frozenset({"XMinioStorageFull", "InsufficientStorage", "StorageFull"})
+_STORAGE_AUTH_CODES = frozenset(
+    {"AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken"}
+)
+_STORAGE_CONFIG_CODES = frozenset({"NoSuchBucket", "InvalidBucketName"})
+
+
+def _storage_category(exc: BaseException) -> str | None:
+    """Failure category for a storage call, or None when it is an expected answer (missing
+    object) rather than a storage problem. Derived only from the S3 error *code* (a closed set
+    of identifiers) - never from the message, which can carry object keys."""
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = str(response.get("Error", {}).get("Code", ""))
+        if code in _MISSING_OBJECT_CODES:
+            return None
+        if code in _STORAGE_FULL_CODES:
+            return "storage_full"
+        if code in _STORAGE_AUTH_CODES:
+            return "storage_auth"
+        if code in _STORAGE_CONFIG_CODES:
+            return "storage_config"
+        return "provider_error"
+    return error_category(exc)
+
+
+@contextmanager
+def _track_storage() -> Iterator[None]:
+    """`hrms_dependency_*` series for one object-store call (no keys, bucket names or payloads)."""
+    started = time.perf_counter()
+    try:
+        yield
+    except Exception as exc:
+        category = _storage_category(exc)
+        safe_observe(DEPENDENCY_DURATION, time.perf_counter() - started, "storage")
+        if category is None:
+            safe_count(DEPENDENCY_CALLS, "storage", "success")
+        else:
+            safe_count(DEPENDENCY_CALLS, "storage", "failure")
+            safe_count(DEPENDENCY_ERRORS, "storage", category)
+        raise
+    safe_observe(DEPENDENCY_DURATION, time.perf_counter() - started, "storage")
+    safe_count(DEPENDENCY_CALLS, "storage", "success")
 
 
 class DocumentStorageService:
@@ -43,25 +104,28 @@ class DocumentStorageService:
 
     async def put_object(self, *, key: str, body: bytes, content_type: str) -> None:
         session = aioboto3.Session()
-        async with session.client("s3", **self._client_kwargs()) as s3:
-            await s3.put_object(
-                Bucket=self._settings.s3_bucket_documents,
-                Key=key,
-                Body=body,
-                ContentType=content_type,
-            )
+        with _track_storage():
+            async with session.client("s3", **self._client_kwargs()) as s3:
+                await s3.put_object(
+                    Bucket=self._settings.s3_bucket_documents,
+                    Key=key,
+                    Body=body,
+                    ContentType=content_type,
+                )
 
     async def get_object(self, *, key: str) -> bytes:
         session = aioboto3.Session()
-        async with session.client("s3", **self._client_kwargs()) as s3:
-            response = await s3.get_object(Bucket=self._settings.s3_bucket_documents, Key=key)
-            body: bytes = await response["Body"].read()
-            return body
+        with _track_storage():
+            async with session.client("s3", **self._client_kwargs()) as s3:
+                response = await s3.get_object(Bucket=self._settings.s3_bucket_documents, Key=key)
+                body: bytes = await response["Body"].read()
+                return body
 
     async def delete_object(self, *, key: str) -> None:
         session = aioboto3.Session()
-        async with session.client("s3", **self._client_kwargs()) as s3:
-            await s3.delete_object(Bucket=self._settings.s3_bucket_documents, Key=key)
+        with _track_storage():
+            async with session.client("s3", **self._client_kwargs()) as s3:
+                await s3.delete_object(Bucket=self._settings.s3_bucket_documents, Key=key)
 
     async def presigned_get_url(
         self,

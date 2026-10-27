@@ -978,6 +978,23 @@ class FaceNotEnrolledForPunchError(ConflictError):
         super().__init__(message)
 
 
+class FaceVerificationRequiredError(PermissionDeniedError):
+    """A plain self-service punch from an employee whose face is ENROLLED. The only way such an
+    employee punches themselves is `POST /attendance/face-punches/me`; recovery when that fails
+    is an HR on-behalf correction, never a fallback to a plain punch."""
+
+    code = "FACE_VERIFICATION_REQUIRED"
+
+    def __init__(
+        self,
+        message: str = (
+            "Face verification is required to punch. Use the face punch flow; if it is "
+            "unavailable, ask HR to record the punch for you."
+        ),
+    ) -> None:
+        super().__init__(message)
+
+
 class FaceNotMatchedError(ValidationError):
     code = "FACE_NOT_MATCHED"
 

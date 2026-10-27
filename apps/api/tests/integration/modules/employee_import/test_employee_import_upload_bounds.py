@@ -132,3 +132,36 @@ async def test_object_key_ignores_the_client_supplied_filename(
         await _cleanup_import_tables(company_id=company_id)
         await _cleanup_org_structure(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"\x89PNG\r\n\x1a\n" + b"\x00" * 64,  # binary content named .csv
+        "first_name\nPriya\n".encode("utf-16"),  # wrong text encoding
+        b"\xff\xfe\xfa" + CSV_HEADER.encode(),  # invalid UTF-8 lead bytes
+    ],
+    ids=["binary", "utf16", "invalid-utf8"],
+)
+async def test_undecodable_upload_is_a_422_not_an_unhandled_error(
+    client: AsyncClient, seeded_plan_catalogue: None, payload: bytes
+) -> None:
+    """Regression (found by live black-box QA): decoding happened with no guard, so binary or
+    non-UTF-8 bytes under a `.csv` name surfaced as an unhandled `UnicodeDecodeError` (HTTP 500,
+    an error-level log) instead of a client error."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        response = await client.post(
+            "/v1/employee-imports",
+            headers=headers,
+            files={"file": ("employees.csv", payload, "text/csv")},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] in {
+            "IMPORT_FILE_UNREADABLE",
+            "IMPORT_HEADER_INVALID",
+        }
+        assert "Traceback" not in response.text
+    finally:
+        await _cleanup_import_tables(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

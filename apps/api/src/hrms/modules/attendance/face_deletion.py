@@ -37,9 +37,9 @@ from hrms.core.db.session import dispose_engine, session_scope
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.modules.attendance.face_service import FacePhotoStorage
 from hrms.modules.attendance.face_verification import (
-    FaceppFaceVerificationProvider,
     FaceProviderError,
     FaceVerificationProvider,
+    provider_for_stored_name,
 )
 from hrms.modules.attendance.repository import (
     ClaimedDeletion,
@@ -65,6 +65,10 @@ class DeletionReport:
     #: provider is disabled), so they are not counted as failed attempts.
     deferred: int = 0
     persistently_failing: int = 0
+
+
+def _configured_name(settings: Settings) -> str | None:
+    return {"facepp": "FACEPP", "opensource": "OPENSOURCE"}.get(settings.face_verification_provider)
 
 
 def _backoff(attempts: int) -> timedelta:
@@ -101,19 +105,29 @@ async def process_company(
     if not claimed:
         return report
 
-    owned_provider: FaceppFaceVerificationProvider | None = None
-    if provider is None and settings.face_verification_provider == "facepp":
-        owned_provider = provider = FaceppFaceVerificationProvider(settings)
+    # A deletion is carried out by the engine that created the resource (the row's `provider`),
+    # not by whichever engine is currently selected: switching engines must neither strand the
+    # old engine's data nor hand its ids to the new engine. An injected `provider` (tests) wins.
+    owned: dict[str, FaceVerificationProvider | None] = {}
     if storage is None:
         from hrms.core.storage import DocumentStorageService
 
         storage = DocumentStorageService(settings)
     try:
         for item in claimed:
-            await _process_one(company_id, item, settings, repo, provider, storage, report, moment)
+            item_provider = provider
+            if item_provider is None and item.kind == "PROVIDER_PERSON":
+                name = item.provider or _configured_name(settings)
+                if name not in owned:
+                    owned[name or ""] = provider_for_stored_name(name, settings)
+                item_provider = owned[name or ""]
+            await _process_one(
+                company_id, item, settings, repo, item_provider, storage, report, moment
+            )
     finally:
-        if owned_provider is not None:
-            await owned_provider.aclose()
+        for created in owned.values():
+            if created is not None:
+                await created.aclose()
 
     safe_log(
         _logger.warning if report.failed or report.persistently_failing else _logger.info,

@@ -7,6 +7,7 @@ import '../../../core/api/api_error.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
+import '../../../core/widgets/ui.dart';
 
 /// HR side of face enrollment — mirrors `apps/web/src/components/attendance/face-enrollment-card.tsx`:
 /// open a one-time self-enrollment window (the employee captures their face in the app), then
@@ -166,20 +167,19 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
       actions = [FilledButton(onPressed: _busy ? null : () => _act(() => _repo.openFaceEnrollmentWindow(widget.employeeId), 'Face enrollment opened.', 'Could not open face enrollment.'), child: const Text('Open face enrollment'))];
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: AppCard(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const Icon(Icons.face_retouching_natural, size: 20),
-          const SizedBox(width: 8),
-          Text('Face attendance', style: Theme.of(context).textTheme.titleSmall),
+          const IconBadge(icon: Icons.face_retouching_natural, size: 34),
+          const SizedBox(width: 10),
+          Text('Face attendance', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(width: 8),
           if (!_loading && _loadError == null)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(color: badgeColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(4)),
+              decoration: BoxDecoration(color: badgeColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(20)),
               child: Text(badge, style: TextStyle(color: badgeColor, fontSize: 11, fontWeight: FontWeight.w600)),
             ),
         ]),
@@ -197,6 +197,7 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
           Wrap(spacing: 8, runSpacing: 8, children: actions),
         ],
       ]),
+      ),
     );
   }
 }

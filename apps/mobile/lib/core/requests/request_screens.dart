@@ -12,6 +12,8 @@ import '../../features/auth/presentation/widgets/auth_form_field.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/shell/more_action.dart';
 import 'request_config.dart';
+import '../widgets/ui.dart' hide DetailSection;
+import '../widgets/ui.dart' as ui show DetailSection;
 
 Color _statusColor(BuildContext context, String status) => switch (status) {
       'APPROVED' || 'AUTO_APPROVED' => Colors.green,
@@ -212,33 +214,28 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
         ),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const ListSkeleton()
               : _error != null
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Text(_error!.message, textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          FilledButton(onPressed: _load, child: const Text('Retry')),
-                        ]),
-                      ),
-                    )
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
                         padding: const EdgeInsets.only(top: 8, bottom: 88),
                         children: [
-                          if (_rows.isEmpty) Padding(padding: const EdgeInsets.all(32), child: Center(child: Text('No ${_c.title.toLowerCase()} match these filters.'))),
+                          if (_rows.isEmpty) SizedBox(height: 320, child: StateMessage(icon: Icons.inbox_outlined, title: 'Nothing here', message: 'No ${_c.title.toLowerCase()} match these filters.')),
                           for (final r in _rows)
-                            ListTile(
-                              title: Text(_c.rowTitle(r, _team ? _employeeName(r['employee_id'] as String) : '')),
-                              subtitle: _c.rowSubtitle?.call(r) == null ? null : Text(_c.rowSubtitle!(r)!),
-                              trailing: RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels),
-                              onTap: () async {
-                                await Navigator.of(context).push(MaterialPageRoute(builder: (_) => RequestDetailScreen(config: _c, requestId: r['id'] as String, initial: r)));
-                                _load();
-                              },
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                              child: ListRowCard(
+                                leading: InitialsAvatar(name: _team ? _employeeName(r['employee_id'] as String) : _c.singular),
+                                title: _c.rowTitle(r, _team ? _employeeName(r['employee_id'] as String) : ''),
+                                subtitle: _c.rowSubtitle?.call(r),
+                                trailing: RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels),
+                                onTap: () async {
+                                  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => RequestDetailScreen(config: _c, requestId: r['id'] as String, initial: r)));
+                                  _load();
+                                },
+                              ),
                             ),
                         ],
                       ),
@@ -386,20 +383,17 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
     final perms = user?.permissions ?? const <String>[];
     final tz = user?.companyTimezone ?? 'Asia/Kolkata';
     final r = _row;
-    final scheme = Theme.of(context).colorScheme;
     Widget body;
     if (r == null && _loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton(count: 3);
     } else if (r == null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error?.status == 404 ? "This ${_c.singular.toLowerCase()} was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
+      body = StateMessage(
+        icon: _error?.status == 404 ? Icons.search_off_rounded : Icons.error_outline_rounded,
+        tone: _error?.status == 404 ? Tone.neutral : Tone.danger,
+        title: _error?.status == 404 ? 'Not found' : 'Something went wrong',
+        message: _error?.status == 404 ? "This ${_c.singular.toLowerCase()} was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'),
+        actionLabel: 'Retry',
+        onAction: _load,
       );
     } else {
       final isOwn = user?.employeeId != null && r['employee_id'] == user!.employeeId;
@@ -410,7 +404,12 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Align(alignment: Alignment.centerLeft, child: RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels)),
+            HeroCard(
+              child: Row(children: [
+                Expanded(child: Text(_c.singular, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 19))),
+                RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels),
+              ]),
+            ),
             if (canReview || canCancel)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
@@ -421,23 +420,12 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
                 ]),
               ),
             for (final s in _c.sections(r, tz))
-              Container(
-                margin: const EdgeInsets.only(top: 14),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(s.title, style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  for (final (k, v) in s.rows)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Expanded(flex: 4, child: Text(k, style: TextStyle(color: scheme.onSurfaceVariant))),
-                        Expanded(flex: 5, child: Text(v, textAlign: TextAlign.end)),
-                      ]),
-                    ),
+              ui.DetailSection(
+                title: s.title,
+                children: [
+                  for (final (k, v) in s.rows) KeyValueRow(k, v == '—' ? null : v),
                   for (final l in s.lines) Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Text(l)),
-                ]),
+                ],
               ),
           ],
         ),

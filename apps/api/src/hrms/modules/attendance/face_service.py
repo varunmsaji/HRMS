@@ -265,7 +265,8 @@ class FaceEnrollmentService:
         rows, total = await self._profiles.page_for_company(
             self._session, company_id=company_id, visible_employee_ids=visible, page=page
         )
-        return [face_profile_to_read(r) for r in rows], total
+        active = self._provider.provider_name if self._provider else None
+        return [face_profile_to_read(r, active_provider=active) for r in rows], total
 
     async def get_status(
         self,
@@ -288,8 +289,16 @@ class FaceEnrollmentService:
         )
         usable = window is not None and window.expires_at > datetime.now(UTC)
         return FaceEnrollmentStatusRead(
-            profile=face_profile_to_read(profile) if profile else None,
+            profile=(
+                face_profile_to_read(
+                    profile,
+                    active_provider=self._provider.provider_name if self._provider else None,
+                )
+                if profile
+                else None
+            ),
             open_window=face_window_to_read(window) if window is not None and usable else None,
+            face_verification_required=profile is not None and profile.status == "ENROLLED",
         )
 
     async def get_review_photo(
@@ -800,7 +809,9 @@ class FaceEnrollmentService:
     ) -> None:
         """Every turned capture must match the front one before any is added — so a profile is
         never built from a mix of faces."""
-        minimum = Decimal(str(self._settings.face_enrollment_angle_min_similarity))
+        minimum = getattr(provider, "angle_threshold", None) or Decimal(
+            str(self._settings.face_enrollment_angle_min_similarity)
+        )
         others = [a for a in FACE_ENROLLMENT_ANGLES if a != "front"]
         for angle in others:
             match = await provider.verify(
@@ -1412,6 +1423,18 @@ class FacePunchService:
                 company_id, employee_id, decision="NOT_ENROLLED", session_id=session_id
             )
             raise FaceNotEnrolledForPunchError()
+        if profile.provider != provider.provider_name:
+            # The profile was made by the other engine (the operator switched engines). Its
+            # person id means nothing to this one, and no fallback exists: re-enrolment is the
+            # only way forward. Recorded as NOT_ENROLLED, which - like any non-infrastructure
+            # rejection - is visible to HR, and nothing is sent to either engine.
+            await self._record_rejection(
+                company_id, employee_id, decision="NOT_ENROLLED", session_id=session_id
+            )
+            raise FaceNotEnrolledForPunchError(
+                "Your face profile was created with a different face engine. "
+                "Ask HR to re-enroll you."
+            )
         person_id = profile.provider_person_id
 
         # Everything above was cheap database work. From here on the request does slow external
@@ -1500,7 +1523,11 @@ class FacePunchService:
             if (
                 match.decision == "MATCHED"
                 and match.similarity is not None
-                and match.similarity >= Decimal(str(self._settings.face_match_min_similarity))
+                and match.similarity
+                >= (
+                    getattr(provider, "match_threshold", None)
+                    or Decimal(str(self._settings.face_match_min_similarity))
+                )
             ):
                 continue
             decision, error = identity_rejection(match.decision, any_matched=len(checked) > 1)

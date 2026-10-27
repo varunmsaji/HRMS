@@ -1,0 +1,17 @@
+{
+  "case": "AUTH-004",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:16:55+05:30",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "expected": "401. Body has no employee names.",
+  "http_status": 401,
+  "headers": {
+    "www-authenticate": "Bearer",
+    "content-type": "application/json",
+    "x-request-id": "b92750de-42ff-42ff-a0e4-c07bd783825b"
+  },
+  "body": "{\"error\":{\"code\":\"UNAUTHORIZED\",\"message\":\"Authentication required\",\"details\":[],\"request_id\":\"b92750de-42ff-42ff-a0e4-c07bd783825b\",\"documentation_url\":null}}",
+  "verdict": "PASS",
+  "note": "WWW-Authenticate=Bearer"
+}

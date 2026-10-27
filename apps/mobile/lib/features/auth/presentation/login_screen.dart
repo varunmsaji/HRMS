@@ -124,88 +124,108 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return AuthScaffold(
-      title: 'Sign in',
-      description: 'Welcome back — enter your details to continue.',
-      footer: Wrap(
-        alignment: WrapAlignment.center,
+      title: 'Welcome back',
+      description: 'Sign in to your company workspace.',
+      footer: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Setting up a new company? '),
-          GestureDetector(
-            onTap: () => context.go('/register'),
-            child: Text('Register', style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)),
+          Row(
+            children: [
+              const Expanded(child: Divider()),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text('New to Krewoxa?', style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+              ),
+              const Expanded(child: Divider()),
+            ],
           ),
-          const Text('  ·  New joiner? '),
-          GestureDetector(
-            onTap: _openOnboardingLink,
-            child: Text('Open onboarding link', style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _submitting ? null : () => context.go('/register'),
+            icon: const Icon(Icons.domain_add_outlined, size: 20),
+            label: const Text('Register your company'),
+          ),
+          const SizedBox(height: 4),
+          TextButton.icon(
+            onPressed: _submitting ? null : _openOnboardingLink,
+            icon: const Icon(Icons.link_rounded, size: 20),
+            label: const Text('New joiner? Open onboarding link'),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (_formError != null) ...[
-            InlineAlert(message: _formError!),
-            const SizedBox(height: 16),
-          ],
-          if (_unverifiedEmail != null) ...[
-            InlineAlert(
-              message: 'Please verify your email address before signing in.',
-              trailing: Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: _resendState == _ResendState.sent
-                    ? const Text('If that address has an account, a new verification email is on its way.')
-                    : GestureDetector(
-                        onTap: _resendState == _ResendState.sending ? null : _resendVerification,
-                        child: Text(
-                          _resendState == _ResendState.sending ? 'Sending…' : 'Resend verification email',
-                          style: const TextStyle(fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+      child: AutofillGroup(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_formError != null) ...[
+              InlineAlert(message: _formError!),
+              const SizedBox(height: 16),
+            ],
+            if (_unverifiedEmail != null) ...[
+              InlineAlert(
+                message: 'Please verify your email address before signing in.',
+                trailing: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: _resendState == _ResendState.sent
+                      ? const Text('If that address has an account, a new verification email is on its way.')
+                      : GestureDetector(
+                          onTap: _resendState == _ResendState.sending ? null : _resendVerification,
+                          child: Text(
+                            _resendState == _ResendState.sending ? 'Sending…' : 'Resend verification email',
+                            style: const TextStyle(fontWeight: FontWeight.w600, decoration: TextDecoration.underline),
+                          ),
                         ),
-                      ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            AuthFormField(
+              label: 'Work email',
+              errorText: _emailError,
+              child: TextField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                autocorrect: false,
+                autofillHints: const [AutofillHints.email],
+                enabled: !_submitting,
+                onChanged: (_) => setState(() => _emailError = null),
+                decoration: const InputDecoration(
+                  hintText: 'you@company.com',
+                  prefixIcon: Icon(Icons.mail_outline_rounded),
+                ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
+            AuthFormField(
+              label: 'Password',
+              errorText: _passwordError,
+              child: AuthPasswordField(
+                controller: _passwordController,
+                enabled: !_submitting,
+                hintText: 'Enter your password',
+                prefixIcon: const Icon(Icons.lock_outline_rounded),
+                textInputAction: TextInputAction.done,
+                autofillHints: const [AutofillHints.password],
+                onChanged: (_) => setState(() => _passwordError = null),
+                onSubmitted: (_) => _submit(),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _submitting ? null : () => context.go('/forgot-password'),
+                style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12)),
+                child: const Text('Forgot password?'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            PrimaryButton(label: _submitting ? 'Signing in…' : 'Sign in', loading: _submitting, onPressed: _submit),
           ],
-          AuthFormField(
-            label: 'Email',
-            required: true,
-            errorText: _emailError,
-            child: TextField(
-              controller: _emailController,
-              keyboardType: TextInputType.emailAddress,
-              autofillHints: const [AutofillHints.email],
-              enabled: !_submitting,
-              onChanged: (_) => setState(() => _emailError = null),
-            ),
-          ),
-          const SizedBox(height: 16),
-          AuthFormField(
-            label: 'Password',
-            required: true,
-            errorText: _passwordError,
-            child: AuthPasswordField(
-              controller: _passwordController,
-              enabled: !_submitting,
-              autofillHints: const [AutofillHints.password],
-              onChanged: (_) => setState(() => _passwordError = null),
-              onSubmitted: (_) => _submit(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: GestureDetector(
-              onTap: () => context.go('/forgot-password'),
-              child: Text(
-                'Forgot password?',
-                style: TextStyle(color: Theme.of(context).colorScheme.primary, fontWeight: FontWeight.w600, fontSize: 13),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          PrimaryButton(label: _submitting ? 'Signing in…' : 'Sign in', loading: _submitting, onPressed: _submit),
-        ],
+        ),
       ),
     );
   }

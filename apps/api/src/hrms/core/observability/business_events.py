@@ -12,6 +12,7 @@ replaces it. Fields must be identifiers and fixed codes only — never names, am
 figures, document contents or a serialized entity.
 """
 
+import re
 from typing import Any
 
 import structlog
@@ -20,8 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, SessionTransaction
 
 from hrms.core.observability.logging import get_logger, safe_log
+from hrms.core.observability.metrics import COMMITTED_EVENTS, safe_count
 
 _logger = get_logger("hrms.business")
+_ENTITY_TYPE = re.compile(r"[a-z][a-z0-9_]{0,39}")
 _PENDING = "hrms_pending_business_events"
 
 _Entry = tuple[SessionTransaction | None, str, dict[str, Any], dict[str, Any]]
@@ -60,4 +63,12 @@ def _emit_committed(session: Session) -> None:
     pending: list[_Entry] = session.info.pop(_PENDING, None) or []
     for _txn, event_name, fields, context in pending:
         with structlog.contextvars.bound_contextvars(**context):
+            # Counted here - after_commit - so the metric, like the log line, never reports a
+            # transition that rolled back. `entity_type` is a table-like name from code, bounded.
+            entity = fields.get("entity_type")
+            safe_count(
+                COMMITTED_EVENTS,
+                event_name,
+                entity if isinstance(entity, str) and _ENTITY_TYPE.fullmatch(entity) else "other",
+            )
             safe_log(_logger.info, event_name, **fields)

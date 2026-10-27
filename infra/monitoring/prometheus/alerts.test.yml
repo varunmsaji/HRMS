@@ -1,0 +1,130 @@
+# promtool unit tests for alerts.yml:
+#   docker run --rm --entrypoint promtool -v $PWD/infra/monitoring/prometheus:/p quay.io/prometheus/prometheus:latest test rules /p/alerts.test.yml
+rule_files:
+  - alerts.yml
+evaluation_interval: 1m
+
+tests:
+  - name: api down fires after 2 minutes
+    interval: 1m
+    input_series:
+      - series: 'up{job="hrms-api"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: HrmsApiDown
+      - eval_time: 5m
+        alertname: HrmsApiDown
+        exp_alerts:
+          - exp_labels: {severity: critical, service: hrms, job: hrms-api}
+            exp_annotations:
+              summary: API metrics endpoint unreachable
+              description: "The scrape failed. Either the API is down or METRICS_TOKEN changed; check /health/live from outside."
+              runbook: docs/operations/OBSERVABILITY_RUNBOOK.md#api-5xx-503
+
+  - name: attendance policy rejections are not infrastructure failures
+    interval: 1m
+    input_series:
+      - series: 'hrms_operations_total{operation="attendance.punch.record",outcome="rejected"}'
+        values: '0+20x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HrmsAttendanceInfrastructureFailures
+
+  - name: attendance server-side failures do fire
+    interval: 1m
+    input_series:
+      - series: 'hrms_operations_total{operation="attendance.punch.record",outcome="failed"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HrmsAttendanceInfrastructureFailures
+        exp_alerts:
+          - exp_labels: {severity: high, service: hrms}
+            exp_annotations:
+              summary: Attendance operations failing for server-side reasons
+              description: "Policy rejections are outcome=rejected and never counted here."
+              runbook: docs/operations/OBSERVABILITY_RUNBOOK.md#attendance-punch
+
+  - name: 5xx ratio needs both a ratio and a traffic floor
+    interval: 1m
+    input_series:
+      - series: 'hrms_http_requests_total{method="GET",route="/v1/x",status_class="2xx"}'
+        values: '0+90x30'
+      - series: 'hrms_http_requests_total{method="GET",route="/v1/x",status_class="5xx"}'
+        values: '0+30x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: HrmsHigh5xxRate
+      - eval_time: 20m
+        alertname: HrmsHigh5xxRate
+        exp_alerts:
+          - exp_labels: {severity: high, service: hrms}
+            exp_annotations:
+              summary: More than 5% of API responses are 5xx
+              description: "Traffic floor of ~3 req/min avoids firing on a single failed request at night."
+              runbook: docs/operations/OBSERVABILITY_RUNBOOK.md#api-5xx-503
+
+  - name: a single 5xx at night does not page
+    interval: 1m
+    input_series:
+      - series: 'hrms_http_requests_total{method="GET",route="/v1/x",status_class="2xx"}'
+        values: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'hrms_http_requests_total{method="GET",route="/v1/x",status_class="5xx"}'
+        values: '0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HrmsHigh5xxRate
+
+  - name: stale scheduler heartbeat is critical after 5 minutes of staleness
+    interval: 1m
+    input_series:
+      - series: 'hrms_celery_scheduler_heartbeat_age_seconds'
+        values: '30 30 400 460 520 580 640 700 760'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: HrmsSchedulerHeartbeatStale
+      - eval_time: 8m
+        alertname: HrmsSchedulerHeartbeatStale
+        exp_alerts:
+          - exp_labels: {severity: critical, service: hrms}
+            exp_annotations:
+              summary: Celery Beat/worker path is not running
+              description: "health.scheduler_heartbeat has not run for over 5 minutes: Beat stopped, broker not delivering, or no worker consuming."
+              runbook: docs/operations/OBSERVABILITY_RUNBOOK.md#worker-unavailable
+
+  - name: missed daily accrual fires after 26 hours without success (and not before)
+    interval: 1m   # sample spacing must stay below the 5 m staleness lookback
+    input_series:
+      - series: 'hrms_celery_task_last_success_timestamp_seconds{task="leave.run_monthly_accrual"}'
+        values: '0x1900'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: HrmsLeaveRunMonthlyAccrualMissed
+      - eval_time: 30h
+        alertname: HrmsLeaveRunMonthlyAccrualMissed
+        exp_alerts:
+          - exp_labels: {severity: critical, service: hrms, task: leave.run_monthly_accrual}
+            exp_annotations:
+              summary: "leave.run_monthly_accrual has not succeeded in over 26 h"
+              description: "Scheduled daily 01:00. Fires only after the task has succeeded at least once since the metrics volume was created; see the absent() rule below for the never-ran case."
+              runbook: docs/operations/OBSERVABILITY_RUNBOOK.md#scheduled-task-failed
+
+  - name: a full object store fires immediately, a missing object never does
+    interval: 1m
+    input_series:
+      - series: 'hrms_dependency_errors_total{dependency="storage",category="storage_full"}'
+        values: '0 0 0 3 6 9'
+      - series: 'hrms_dependency_errors_total{dependency="storage",category="provider_error"}'
+        values: '0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: HrmsObjectStorageRejectingCalls
+      - eval_time: 4m
+        alertname: HrmsObjectStorageRejectingCalls
+        exp_alerts:
+          - exp_labels: {severity: critical, service: hrms, category: storage_full}
+            exp_annotations:
+              summary: Object storage is refusing calls (full disk, bad credentials or missing bucket)
+              description: "These answers are deterministic, not transient: nothing retries its way out of a full MinIO volume (XMinioStorageFull), rejected credentials or a missing bucket. Document uploads and bulk imports fail until an operator acts. Missing objects (NoSuchKey) never count."
+              runbook: docs/operations/OBSERVABILITY_RUNBOOK.md#external-provider

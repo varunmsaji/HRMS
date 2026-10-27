@@ -48,6 +48,29 @@ export interface CompanyDetail extends CompanyListItem {
   usage: { employees: number; active_users: number };
 }
 
+export interface EmailLogItem {
+  id: string;
+  created_at: string;
+  kind: string | null;
+  provider: string;
+  status: "ACCEPTED" | "FAILED" | "LOGGED_ONLY";
+  recipient: string;
+  sender: string | null;
+  subject: string;
+  company_id: string | null;
+  request_id: string | null;
+  failure_class: string | null;
+  error_type: string | null;
+  status_code: number | null;
+  retryable: boolean | null;
+  duration_ms: number | null;
+}
+
+export interface EmailLogDetail extends EmailLogItem {
+  text_body: string | null;
+  html_body: string | null;
+}
+
 export interface AuditEntry {
   id: string;
   created_at: string;
@@ -224,6 +247,12 @@ export const platformApi = {
     const env = raw as ListEnvelope<AuditEntry>;
     return { items: env.data, pagination: env.pagination as PaginationMeta };
   },
+  async emails(query: { status?: string; q?: string; company_id?: string; page?: number }) {
+    const { raw } = await call<EmailLogItem[]>("GET", "/emails", { query: { ...query, per_page: 25 } });
+    const env = raw as ListEnvelope<EmailLogItem>;
+    return { items: env.data, pagination: env.pagination as PaginationMeta };
+  },
+  email: async (id: string) => (await call<EmailLogDetail>("GET", `/emails/${id}`)).data,
   logFiles: async () =>
     (await call<LogFiles>("GET", "/logs/files")).data,
   logEntries: async (query: {

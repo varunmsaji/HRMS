@@ -84,6 +84,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 
       // Authenticated.
       if (location == '/splash' || isAuthOnly) return landingPathFor(auth.user);
+      // The Home tab is hidden for them (see `showHomeTab`), so don't strand an employee on the
+      // dashboard's "No access" page if something navigates there.
+      if (location == '/app/dashboard' && !showHomeTab(auth.user)) return landingPathFor(auth.user);
       return null;
     },
     routes: [

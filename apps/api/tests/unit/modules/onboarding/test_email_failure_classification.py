@@ -149,8 +149,12 @@ def test_a_non_transport_failure_is_an_error_with_traceback() -> None:
 
 
 async def test_dev_logging_sender_keeps_content_out_of_the_structured_log(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    async def _no_db(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("hrms.modules.onboarding.email_sender.record_email", _no_db)
     link = "http://localhost:3000/reset-password/dev-token-123"
     with capture_logs() as logs:
         await LoggingEmailSender().send(

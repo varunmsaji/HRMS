@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
 import 'onboarding_cases_screen.dart' show onboardingRepositoryProvider;
+import '../../../core/widgets/ui.dart';
 
 /// Where each documented setup step sends the user to finish it (mirrors `STEP_DESTINATIONS` in
 /// `apps/web/src/app/app/setup/page.tsx`).
@@ -64,39 +65,59 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Company setup')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : _error != null
-              ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [Text(_error!, textAlign: TextAlign.center), const SizedBox(height: 16), FilledButton(onPressed: _load, child: const Text('Retry'))])))
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!, actionLabel: 'Retry', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
-                      Text('Track onboarding progress for your company.', style: TextStyle(color: scheme.onSurfaceVariant)),
-                      const SizedBox(height: 12),
-                      Chip(label: Text(complete ? 'Setup complete' : '$done of ${_steps.length} complete')),
+                      HeroCard(
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Text('Company setup', style: TextStyle(color: Colors.white70, fontSize: 12.5)),
+                          const SizedBox(height: 4),
+                          Text(complete ? 'Setup complete' : '$done of ${_steps.length} complete', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 4),
+                          const Text('Track onboarding progress for your company.', style: TextStyle(color: Colors.white70, fontSize: 12.5)),
+                          const SizedBox(height: 14),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: LinearProgressIndicator(
+                              value: _steps.isEmpty ? 0 : done / _steps.length,
+                              minHeight: 8,
+                              backgroundColor: Colors.white24,
+                              valueColor: const AlwaysStoppedAnimation(Colors.white),
+                            ),
+                          ),
+                        ]),
+                      ),
                       if (!complete && next != null)
-                        Container(
-                          margin: const EdgeInsets.only(top: 12),
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            const Text('Next step', style: TextStyle(fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 4),
-                            Text('Finish setting up “${nextLabel ?? _currentStep}” to keep onboarding moving.'),
-                            const SizedBox(height: 10),
-                            FilledButton(onPressed: () => context.push(next.$2), child: Text(next.$1)),
-                          ]),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: AppCard(
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              const Text('Next step', style: TextStyle(fontWeight: FontWeight.w700)),
+                              const SizedBox(height: 4),
+                              Text('Finish setting up “${nextLabel ?? _currentStep}” to keep onboarding moving.', style: TextStyle(color: scheme.onSurfaceVariant)),
+                              const SizedBox(height: 12),
+                              FilledButton(onPressed: () => context.push(next.$2), child: Text(next.$1)),
+                            ]),
+                          ),
                         ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       for (final step in _steps)
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(step.label),
-                          trailing: Chip(
-                            visualDensity: VisualDensity.compact,
-                            avatar: step.isComplete ? const Icon(Icons.check_circle, size: 16, color: Colors.green) : null,
-                            label: Text(step.isComplete ? 'Complete' : 'Pending'),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: ListRowCard(
+                            leading: IconBadge(
+                              icon: step.isComplete ? Icons.check_rounded : Icons.radio_button_unchecked_rounded,
+                              tone: step.isComplete ? Tone.success : Tone.neutral,
+                              size: 36,
+                            ),
+                            title: step.label,
+                            showChevron: false,
+                            trailing: StatusChip(label: step.isComplete ? 'Complete' : 'Pending', tone: step.isComplete ? Tone.success : Tone.warning),
                           ),
                         ),
                     ],

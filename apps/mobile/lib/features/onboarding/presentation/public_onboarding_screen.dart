@@ -8,6 +8,7 @@ import '../data/public_onboarding_repository.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/forms/spec_form.dart';
 import '../domain/onboarding_form_spec.dart';
+import '../../../core/widgets/ui.dart';
 
 final publicOnboardingRepositoryProvider = Provider<PublicOnboardingRepository>(
   (ref) => PublicOnboardingRepository(ref.watch(apiClientProvider)),
@@ -171,7 +172,7 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_loading) return const Scaffold(body: ListSkeleton(count: 3));
     if (_loadError != null || _case == null) {
       return _Terminal(
         icon: Icons.warning_amber_rounded,
@@ -320,19 +321,22 @@ class _PublicOnboardingScreenState extends ConsumerState<PublicOnboardingScreen>
         const Text('Check everything below before you submit. Once submitted, HR will verify each section — you will be notified if anything needs a correction.'),
         const SizedBox(height: 12),
         for (var i = 0; i < onboardingSections.length; i++)
-          Card(
-            child: ListTile(
-              title: Text(onboardingSections[i].label),
-              subtitle: Text(_summary(onboardingSections[i])),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: ListRowCard(
+              leading: const IconBadge(icon: Icons.assignment_outlined, size: 38),
+              title: onboardingSections[i].label,
+              subtitle: _summary(onboardingSections[i]),
+              showChevron: false,
               trailing: TextButton(onPressed: () => _goTo(i + 1), child: const Text('Edit')),
             ),
           ),
-        Card(
-          child: ListTile(
-            title: const Text('Documents'),
-            subtitle: Text(_documents.isEmpty ? 'None uploaded' : '${_documents.length} uploaded'),
-            trailing: TextButton(onPressed: () => _goTo(_documentsStep), child: const Text('Edit')),
-          ),
+        ListRowCard(
+          leading: const IconBadge(icon: Icons.folder_open_outlined, size: 38),
+          title: 'Documents',
+          subtitle: _documents.isEmpty ? 'None uploaded' : '${_documents.length} uploaded',
+          showChevron: false,
+          trailing: TextButton(onPressed: () => _goTo(_documentsStep), child: const Text('Edit')),
         ),
       ],
     );
@@ -475,12 +479,13 @@ class _DocumentsStepState extends ConsumerState<_DocumentsStep> {
         const SizedBox(height: 16),
         if (widget.documents.isEmpty) Text('No documents uploaded yet.', style: TextStyle(color: scheme.onSurfaceVariant)),
         for (final d in widget.documents)
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.description_outlined),
-              title: Text(onboardingDocumentTypes[d.documentType] ?? d.documentType),
-              subtitle: Text('${d.originalFilename} · ${_size(d.sizeBytes)} · ${d.status}${d.rejectionReason != null ? '\nRejected: ${d.rejectionReason}' : ''}'),
-              isThreeLine: d.rejectionReason != null,
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: ListRowCard(
+              leading: const IconBadge(icon: Icons.description_outlined, size: 38),
+              title: onboardingDocumentTypes[d.documentType] ?? d.documentType,
+              subtitle: '${d.originalFilename} · ${_size(d.sizeBytes)} · ${d.status}${d.rejectionReason != null ? '\nRejected: ${d.rejectionReason}' : ''}',
+              showChevron: false,
               trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: _busy ? null : () => _delete(d)),
             ),
           ),

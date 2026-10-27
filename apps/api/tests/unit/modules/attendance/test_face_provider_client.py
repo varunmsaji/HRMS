@@ -190,3 +190,39 @@ def test_provider_transport_settings_are_bounded() -> None:
 def test_the_reservation_lease_must_outlast_the_provider_budget() -> None:
     with pytest.raises(ValidationError, match="lease"):
         _settings(face_enrollment_provider_budget_seconds=200, face_enrollment_lease_seconds=100)
+
+
+async def test_provider_calls_are_measured_and_timeouts_are_a_distinct_category() -> None:
+    """Observability: success/failure counts, latency, and a `timeout` category an alert can
+    separate from a rejection - with no payload, key or secret reaching a series."""
+    from prometheus_client import REGISTRY, generate_latest
+
+    def sample(name: str, **labels: str) -> float:
+        return REGISTRY.get_sample_value(name, labels) or 0.0
+
+    ok = sample("hrms_dependency_calls_total", dependency="face_provider", outcome="success")
+    bad = sample("hrms_dependency_calls_total", dependency="face_provider", outcome="failure")
+    timeouts = sample(
+        "hrms_dependency_errors_total", dependency="face_provider", category="timeout"
+    )
+
+    provider = FaceppFaceVerificationProvider(_settings(), transport=httpx.MockTransport(_ok))
+    await provider.delete_person(person_id=_PERSON)
+    await provider.aclose()
+
+    def slow(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    failing = FaceppFaceVerificationProvider(_settings(), transport=httpx.MockTransport(slow))
+    with pytest.raises(FaceProviderError):
+        await failing.delete_person(person_id=_PERSON)
+    await failing.aclose()
+
+    calls = "hrms_dependency_calls_total"
+    assert sample(calls, dependency="face_provider", outcome="success") == ok + 1
+    assert sample(calls, dependency="face_provider", outcome="failure") == bad + 1
+    errors = "hrms_dependency_errors_total"
+    assert sample(errors, dependency="face_provider", category="timeout") == timeouts + 1
+    assert sample("hrms_dependency_call_duration_seconds_count", dependency="face_provider") >= 2
+    exposition = generate_latest(REGISTRY).decode()
+    assert _API_KEY not in exposition and _API_SECRET not in exposition

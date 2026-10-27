@@ -130,7 +130,16 @@ async def test_invite_stores_only_a_hash_and_response_never_exposes_it(
         data = r.json()["data"]
         raw = _token_from_invite_url(data["invite_url"])
         assert len(raw) >= 40  # 256 bits of urlsafe entropy
-        assert set(data) == {"id", "email", "role_code", "expires_at", "invite_url", "email_sent"}
+        assert set(data) == {
+            "id",
+            "email",
+            "role_code",
+            "expires_at",
+            "invite_url",
+            "email_sent",
+            "email_queued",  # B13 additive fields; still no token hash or other secret
+            "email_delivery_status",
+        }
         factory = get_session_factory()
         async with factory() as session:
             await set_rls_company_id(session, str(tenant.company_id))
@@ -172,7 +181,10 @@ async def test_email_delivery_failure_does_not_fail_the_invite(
             json={"email": email, "role_code": "EMPLOYEE"},
         )
         assert r.status_code == 201, r.text
-        assert r.json()["data"]["email_sent"] is False
+        # B12 / DEF-B11-04: delivery happens after the commit, so the response can only say the
+        # email was queued (`email_sent` = True); the provider failure is logged afterwards and
+        # never fails or undoes the invite.
+        assert r.json()["data"]["email_sent"] is True
         # the admin can still hand over the link manually and it works
         token = _token_from_invite_url(r.json()["data"]["invite_url"])
         accept = await client.post(

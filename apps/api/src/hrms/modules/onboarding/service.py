@@ -11,11 +11,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
+from hrms.core.db.locks import lock_onboarding_case_email
 from hrms.core.db.session import set_rls_company_id
 from hrms.core.errors.base import AppError, NotFoundError
 from hrms.core.links import mobile_link
@@ -28,11 +30,14 @@ from hrms.modules.onboarding.document_validation import (
     sanitize_display_filename,
     sniff_document_content_type,
 )
-from hrms.modules.onboarding.email_sender import get_email_sender, log_email_failure
+from hrms.modules.onboarding.email_sender import (
+    get_email_sender,
+    log_email_failure,
+    queue_email_after_commit,
+)
 from hrms.modules.onboarding.email_templates import (
     build_activated_email,
     build_changes_requested_email,
-    build_invite_email,
 )
 from hrms.modules.onboarding.exceptions import (
     DuplicateActiveOnboardingCaseError,
@@ -320,6 +325,47 @@ class OnboardingCaseService:
             raise InvalidBranchReferenceError() from exc
         return branch.legal_entity_id
 
+    async def _insert_new_case(
+        self,
+        *,
+        company_id: UUID,
+        case_id: UUID,
+        body: OnboardingCaseCreate,
+        personal_email: str,
+        legal_entity_id: UUID | None,
+        actor_user_id: UUID,
+        now: datetime,
+    ) -> "OnboardingCase":
+        return await self._repo.insert_case(
+            self._session,
+            data={
+                "id": case_id,
+                "company_id": company_id,
+                "status": "DRAFT",
+                "candidate_first_name": body.candidate_first_name,
+                "candidate_last_name": body.candidate_last_name,
+                "personal_email": personal_email,
+                "personal_mobile": body.personal_mobile,
+                "designation_id": body.designation_id,
+                "department_id": body.department_id,
+                "branch_id": body.branch_id,
+                "legal_entity_id": legal_entity_id,
+                "proposed_joining_date": body.proposed_joining_date,
+                "created_by_user_id": actor_user_id,
+                "personal_info": {},
+                "address_info": {},
+                "emergency_contact": {},
+                "bank_info": {},
+                "statutory_info": {},
+                "compensation_info": {},
+                "previous_employment_info": {},
+                "education_info": {},
+                "nominee_info": {},
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
     @logged_operation("recruitment.onboarding_case.create")
     async def create_case(
         self,
@@ -343,43 +389,39 @@ class OnboardingCaseService:
         if body.branch_id is not None:
             legal_entity_id = await self._assert_branch_ownership(company_id, body.branch_id)
 
+        # B12 (DEF-B11-03 / DEF-B11-05): one normalised spelling (stripped, lower-cased - the same
+        # rule invites and user accounts already apply) is what is checked, locked on and stored.
+        # The advisory lock makes check-then-insert atomic across requests and processes: a
+        # parallel create for the same address waits here, then sees the winner's committed case
+        # and gets the 409 below. Nothing is written before the check passes.
+        personal_email = body.personal_email.strip().lower()
+        await lock_onboarding_case_email(self._session, company_id, personal_email)
         existing = await self._repo.get_active_case_by_email(
-            self._session, company_id=company_id, personal_email=body.personal_email
+            self._session, company_id=company_id, personal_email=personal_email
         )
         if existing is not None:
             raise DuplicateActiveOnboardingCaseError()
 
         now = datetime.now(UTC)
         case_id = uuid4()
-        case = await self._repo.insert_case(
-            self._session,
-            data={
-                "id": case_id,
-                "company_id": company_id,
-                "status": "DRAFT",
-                "candidate_first_name": body.candidate_first_name,
-                "candidate_last_name": body.candidate_last_name,
-                "personal_email": body.personal_email,
-                "personal_mobile": body.personal_mobile,
-                "designation_id": body.designation_id,
-                "department_id": body.department_id,
-                "branch_id": body.branch_id,
-                "legal_entity_id": legal_entity_id,
-                "proposed_joining_date": body.proposed_joining_date,
-                "created_by_user_id": actor_user_id,
-                "personal_info": {},
-                "address_info": {},
-                "emergency_contact": {},
-                "bank_info": {},
-                "statutory_info": {},
-                "compensation_info": {},
-                "previous_employment_info": {},
-                "education_info": {},
-                "nominee_info": {},
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
+        try:
+            # SAVEPOINT: a database-level duplicate (migration 20261027091000) must not poison the
+            # request transaction. With the advisory lock above this is unreachable from this code;
+            # it is the backstop for any writer that bypasses the lock.
+            async with self._session.begin_nested():
+                case = await self._insert_new_case(
+                    company_id=company_id,
+                    case_id=case_id,
+                    body=body,
+                    personal_email=personal_email,
+                    legal_entity_id=legal_entity_id,
+                    actor_user_id=actor_user_id,
+                    now=now,
+                )
+        except IntegrityError as exc:
+            if "onboarding_case_company_live_email_key" in str(exc.orig):
+                raise DuplicateActiveOnboardingCaseError() from exc
+            raise
 
         read = onboarding_case_to_read(case)
         await self._audit.record(
@@ -640,6 +682,14 @@ class OnboardingTokenService:
     async def issue_token(
         self, company_id: UUID, case_id: UUID, *, ttl_days: int = DEFAULT_TOKEN_TTL_DAYS
     ) -> str:
+        raw_token, _expires_at = await self.issue_token_with_expiry(
+            company_id, case_id, ttl_days=ttl_days
+        )
+        return raw_token
+
+    async def issue_token_with_expiry(
+        self, company_id: UUID, case_id: UUID, *, ttl_days: int = DEFAULT_TOKEN_TTL_DAYS
+    ) -> tuple[str, datetime]:
         """Mints a new public-link token for the case, revoking any previous live one first
         (plan §4.2), and moves `DRAFT`/`EXPIRED` → `INVITED` (state machine, plan §6) — the same
         transition the O3 send-invite endpoint will trigger; this method already does the full
@@ -673,7 +723,7 @@ class OnboardingTokenService:
         if case.status in ("DRAFT", "EXPIRED"):
             await self._case_repo.set_status(self._session, case=case, status="INVITED", now=now)
 
-        return raw_token
+        return raw_token, now + timedelta(days=ttl_days)
 
     async def resolve_and_touch(self, raw_token: str) -> OnboardingTokenContext:
         """The single security boundary for the entire public surface (plan §5) — every public
@@ -724,51 +774,116 @@ class OnboardingTokenService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        subject: str | None = None,
+        body: str | None = None,
+        send_request_id: UUID | None = None,
     ) -> OnboardingInviteRead:
-        """`POST /onboarding-cases/{id}/send-invite` (O3) — issues/reissues a token via
-        `issue_token` (module docstring: that method already does the full state-machine work,
-        this just wraps it with the email-sending step the plan's own phase split deferred to
-        O3) and emails the resulting link. A failed send never rolls back the token — the link
-        is already live and valid the moment it's issued, so HR can always fall back to "Copy
-        link" (plan §9) even if delivery failed."""
-        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        """`POST /onboarding-cases/{id}/send-invite` - issues/reissues a token via `issue_token`
+        and queues the invitation (HR-edited `subject`/`body`, or the built-in default).
+
+        Concurrency: the case row is locked (`FOR UPDATE`) for the whole transaction, so two
+        simultaneous sends are serialised - each is then an intentional re-issue that revokes the
+        previous link - unless they carry the same `send_request_id`, in which case the second
+        finds the first's message and returns it WITHOUT minting another token (its `invite_url`
+        is `None`: only the token's hash exists after the first response).
+
+        Order inside the one transaction: validate + render with an inert link (nothing written if
+        the content is unsendable) -> issue token -> render with the real link -> outbox row ->
+        history row -> audit. The mail is delivered by a worker only after commit. A failed outbox
+        write never rolls back the token (HR can still copy the link) and is reported as
+        `NOT_QUEUED`, never as sent."""
+        from hrms.modules.onboarding.invitation_compose import PREVIEW_LINK
+        from hrms.modules.onboarding.invitation_service import OnboardingInvitationService
+
+        assert actor_user_id is not None
+        case = await self._case_repo.get_case_for_update(
+            self._session, company_id=company_id, case_id=case_id
+        )
         if case is None:
             raise NotFoundError("Resource not found")
+        invitations = OnboardingInvitationService(self._session, self._settings)
+
+        if send_request_id is not None:
+            existing = await invitations.find_by_request_id(case_id, send_request_id)
+            if existing is not None:
+                listed = [m for m in await invitations.list_messages(company_id, case_id)]
+                current = next((m for m in listed if m.id == existing.id), None)
+                return OnboardingInviteRead(
+                    case=onboarding_case_to_read(case),
+                    invite_url=None,
+                    email_sent=existing.outbox_message_key is not None,
+                    email_queued=existing.outbox_message_key is not None,
+                    email_delivery_status="QUEUED" if existing.outbox_message_key else "NOT_QUEUED",
+                    message_id=existing.id,
+                    message_status=current.status if current else None,
+                    replayed=True,
+                )
+
         if case.status not in ONBOARDING_CASE_INVITABLE_STATUSES:
             raise OnboardingCaseNotInvitableError()
 
-        raw_token = await self.issue_token(company_id, case_id)
-        # Re-fetch rather than reuse the `case` object above — `issue_token` may have just
+        # Dry run first: unsendable content must fail before any token is minted or revoked.
+        probe_expiry = datetime.now(UTC) + timedelta(days=DEFAULT_TOKEN_TTL_DAYS)
+        values, _ = await invitations.resolve_values(company_id, case, expires_at=probe_expiry)
+        invitations.render(
+            subject=subject,
+            body=body,
+            values=values,
+            onboarding_url=f"{self._settings.web_app_base_url}/onboarding/{PREVIEW_LINK}",
+            mobile_url=None,
+        )
+
+        raw_token, expires_at = await self.issue_token_with_expiry(company_id, case_id)
+        # Re-fetch rather than reuse the `case` object above - `issue_token` may have just
         # transitioned its status (DRAFT/EXPIRED -> INVITED) and the response/audit trail below
         # must reflect that.
         case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
         assert case is not None
         invite_url = f"{self._settings.web_app_base_url}/onboarding/{raw_token}"
-
-        # Cross-module read only (`OrganisationService.get_company_profile`), never
-        # `.repository`/`.models` directly — same lazy-import convention as
-        # `OnboardingCaseService._assert_*_ownership` (Module Standard §2).
-        from hrms.modules.organisation.service import OrganisationService
-
-        organisation = OrganisationService(self._session, self._settings)
-        company = await organisation.get_company_profile(company_id)
-
-        subject, html_body, text_body = build_invite_email(
-            candidate_first_name=case.candidate_first_name,
-            company_name=company.name,
-            invite_url=invite_url,
+        values, _ = await invitations.resolve_values(company_id, case, expires_at=expires_at)
+        rendered = invitations.render(
+            subject=subject,
+            body=body,
+            values=values,
+            onboarding_url=invite_url,
             mobile_url=mobile_link(self._settings, "onboarding", raw_token),
         )
-        email_sent = True
+
+        # B13: written to the transactional outbox in this transaction, delivered by a worker
+        # after it commits (see `account_invite.service` for the full contract of the flags).
+        message_key = (
+            f"onboarding_invite:{case_id}:{hashlib.sha256(raw_token.encode()).hexdigest()[:24]}"
+        )
+        queued = False
         try:
-            await get_email_sender(self._settings).send(
-                to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
+            queued = await queue_email_after_commit(
+                self._session,
+                get_email_sender(self._settings),
+                to=case.personal_email,
+                subject=rendered.subject,
+                html_body=rendered.html_body,
+                text_body=rendered.text_body,
+                failure_kind="onboarding_invite",
+                message_key=message_key,
+                company_id=str(company_id),
+                case_id=str(case_id),
             )
-        except Exception as exc:  # noqa: BLE001 — delivery failure must not fail the request, see above
-            email_sent = False
+        except Exception as exc:  # noqa: BLE001 - a queueing failure must not fail the request
             log_email_failure(
                 "onboarding_invite", exc, company_id=str(company_id), case_id=str(case_id)
             )
+
+        now = datetime.now(UTC)
+        message = await invitations.record_message(
+            company_id=company_id,
+            case=case,
+            subject=rendered.subject,
+            text_body=invitations.redacted_text(subject=subject, body=body, values=values),
+            actor_user_id=actor_user_id,
+            outbox_message_key=message_key if queued else None,
+            send_request_id=send_request_id,
+            now=now,
+        )
 
         read = onboarding_case_to_read(case)
         await self._audit.record(
@@ -778,11 +893,26 @@ class OnboardingTokenService:
             action="ONBOARDING_INVITE_SENT",
             entity_type="onboarding_case",
             entity_id=case_id,
-            after={**onboarding_case_to_audit_dict(read), "email_sent": email_sent},
+            after={
+                **onboarding_case_to_audit_dict(read),
+                "email_sent": queued,
+                "email_queued": queued,
+                "message_id": str(message.id),
+                "customised": subject is not None or body is not None,
+            },
             ip=ip_address,
             user_agent=user_agent,
         )
-        return OnboardingInviteRead(case=read, invite_url=invite_url, email_sent=email_sent)
+        return OnboardingInviteRead(
+            case=read,
+            invite_url=invite_url,
+            email_sent=queued,
+            email_queued=queued,
+            email_delivery_status="QUEUED" if queued else "NOT_QUEUED",
+            message_id=message.id,
+            message_status="QUEUED" if queued else "NOT_QUEUED",
+            invitation_expires_at=expires_at,
+        )
 
 
 class OnboardingDocumentService:
@@ -1096,8 +1226,16 @@ class OnboardingReviewService:
             rejected_items=rejected_items,
         )
         try:
-            await get_email_sender(self._settings).send(
-                to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
+            await queue_email_after_commit(
+                self._session,
+                get_email_sender(self._settings),
+                to=case.personal_email,
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+                failure_kind="onboarding_changes_requested",
+                company_id=str(company_id),
+                case_id=str(case.id),
             )
         except Exception as exc:  # noqa: BLE001 — delivery failure must not block the status transition
             log_email_failure(
@@ -1222,7 +1360,13 @@ class OnboardingActivationService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> OnboardingCaseRead:
-        case = await self._case_repo.get_case(self._session, company_id=company_id, case_id=case_id)
+        # B12 / DEF-B11-02 - the row lock is the single-activation invariant. Every concurrent
+        # activation of this case queues on it; the first commits ACTIVATED together with the
+        # employee graph it created (one transaction), and each later one re-reads ACTIVATED and
+        # is refused below with the established "not ready" conflict, having written nothing.
+        case = await self._case_repo.get_case_for_update(
+            self._session, company_id=company_id, case_id=case_id
+        )
         if case is None:
             raise NotFoundError("Resource not found")
         if case.status != "VERIFIED":
@@ -1507,9 +1651,20 @@ class OnboardingActivationService:
             company_name=company.name,
             employee_code=employee.employee_code,
         )
+        # Delivered only after the activation commits (B12 / DEF-B11-04): a failure anywhere
+        # below - the audit write included - rolls the activation back and sends nothing.
         try:
-            await get_email_sender(self._settings).send(
-                to=case.personal_email, subject=subject, html_body=html_body, text_body=text_body
+            await queue_email_after_commit(
+                self._session,
+                get_email_sender(self._settings),
+                to=case.personal_email,
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+                failure_kind="onboarding_activated",
+                message_key=f"onboarding_activated:{case.id}",
+                company_id=str(company_id),
+                case_id=str(case.id),
             )
         except Exception as exc:  # noqa: BLE001 — delivery failure must not undo the activation
             log_email_failure(

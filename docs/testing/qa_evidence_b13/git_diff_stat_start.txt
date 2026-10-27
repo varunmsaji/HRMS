@@ -1,0 +1,143 @@
+ apps/api/.dockerignore                             |   4 +
+ apps/api/.env.example                              |  16 +
+ apps/api/Dockerfile                                |  16 +
+ apps/api/env/.env.production.example               |   5 +
+ apps/api/pyproject.toml                            |   3 +
+ apps/api/src/hrms/app.py                           |  17 +-
+ apps/api/src/hrms/core/celery_app.py               |  59 +-
+ apps/api/src/hrms/core/config/settings.py          |  38 +-
+ apps/api/src/hrms/core/db/locks.py                 |  16 +
+ apps/api/src/hrms/core/db/session.py               |  33 +-
+ apps/api/src/hrms/core/errors/handlers.py          |   6 +
+ .../src/hrms/core/observability/business_events.py |  11 +
+ apps/api/src/hrms/core/observability/file_sink.py  |   4 +
+ apps/api/src/hrms/core/observability/logging.py    |  11 +
+ apps/api/src/hrms/core/observability/operations.py |  22 +-
+ apps/api/src/hrms/core/observability/redaction.py  |  11 +-
+ .../src/hrms/core/observability/request_context.py |  27 +-
+ .../src/hrms/core/observability/security_events.py |   3 +
+ apps/api/src/hrms/core/storage.py                  |  90 ++-
+ apps/api/src/hrms/modules/account_invite/router.py |   7 +-
+ .../api/src/hrms/modules/account_invite/service.py |  44 +-
+ .../src/hrms/modules/attendance/face_deletion.py   |  28 +-
+ .../src/hrms/modules/attendance/face_service.py    |  34 +-
+ .../hrms/modules/attendance/face_verification.py   |  75 +-
+ apps/api/src/hrms/modules/attendance/models.py     |  21 +
+ apps/api/src/hrms/modules/attendance/router.py     |  47 +-
+ apps/api/src/hrms/modules/attendance/schemas.py    |  14 +-
+ apps/api/src/hrms/modules/attendance/service.py    |  78 +-
+ apps/api/src/hrms/modules/attendance/tasks.py      |  21 +-
+ apps/api/src/hrms/modules/employee/service.py      |  71 ++
+ apps/api/src/hrms/modules/employee/tasks.py        |   7 +-
+ .../src/hrms/modules/employee_import/exceptions.py |  14 +
+ .../src/hrms/modules/employee_import/service.py    |  15 +-
+ apps/api/src/hrms/modules/employee_import/tasks.py |   5 +-
+ apps/api/src/hrms/modules/leave/router.py          |  20 +-
+ apps/api/src/hrms/modules/leave/service.py         |  40 +-
+ apps/api/src/hrms/modules/leave/tasks.py           |  19 +-
+ .../src/hrms/modules/onboarding/email_sender.py    | 222 +++++-
+ apps/api/src/hrms/modules/onboarding/repository.py |  45 +-
+ apps/api/src/hrms/modules/onboarding/service.py    |  65 +-
+ apps/api/src/hrms/modules/organisation/service.py  |   8 +
+ apps/api/src/hrms/modules/payroll/exceptions.py    |  27 +
+ apps/api/src/hrms/modules/payroll/repository.py    |  19 +
+ apps/api/src/hrms/modules/payroll/service.py       |  42 +
+ apps/api/src/hrms/modules/platform/models.py       |  24 +
+ apps/api/src/hrms/seed/bootstrap.py                |  20 +-
+ apps/api/tests/conftest.py                         |   9 +
+ apps/api/tests/integration/core/test_storage.py    |  72 +-
+ .../account_invite/test_invite_accept_hardening.py |   5 +-
+ .../integration/modules/attendance/conftest.py     |   1 +
+ .../employee/test_effective_dated_integrity.py     |  38 +
+ .../test_employee_import_upload_bounds.py          |  33 +
+ .../modules/payroll/test_p1_hardening.py           |  14 +-
+ .../modules/platform/test_platform_console.py      |  36 +
+ apps/api/tests/security/test_rls_runtime_role.py   |  24 +-
+ apps/api/tests/unit/core/test_file_logging.py      |  14 +
+ apps/api/tests/unit/core/test_log_redaction.py     |  54 +-
+ .../attendance/test_face_provider_client.py        |  36 +
+ .../test_email_failure_classification.py           |   6 +-
+ apps/api/uv.lock                                   |  11 +
+ .../android/app/src/main/AndroidManifest.xml       |   3 +-
+ .../app/src/main/res/mipmap-hdpi/ic_launcher.png   | Bin 544 -> 2258 bytes
+ .../app/src/main/res/mipmap-mdpi/ic_launcher.png   | Bin 442 -> 1352 bytes
+ .../app/src/main/res/mipmap-xhdpi/ic_launcher.png  | Bin 721 -> 3375 bytes
+ .../app/src/main/res/mipmap-xxhdpi/ic_launcher.png | Bin 1031 -> 5589 bytes
+ .../src/main/res/mipmap-xxxhdpi/ic_launcher.png    | Bin 1443 -> 8152 bytes
+ .../AppIcon.appiconset/Icon-App-1024x1024@1x.png   | Bin 10932 -> 116169 bytes
+ .../AppIcon.appiconset/Icon-App-20x20@1x.png       | Bin 295 -> 439 bytes
+ .../AppIcon.appiconset/Icon-App-20x20@2x.png       | Bin 406 -> 1120 bytes
+ .../AppIcon.appiconset/Icon-App-20x20@3x.png       | Bin 450 -> 1830 bytes
+ .../AppIcon.appiconset/Icon-App-29x29@1x.png       | Bin 282 -> 724 bytes
+ .../AppIcon.appiconset/Icon-App-29x29@2x.png       | Bin 462 -> 1734 bytes
+ .../AppIcon.appiconset/Icon-App-29x29@3x.png       | Bin 704 -> 3020 bytes
+ .../AppIcon.appiconset/Icon-App-40x40@1x.png       | Bin 406 -> 1120 bytes
+ .../AppIcon.appiconset/Icon-App-40x40@2x.png       | Bin 586 -> 2623 bytes
+ .../AppIcon.appiconset/Icon-App-40x40@3x.png       | Bin 862 -> 4500 bytes
+ .../AppIcon.appiconset/Icon-App-60x60@2x.png       | Bin 862 -> 4500 bytes
+ .../AppIcon.appiconset/Icon-App-60x60@3x.png       | Bin 1674 -> 7500 bytes
+ .../AppIcon.appiconset/Icon-App-76x76@1x.png       | Bin 762 -> 2506 bytes
+ .../AppIcon.appiconset/Icon-App-76x76@2x.png       | Bin 1226 -> 5887 bytes
+ .../AppIcon.appiconset/Icon-App-83.5x83.5@2x.png   | Bin 1418 -> 6624 bytes
+ apps/mobile/lib/core/forms/spec_form_screen.dart   |   3 +-
+ apps/mobile/lib/core/requests/request_screens.dart |  84 +-
+ .../mobile/lib/core/resource/resource_screens.dart |  85 +-
+ .../lib/core/resource/sub_resource_section.dart    |  20 +-
+ apps/mobile/lib/core/theme/app_theme.dart          | 174 ++++-
+ .../mobile/lib/core/widgets/async_list_screen.dart |  93 ++-
+ .../presentation/attendance_day_detail_screen.dart | 102 ++-
+ .../presentation/attendance_insights_screen.dart   |  34 +-
+ .../presentation/attendance_month_card.dart        |  17 +-
+ .../attendance_period_detail_screen.dart           |  69 +-
+ .../presentation/attendance_periods_screen.dart    |  38 +-
+ .../presentation/attendance_self_screen.dart       |  34 +-
+ .../presentation/attendance_summary.dart           |  15 +-
+ .../presentation/attendance_widgets.dart           |  50 +-
+ .../presentation/face_enrollment_admin_card.dart   |  17 +-
+ .../attendance/presentation/face_punch_card.dart   |  21 +-
+ .../presentation/policy_assignments_screen.dart    |  34 +-
+ .../presentation/policy_resolution_screen.dart     |   9 +-
+ .../presentation/roster_calendar_screen.dart       |   8 +-
+ .../attendance/presentation/rosters_screen.dart    |  72 +-
+ .../presentation/team_attendance_screen.dart       |  16 +-
+ .../features/auth/presentation/login_screen.dart   | 160 ++--
+ .../auth/presentation/widgets/auth_form_field.dart |  36 +-
+ .../auth/presentation/widgets/auth_scaffold.dart   | 301 +++++---
+ .../dashboard/presentation/dashboard_screen.dart   | 853 +++++++++++++++------
+ .../employees/presentation/employees_screen.dart   |  24 +-
+ .../leave_application_detail_screen.dart           |  73 +-
+ .../presentation/leave_applications_screen.dart    | 111 +--
+ .../leave/presentation/leave_balances_screen.dart  |  97 ++-
+ .../presentation/leave_year_setting_screen.dart    |   3 +-
+ .../onboarding_case_detail_screen.dart             |  98 +--
+ .../presentation/onboarding_cases_screen.dart      |  11 +-
+ .../presentation/public_onboarding_screen.dart     |  39 +-
+ .../onboarding/presentation/setup_screen.dart      |  69 +-
+ .../onboarding/presentation/users_screen.dart      |  17 +-
+ .../presentation/company_profile_screen.dart       |  52 +-
+ .../presentation/employee_salary_panel.dart        |  31 +-
+ .../payroll/presentation/my_payslips_screen.dart   |  17 +-
+ .../presentation/pay_run_detail_screen.dart        | 120 +--
+ .../presentation/pay_run_employee_screen.dart      |  84 +-
+ .../payroll/presentation/pay_runs_screen.dart      |  63 +-
+ .../payroll/presentation/payslip_screen.dart       | 203 +++--
+ .../presentation/statutory_rates_screen.dart       |  33 +-
+ .../presentation/employee_documents_panel.dart     |  31 +-
+ .../profile/presentation/employee_overview.dart    | 141 ++--
+ .../presentation/employee_record_sections.dart     |  47 +-
+ .../profile/presentation/profile_screen.dart       |  36 +-
+ apps/mobile/lib/features/shell/app_shell.dart      |  39 +-
+ .../lib/features/shell/settings_hub_screen.dart    | 153 +++-
+ apps/mobile/lib/features/splash/splash_screen.dart |  17 +-
+ apps/mobile/pubspec.yaml                           |   2 +
+ apps/mobile/test/leave_applications_test.dart      |   4 +-
+ apps/mobile/test/live/live_contract_test.dart      |  37 +-
+ apps/web/src/app/platform/layout.tsx               |   6 +-
+ apps/web/src/components/landing/landing.tsx        |   6 +-
+ apps/web/src/components/layout/app-shell.tsx       |  12 +-
+ apps/web/src/components/layout/auth-layout.tsx     |   4 +-
+ apps/web/src/lib/platform/api.ts                   |  29 +
+ docker-compose.prod.yml                            |  13 +
+ infra/nginx/conf.d/hrms.conf.template              |   6 +
+ run_full_tests.py                                  |  16 +-
+ 142 files changed, 4152 insertions(+), 1717 deletions(-)

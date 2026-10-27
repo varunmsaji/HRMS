@@ -8,6 +8,7 @@ import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
 import '../../../core/providers.dart';
 import '../../auth/state/auth_controller.dart';
+import '../../../core/widgets/ui.dart';
 
 /// Mirrors `EMPLOYEE_DOCUMENT_TYPES` / `_LABELS` in `apps/web/src/lib/employee/types.ts`.
 const employeeDocumentTypeLabels = {
@@ -238,19 +239,8 @@ class _EmployeeDocumentsPanelState extends ConsumerState<EmployeeDocumentsPanel>
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canManage = permissions.contains(employeeUpdateSensitive);
-    if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!.status == 403 ? "You do not have permission to view this employee's documents." : _error!.message, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
-      );
-    }
+    if (_loading) return const ListSkeleton(count: 3);
+    if (_error != null) return StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.status == 403 ? "You do not have permission to view this employee's documents." : _error!.message, actionLabel: 'Retry', onAction: _load);
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
@@ -266,17 +256,16 @@ class _EmployeeDocumentsPanelState extends ConsumerState<EmployeeDocumentsPanel>
               ),
             ),
           if (_docs.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 48),
-              child: Center(child: Text('No documents on record yet.')),
-            ),
+            const SizedBox(height: 280, child: StateMessage(icon: Icons.description_outlined, title: 'No documents yet', message: 'No documents on record yet.')),
           for (final d in _docs)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: AppCard(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
-                    Expanded(child: Text(employeeDocumentTypeLabels[d.documentType] ?? d.documentType, style: const TextStyle(fontWeight: FontWeight.w600))),
+                    const IconBadge(icon: Icons.description_outlined, size: 36),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(employeeDocumentTypeLabels[d.documentType] ?? d.documentType, style: const TextStyle(fontWeight: FontWeight.w700))),
                     _statusChip(context, d.status),
                   ]),
                   const SizedBox(height: 4),

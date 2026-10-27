@@ -29,7 +29,6 @@ instead. `calculate()` also bounds its lock and statement waits (`core/db/timeou
 blocked step fails cleanly and the sweep moves on.
 """
 
-import asyncio
 from datetime import date, timedelta
 from uuid import UUID
 
@@ -43,7 +42,7 @@ from hrms.core.celery_app import (
     dispatch_per_company,
 )
 from hrms.core.db.models.identity import Company
-from hrms.core.db.session import session_scope
+from hrms.core.db.session import run_task, session_scope
 from hrms.core.db.timeouts import is_wait_timeout
 from hrms.core.observability.logging import get_logger, safe_error
 from hrms.modules.attendance.exceptions import (
@@ -161,7 +160,7 @@ async def _calculate_company_async(company_id: UUID) -> int:
 
 @celery_app.task(name="attendance.calculate_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def calculate_company(company_id: str) -> int:
-    return asyncio.run(_calculate_company_async(UUID(company_id)))
+    return run_task(_calculate_company_async(UUID(company_id)))
 
 
 @celery_app.task(name="attendance.run_daily_calculation", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
@@ -171,7 +170,7 @@ def run_daily_calculation() -> int:
     **09:30 IST** (`CD-4`). Fans out one `calculate_company` task per active company rather than
     calculating inline — keeps each tenant's run independently retryable, exactly like
     `leave.run_monthly_accrual`."""
-    company_ids = asyncio.run(_list_active_company_ids())
+    company_ids = run_task(_list_active_company_ids())
     return dispatch_per_company(calculate_company, company_ids)
 
 
@@ -254,7 +253,7 @@ def calculate_range(
     actor_user_id: str | None,
     legal_entity_id: str | None = None,
 ) -> dict[str, int]:
-    return asyncio.run(
+    return run_task(
         _calculate_range_async(
             UUID(company_id),
             date.fromisoformat(date_from),
@@ -295,14 +294,14 @@ async def _send_incomplete_reminders_async(company_id: UUID) -> int:
 
 @celery_app.task(name="attendance.send_incomplete_reminders_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def send_incomplete_reminders_company(company_id: str) -> int:
-    return asyncio.run(_send_incomplete_reminders_async(UUID(company_id)))
+    return run_task(_send_incomplete_reminders_async(UUID(company_id)))
 
 
 @celery_app.task(name="attendance.run_incomplete_reminders", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def run_incomplete_reminders() -> int:
     """Beat-scheduled entrypoint, 10:00 IST — after `run_daily_calculation` (09:30) has
     refreshed the trailing days, so a day fixed by a late punch is not reminded about."""
-    company_ids = asyncio.run(_list_active_company_ids())
+    company_ids = run_task(_list_active_company_ids())
     return dispatch_per_company(send_incomplete_reminders_company, company_ids)
 
 
@@ -318,7 +317,7 @@ def cleanup_face_records_company(company_id: str) -> dict[str, object]:
     from hrms.core.config.settings import get_settings
     from hrms.modules.attendance.face_cleanup import cleanup_company
 
-    return dict(asdict(asyncio.run(cleanup_company(UUID(company_id), get_settings()))))
+    return dict(asdict(run_task(cleanup_company(UUID(company_id), get_settings()))))
 
 
 @celery_app.task(name="attendance.run_face_cleanup", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
@@ -330,7 +329,7 @@ def run_face_cleanup() -> int:
 
     if not retention_configured(get_settings()):
         return 0
-    return dispatch_per_company(cleanup_face_records_company, asyncio.run(_all_company_ids()))
+    return dispatch_per_company(cleanup_face_records_company, run_task(_all_company_ids()))
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +344,7 @@ def process_face_deletions_company(company_id: str) -> dict[str, object]:
     from hrms.core.config.settings import get_settings
     from hrms.modules.attendance.face_deletion import process_company
 
-    return dict(asdict(asyncio.run(process_company(UUID(company_id), get_settings()))))
+    return dict(asdict(run_task(process_company(UUID(company_id), get_settings()))))
 
 
 @celery_app.task(name="attendance.run_face_deletions", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
@@ -355,4 +354,4 @@ def run_face_deletions() -> int:
     after the transaction that queued them has committed. Idempotent and safe to overlap."""
     from hrms.modules.attendance.face_cleanup import _all_company_ids
 
-    return dispatch_per_company(process_face_deletions_company, asyncio.run(_all_company_ids()))
+    return dispatch_per_company(process_face_deletions_company, run_task(_all_company_ids()))

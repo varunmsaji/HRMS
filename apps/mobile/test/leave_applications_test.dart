@@ -153,9 +153,7 @@ void main() {
     testWidgets('the status filter is sent as application_status', (tester) async {
       final repo = _FakeLeave([_app()]);
       await _pump(tester, repo, [leaveApplicationSubmit], const LeaveApplicationsScreen());
-      await tester.tap(find.byType(DropdownButtonFormField<String>).first);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Approved').last);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Approved'));
       await tester.pumpAndSettle();
       expect(repo.calls.last, contains(':APPROVED:'));
     });

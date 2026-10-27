@@ -10,6 +10,7 @@ import '../../../core/providers.dart';
 import '../../../core/time.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -234,23 +235,9 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
     }
   }
 
-  Widget _section(String title, List<Widget> children) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(top: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.titleSmall), const SizedBox(height: 8), ...children]),
-    );
-  }
+  Widget _section(String title, List<Widget> children, {IconData? icon}) => DetailSection(title: title, icon: icon, children: children);
 
-  Widget _kv(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(flex: 4, child: Text(k, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
-          Expanded(flex: 5, child: Text(v, textAlign: TextAlign.end)),
-        ]),
-      );
+  Widget _kv(String k, String v) => KeyValueRow(k, v == '—' ? null : v);
 
   @override
   Widget build(BuildContext context) {
@@ -263,18 +250,9 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
     final p = _period;
     Widget body;
     if (p == null && _loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton();
     } else if (p == null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error?.status == 404 ? "This attendance period was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
-      );
+      body = StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error?.status == 404 ? "This attendance period was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), actionLabel: 'Retry', onAction: _load);
     } else {
       final open = p['status'] == 'OPEN';
       final actions = ((p['actions'] as List?) ?? const []).cast<Rec>();
@@ -285,10 +263,17 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Row(children: [
-              Expanded(child: Text(p['label'] as String? ?? '${p['period_start']} → ${p['period_end']}', style: Theme.of(context).textTheme.headlineSmall)),
-              Chip(label: Text(open ? 'Open' : 'Closed & locked'), visualDensity: VisualDensity.compact, backgroundColor: (open ? Colors.orange : Colors.green).withValues(alpha: 0.15)),
-            ]),
+            HeroCard(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Expanded(child: Text(p['label'] as String? ?? '${p['period_start']} → ${p['period_end']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 19))),
+                  StatusChip(label: open ? 'Open' : 'Closed & locked', tone: open ? Tone.warning : Tone.success),
+                ]),
+                const SizedBox(height: 6),
+                Text('${_entityName ?? 'Legal entity'} · ${p['period_start']} → ${p['period_end']}', style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
+              ]),
+            ),
+            const SizedBox(height: 12),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (open && canRecompute) OutlinedButton(onPressed: _busy ? null : () => _calculateRange(p), child: const Text('Calculate attendance')),
               if (open && canLock) OutlinedButton(onPressed: _busy ? null : _validate, child: const Text('Validate')),
@@ -309,18 +294,14 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
               _section('Finalization readiness', [
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: Chip(
-                    label: Text('${_validation!['status']}'),
-                    visualDensity: VisualDensity.compact,
-                    backgroundColor: (_validation!['status'] == 'READY' ? Colors.green : Colors.orange).withValues(alpha: 0.15),
-                  ),
+                  child: StatusChip(label: '${_validation!['status']}', tone: _validation!['status'] == 'READY' ? Tone.success : Tone.warning),
                 ),
                 if (_validation!['status'] == 'BLOCKED')
                   for (final r in reasons)
                     Container(
                       margin: const EdgeInsets.only(top: 8),
                       padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(8)),
+                      decoration: BoxDecoration(color: toneColors(context, Tone.warning).bg, borderRadius: BorderRadius.circular(12)),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text('${periodBlockingReasonLabels[r['code']] ?? r['code']} — ${r['count']}', style: const TextStyle(fontWeight: FontWeight.w600)),
                         Text('${r['message']}', style: TextStyle(color: scheme.onSurfaceVariant)),
@@ -341,14 +322,12 @@ class _AttendancePeriodDetailScreenState extends ConsumerState<AttendancePeriodD
             ]),
             if (actions.isNotEmpty)
               _section('Timeline', [
-                for (final a in actions)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(periodActionLabels[a['action']] ?? '${a['action']}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                      Text(formatDateTime(a['created_at'] as String?, tz), style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                      if (a['comment'] != null) Text('${a['comment']}'),
-                    ]),
+                for (var i = 0; i < actions.length; i++)
+                  TimelineEntry(
+                    title: periodActionLabels[actions[i]['action']] ?? '${actions[i]['action']}',
+                    subtitle: formatDateTime(actions[i]['created_at'] as String?, tz),
+                    body: actions[i]['comment'] == null ? null : '${actions[i]['comment']}',
+                    last: i == actions.length - 1,
                   ),
               ]),
           ],

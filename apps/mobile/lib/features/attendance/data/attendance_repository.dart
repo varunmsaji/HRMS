@@ -243,7 +243,8 @@ bool facePunchOutcomeUnknown(Object error) =>
 
 /// The signed-in employee's face enrollment state (`GET /attendance/face-enrollment/me`).
 class FaceEnrollmentStatus {
-  FaceEnrollmentStatus({this.profileStatus, this.reviewNote, this.windowExpiresAt});
+  FaceEnrollmentStatus({this.profileStatus, this.reviewNote, this.windowExpiresAt, bool? faceVerificationRequired})
+      : _faceVerificationRequired = faceVerificationRequired;
 
   /// `PENDING_APPROVAL` | `ENROLLED` | `REJECTED` | `REVOKED`, or null if never enrolled.
   final String? profileStatus;
@@ -252,7 +253,14 @@ class FaceEnrollmentStatus {
   /// Set only while an HR-opened enrollment window is open and unexpired.
   final DateTime? windowExpiresAt;
 
+  final bool? _faceVerificationRequired;
+
   bool get isEnrolled => profileStatus == 'ENROLLED';
+
+  /// True when plain Punch in/out is refused for this employee (server: 403
+  /// FACE_VERIFICATION_REQUIRED) and only the face punch flow may be offered. Mirrors the server's
+  /// `face_verification_required`; derived from the profile status when the field is absent.
+  bool get faceVerificationRequired => _faceVerificationRequired ?? isEnrolled;
   bool get isPendingApproval => profileStatus == 'PENDING_APPROVAL';
   bool get canEnroll => windowExpiresAt != null && !isEnrolled && !isPendingApproval;
 
@@ -263,6 +271,7 @@ class FaceEnrollmentStatus {
       profileStatus: profile?['status'] as String?,
       reviewNote: profile?['review_note'] as String?,
       windowExpiresAt: window == null ? null : DateTime.parse(window['expires_at'] as String),
+      faceVerificationRequired: json['face_verification_required'] as bool?,
     );
   }
 }

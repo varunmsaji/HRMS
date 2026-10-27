@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R05",
+  "direction": "MARKER-FOUNDRY-own",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 200,
+  "body": "{\"data\":{\"employee_id\":\"eee9f7cc-292c-49f4-aff9-92d490ff6b1f\",\"pan_number\":null,\"aadhaar_number\":null,\"uan_number\":null,\"father_or_husband_name\":null,\"version\":1},\"meta\":{\"request_id\":\"4e974a95-b6f0-4e2b-8e74-e5c365b086a4\",\"server_time\":\"2026-10-26T13:07:01.652100Z\"}}",
+  "verdict": "PASS",
+  "note": "own identity",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

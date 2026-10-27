@@ -12,6 +12,7 @@ import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import 'attendance_period_detail_screen.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -130,18 +131,9 @@ class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScree
       appBar: AppBar(title: const Text('Attendance Periods'), actions: const [MoreAction()]),
       floatingActionButton: canManage ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('Open period')) : null,
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(_error!.message, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      FilledButton(onPressed: _load, child: const Text('Retry')),
-                    ]),
-                  ),
-                )
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
@@ -158,20 +150,20 @@ class _AttendancePeriodsScreenState extends ConsumerState<AttendancePeriodsScree
                             onChanged: (v) => setState(() => _entity = v ?? ''),
                           ),
                         ),
-                      if (visible.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No attendance periods yet.'))),
+                      if (visible.isEmpty) const SizedBox(height: 300, child: StateMessage(icon: Icons.event_busy_outlined, title: 'No attendance periods yet')),
                       for (final p in visible)
-                        ListTile(
-                          title: Text(p['label'] as String? ?? '${p['period_start']} → ${p['period_end']}'),
-                          subtitle: Text('${_entityName(p['legal_entity_id'] as String)} · ${p['period_start']} → ${p['period_end']}'),
-                          trailing: Chip(
-                            label: Text(p['status'] == 'CLOSED' ? 'Closed & locked' : 'Open'),
-                            visualDensity: VisualDensity.compact,
-                            backgroundColor: (p['status'] == 'CLOSED' ? Colors.green : Colors.orange).withValues(alpha: 0.15),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                          child: ListRowCard(
+                            leading: IconBadge(icon: p['status'] == 'CLOSED' ? Icons.lock_outline_rounded : Icons.lock_open_rounded, tone: p['status'] == 'CLOSED' ? Tone.success : Tone.warning),
+                            title: p['label'] as String? ?? '${p['period_start']} → ${p['period_end']}',
+                            subtitle: '${_entityName(p['legal_entity_id'] as String)} · ${p['period_start']} → ${p['period_end']}',
+                            trailing: StatusChip(label: p['status'] == 'CLOSED' ? 'Closed & locked' : 'Open', tone: p['status'] == 'CLOSED' ? Tone.success : Tone.warning),
+                            onTap: () async {
+                              await Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendancePeriodDetailScreen(periodId: p['id'] as String, initial: p)));
+                              _load();
+                            },
                           ),
-                          onTap: () async {
-                            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendancePeriodDetailScreen(periodId: p['id'] as String, initial: p)));
-                            _load();
-                          },
                         ),
                     ],
                   ),

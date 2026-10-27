@@ -21,6 +21,21 @@ from kombu import Queue  # type: ignore[import-untyped]
 
 from hrms.core.config.settings import get_settings
 from hrms.core.observability.logging import configure_logging, get_logger, safe_error, safe_log
+from hrms.core.observability.metrics import (
+    CELERY_DURATION,
+    CELERY_FAILURES,
+    CELERY_FINISHED,
+    CELERY_LAST_SUCCESS,
+    CELERY_PUBLISH_FAILURES,
+    CELERY_PUBLISHED,
+    CELERY_QUEUE_WAIT,
+    CELERY_RETRIES,
+    CELERY_STARTED,
+    CELERY_UNKNOWN,
+    safe_count,
+    safe_observe,
+)
+from hrms.core.observability.trace_context import current_traceparent, start_context
 from hrms.core.tenancy.context import current_request_id
 
 _logger = get_logger(__name__)
@@ -117,6 +132,13 @@ def create_celery_app() -> Celery:
                 "task": "attendance.run_face_deletions",
                 "schedule": crontab(minute="*/2"),
             },
+            # B13 — transactional e-mail outbox safety net: delivers committed messages whose
+            # immediate dispatch was lost or failed, retries due ones, takes over from a dead
+            # worker. Idempotent (claims are leased), so overlapping runs are harmless.
+            "email-outbox-sweep": {
+                "task": "email_outbox.sweep",
+                "schedule": 60.0,
+            },
             # Mission Phase 7 — proves the whole scheduling path (Beat -> broker -> worker) is
             # alive. `python -m hrms.ops.job_health` alerts when its timestamp goes stale, which
             # is how a stopped Beat or a wedged worker becomes visible (nothing else watches
@@ -152,6 +174,7 @@ def dispatch_per_company(task: Any, company_ids: Iterable[UUID], *args: Any) -> 
             queued += 1
         except Exception as exc:  # noqa: BLE001 — isolate one company, see above
             failed += 1
+            safe_count(CELERY_PUBLISH_FAILURES, name)
             safe_log(
                 _logger.warning,
                 "celery_task_dispatch_failed",
@@ -180,6 +203,11 @@ def _log_unhandled_task_failure(
     independent of a custom `on_failure`. Compact by design: Celery's own "Task ... raised
     unexpected" record carries the single (redacted) traceback. LOG-08 — no `str(exception)`."""
     request = getattr(sender, "request", None)
+    safe_count(
+        CELERY_FAILURES,
+        getattr(sender, "name", "unknown"),
+        safe_error(exception)["error_category"] if exception else "unexpected",
+    )
     safe_log(
         _logger.error,
         "celery_task_failed",
@@ -196,6 +224,7 @@ def _log_task_retry(
 ) -> None:
     """A scheduled retry (`autoretry_for` or an explicit `self.retry`). WARNING, not ERROR: the
     task may still succeed; exhaustion surfaces as `celery_task_failed`."""
+    safe_count(CELERY_RETRIES, getattr(sender, "name", "unknown"))
     safe_log(
         _logger.warning,
         "celery_task_retry",
@@ -214,13 +243,16 @@ def _log_task_retry(
 @task_unknown.connect  # type: ignore[untyped-decorator]
 def _log_task_unknown(name: str | None = None, id: str | None = None, **_kw: Any) -> None:  # noqa: A002 — Celery's signal argument name
     """A message for a task name this worker does not have registered (version skew between the
-    API and worker images, or a renamed task). Celery discards such a message."""
+    API and worker images, or a renamed task). Celery discards such a message. The name is
+    attacker/skew-controlled, so it is a log field only, never a metric label."""
+    safe_count(CELERY_UNKNOWN, "unknown_task")
     safe_log(_logger.error, "celery_task_unknown", task=name, task_id=id)
 
 
 @task_rejected.connect  # type: ignore[untyped-decorator]
 def _log_task_rejected(message: Any = None, **_kw: Any) -> None:
     """A message the worker could not accept (unknown content type / serializer)."""
+    safe_count(CELERY_UNKNOWN, "rejected")
     headers = getattr(message, "headers", None) or {}
     safe_log(
         _logger.error,
@@ -233,6 +265,8 @@ def _log_task_rejected(message: Any = None, **_kw: Any) -> None:
 #: Message header carrying the API request id into a task it dispatched (LOG-03). Namespaced so
 #: it can never collide with one of Celery's own protocol headers.
 _REQUEST_ID_HEADER = "hrms_request_id"
+#: W3C `traceparent` of the unit of work that dispatched the task (API request or parent task).
+_TRACEPARENT_HEADER = "hrms_traceparent"
 #: Epoch seconds at publish time, so `hrms.ops.job_health` can report the age of the oldest
 #: message still waiting in a queue (Celery's Redis messages carry no timestamp of their own).
 ENQUEUED_AT_HEADER = "hrms_enqueued_at"
@@ -261,7 +295,12 @@ def _propagate_request_id(headers: dict[str, Any] | None = None, **_kwargs: Any)
     id, so the worker's log lines can be joined to the API's. Beat-scheduled tasks have none."""
     if headers is None:
         return
+    task_name = headers.get("task")
+    safe_count(CELERY_PUBLISHED, task_name if isinstance(task_name, str) else "unknown")
     headers.setdefault(ENQUEUED_AT_HEADER, round(time.time(), 3))
+    traceparent = current_traceparent()
+    if traceparent is not None:
+        headers.setdefault(_TRACEPARENT_HEADER, traceparent)
     request_id = current_request_id()
     if request_id is not None:
         headers.setdefault(_REQUEST_ID_HEADER, request_id)
@@ -271,16 +310,29 @@ def _propagate_request_id(headers: dict[str, Any] | None = None, **_kwargs: Any)
 #: exactly the context that existed before the task (relevant when a task runs eagerly inside a
 #: request) and can report the run's duration.
 _task_log_tokens: dict[str, tuple[Any, float]] = {}
+_TASK_STATES = frozenset({"SUCCESS", "FAILURE", "RETRY", "REVOKED", "IGNORED", "REJECTED"})
 
 
 @task_prerun.connect  # type: ignore[untyped-decorator]
 def _bind_task_context(task_id: str | None = None, task: Any = None, **_kwargs: Any) -> None:
-    request_id = getattr(getattr(task, "request", None), _REQUEST_ID_HEADER, None)
+    request = getattr(task, "request", None)
+    request_id = getattr(request, _REQUEST_ID_HEADER, None)
+    # Continues the dispatching request's trace (new span id for this run); a Beat-scheduled task
+    # has no inbound header and starts its own trace.
+    inbound = getattr(request, _TRACEPARENT_HEADER, None)
+    trace = start_context(inbound if isinstance(inbound, str) else None)
     tokens = structlog.contextvars.bind_contextvars(
         task_id=task_id,
         task_name=getattr(task, "name", None),
+        trace_id=trace.trace_id,
+        span_id=trace.span_id,
         **({"request_id": request_id} if isinstance(request_id, str) else {}),
     )
+    name = getattr(task, "name", None) or "unknown"
+    safe_count(CELERY_STARTED, name)
+    enqueued = getattr(request, ENQUEUED_AT_HEADER, None)
+    if isinstance(enqueued, (int, float)):
+        safe_observe(CELERY_QUEUE_WAIT, max(0.0, time.time() - float(enqueued)), name)
     if task_id is not None:
         _task_log_tokens[task_id] = (tokens, time.monotonic())
 
@@ -293,6 +345,16 @@ def _restore_task_context(
     if entry is None:
         return
     tokens, started = entry
+    name = getattr(task, "name", None) or "unknown"
+    final_state = state if state in _TASK_STATES else "OTHER"
+    elapsed = time.monotonic() - started
+    safe_count(CELERY_FINISHED, name, final_state)
+    safe_observe(CELERY_DURATION, elapsed, name)
+    if final_state == "SUCCESS":
+        try:
+            CELERY_LAST_SUCCESS.labels(name).set(time.time())
+        except Exception:  # noqa: BLE001 — metrics never fail a task
+            pass
     # One lifecycle line per task run — the task's outcome (SUCCESS / FAILURE / RETRY) and
     # duration, still inside the task's log context so it carries task_id/request_id.
     safe_log(

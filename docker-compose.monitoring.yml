@@ -1,0 +1,52 @@
+# OPTIONAL extended observability: Prometheus + node_exporter. NOT part of the default stack and
+# NOT started by anything automatically - it needs an explicit decision (docs/architecture/
+# OBSERVABILITY_ARCHITECTURE.md section 9, "Decisions required").
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d prometheus node-exporter
+#
+# Footprint (estimates, section 10 of the architecture doc): Prometheus ~150-250 MB RAM at this
+# series count, node_exporter ~20 MB; both capped below. No port is published to the host:
+# reach the Prometheus UI with an SSH tunnel (`ssh -L 9090:localhost:9090 vps` after temporarily
+# adding a 127.0.0.1-only port mapping) or through a deliberately authenticated proxy.
+#
+# Before first start: write the METRICS_TOKEN value (same as apps/api/env/.env.production) to
+# infra/monitoring/prometheus/secrets/metrics_token (mode 0400, git-ignored).
+
+volumes:
+  prometheus_data:
+
+services:
+  prometheus:
+    image: quay.io/prometheus/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d    # provisional
+      - --storage.tsdb.retention.size=2GB    # hard disk ceiling, whichever limit is hit first
+      - --web.enable-lifecycle=false
+    volumes:
+      - ./infra/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./infra/monitoring/prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus_data:/prometheus
+    networks: [data]
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v1.8.2
+    restart: unless-stopped
+    command: ["--path.rootfs=/host", "--collector.disable-defaults", "--collector.cpu", "--collector.meminfo", "--collector.filesystem", "--collector.loadavg", "--collector.diskstats"]
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks: [data]
+    mem_limit: 64m
+    cpus: 0.1
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}

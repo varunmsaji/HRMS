@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
@@ -188,32 +189,30 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
       appBar: AppBar(
         title: const Text('Payroll'),
         actions: [
-          if (canProcess) IconButton(tooltip: 'Payroll settings', icon: const Icon(Icons.tune), onPressed: _openSettings),
+          if (canProcess) IconButton(tooltip: 'Payroll settings', icon: const Icon(Icons.tune_rounded), onPressed: _openSettings),
           const MoreAction(),
         ],
       ),
-      floatingActionButton: canProcess ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('New pay run')) : null,
+      floatingActionButton: canProcess ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add_rounded), label: const Text('New pay run')) : null,
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(_error!.status == 403 ? 'You do not have permission to view pay runs.' : _error!.message, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      FilledButton(onPressed: _load, child: const Text('Retry')),
-                    ]),
-                  ),
+              ? StateMessage(
+                  icon: _error!.status == 403 ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
+                  tone: _error!.status == 403 ? Tone.warning : Tone.danger,
+                  title: _error!.status == 403 ? 'No access' : 'Couldn\'t load pay runs',
+                  message: _error!.status == 403 ? 'You do not have permission to view pay runs.' : _error!.message,
+                  actionLabel: _error!.status == 403 ? null : 'Try again',
+                  onAction: _load,
                 )
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.only(bottom: 88),
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
                     children: [
                       if (_entities.length > 1)
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          padding: const EdgeInsets.only(bottom: 12),
                           child: DropdownButtonFormField<String?>(
                             value: _entityFilter,
                             isExpanded: true,
@@ -222,16 +221,34 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
                             onChanged: (v) => setState(() => _entityFilter = v),
                           ),
                         ),
-                      if (visible.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No pay runs yet.'))),
+                      if (visible.isEmpty)
+                        SizedBox(
+                          height: MediaQuery.sizeOf(context).height * 0.5,
+                          child: const StateMessage(icon: Icons.payments_outlined, title: 'No pay runs yet', message: 'Create a pay run to start processing salaries.'),
+                        ),
                       for (final run in visible)
-                        ListTile(
-                          title: Text(formatPayMonth(run.month)),
-                          subtitle: Text([_entityName(run.legalEntityId), run.status.replaceAll('_', ' '), if (run.employeeCount != null) '${run.employeeCount} employees'].join(' · ')),
-                          trailing: run.isComputed && run.netMinor != null ? Text(formatInr(run.netMinor!), style: const TextStyle(fontWeight: FontWeight.w600)) : const Icon(Icons.chevron_right, size: 20),
-                          onTap: () async {
-                            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PayRunDetailScreen(runId: run.id)));
-                            _load();
-                          },
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: ListRowCard(
+                            title: formatPayMonth(run.month),
+                            subtitle: [_entityName(run.legalEntityId), if (run.employeeCount != null) '${run.employeeCount} employees'].join(' · '),
+                            leading: const IconBadge(icon: Icons.payments_outlined),
+                            trailing: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (run.isComputed && run.netMinor != null) ...[
+                                  Text(formatInr(run.netMinor!), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                                  const SizedBox(height: 4),
+                                ],
+                                StatusChip.status(run.status),
+                              ],
+                            ),
+                            onTap: () async {
+                              await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PayRunDetailScreen(runId: run.id)));
+                              _load();
+                            },
+                          ),
                         ),
                     ],
                   ),

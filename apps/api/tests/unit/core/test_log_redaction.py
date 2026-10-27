@@ -54,6 +54,22 @@ def _redact(**fields: Any) -> dict[str, Any]:
         "request_body",
         "face_template",
         "credentials",
+        # observability audit 2026-10-25: contact, payroll and image material
+        "phone",
+        "personal_mobile",
+        "date_of_birth",
+        "dob",
+        "passport",
+        "uan",
+        "net_pay",
+        "gross_minor",
+        "daily_rate_minor",
+        "image_b64",
+        "photo",
+        "selfie",
+        "liveness_frames",
+        "biometric_payload",
+        "base64",
     ],
 )
 def test_sensitive_keys_are_masked_whatever_their_value(key: str) -> None:
@@ -62,7 +78,20 @@ def test_sensitive_keys_are_masked_whatever_their_value(key: str) -> None:
 
 @pytest.mark.parametrize(
     "key",
-    ["family_id", "token_kind", "key_version", "salary_structure_id", "request_id", "user_id"],
+    [
+        "family_id",
+        "token_kind",
+        "key_version",
+        "salary_structure_id",
+        "request_id",
+        "user_id",
+        "image_type",
+        "photo_id",
+        "phone_verified_status",
+        "frame_count",
+        "duration_ms",
+        "status_code",
+    ],
 )
 def test_identifiers_about_sensitive_things_are_kept(key: str) -> None:
     assert _redact(**{key: "abc-123"})[key] == "abc-123"
@@ -268,3 +297,26 @@ def test_stdlib_records_are_redacted_on_the_worker_pipeline(
     assert "abc123sig" not in raw
     (entry,) = [e for e in _json_lines(raw) if e.get("logger") == "httpx"]
     assert entry["service"] == "worker"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["call 9876543210 now", "mobile=+91 98765 43210;", "alt +91-98765-43210.", "98765 43210"],
+)
+def test_indian_mobile_numbers_in_free_text_are_masked(raw: str) -> None:
+    out = _redact(message=raw)["message"]
+    assert "98765" not in out and "43210" not in out
+    assert "[PHONE]" in out
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "epoch 1792888781 seconds",  # 10 digits but starts with 1
+        "request 7123456789012 took 5s",  # longer digit run is an id, not a phone number
+        "retry in 1234567890 ms",
+        "build 20261025",
+    ],
+)
+def test_other_numbers_are_not_mistaken_for_phone_numbers(raw: str) -> None:
+    assert _redact(message=raw)["message"] == raw

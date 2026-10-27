@@ -2260,10 +2260,22 @@ class FaceProfileRead(BaseModel):
     review_note: str | None
     revoked_at: str | None
     revoked_by_user_id: UUID | None
+    requires_reenrollment: bool = False
+    """True when this ENROLLED / PENDING_APPROVAL profile was created by a different face engine
+    than the one currently selected, so it cannot be used for punches until HR revokes it and the
+    employee enrolls again. Only computed by the list and status endpoints (False elsewhere).
+    Carries no biometric data."""
 
 
-def face_profile_to_read(row: "EmployeeFaceProfile") -> FaceProfileRead:
+def face_profile_to_read(
+    row: "EmployeeFaceProfile", *, active_provider: str | None = None
+) -> FaceProfileRead:
     return FaceProfileRead(
+        requires_reenrollment=(
+            active_provider is not None
+            and row.status in ("ENROLLED", "PENDING_APPROVAL")
+            and row.provider != active_provider
+        ),
         id=row.id,
         employee_id=row.employee_id,
         provider=row.provider,
@@ -2307,6 +2319,9 @@ class FaceEnrollmentStatusRead(BaseModel):
 
     profile: FaceProfileRead | None
     open_window: FaceEnrollmentWindowRead | None
+    face_verification_required: bool = False
+    """True when the employee's profile is ENROLLED: their own punches must go through the face
+    punch flow and `POST /attendance/punches/me` is refused (403 FACE_VERIFICATION_REQUIRED)."""
 
 
 class FaceProfileRejectInput(BaseModel):

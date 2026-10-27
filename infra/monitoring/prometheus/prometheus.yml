@@ -1,0 +1,35 @@
+# Krewoxa HRMS - minimal Prometheus configuration (OPTIONAL component, not applied by default).
+# See docs/architecture/OBSERVABILITY_ARCHITECTURE.md and docs/operations/OBSERVABILITY_ALERT_CATALOG.md.
+#
+# Scrapes only the API's authenticated /metrics endpoint over the private Docker network. The
+# endpoint is 404 unless METRICS_TOKEN is set; the same value goes in the token file below
+# (mounted read-only, never committed).
+global:
+  scrape_interval: 30s        # 30 s keeps series count and CPU low; alert windows assume it.
+  evaluation_interval: 30s
+  scrape_timeout: 10s         # /metrics probes Postgres/Redis with a 2 s cap each.
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# Routing destination is an OPEN DECISION (docs/operations/OBSERVABILITY_ALERT_CATALOG.md section 5).
+# Until one is approved no alertmanager is configured: rules evaluate and show in the Prometheus
+# UI, but nobody is notified. Uncomment and point at the approved Alertmanager when decided.
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: hrms-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/metrics_token
+    static_configs:
+      - targets: ["api:8000"]
+
+  # Host/container resources (CPU, RAM, disk). Needs node_exporter - see the optional compose file.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]

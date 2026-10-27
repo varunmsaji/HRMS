@@ -13,6 +13,7 @@ import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../domain/roster_form.dart';
+import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -156,7 +157,6 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
   @override
   Widget build(BuildContext context) {
     final canManage = (ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(attendanceRosterManage);
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Shift Rosters'),
@@ -212,52 +212,44 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
         ),
         Expanded(
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const ListSkeleton()
               : _error != null
-                  ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Text(_error!.message, textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          FilledButton(onPressed: _load, child: const Text('Retry')),
-                        ]),
-                      ),
-                    )
+                  ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
                         padding: const EdgeInsets.only(top: 8, bottom: 88),
                         children: [
-                          if (_rows.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('No roster entries in this range.'))),
+                          if (_rows.isEmpty) const SizedBox(height: 320, child: StateMessage(icon: Icons.calendar_month_outlined, title: 'No roster entries', message: 'No roster entries in this range.')),
                           for (final r in _rows)
-                            ListTile(
-                              title: Text('${_employeeName(r['employee_id'] as String)} · ${r['roster_date']}'),
-                              subtitle: Text(rosterDayLabel(r, _shifts)),
-                              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                                Chip(
-                                  label: Text(r['status'] == 'PUBLISHED' ? 'Published' : 'Draft'),
-                                  visualDensity: VisualDensity.compact,
-                                  backgroundColor: (r['status'] == 'PUBLISHED' ? Colors.green : scheme.onSurfaceVariant).withValues(alpha: 0.15),
-                                ),
-                                if (canManage)
-                                  PopupMenuButton<String>(
-                                    onSelected: (v) async {
-                                      if (v == 'edit') {
-                                        if (await openRosterForm(context, ref, roster: r) && mounted) _load();
-                                      } else if (v == 'publish') {
-                                        _publish(r);
-                                      } else {
-                                        _delete(r);
-                                      }
-                                    },
-                                    itemBuilder: (_) => [
-                                      if (r['status'] == 'DRAFT') const PopupMenuItem(value: 'publish', child: Text('Publish')),
-                                      const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                                      const PopupMenuItem(value: 'delete', child: Text('Remove')),
-                                    ],
-                                  ),
-                              ]),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                              child: ListRowCard(
+                                leading: InitialsAvatar(name: _employeeName(r['employee_id'] as String)),
+                                title: '${_employeeName(r['employee_id'] as String)} · ${r['roster_date']}',
+                                subtitle: rosterDayLabel(r, _shifts),
+                                showChevron: false,
+                                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  StatusChip(label: r['status'] == 'PUBLISHED' ? 'Published' : 'Draft', tone: r['status'] == 'PUBLISHED' ? Tone.success : Tone.neutral),
+                                  if (canManage)
+                                    PopupMenuButton<String>(
+                                      onSelected: (v) async {
+                                        if (v == 'edit') {
+                                          if (await openRosterForm(context, ref, roster: r) && mounted) _load();
+                                        } else if (v == 'publish') {
+                                          _publish(r);
+                                        } else {
+                                          _delete(r);
+                                        }
+                                      },
+                                      itemBuilder: (_) => [
+                                        if (r['status'] == 'DRAFT') const PopupMenuItem(value: 'publish', child: Text('Publish')),
+                                        const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                                        const PopupMenuItem(value: 'delete', child: Text('Remove')),
+                                      ],
+                                    ),
+                                ]),
+                              ),
                             ),
                         ],
                       ),

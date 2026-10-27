@@ -11,7 +11,6 @@ Idempotent — an account already revoked is not selected again, so a repeated o
 changes nothing and writes no second audit event.
 """
 
-import asyncio
 from uuid import UUID
 
 from sqlalchemy import select
@@ -23,7 +22,7 @@ from hrms.core.celery_app import (
     dispatch_per_company,
 )
 from hrms.core.db.models.identity import Company
-from hrms.core.db.session import session_scope
+from hrms.core.db.session import run_task, session_scope
 
 
 async def _list_active_company_ids() -> list[UUID]:
@@ -41,10 +40,10 @@ async def _enforce_company_async(company_id: UUID) -> int:
 
 @celery_app.task(name="employee.enforce_terminations_company", **COMPANY_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def enforce_terminations_company(company_id: str) -> int:
-    return asyncio.run(_enforce_company_async(UUID(company_id)))
+    return run_task(_enforce_company_async(UUID(company_id)))
 
 
 @celery_app.task(name="employee.run_termination_access_sweep", **FANOUT_TASK_LIMITS)  # type: ignore[untyped-decorator]
 def run_termination_access_sweep() -> int:
-    company_ids = asyncio.run(_list_active_company_ids())
+    company_ids = run_task(_list_active_company_ids())
     return dispatch_per_company(enforce_terminations_company, company_ids)

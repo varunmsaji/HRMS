@@ -416,24 +416,75 @@ class WorkCalendarCompositionInvalidError(ValidationError):
         )
 
 
-class WorkCalendarDeactivationBlockedError(ConflictError):
-    """Architecture §4.2 WorkCalendar table: "Blocked if referenced by an open assignment or
-    current branch default." — mirrors `BranchDeactivationBlockedError`."""
-
-    code = "WORK_CALENDAR_HAS_ACTIVE_ASSIGNMENTS"
-
-    def __init__(self, *, active_assignment_count: int) -> None:
-        message = "This work calendar cannot be deactivated while it has active assignments"
+class _CalendarDeactivationBlockedError(ConflictError):
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        active_assignment_count: int,
+        dependents: list[dict[str, str | None]],
+        default_for_calendars: int = 0,
+    ) -> None:
         super().__init__(
             message,
             details=[
                 {
                     "field": "is_active",
-                    "code": "WORK_CALENDAR_HAS_ACTIVE_ASSIGNMENTS",
+                    "code": code,
                     "message": message,
-                    "context": {"active_assignment_count": active_assignment_count},
+                    "context": {
+                        "active_assignment_count": active_assignment_count,
+                        "assignments": dependents,
+                        "default_for_work_calendars": default_for_calendars,
+                        "next_action": (
+                            "Reassign the affected scopes to another calendar or pattern, or end "
+                            "these assignments, then deactivate."
+                        ),
+                    },
                 }
             ],
+        )
+
+
+class WorkCalendarDeactivationBlockedError(_CalendarDeactivationBlockedError):
+    """Architecture §4.2 WorkCalendar table: "Blocked if referenced by an open assignment or
+    current branch default." Policy F: "open" means not yet ended - current, future-dated or
+    ending today; the 409 lists up to ten of them and the next action."""
+
+    code = "WORK_CALENDAR_HAS_ACTIVE_ASSIGNMENTS"
+
+    def __init__(
+        self, *, active_assignment_count: int, dependents: list[dict[str, str | None]] | None = None
+    ) -> None:
+        super().__init__(
+            code=self.code,
+            message="This work calendar cannot be deactivated while it has active assignments",
+            active_assignment_count=active_assignment_count,
+            dependents=dependents or [],
+        )
+
+
+class WeeklyOffPatternDeactivationBlockedError(_CalendarDeactivationBlockedError):
+    """Same posture for a weekly-off pattern: blocked while an assignment, or an active work
+    calendar's default pattern, still depends on it."""
+
+    code = "WEEKLY_OFF_PATTERN_HAS_ACTIVE_ASSIGNMENTS"
+
+    def __init__(
+        self,
+        *,
+        active_assignment_count: int,
+        dependents: list[dict[str, str | None]] | None = None,
+        default_for_calendars: int = 0,
+    ) -> None:
+        super().__init__(
+            code=self.code,
+            message="This weekly-off pattern cannot be deactivated while it is assigned or is the "
+            "default pattern of an active work calendar",
+            active_assignment_count=active_assignment_count,
+            dependents=dependents or [],
+            default_for_calendars=default_for_calendars,
         )
 
 

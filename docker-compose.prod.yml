@@ -37,6 +37,10 @@ volumes:
   # Per-module application log files, shared by api, worker and beat (multi-process-safe
   # appends and rotation — see docs/operations/LOGGING_GUIDE.md).
   api_logs:
+  # Multi-process Prometheus metric files, shared by api, worker and beat so /metrics reports the
+  # whole system. Counters only; safe to wipe on a full redeploy (docs/operations/
+  # OBSERVABILITY_RUNBOOK.md). Grows by ~64 KB per process ever started - negligible.
+  metrics_mp:
   certbot_certs:
   certbot_webroot:
 
@@ -140,6 +144,9 @@ services:
         condition: service_healthy
     volumes:
       - api_logs:/app/logs
+      - metrics_mp:/app/metrics
+    environment:
+      PROMETHEUS_MULTIPROC_DIR: /app/metrics
     networks: [data, edge]
     logging: *default-logging
     # HEALTHCHECK is inherited from the image (apps/api/Dockerfile) — liveness only, deliberately
@@ -182,6 +189,9 @@ services:
         condition: service_healthy
     volumes:
       - api_logs:/app/logs
+      - metrics_mp:/app/metrics
+    environment:
+      PROMETHEUS_MULTIPROC_DIR: /app/metrics
     networks: [data]
     # Overrides the image's inherited HEALTHCHECK (an HTTP GET on :8000 — this container runs
     # Celery, not the API's HTTP server, so that check would fail permanently). `inspect ping`
@@ -225,6 +235,9 @@ services:
         condition: service_healthy
     volumes:
       - api_logs:/app/logs
+      - metrics_mp:/app/metrics
+    environment:
+      PROMETHEUS_MULTIPROC_DIR: /app/metrics
     networks: [data]
     logging: *default-logging
 

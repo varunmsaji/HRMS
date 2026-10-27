@@ -5,6 +5,7 @@ import '../../../core/api/api_error.dart';
 import '../../../core/format.dart';
 import '../data/payroll_repository.dart';
 import 'pay_runs_screen.dart' show payrollRepositoryProvider;
+import '../../../core/widgets/ui.dart';
 
 /// One employee's pay in a run, line by line with the formula behind each amount — mirrors
 /// `apps/web/src/components/payroll/pay-run-employee-dialog.tsx`.
@@ -59,64 +60,59 @@ class _PayRunEmployeeScreenState extends ConsumerState<PayRunEmployeeScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(d?.employee.displayName ?? widget.title ?? 'Employee pay')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton()
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(_error!.message, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      FilledButton(onPressed: _load, child: const Text('Retry')),
-                    ]),
-                  ),
-                )
+              ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    Text('${d!.employee.employeeCode ?? ''} · paid days ${d.employee.paidDays ?? '—'} · LOP ${d.employee.lopDays ?? '—'}', style: TextStyle(color: scheme.onSurfaceVariant)),
+                    HeroCard(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(children: [
+                          InitialsAvatar(name: d!.employee.displayName, size: 44),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(d.employee.displayName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17)),
+                              Text('${d.employee.employeeCode ?? ''} · paid days ${d.employee.paidDays ?? '—'} · LOP ${d.employee.lopDays ?? '—'}', style: const TextStyle(color: Colors.white70, fontSize: 12.5)),
+                            ]),
+                          ),
+                        ]),
+                        const SizedBox(height: 14),
+                        const Text('Net pay', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                        Text(d.lines.isEmpty ? '—' : formatInr(d.employee.netMinor ?? 0), style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800)),
+                      ]),
+                    ),
                     const SizedBox(height: 12),
                     for (final issue in d.employee.issues)
                       Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: (issue.isError ? scheme.error : Colors.orange).withValues(alpha: 0.08),
-                          border: Border.all(color: issue.isError ? scheme.error : Colors.orange),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(color: toneColors(context, issue.isError ? Tone.danger : Tone.warning).bg, borderRadius: BorderRadius.circular(12)),
                         child: Text('${issue.isError ? 'Error' : 'Warning'}: ${issue.message}'),
                       ),
-                    if (d.lines.isEmpty) const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('Not computed yet.'))),
+                    if (d.lines.isEmpty) const SizedBox(height: 240, child: StateMessage(icon: Icons.hourglass_empty_rounded, title: 'Not computed yet')),
                     for (final (type, label) in _sections)
                       if (d.lines.any((l) => l.lineType == type)) ...[
-                        const SizedBox(height: 12),
-                        Text(label, style: Theme.of(context).textTheme.titleSmall),
-                        const SizedBox(height: 6),
+                        SectionHeader(label),
                         for (final line in d.lines.where((l) => l.lineType == type))
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 6),
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(8)),
-                            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Expanded(
-                                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                  Text(line.componentName),
-                                  if (line.formula != null) Text(line.formula!, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                                  if (line.fullMonthlyMinor != null) Text('Full month ${formatInr(line.fullMonthlyMinor!)}', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                                ]),
-                              ),
-                              Text(formatInr(line.amountMinor), style: const TextStyle(fontWeight: FontWeight.w600)),
-                            ]),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: AppCard(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Expanded(
+                                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                    Text(line.componentName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                    if (line.formula != null) Text(line.formula!, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                                    if (line.fullMonthlyMinor != null) Text('Full month ${formatInr(line.fullMonthlyMinor!)}', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                                  ]),
+                                ),
+                                Text(formatInr(line.amountMinor), style: const TextStyle(fontWeight: FontWeight.w700)),
+                              ]),
+                            ),
                           ),
                       ],
-                    if (d.lines.isNotEmpty) ...[
-                      const Divider(height: 28),
-                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                        const Text('Net pay', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                        Text(formatInr(d.employee.netMinor ?? 0), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
-                      ]),
-                    ],
                   ],
                 ),
     );

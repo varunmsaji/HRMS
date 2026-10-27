@@ -1,0 +1,13 @@
+{
+  "case": "SEC-R04",
+  "direction": "MARKER-FOUNDRY-foreign-header",
+  "environment": "hrms_qa_20261026",
+  "started_at": "2026-10-26T18:37:01+05:30",
+  "observed_at": "2026-10-26T18:37:01+05:30",
+  "timezone": "Asia/Kolkata",
+  "http_status": 404,
+  "body": "{\"error\":{\"code\":\"NOT_FOUND\",\"message\":\"Resource not found\",\"details\":[],\"request_id\":\"8e3fb580-ed25-438d-a7c6-15990d8ee253\",\"documentation_url\":null}}",
+  "verdict": "PASS",
+  "note": "foreign company header",
+  "rls": "not tested; API role hrms_qa bypasses RLS"
+}

@@ -1,5 +1,7 @@
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -10,6 +12,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from hrms.core.config.settings import Settings, get_settings
+from hrms.core.db.post_commit import run_post_commit
+from hrms.core.observability.db_metrics import instrument_engine
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.tenancy.context import current_tenant_company_id
 
@@ -31,6 +35,7 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
             # handlers and task-failure logs now record. The SQL text itself is still shown.
             hide_parameters=True,
         )
+        instrument_engine(_engine)
     return _engine
 
 
@@ -72,6 +77,9 @@ async def session_scope(
         except Exception:
             await _rollback_preserving_cause(session)
             raise
+        # After the commit has returned (outside the try: a failure here must not roll back, or
+        # report as failed, a transaction that is already durable) - see `core/db/post_commit.py`.
+        await run_post_commit(session)
 
 
 async def _rollback_preserving_cause(session: AsyncSession) -> None:
@@ -100,6 +108,9 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await _rollback_preserving_cause(session)
             raise
+        # After the commit has returned (outside the try: a failure here must not roll back, or
+        # report as failed, a transaction that is already durable) - see `core/db/post_commit.py`.
+        await run_post_commit(session)
 
 
 async def dispose_engine() -> None:
@@ -108,3 +119,23 @@ async def dispose_engine() -> None:
         await _engine.dispose()
         _engine = None
         _session_factory = None
+
+
+def run_task[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Run an async task body from a synchronous Celery task.
+
+    Each Celery task body runs under its own `asyncio.run()` loop, but the engine (and its
+    asyncpg pool) is process-global. Without this, a pooled connection created under one task's
+    loop is reused under the next task's loop in the same worker process and fails with
+    "attached to a different loop" / "Event loop is closed" - intermittently, depending on which
+    task ran before it. Disposing the engine inside the task's own loop, before that loop closes,
+    makes every task start with a fresh pool.
+    """
+
+    async def _runner() -> T:
+        try:
+            return await coro
+        finally:
+            await dispose_engine()
+
+    return asyncio.run(_runner())

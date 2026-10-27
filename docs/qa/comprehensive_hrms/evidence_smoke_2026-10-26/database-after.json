@@ -1,0 +1,66 @@
+{
+  "environment": "hrms_qa_20261026",
+  "observed_at": "2026-10-26T18:16:55+05:30",
+  "timezone": "Asia/Kolkata",
+  "employees_unchanged": true,
+  "email_log_before": 6,
+  "email_log_after": 6,
+  "stopped_for_leak": false,
+  "results": [
+    {
+      "case": "PLT-001",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "AUTH-004",
+      "verdict": "PASS",
+      "http_status": 401
+    },
+    {
+      "case": "login-MARKER-FOUNDRY",
+      "verdict": "SETUP",
+      "http_status": 200
+    },
+    {
+      "case": "login-MARKER-NORTHWIND",
+      "verdict": "SETUP",
+      "http_status": 200
+    },
+    {
+      "case": "AUTH-009",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-001-MARKER-FOUNDRY",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-001-MARKER-NORTHWIND",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-002-own-FOUNDRY",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-002-cross-NORTHWIND-reads-FOUNDRY",
+      "verdict": "PASS",
+      "http_status": 404
+    },
+    {
+      "case": "SEC-002-own-NORTHWIND",
+      "verdict": "PASS",
+      "http_status": 200
+    },
+    {
+      "case": "SEC-002-cross-FOUNDRY-reads-NORTHWIND",
+      "verdict": "PASS",
+      "http_status": 404
+    }
+  ]
+}

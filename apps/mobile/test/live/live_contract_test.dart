@@ -5,8 +5,12 @@ library;
 // drift (a field typed differently, a missing header, a renamed key) fails here instead of on a
 // device. Skipped unless HRMS_LIVE_API is set:
 //
-//   HRMS_LIVE_API=1 flutter test test/live            # backend on http://localhost:8000
-//   HRMS_LIVE_API=1 HRMS_LIVE_EMAIL=… HRMS_LIVE_PASSWORD=… flutter test test/live
+//   HRMS_LIVE_API=1 HRMS_LIVE_EMAIL=… HRMS_LIVE_PASSWORD=… \
+//     flutter test test/live --dart-define=API_BASE_URL=http://127.0.0.1:<private-port>
+//
+// QA Phase 3 safety: the app's compile-time default API_BASE_URL is http://localhost:8000, the
+// SHARED development API. This test therefore refuses to run unless API_BASE_URL is passed
+// explicitly and is not port 8000, and it no longer falls back to seeded demo credentials.
 //
 // Read-only: it only issues GETs (plus the login).
 
@@ -56,8 +60,29 @@ Future<T?> _check<T>(String name, Future<T> Function() call) async {
   }
 }
 
+const _apiBaseUrl = String.fromEnvironment('API_BASE_URL');
+
+/// Null when it is safe to run; otherwise the reason the live test must be skipped.
+String? _liveSkipReason() {
+  if (Platform.environment['HRMS_LIVE_API'] != '1') {
+    return 'set HRMS_LIVE_API=1 to run against a live backend';
+  }
+  if (_apiBaseUrl.isEmpty) {
+    return 'pass --dart-define=API_BASE_URL=<private API url>; the default is the shared dev API';
+  }
+  final uri = Uri.tryParse(_apiBaseUrl);
+  if (uri == null || !uri.hasAuthority || uri.port == 8000) {
+    return 'API_BASE_URL must be a valid URL and must not be port 8000 (shared dev API)';
+  }
+  if ((Platform.environment['HRMS_LIVE_EMAIL'] ?? '').isEmpty ||
+      (Platform.environment['HRMS_LIVE_PASSWORD'] ?? '').isEmpty) {
+    return 'set HRMS_LIVE_EMAIL and HRMS_LIVE_PASSWORD for a user of the private stack';
+  }
+  return null;
+}
+
 void main() {
-  final live = Platform.environment['HRMS_LIVE_API'] != null;
+  final skipReason = _liveSkipReason();
 
   test('every read the app makes parses against the live API', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
@@ -72,8 +97,8 @@ void main() {
     final client = await ApiClient.getInstance();
     final auth = AuthRepository(client);
     final login = await auth.login(
-      email: Platform.environment['HRMS_LIVE_EMAIL'] ?? 'admin@example.com',
-      password: Platform.environment['HRMS_LIVE_PASSWORD'] ?? 'DemoPass123!',
+      email: Platform.environment['HRMS_LIVE_EMAIL']!,
+      password: Platform.environment['HRMS_LIVE_PASSWORD']!,
     );
     await TokenStorage.instance.save(StoredSession.fromTokenResponse(login));
 
@@ -165,5 +190,5 @@ void main() {
       print('  FAIL $f');
     }
     expect(_failures, isEmpty);
-  }, skip: live ? false : 'set HRMS_LIVE_API=1 to run against a live backend', timeout: const Timeout(Duration(minutes: 3)));
+  }, skip: skipReason ?? false, timeout: const Timeout(Duration(minutes: 3)));
 }

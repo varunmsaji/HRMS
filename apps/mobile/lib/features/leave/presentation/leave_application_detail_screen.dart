@@ -7,6 +7,7 @@ import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart' show Choice, prettyEnum;
 import '../../../core/providers.dart';
 import '../../../core/time.dart';
+import '../../../core/widgets/ui.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/leave_repository.dart';
@@ -187,23 +188,9 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
     }
   }
 
-  Widget _section(String title, List<Widget> children) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(top: 14),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12)),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.titleSmall), const SizedBox(height: 8), ...children]),
-    );
-  }
+  Widget _section(String title, List<Widget> children, {IconData? icon}) => DetailSection(title: title, icon: icon, children: children);
 
-  Widget _kv(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(flex: 4, child: Text(k, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
-          Expanded(flex: 5, child: Text(v, textAlign: TextAlign.end)),
-        ]),
-      );
+  Widget _kv(String k, String v) => KeyValueRow(k, v == '—' ? null : v);
 
   @override
   Widget build(BuildContext context) {
@@ -211,21 +198,18 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
     final permissions = user?.permissions ?? const <String>[];
     final tz = user?.companyTimezone ?? 'Asia/Kolkata';
     final a = _app;
-    final scheme = Theme.of(context).colorScheme;
 
     Widget body;
     if (a == null && _loading) {
-      body = const Center(child: CircularProgressIndicator());
+      body = const ListSkeleton(count: 3);
     } else if (a == null) {
-      body = Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error?.status == 404 ? "This leave application was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'), textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            FilledButton(onPressed: _load, child: const Text('Retry')),
-          ]),
-        ),
+      body = StateMessage(
+        icon: _error?.status == 404 ? Icons.search_off_rounded : Icons.error_outline_rounded,
+        tone: _error?.status == 404 ? Tone.neutral : Tone.danger,
+        title: _error?.status == 404 ? 'Not found' : 'Couldn\'t load application',
+        message: _error?.status == 404 ? "This leave application was not found, or you don't have access to it." : (_error?.message ?? 'Something went wrong.'),
+        actionLabel: 'Retry',
+        onAction: _load,
       );
     } else {
       final r = a.raw;
@@ -248,11 +232,22 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Row(children: [
-              Expanded(child: Text(_typeNames[a.leaveTypeId] ?? 'Leave', style: Theme.of(context).textTheme.headlineSmall)),
-              LeaveStatusChip(status: a.status),
-            ]),
-            Text('${a.startDate} → ${a.endDate}', style: TextStyle(color: scheme.onSurfaceVariant)),
+            HeroCard(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Expanded(child: Text(_typeNames[a.leaveTypeId] ?? 'Leave', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 20))),
+                  LeaveStatusChip(status: a.status),
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  const Icon(Icons.event_rounded, size: 16, color: Colors.white70),
+                  const SizedBox(width: 6),
+                  Text('${a.startDate} → ${a.endDate}', style: const TextStyle(color: Colors.white70)),
+                ]),
+                const SizedBox(height: 4),
+                Text('${s('total_days')} day(s)', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              ]),
+            ),
             if (canCancel || canReview)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
@@ -295,14 +290,12 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
               ]),
             if (actions.isNotEmpty)
               _section('History', [
-                for (final h in actions)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('${prettyEnum('${h['action']}')}${h['stage'] != null ? ' · ${h['stage']}' : ''}', style: const TextStyle(fontWeight: FontWeight.w600)),
-                      Text(formatDateTime(h['created_at'] as String?, tz), style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-                      if (h['comment'] != null) Text('${h['comment']}'),
-                    ]),
+                for (var i = 0; i < actions.length; i++)
+                  TimelineEntry(
+                    title: '${prettyEnum('${actions[i]['action']}')}${actions[i]['stage'] != null ? ' · ${actions[i]['stage']}' : ''}',
+                    subtitle: formatDateTime(actions[i]['created_at'] as String?, tz),
+                    body: actions[i]['comment'] == null ? null : '${actions[i]['comment']}',
+                    last: i == actions.length - 1,
                   ),
               ]),
           ],

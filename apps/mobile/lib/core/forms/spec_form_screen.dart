@@ -4,6 +4,7 @@ import '../api/api_error.dart';
 import '../../features/auth/presentation/widgets/auth_form_field.dart' show InlineAlert;
 import 'form_spec.dart';
 import 'spec_form.dart';
+import '../widgets/ui.dart';
 
 /// A full-screen create/edit form driven by a [FormSpec]. Pops `true` after [onSubmit] succeeds so
 /// the caller can reload.
@@ -116,7 +117,7 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const ListSkeleton(count: 4)
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [

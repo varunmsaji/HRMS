@@ -23,7 +23,10 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from tests.integration.modules.attendance.test_attendance_day import _register_tenant
-from tests.integration.modules.attendance.test_attendance_security import _cleanup_scoped_users
+from tests.integration.modules.attendance.test_attendance_security import (
+    _cleanup_scoped_users,
+    _create_permission_scoped_user,
+)
 from tests.integration.modules.organisation.test_registration_flow import _cleanup
 from tests.integration.modules.payroll.test_arrears import _finalised_run, _lines
 from tests.integration.modules.payroll.test_pay_run import (
@@ -531,12 +534,17 @@ async def _locked_run(
         company_id=company_id, legal_entity_id=le, start="2026-09-01", end="2026-09-30",
         paid_days={employee: "30"}, days_in_month=30,
     )  # fmt: skip
-    # A PF-applicable employee cannot be approved on an unverified PF rate (FR-PAY-005).
+    # A PF-applicable employee cannot be approved on an unverified PF rate (FR-PAY-005). The
+    # sign-off comes from an independent user: the editor of a rate may not verify it (HR_ADMIN
+    # policy; `test_hr_admin_separation.py`), and some cases edit the rate before this point.
     rates = await client.get("/v1/payroll/statutory-rates", headers=headers)
     pf = next(r for r in rates.json()["data"] if r["scheme"] == "PF")
+    verifier, _ = await _create_permission_scoped_user(
+        company_id=company_id, permission_codes=["PAYROLL.STATUTORY_MANAGE"], data_scope="COMPANY"
+    )
     verified = await client.post(
         f"/v1/payroll/statutory-rates/{pf['id']}/verify",
-        headers={**headers, "If-Match": str(pf["version"])},
+        headers={**verifier, "If-Match": str(pf["version"])},
     )
     assert verified.status_code == 200, verified.text
     run = await _create_run(client, headers, le, "2026-09")

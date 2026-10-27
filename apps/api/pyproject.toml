@@ -36,6 +36,9 @@ dependencies = [
     # (`docs/audits/RELEASE_HARDENING_PHASE_5A_EMAIL.md`). Async SMTP client, no AWS/vendor ties;
     # replaces `SesEmailSender`'s `aioboto3`-based AWS SES usage as the real email delivery path.
     "aiosmtplib>=3.0.0",
+    # Observability: Prometheus-format metrics (docs/architecture/OBSERVABILITY_ARCHITECTURE.md).
+    # Pure Python, no agent/daemon; multiprocess mode aggregates gunicorn + Celery workers.
+    "prometheus-client>=0.21.0",
 ]
 
 [project.optional-dependencies]

@@ -89,6 +89,12 @@ server {
         proxy_pass http://api:8000/health/ready;
         proxy_set_header Host $host;
     }
+
+    # Prometheus metrics are scraped over the private Docker network (api:8000) and must never be
+    # reachable from the internet, even though the endpoint also requires a bearer token.
+    location = /metrics {
+        return 404;
+    }
 }
 
 server {

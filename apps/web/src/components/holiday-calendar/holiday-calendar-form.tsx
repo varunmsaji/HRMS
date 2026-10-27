@@ -61,14 +61,24 @@ export function HolidayCalendarForm({
             onChange={(e) => update("stateCode", e.target.value.toUpperCase())}
           />
         </FormField>
-        <FormField id={id("validFrom")} label="Valid from" error={errors.validFrom}>
+        <FormField
+          id={id("validFrom")}
+          label="Valid from"
+          error={errors.validFrom}
+          description="Inclusive. Holidays dated before this day do not apply. Leave empty for no start."
+        >
           <Input
             type="date"
             value={values.validFrom}
             onChange={(e) => update("validFrom", e.target.value)}
           />
         </FormField>
-        <FormField id={id("validTo")} label="Valid to" error={errors.validTo}>
+        <FormField
+          id={id("validTo")}
+          label="Valid to"
+          error={errors.validTo}
+          description="Inclusive. Holidays dated after this day do not apply. Leave empty for no end."
+        >
           <Input
             type="date"
             value={values.validTo}
