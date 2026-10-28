@@ -129,6 +129,15 @@ class OnboardingCaseCreate(BaseModel):
     proposed_joining_date: date
 
 
+class OnboardingCaseCancelRequest(BaseModel):
+    """Optional body of `POST /onboarding-cases/{id}/cancel`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Recorded in the audit trail only; never shown to or emailed to the candidate.
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class OnboardingCaseRead(BaseModel):
     id: UUID
     company_id: UUID

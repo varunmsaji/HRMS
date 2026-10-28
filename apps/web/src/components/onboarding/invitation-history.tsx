@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import { formatDateTime } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { describeMessageStatus } from "@/lib/onboarding/invitation";
 import type { OnboardingMessage } from "@/lib/onboarding/types";
 
@@ -17,13 +19,15 @@ interface InvitationHistoryProps {
   onResend: () => void;
 }
 
-function when(value: string | null): string {
+function when(value: string | null, tz: string): string {
   if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  if (Number.isNaN(new Date(value).getTime())) return value;
+  return formatDateTime(value, tz);
 }
 
 export function InvitationHistory({ caseId, currentUserId, refreshKey, canResend, onResend }: InvitationHistoryProps) {
+  const { user } = useAuth();
+  const tz = user?.company_timezone ?? "Asia/Kolkata";
   const [messages, setMessages] = useState<OnboardingMessage[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -75,12 +79,12 @@ export function InvitationHistory({ caseId, currentUserId, refreshKey, canResend
                 </div>
                 <p className="text-foreground-muted">
                   To {m.recipient_email} · by {m.created_by_user_id === currentUserId ? "you" : "another HR user"} ·{" "}
-                  {when(m.created_at)}
+                  {when(m.created_at, tz)}
                 </p>
                 <p className="text-foreground-muted">
                   {info.description}
-                  {m.last_attempt_at ? ` Last attempt: ${when(m.last_attempt_at)}.` : ""}
-                  {m.provider_accepted_at ? ` Accepted: ${when(m.provider_accepted_at)}.` : ""}
+                  {m.last_attempt_at ? ` Last attempt: ${when(m.last_attempt_at, tz)}.` : ""}
+                  {m.provider_accepted_at ? ` Accepted: ${when(m.provider_accepted_at, tz)}.` : ""}
                 </p>
                 {info.needsResend && canResend ? (
                   <Button type="button" variant="outline" size="sm" onClick={onResend}>

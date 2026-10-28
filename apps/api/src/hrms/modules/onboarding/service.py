@@ -47,6 +47,7 @@ from hrms.modules.onboarding.exceptions import (
     InvalidOnboardingDocumentTypeError,
     InvalidOnboardingSectionError,
     OnboardingCaseMissingLegalEntityError,
+    OnboardingCaseNotCancellableError,
     OnboardingCaseNotInvitableError,
     OnboardingCaseNotReadyForActivationError,
     OnboardingCaseNotReviewableError,
@@ -104,6 +105,18 @@ if TYPE_CHECKING:
 #: terminal: HR may still need to hand back a link so the (now-)employee can view what they
 #: submitted — `resolve_and_touch` resolves it read-only (`writable` is false past this point,
 #: `ONBOARDING_CASE_WRITABLE_STATUSES` below), so this can never reopen editing.
+#: Statuses a case can still be cancelled from. Excludes `ACTIVATED` (an employee exists) and the
+#: already-closed `EXPIRED` / `CANCELLED`.
+ONBOARDING_CASE_CANCELLABLE_STATUSES = (
+    "DRAFT",
+    "INVITED",
+    "IN_PROGRESS",
+    "SUBMITTED",
+    "UNDER_REVIEW",
+    "VERIFIED",
+    "CHANGES_REQUESTED",
+)
+
 ONBOARDING_CASE_INVITABLE_STATUSES = ("DRAFT", "EXPIRED", "INVITED", "IN_PROGRESS", "ACTIVATED")
 
 #: Default public-link lifetime (plan §4.2: "default 7 days, HR-configurable per case at
@@ -766,6 +779,51 @@ class OnboardingTokenService:
 
         return OnboardingTokenContext(case_id=case.id, company_id=token.company_id)
 
+    async def cancel_case(
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        *,
+        actor_user_id: UUID,
+        reason: str | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> OnboardingCaseRead:
+        """`POST /onboarding-cases/{id}/cancel` - closes a case that will not proceed.
+
+        One transaction: lock the row (so a concurrent send/submit/activate and this cancel are
+        serialised, and a second cancel sees `CANCELLED`) -> status check -> revoke every live
+        public link -> `CANCELLED` -> audit. The candidate is not emailed. `CANCELLED` is outside
+        the live-email unique index, so the address can be onboarded again. Uploaded documents and
+        history are kept, not deleted."""
+        case = await self._case_repo.get_case_for_update(
+            self._session, company_id=company_id, case_id=case_id
+        )
+        if case is None:
+            raise NotFoundError("Resource not found")
+        if case.status not in ONBOARDING_CASE_CANCELLABLE_STATUSES:
+            raise OnboardingCaseNotCancellableError()
+
+        previous_status = case.status
+        now = datetime.now(UTC)
+        await self._token_repo.revoke_live_tokens_for_case(self._session, case_id=case_id, now=now)
+        await self._case_repo.set_status(self._session, case=case, status="CANCELLED", now=now)
+
+        read = onboarding_case_to_read(case)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="ONBOARDING_CASE_CANCELLED",
+            entity_type="onboarding_case",
+            entity_id=case_id,
+            before={"status": previous_status},
+            after={**onboarding_case_to_audit_dict(read), "reason": (reason or "").strip() or None},
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
     async def send_invite(
         self,
         company_id: UUID,
@@ -776,6 +834,7 @@ class OnboardingTokenService:
         user_agent: str | None = None,
         subject: str | None = None,
         body: str | None = None,
+        body_doc: dict[str, Any] | None = None,
         send_request_id: UUID | None = None,
     ) -> OnboardingInviteRead:
         """`POST /onboarding-cases/{id}/send-invite` - issues/reissues a token via `issue_token`
@@ -828,6 +887,7 @@ class OnboardingTokenService:
         invitations.render(
             subject=subject,
             body=body,
+            body_doc=body_doc,
             values=values,
             onboarding_url=f"{self._settings.web_app_base_url}/onboarding/{PREVIEW_LINK}",
             mobile_url=None,
@@ -844,6 +904,7 @@ class OnboardingTokenService:
         rendered = invitations.render(
             subject=subject,
             body=body,
+            body_doc=body_doc,
             values=values,
             onboarding_url=invite_url,
             mobile_url=mobile_link(self._settings, "onboarding", raw_token),
@@ -878,7 +939,9 @@ class OnboardingTokenService:
             company_id=company_id,
             case=case,
             subject=rendered.subject,
-            text_body=invitations.redacted_text(subject=subject, body=body, values=values),
+            text_body=invitations.redacted_text(
+                subject=subject, body=body, body_doc=body_doc, values=values
+            ),
             actor_user_id=actor_user_id,
             outbox_message_key=message_key if queued else None,
             send_request_id=send_request_id,

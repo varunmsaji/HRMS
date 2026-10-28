@@ -4,6 +4,8 @@ rendering. `build_invite_email` (O3), `build_changes_requested_email` (O6), and
 `build_activated_email` (O7) — the plan's own three templates, each landing alongside the
 endpoint that first needed it."""
 
+from html import escape as _e
+
 from hrms.core.links import mobile_html as _mobile_html
 from hrms.core.links import mobile_text as _mobile_text
 
@@ -20,9 +22,10 @@ def build_invite_email(
         "email, you can safely ignore it."
     )
     html_body = (
-        f"<p>Hi {candidate_first_name},</p>"
-        f"<p>Welcome to <strong>{company_name}</strong>! Please complete your onboarding details "
-        f'using the secure link below:</p><p><a href="{invite_url}">{invite_url}</a></p>'
+        f"<p>Hi {_e(candidate_first_name)},</p>"
+        f"<p>Welcome to <strong>{_e(company_name)}</strong>! Please complete your onboarding "
+        f'details using the secure link below:</p><p><a href="{_e(invite_url, quote=True)}">'
+        f"{_e(invite_url)}</a></p>"
         f"{_mobile_html(mobile_url)}"
         "<p>This link is personal to you — please don't forward it. If you weren't expecting this "
         "email, you can safely ignore it.</p>"
@@ -41,7 +44,7 @@ def build_changes_requested_email(
     subject = f"Action needed: updates requested on your {company_name} onboarding"
     item_lines_text = "\n".join(f"- {label}: {reason}" for label, reason in rejected_items)
     item_lines_html = "".join(
-        f"<li><strong>{label}:</strong> {reason}</li>" for label, reason in rejected_items
+        f"<li><strong>{_e(label)}:</strong> {_e(reason)}</li>" for label, reason in rejected_items
     )
     text_body = (
         f"Hi {candidate_first_name},\n\n"
@@ -51,8 +54,8 @@ def build_changes_requested_email(
         "resubmit. If you can't find that email, contact HR directly."
     )
     html_body = (
-        f"<p>Hi {candidate_first_name},</p>"
-        f"<p><strong>{company_name}</strong>'s HR team has reviewed your onboarding submission "
+        f"<p>Hi {_e(candidate_first_name)},</p>"
+        f"<p><strong>{_e(company_name)}</strong>'s HR team has reviewed your onboarding submission "
         f"and requested a few updates before it can be approved:</p><ul>{item_lines_html}</ul>"
         "<p>Please use the onboarding link you were sent earlier to make these corrections and "
         "resubmit. If you can't find that email, contact HR directly.</p>"
@@ -74,9 +77,9 @@ def build_activated_email(
         "any next steps before your start date."
     )
     html_body = (
-        f"<p>Hi {candidate_first_name},</p>"
-        f"<p>Your onboarding at <strong>{company_name}</strong> is complete and your employee "
-        f"record has been created (employee code <strong>{employee_code}</strong>). Welcome "
+        f"<p>Hi {_e(candidate_first_name)},</p>"
+        f"<p>Your onboarding at <strong>{_e(company_name)}</strong> is complete and your employee "
+        f"record has been created (employee code <strong>{_e(employee_code)}</strong>). Welcome "
         "aboard — HR will be in touch with any next steps before your start date.</p>"
     )
     return subject, html_body, text_body

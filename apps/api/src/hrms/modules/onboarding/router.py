@@ -51,11 +51,13 @@ from hrms.modules.onboarding.invitation_schemas import (
 from hrms.modules.onboarding.invitation_service import OnboardingInvitationService
 from hrms.modules.onboarding.permissions import (
     ONBOARDING_ACTIVATE,
+    ONBOARDING_CANCEL,
     ONBOARDING_CREATE,
     ONBOARDING_REVIEW,
     ONBOARDING_VIEW,
 )
 from hrms.modules.onboarding.schemas import (
+    OnboardingCaseCancelRequest,
     OnboardingCaseCreate,
     OnboardingCaseDetailRead,
     OnboardingCaseRead,
@@ -171,6 +173,7 @@ async def send_onboarding_invite(
         user_agent=request.headers.get("User-Agent"),
         subject=body.subject if body else None,
         body=body.body if body else None,
+        body_doc=body.body_doc if body else None,
         send_request_id=body.send_request_id if body else None,
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
@@ -198,7 +201,9 @@ async def preview_invitation(
 ) -> DataEnvelope[InvitationPreviewRead]:
     """Renders exactly what `send-invite` would send, with an inert link. No side effects: no
     token, no outbox row, no history, no audit."""
-    data = await service.preview(tenant.company_id, case_id, subject=body.subject, body=body.body)
+    data = await service.preview(
+        tenant.company_id, case_id, subject=body.subject, body=body.body, body_doc=body.body_doc
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -289,6 +294,29 @@ async def request_onboarding_changes(
         tenant.company_id,
         case_id,
         actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/onboarding-cases/{case_id}/cancel", status_code=status.HTTP_200_OK)
+async def cancel_onboarding_case(
+    case_id: UUID,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_CANCEL))],
+    service: Annotated[OnboardingTokenService, Depends(get_onboarding_token_service)],
+    body: OnboardingCaseCancelRequest | None = None,
+) -> DataEnvelope[OnboardingCaseRead]:
+    """Closes a case that will not proceed: revokes its live link, sets `CANCELLED`, audits.
+    Gated by its own `ONBOARDING.CANCEL` code (not widened from `.CREATE`). Not allowed once
+    activated (an employee exists) or when already closed (409)."""
+    data = await service.cancel_case(
+        tenant.company_id,
+        case_id,
+        actor_user_id=tenant.user_id,
+        reason=body.reason if body else None,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )

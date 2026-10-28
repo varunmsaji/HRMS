@@ -62,6 +62,14 @@ export interface InvitationPlaceholder {
 }
 
 /** `GET /onboarding-cases/{id}/invitation/compose`. */
+export interface InvitationTemplate {
+  key: string;
+  name: string;
+  description: string;
+  subject: string;
+  body: string;
+}
+
 export interface InvitationCompose {
   case_id: string;
   recipient_email: string;
@@ -76,6 +84,8 @@ export interface InvitationCompose {
   link_valid_days: number;
   default_subject: string;
   default_body: string;
+  /** Built-in starting points; the first is the default. May be absent on older servers. */
+  templates?: InvitationTemplate[];
   subject_max_length: number;
   body_max_length: number;
   placeholders: InvitationPlaceholder[];
@@ -87,6 +97,8 @@ export interface InvitationPreview {
   subject: string;
   html_body: string;
   text_body: string;
+  /** Message with candidate details filled in; only `{{onboarding_url}}` stays a token. */
+  editable_body?: string | null;
   link_is_placeholder: boolean;
 }
 

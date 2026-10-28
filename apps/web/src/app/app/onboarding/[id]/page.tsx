@@ -2,24 +2,33 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { BackButton } from "@/components/common/back-button";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
+import {
+  CancelOnboardingDialog,
+  ONBOARDING_CANCELLABLE_STATUSES,
+} from "@/components/onboarding/cancel-onboarding-dialog";
 import { DocumentRejectDialog } from "@/components/onboarding/document-review-dialog";
 import { InvitationComposer } from "@/components/onboarding/invitation-composer";
 import { InvitationHistory } from "@/components/onboarding/invitation-history";
 import { OnboardingStatusBadge } from "@/components/onboarding/onboarding-status-badge";
 import { SectionRejectDialog } from "@/components/onboarding/section-review-dialog";
 import { Badge } from "@/components/ui/badge";
+import { HorizontalScroll } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { formatDateTime } from "@/lib/attendance/format";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import type { Designation } from "@/lib/designation/types";
@@ -41,19 +50,14 @@ function ReviewStatusBadge({ status }: { status: string }) {
   return <Badge variant="outline">Pending</Badge>;
 }
 
-function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
-
 function LinkStatus({
   status,
   expiresAt,
+  tz,
 }: {
   status: OnboardingCaseDetail["token_status"];
   expiresAt: string | null;
+  tz: string;
 }) {
   if (!status) return null;
   if (status === "ACTIVE") {
@@ -61,7 +65,7 @@ function LinkStatus({
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge variant="success">Link active</Badge>
         <span className="text-foreground-muted">
-          {expiresAt ? `Expires ${formatDateTime(expiresAt)}` : null}
+          {expiresAt ? `Expires ${formatDateTime(expiresAt, tz)}` : null}
         </span>
       </div>
     );
@@ -71,7 +75,7 @@ function LinkStatus({
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge variant="danger">Link expired</Badge>
         <span className="text-foreground-muted">
-          {expiresAt ? `Expired ${formatDateTime(expiresAt)} — ` : ""}Resend the invite to
+          {expiresAt ? `Expired ${formatDateTime(expiresAt, tz)} — ` : ""}Resend the invite to
           generate a new one.
         </span>
       </div>
@@ -177,6 +181,7 @@ export default function OnboardingCaseDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const datePattern = useCompanyDatePattern();
   const { user } = useAuth();
 
   const [onboardingCase, setOnboardingCase] = useState<OnboardingCaseDetail | null>(null);
@@ -184,6 +189,13 @@ export default function OnboardingCaseDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [composerJustCreated, setComposerJustCreated] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const autoOpenHandledRef = useRef(false);
+  const canRef = useRef(can);
+  useEffect(() => {
+    canRef.current = can;
+  }, [can]);
   const [historyKey, setHistoryKey] = useState(0);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [reviewingSection, setReviewingSection] = useState<OnboardingSectionName | null>(null);
@@ -225,6 +237,23 @@ export default function OnboardingCaseDetailPage() {
       ]);
       setOnboardingCase(data);
       setRefs({ branches, departments, designations, legalEntities });
+      // The create flow lands here with `?compose=1`: open the composer once (never sends
+      // anything), then drop the param so a refresh or back-navigation doesn't reopen it.
+      if (!autoOpenHandledRef.current) {
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("compose") === "1") {
+          autoOpenHandledRef.current = true;
+          url.searchParams.delete("compose");
+          window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+          if (
+            canRef.current("ONBOARDING.CREATE") &&
+            ONBOARDING_CASE_INVITABLE_STATUSES.includes(data.status)
+          ) {
+            setComposerJustCreated(true);
+            setComposerOpen(true);
+          }
+        }
+      }
     } catch (err) {
       setOnboardingCase(null);
       setError(
@@ -447,6 +476,8 @@ export default function OnboardingCaseDetailPage() {
   const canInvite = can("ONBOARDING.CREATE");
   const canReview = can("ONBOARDING.REVIEW");
   const canActivate = can("ONBOARDING.ACTIVATE");
+  const canCancel =
+    can("ONBOARDING.CANCEL") && ONBOARDING_CANCELLABLE_STATUSES.includes(onboardingCase.status);
   const isInvitable = ONBOARDING_CASE_INVITABLE_STATUSES.includes(onboardingCase.status);
   const isReviewable = REVIEWABLE_CASE_STATUSES.includes(onboardingCase.status);
   const inviteLabel =
@@ -470,18 +501,34 @@ export default function OnboardingCaseDetailPage() {
         title={candidateName || "Onboarding case"}
         description="HR-started onboarding case — review each section, then activate once everything is verified."
         actions={
-          <Link href="/app/onboarding" className="text-sm text-foreground-secondary hover:underline">
-            ← Back to onboarding
-          </Link>
+          <BackButton href="/app/onboarding">Back to onboarding</BackButton>
         }
       />
 
       {canInvite ? (
         <InvitationComposer
           open={composerOpen}
-          onOpenChange={setComposerOpen}
+          onOpenChange={(next) => {
+            setComposerOpen(next);
+            if (!next) setComposerJustCreated(false);
+          }}
+          justCreated={composerJustCreated}
           caseId={params.id}
           onSent={handleInviteQueued}
+        />
+      ) : null}
+
+      {canCancel ? (
+        <CancelOnboardingDialog
+          open={cancelOpen}
+          onOpenChange={setCancelOpen}
+          caseId={params.id}
+          candidateName={candidateName}
+          hasLiveLink={onboardingCase.token_status === "ACTIVE"}
+          onCancelled={() => {
+            void load();
+            setHistoryKey((k) => k + 1);
+          }}
         />
       ) : null}
 
@@ -510,6 +557,11 @@ export default function OnboardingCaseDetailPage() {
                   disabled={requestingChanges}
                 >
                   {requestingChanges ? "Requesting…" : "Request Changes"}
+                </Button>
+              ) : null}
+              {canCancel ? (
+                <Button type="button" size="sm" variant="outline" onClick={() => setCancelOpen(true)}>
+                  Cancel Onboarding
                 </Button>
               ) : null}
               {canActivate && onboardingCase.status === "VERIFIED" ? (
@@ -572,14 +624,21 @@ export default function OnboardingCaseDetailPage() {
             />
           ) : null}
 
-          <LinkStatus status={onboardingCase.token_status} expiresAt={onboardingCase.token_expires_at} />
+          <LinkStatus
+            status={onboardingCase.token_status}
+            expiresAt={onboardingCase.token_expires_at}
+            tz={user?.company_timezone ?? "Asia/Kolkata"}
+          />
 
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <DetailField label="Candidate first name" value={onboardingCase.candidate_first_name} />
             <DetailField label="Candidate last name" value={onboardingCase.candidate_last_name} />
             <DetailField label="Personal email" value={onboardingCase.personal_email} />
             <DetailField label="Personal mobile" value={onboardingCase.personal_mobile} />
-            <DetailField label="Proposed joining date" value={onboardingCase.proposed_joining_date} />
+            <DetailField
+              label="Proposed joining date"
+              value={formatCompanyDate(onboardingCase.proposed_joining_date, datePattern)}
+            />
             <DetailField label="Company" value={nameIn(refs?.legalEntities, onboardingCase.legal_entity_id)} />
             <DetailField label="Branch" value={nameIn(refs?.branches, onboardingCase.branch_id)} />
             <DetailField label="Department" value={nameIn(refs?.departments, onboardingCase.department_id)} />
@@ -646,7 +705,7 @@ export default function OnboardingCaseDetailPage() {
           ) : null}
 
           {!documentsError && documents && documents.length > 0 ? (
-            <div className="overflow-x-auto">
+            <HorizontalScroll>
               <table className="w-full min-w-[560px] border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wide text-foreground-muted">
@@ -710,7 +769,7 @@ export default function OnboardingCaseDetailPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </HorizontalScroll>
           ) : null}
         </CardContent>
       </Card>

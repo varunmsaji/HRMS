@@ -341,3 +341,16 @@ class OnboardingCaseMissingLegalEntityError(ValidationError):
                 }
             ],
         )
+
+
+class OnboardingCaseNotCancellableError(ConflictError):
+    """Raised by `cancel` when the case can no longer (or need not) be cancelled: `ACTIVATED`
+    cases already have a real employee (use the employee lifecycle instead), and `EXPIRED` /
+    `CANCELLED` cases are already closed."""
+
+    code = "ONBOARDING_CASE_NOT_CANCELLABLE"
+
+    def __init__(
+        self, message: str = "This onboarding case cannot be cancelled in its current status"
+    ) -> None:
+        super().__init__(message)

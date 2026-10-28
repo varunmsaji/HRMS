@@ -32,13 +32,45 @@ Welcome to {{company_name}}!
 
 We are pleased to begin your pre-joining onboarding for the {{designation}} position.
 
+You will be joining the {{department}} team.
+
 Your proposed joining date is {{joining_date}}.
 
-Please use the secure link below to complete the required onboarding information before your joining date. The link is valid until {{invitation_expiry}}.
+To get everything ready before your first day, please complete your online onboarding form using the secure link below. The link is personal to you and is valid until {{invitation_expiry}}.
 
 {{onboarding_url}}
 
-If you need assistance, please contact the HR team.
+What the form asks for:
+- Personal information
+- Address
+- Emergency contact
+- Bank details
+- Statutory details
+- Compensation details
+- Previous employment
+- Education
+- Nominee and family details
+
+Please keep clear copies (photo or scan) of these documents ready to upload:
+- Passport-size photograph
+- PAN card
+- Aadhaar card
+- Address proof
+- Education certificates
+- Previous employment proof, such as a relieving or experience letter
+- Bank proof, such as a cancelled cheque or passbook first page
+
+How it works:
+1. Open the link and fill in each section. Your progress is saved as you go, so you can leave and come back using the same link until it expires.
+2. Upload your documents and submit the form.
+3. Our HR team will review your details and documents. If anything needs to be corrected, we will email you exactly what to update, and you can fix it using the same link.
+4. Once everything is verified, HR will complete your onboarding and set up your employee record.
+
+Please complete the form well before your joining date so that nothing delays your first day. Please do not share the link with anyone else. It contains your personal details and is meant only for you.
+
+If you have any questions, face any difficulty with the form, or need a new link after this one expires, please contact the HR team.
+
+We look forward to having you with us.
 
 Regards,
 {{company_name}} HR Team"""  # noqa: E501
@@ -209,6 +241,48 @@ def _link_html(url: str, label: str) -> str:
     return f'<a href="{html.escape(url, quote=True)}">{html.escape(label)}</a>'
 
 
+def call_to_action_html(onboarding_url: str) -> str:
+    """The server-built button + visible address. Shared by the plain-text and rich-text paths."""
+    return (
+        f'<p style="margin:24px 0">{_link_html(onboarding_url, CALL_TO_ACTION)}'
+        f'</p><p style="font-size:12px;color:#555">If the button does not work, '
+        f"copy this address into your browser:<br>{html.escape(onboarding_url)}</p>"
+    )
+
+
+def append_mobile_and_footer(
+    text_body: str, html_body: str, mobile_url: str | None
+) -> tuple[str, str]:
+    if mobile_url:
+        text_body += (
+            "\n\nOn a phone with the HRMS app installed, open it with this link:\n" + mobile_url
+        )
+        html_body += (
+            "<p>On a phone with the HRMS app installed, "
+            f"{_link_html(mobile_url, 'open it in the app')}.</p>"
+        )
+    text_body += "\n\n" + FOOTER_TEXT
+    html_body += f'<p style="font-size:12px;color:#555">{html.escape(FOOTER_TEXT)}</p>'
+    return text_body, html_body
+
+
+def render_editable_body(body_template: str, values: InvitationValues) -> str:
+    """The body with every placeholder filled in except `{{onboarding_url}}`, which stays a token
+    because the real link only exists at send time. Lets HR edit the text they will actually send;
+    it is validated and rendered again like any other body on preview/send."""
+    body_tpl = validate_body_template(body_template)
+    url_values = InvitationValues({**values.values, "onboarding_url": "{{onboarding_url}}"})
+    parts: list[str] = []
+    for paragraph in _PARAGRAPH_SPLIT.split(body_tpl):
+        paragraph = paragraph.strip("\n")
+        if not paragraph.strip():
+            continue
+        text = _paragraph_text(paragraph, url_values)
+        if text is not None:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
 def render_invitation(
     *,
     subject_template: str,
@@ -237,11 +311,7 @@ def render_invitation(
             continue
         text_parts.append(text)
         if paragraph.strip() == "{{onboarding_url}}":
-            html_parts.append(
-                f'<p style="margin:24px 0">{_link_html(onboarding_url, CALL_TO_ACTION)}'
-                f'</p><p style="font-size:12px;color:#555">If the button does not work, '
-                f"copy this address into your browser:<br>{html.escape(onboarding_url)}</p>"
-            )
+            html_parts.append(call_to_action_html(onboarding_url))
             continue
         # escape the template text and each value separately so a value can't affect structure
         html_line_parts: list[str] = []
@@ -257,16 +327,7 @@ def render_invitation(
         html_line_parts.append(html.escape(paragraph[pos:]))
         html_parts.append("<p>" + "".join(html_line_parts).replace("\n", "<br>") + "</p>")
 
-    text_body = "\n\n".join(text_parts)
-    html_body = "".join(html_parts)
-    if mobile_url:
-        text_body += (
-            "\n\nOn a phone with the HRMS app installed, open it with this link:\n" + mobile_url
-        )
-        html_body += (
-            "<p>On a phone with the HRMS app installed, "
-            f"{_link_html(mobile_url, 'open it in the app')}.</p>"
-        )
-    text_body += "\n\n" + FOOTER_TEXT
-    html_body += f'<p style="font-size:12px;color:#555">{html.escape(FOOTER_TEXT)}</p>'
+    text_body, html_body = append_mobile_and_footer(
+        "\n\n".join(text_parts), "".join(html_parts), mobile_url
+    )
     return RenderedInvitation(subject=subject, html_body=html_body, text_body=text_body)
