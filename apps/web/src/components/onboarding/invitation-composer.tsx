@@ -13,25 +13,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
-import { insertPlaceholder } from "@/lib/onboarding/invitation";
+import { formatDateTime } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import type { InvitationCompose, InvitationPreview, OnboardingInvite } from "@/lib/onboarding/types";
 
 interface InvitationComposerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** True when opened straight after the case was created; adds a "nothing sent yet" notice. */
+  justCreated?: boolean;
   caseId: string;
   onSent: (result: OnboardingInvite) => void;
 }
 
-function formatDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
-/** Compose -> Preview -> Confirm send. The preview is rendered by the server with the same code
+/** Choose template -> edit the full message (with a rendered preview tab) -> send. The preview is rendered by the server with the same code
  * that renders the real email, with an inert link (no token is created to preview). Sending
  * queues the email; it is NOT a delivery confirmation. */
 export function InvitationComposer({ open, ...rest }: InvitationComposerProps) {
@@ -39,18 +36,26 @@ export function InvitationComposer({ open, ...rest }: InvitationComposerProps) {
   return open ? <ComposerSession {...rest} /> : null;
 }
 
-function ComposerSession({ onOpenChange, caseId, onSent }: Omit<InvitationComposerProps, "open">) {
+function ComposerSession({
+  onOpenChange,
+  caseId,
+  onSent,
+  justCreated,
+}: Omit<InvitationComposerProps, "open">) {
+  const { user } = useAuth();
+  const tz = user?.company_timezone ?? "Asia/Kolkata";
   const [compose, setCompose] = useState<InvitationCompose | null>(null);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [preview, setPreview] = useState<InvitationPreview | null>(null);
-  const [previewing, setPreviewing] = useState(false);
+  const [templateKey, setTemplateKey] = useState("");
+  const [step, setStep] = useState<"template" | "edit">("template");
+  const [rendering, setRendering] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
   // One id per compose session: if a send times out and is retried, the server recognises the
   // duplicate instead of issuing a second link. Re-created for each new session.
   const [requestId] = useState(() => crypto.randomUUID());
@@ -65,6 +70,10 @@ function ComposerSession({ onOpenChange, caseId, onSent }: Omit<InvitationCompos
         setCompose(data);
         setSubject(data.default_subject);
         setBody(data.default_body);
+        setTemplateKey(data.templates?.[0]?.key ?? "");
+        if ((data.templates?.length ?? 0) <= 1) {
+          void fillIn(data.default_subject, data.default_body, true);
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -81,39 +90,44 @@ function ComposerSession({ onOpenChange, caseId, onSent }: Omit<InvitationCompos
     return () => {
       cancelled = true;
     };
-  }, [caseId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fillIn only uses stable setters and caseId
+  }, [caseId, loadAttempt]);
 
-  function handleInsert(key: string) {
-    const el = bodyRef.current;
-    const next = insertPlaceholder(body, el?.selectionStart ?? body.length, el?.selectionEnd ?? body.length, key);
-    setBody(next.value);
-    setPreview(null);
-    requestAnimationFrame(() => {
-      el?.focus();
-      el?.setSelectionRange(next.caret, next.caret);
-    });
-  }
+  const templates = compose?.templates ?? [];
 
-  async function handlePreview() {
-    setPreviewing(true);
+  /** Renders the template with this candidate's real details and shows the result as the text to
+   * edit. Only `{{onboarding_url}}` stays a token: the real link is created when HR sends. */
+  async function fillIn(subjectTemplate: string, bodyTemplate: string, fallback = false) {
+    setRendering(true);
     setFieldError(null);
     try {
-      setPreview(
-        await apiClient.post<InvitationPreview>(`/onboarding-cases/${caseId}/invitation/preview`, {
-          subject,
-          body,
-        }),
+      const rendered = await apiClient.post<InvitationPreview>(
+        `/onboarding-cases/${caseId}/invitation/preview`,
+        { subject: subjectTemplate, body: bodyTemplate },
       );
+      setSubject(rendered.subject);
+      setBody(rendered.editable_body ?? bodyTemplate);
+      setStep("edit");
     } catch (err) {
-      setPreview(null);
+      if (fallback) {
+        // No template choice to go back to: edit the raw template rather than strand HR.
+        setSubject(subjectTemplate);
+        setBody(bodyTemplate);
+        setStep("edit");
+      }
       setFieldError(
         err instanceof ApiError && err.status === 403
           ? "You don't have permission to preview this invitation."
           : describeApiError(err),
       );
     } finally {
-      setPreviewing(false);
+      setRendering(false);
     }
+  }
+
+  function continueWithTemplate() {
+    const chosen = templates.find((t) => t.key === templateKey);
+    if (chosen) void fillIn(chosen.subject, chosen.body);
   }
 
   async function handleSend() {
@@ -141,111 +155,116 @@ function ComposerSession({ onOpenChange, caseId, onSent }: Omit<InvitationCompos
     }
   }
 
-  const required = compose?.placeholders.filter((p) => p.key !== "onboarding_url") ?? [];
-
+  const selecting = step === "template" && templates.length > 1;
+  
   return (
     <Dialog open onOpenChange={(next) => (!sending ? onOpenChange(next) : null)}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{preview ? "Review and send invitation" : "Compose invitation"}</DialogTitle>
+          <DialogTitle>{selecting ? "Choose a template" : "Review and send invitation"}</DialogTitle>
           <DialogDescription>
-            A pre-joining onboarding invitation — not an offer letter. Nothing is sent until you confirm.
+            {justCreated ? "The onboarding case has been created. No email has been sent yet. " : ""}
+            {selecting
+              ? "Pick the message to start from. You can edit it on the next step."
+              : "Edit the message if you like. Nothing is sent until you click Send."}
           </DialogDescription>
         </DialogHeader>
 
-        {loading ? <p role="status">Loading…</p> : null}
+        {loading || (rendering && !selecting) ? <p role="status">Loading…</p> : null}
         {loadError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {loadError.status === 403
-              ? "You don't have permission to send invitations."
-              : `Could not load the invitation: ${describeApiError(loadError)}`}
-          </p>
+          <div className="space-y-2">
+            <p role="alert" className="text-sm text-destructive">
+              {loadError.status === 403
+                ? "You don't have permission to send invitations."
+                : `Could not load the invitation: ${describeApiError(loadError)}`}
+            </p>
+            {loadError.status !== 403 ? (
+              <Button type="button" size="sm" variant="outline" onClick={() => {
+                  setLoading(true);
+                  setLoadError(null);
+                  setLoadAttempt((n) => n + 1);
+                }}>
+                Retry
+              </Button>
+            ) : null}
+          </div>
         ) : null}
 
-        {compose && !loading ? (
+        {compose && !loading && !(rendering && !selecting) ? (
           <div className="space-y-4">
-            <dl className="grid grid-cols-1 gap-x-4 gap-y-1 rounded-md border border-border bg-background-secondary p-3 text-sm sm:grid-cols-2">
-              <div><dt className="inline text-foreground-muted">To: </dt><dd className="inline">{compose.candidate_name} &lt;{compose.recipient_email}&gt;</dd></div>
-              <div><dt className="inline text-foreground-muted">Company: </dt><dd className="inline">{compose.company_name}</dd></div>
-              <div><dt className="inline text-foreground-muted">Designation: </dt><dd className="inline">{compose.designation ?? "—"}</dd></div>
-              <div><dt className="inline text-foreground-muted">Department: </dt><dd className="inline">{compose.department ?? "—"}</dd></div>
-              <div><dt className="inline text-foreground-muted">Joining date: </dt><dd className="inline">{compose.proposed_joining_date}</dd></div>
-              <div><dt className="inline text-foreground-muted">New link valid for: </dt><dd className="inline">{compose.link_valid_days} days</dd></div>
-            </dl>
-
             {!compose.invitable ? (
               <p role="alert" className="text-sm text-destructive">
                 This case is no longer in a status an invitation can be sent for.
               </p>
             ) : null}
 
-            {compose.has_active_link ? (
-              <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
-                The candidate already has a live link
-                {compose.active_link_expires_at ? ` (expires ${formatDate(compose.active_link_expires_at)})` : ""}.
-                Sending issues a <strong>new link and revokes the previous one</strong>.
-              </p>
+            {selecting && fieldError ? (
+              <p role="alert" className="text-sm text-destructive">{fieldError}</p>
             ) : null}
-
-            {preview ? (
-              <div className="space-y-3" data-testid="invitation-preview">
-                <p className="text-sm">
-                  <span className="text-foreground-muted">Subject: </span>
-                  <strong>{preview.subject}</strong>
-                </p>
-                <iframe
-                  title="Email preview"
-                  sandbox=""
-                  srcDoc={`<body style="font-family:sans-serif;font-size:14px">${preview.html_body}</body>`}
-                  className="h-72 w-full rounded-md border border-border bg-white"
-                />
-                <p className="text-xs text-foreground-muted">
-                  The link shown is a non-functional placeholder; the real secure link is created when you send.
-                </p>
-                {sendError ? (
-                  <p role="alert" className="text-sm text-destructive">{sendError}</p>
-                ) : null}
+            {selecting ? (
+              <div role="radiogroup" aria-label="Template" className="space-y-2">
+                {templates.map((t) => (
+                  <label
+                    key={t.key}
+                    className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${
+                      t.key === templateKey ? "border-primary bg-primary/5" : "border-border"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="invitationTemplate"
+                      className="mt-1"
+                      checked={t.key === templateKey}
+                      onChange={() => setTemplateKey(t.key)}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium">{t.name}</span>
+                      <span className="block text-xs text-foreground-muted">{t.description}</span>
+                    </span>
+                  </label>
+                ))}
               </div>
             ) : (
               <>
+                <p className="text-sm">
+                  <span className="text-foreground-muted">To: </span>
+                  {compose.candidate_name} &lt;{compose.recipient_email}&gt;
+                </p>
+
+                {compose.has_active_link ? (
+                  <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+                    The candidate already has a live link
+                    {compose.active_link_expires_at
+                      ? ` (expires ${formatDateTime(compose.active_link_expires_at, tz)})`
+                      : ""}
+                    . Sending issues a <strong>new link and revokes the previous one</strong>.
+                  </p>
+                ) : null}
+
                 <FormField id="invitationSubject" label="Subject" required>
                   <Input
                     value={subject}
                     maxLength={compose.subject_max_length}
-                    onChange={(e) => { setSubject(e.target.value); setPreview(null); }}
+                    onChange={(e) => setSubject(e.target.value)}
                   />
                 </FormField>
                 <div className="space-y-1.5">
                   <label htmlFor="invitationBody" className="text-sm font-medium">Message</label>
                   <textarea
                     id="invitationBody"
-                    ref={bodyRef}
                     value={body}
-                    rows={12}
+                    rows={18}
                     maxLength={compose.body_max_length}
-                    onChange={(e) => { setBody(e.target.value); setPreview(null); }}
-                    className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    onChange={(e) => setBody(e.target.value)}
+                    className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
                   />
-                  <div className="flex items-center gap-2">
-                    <label htmlFor="invitationPlaceholder" className="text-sm text-foreground-muted">Insert field</label>
-                    <NativeSelect
-                      id="invitationPlaceholder"
-                      className="w-64"
-                      value=""
-                      onChange={(e) => { if (e.target.value) handleInsert(e.target.value); }}
-                    >
-                      <option value="">Choose…</option>
-                      {compose.placeholders.map((p) => (
-                        <option key={p.key} value={p.key}>{p.label}</option>
-                      ))}
-                    </NativeSelect>
-                  </div>
                   <p className="text-xs text-foreground-muted">
-                    The message must include the secure link. Lines using a field the candidate does not have
-                    ({required.filter((p) => !p.required).map((p) => p.label.toLowerCase()).join(", ")}) are left out.
+                    This is the email as the candidate will see it. Keep {"{{onboarding_url}}"} where the
+                    secure link should go; it is replaced with their personal link when you send.
                   </p>
                 </div>
                 {fieldError ? <p role="alert" className="text-sm text-destructive">{fieldError}</p> : null}
+                {sendError ? <p role="alert" className="text-sm text-destructive">{sendError}</p> : null}
               </>
             )}
           </div>
@@ -255,23 +274,21 @@ function ComposerSession({ onOpenChange, caseId, onSent }: Omit<InvitationCompos
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={sending}>
             Cancel
           </Button>
-          {preview ? (
+          {selecting ? (
+            <Button type="button" onClick={continueWithTemplate} disabled={!compose?.invitable || !templateKey || rendering}>
+              {rendering ? "Preparing…" : "Next"}
+            </Button>
+          ) : (
             <>
-              <Button type="button" variant="outline" onClick={() => setPreview(null)} disabled={sending}>
-                Edit
-              </Button>
-              <Button type="button" onClick={() => void handleSend()} disabled={sending || !compose?.invitable}>
-                {sending ? "Queuing…" : "Confirm & send"}
+              {templates.length > 1 ? (
+                <Button type="button" variant="outline" onClick={() => setStep("template")} disabled={sending}>
+                  Back
+                </Button>
+              ) : null}
+              <Button type="button" onClick={() => void handleSend()} disabled={sending || rendering || !compose?.invitable}>
+                {sending ? "Queuing…" : "Send invitation"}
               </Button>
             </>
-          ) : (
-            <Button
-              type="button"
-              onClick={() => void handlePreview()}
-              disabled={!compose || previewing || !compose.invitable}
-            >
-              {previewing ? "Rendering…" : "Preview"}
-            </Button>
           )}
         </DialogFooter>
       </DialogContent>

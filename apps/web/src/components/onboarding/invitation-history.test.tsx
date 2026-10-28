@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api/client", () => ({ apiClient: { get: vi.fn() } }));
+vi.mock("@/lib/auth/auth-context", () => ({
+  useAuth: () => ({ user: { company_timezone: "Asia/Kolkata" } }),
+}));
 
 import { InvitationHistory } from "@/components/onboarding/invitation-history";
 import { apiClient } from "@/lib/api/client";

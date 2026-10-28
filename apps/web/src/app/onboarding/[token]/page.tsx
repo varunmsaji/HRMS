@@ -3,12 +3,14 @@
 import {
   AlertTriangle,
   Briefcase,
-  Building2,
+  CalendarCheck,
+  Check,
   CheckCircle2,
   ClipboardCheck,
   ClipboardList,
   FileText,
   GraduationCap,
+  Lock,
   Landmark,
   MapPin,
   Pencil,
@@ -18,10 +20,12 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { Logo } from "@/components/brand/logo";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { AddressInfoStep } from "@/components/onboarding/wizard/address-info-step";
@@ -138,14 +142,98 @@ const STEP_DESCRIPTIONS: Partial<Record<Step, string>> = {
 
 function WizardHeader() {
   return (
-    <header className="border-b border-border bg-surface px-6 py-4">
-      <div className="mx-auto flex max-w-2xl items-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary-subtle text-primary">
-          <Building2 className="h-4 w-4" aria-hidden="true" />
+    <header className="border-b border-border bg-surface px-4 py-3.5 sm:px-8">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+        <Logo size={28} />
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-foreground-secondary">
+          <Lock className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+          Secure onboarding
         </span>
-        <span className="text-md font-semibold text-foreground">Krewoxa</span>
       </div>
     </header>
+  );
+}
+
+function formatJoiningDate(value: string): string | null {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+}
+
+function WizardHero({ name, joiningDate }: { name: string; joiningDate: string }) {
+  const joining = formatJoiningDate(joiningDate);
+  return (
+    <section className="relative overflow-hidden rounded-2xl bg-[#0b1530] shadow-sm">
+      <Image src="/landing/team.jpg" alt="" fill priority sizes="1152px" className="object-cover" />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-gradient-to-r from-[#0b1530]/95 via-[#0b1530]/80 to-[#0b1530]/40"
+      />
+      <div className="relative z-10 px-6 py-8 sm:px-10 sm:py-10">
+        <p className="text-sm font-medium text-blue-300">Pre-joining onboarding</p>
+        <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-white sm:text-[32px]">
+          Welcome aboard, {name}
+        </h1>
+        <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-300 sm:text-base">
+          A few details now means a smooth first day. Fill in each section at your own pace — your
+          progress is saved as you go.
+        </p>
+        {joining ? (
+          <div className="mt-5 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-3.5 py-2 text-sm text-white backdrop-blur-sm">
+            <CalendarCheck className="h-4 w-4 text-blue-300" aria-hidden="true" />
+            Proposed joining date: <strong className="font-semibold">{joining}</strong>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function StepNav({ step }: { step: Step }) {
+  const currentIndex = STEPS.indexOf(step);
+  return (
+    <nav aria-label="Onboarding sections" className="hidden lg:block">
+      <ol className="space-y-1">
+        {STEPS.map((item, index) => {
+          const done = index < currentIndex;
+          const active = index === currentIndex;
+          const Icon = STEP_ICONS[item];
+          return (
+            <li
+              key={item}
+              aria-current={active ? "step" : undefined}
+              className={
+                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm " +
+                (active
+                  ? "bg-primary-subtle font-semibold text-primary"
+                  : done
+                    ? "text-foreground-secondary"
+                    : "text-foreground-muted")
+              }
+            >
+              <span
+                className={
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full " +
+                  (done
+                    ? "bg-success text-white"
+                    : active
+                      ? "bg-primary text-white"
+                      : "border border-border bg-surface")
+                }
+              >
+                {done ? (
+                  <Check className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+              </span>
+              <span className="truncate">{STEP_LABELS[item]}</span>
+              {done ? <span className="sr-only">(completed)</span> : null}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }
 
@@ -464,40 +552,51 @@ export default function OnboardingWizardPage() {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <WizardHeader />
-      <main className="flex flex-1 justify-center px-4 py-12">
-        <div className="w-full max-w-2xl">
-          <div className="mb-6">
-            <h1 className="text-xl font-semibold text-foreground">Welcome, {candidateName}</h1>
-            <p className="mt-1 text-sm text-foreground-secondary">
-              Please complete the sections below so HR can finish setting up your employee record.
-              You can leave and come back — your progress is saved as you go.
-            </p>
-          </div>
+      <main className="flex flex-1 justify-center px-4 py-6 sm:px-8 sm:py-10">
+        <div className="w-full max-w-6xl space-y-6">
+          <WizardHero name={candidateName} joiningDate={onboardingCase.proposed_joining_date} />
 
-          <div className="rounded-lg border border-border bg-surface p-6 shadow-sm sm:p-8">
-            <ProgressHeader step={step} />
+          <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+            <aside className="lg:sticky lg:top-6 lg:self-start">
+              <div className="rounded-xl border border-border bg-surface p-3 shadow-sm lg:p-4">
+                <StepNav step={step} />
+                <div className="lg:hidden">
+                  <ProgressHeader step={step} />
+                  <p className="-mt-3 text-sm font-medium text-foreground">{STEP_LABELS[step]}</p>
+                </div>
+              </div>
+            </aside>
+
+            <div className="min-w-0">
+          <div className="rounded-xl border border-border bg-surface p-5 shadow-sm sm:p-8">
+
 
             {step === "welcome" ? (
               <div className="space-y-5">
-                <div className="space-y-2 rounded-md border border-border bg-muted/40 p-4 text-sm">
-                  <p className="font-medium text-foreground">Before you start, have these ready:</p>
-                  <ul className="space-y-1.5 text-foreground-secondary">
-                    <li className="flex items-center gap-2">
-                      <Landmark className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />
-                      Bank account details
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />
-                      PF / ESI information
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <Upload className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />A
-                      photo or scan of your ID
-                    </li>
-                  </ul>
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground">Let&apos;s get you set up</h2>
+                  <p className="mt-1 text-sm text-foreground-secondary">
+                    It takes about 10 minutes. Keep these handy before you start:
+                  </p>
                 </div>
-                <p className="text-xs text-foreground-muted">
-                  This should take about 10 minutes.
+                <ul className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    { icon: Landmark, title: "Bank details", text: "Account number and IFSC, or a cancelled cheque." },
+                    { icon: FileText, title: "PF / ESI info", text: "UAN and ESI numbers, if you have them." },
+                    { icon: Upload, title: "ID documents", text: "A clear photo or scan of your ID proofs." },
+                  ].map(({ icon: Icon, title, text }) => (
+                    <li key={title} className="rounded-lg border border-border bg-muted/30 p-4">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-md bg-primary-subtle text-primary">
+                        <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                      </span>
+                      <p className="mt-3 text-sm font-semibold text-foreground">{title}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-foreground-muted">{text}</p>
+                    </li>
+                  ))}
+                </ul>
+                <p className="flex items-center gap-2 text-xs text-foreground-muted">
+                  <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                  Your information is encrypted and only visible to your HR team.
                 </p>
                 <div className="flex justify-end">
                   <Button type="button" onClick={() => goTo("personal")}>
@@ -938,6 +1037,8 @@ export default function OnboardingWizardPage() {
               Krewoxa
             </Link>
           </p>
+            </div>
+          </div>
         </div>
       </main>
     </div>

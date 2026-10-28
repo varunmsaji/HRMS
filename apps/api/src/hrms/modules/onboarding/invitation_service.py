@@ -5,7 +5,7 @@ the helpers here, so preview and send share `resolve_values` and `render_invitat
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
@@ -25,14 +25,18 @@ from hrms.modules.onboarding.invitation_compose import (
     RenderedInvitation,
     format_date,
     format_expiry,
+    render_editable_body,
     render_invitation,
 )
+from hrms.modules.onboarding.invitation_rich_text import render_invitation_document
 from hrms.modules.onboarding.invitation_schemas import (
     InvitationComposeRead,
     InvitationPlaceholderRead,
     InvitationPreviewRead,
+    InvitationTemplateRead,
     OnboardingMessageRead,
 )
+from hrms.modules.onboarding.invitation_templates import INVITATION_TEMPLATES
 from hrms.modules.onboarding.models import OnboardingMessage
 from hrms.modules.onboarding.repository import OnboardingCaseRepository, OnboardingTokenRepository
 
@@ -109,10 +113,23 @@ class OnboardingInvitationService:
         *,
         subject: str | None,
         body: str | None,
+        body_doc: dict[str, Any] | None = None,
         values: InvitationValues,
         onboarding_url: str,
         mobile_url: str | None,
     ) -> RenderedInvitation:
+        """`body_doc` (structured rich text) and `body` (plain text) are mutually exclusive; the
+        API schemas enforce that, and it is re-checked here so no caller can blur the two."""
+        if body_doc is not None:
+            if body is not None:
+                raise ValueError("body and body_doc are mutually exclusive")
+            return render_invitation_document(
+                subject_template=DEFAULT_SUBJECT if subject is None else subject,
+                body_doc=body_doc,
+                values=values,
+                onboarding_url=onboarding_url,
+                mobile_url=mobile_url,
+            )
         return render_invitation(
             subject_template=DEFAULT_SUBJECT if subject is None else subject,
             body_template=DEFAULT_BODY if body is None else body,
@@ -122,12 +139,18 @@ class OnboardingInvitationService:
         )
 
     def redacted_text(
-        self, *, subject: str | None, body: str | None, values: InvitationValues
+        self,
+        *,
+        subject: str | None,
+        body: str | None,
+        body_doc: dict[str, Any] | None = None,
+        values: InvitationValues,
     ) -> str:
         """The retained copy: same text, credential link replaced, mobile link dropped."""
         return self.render(
             subject=subject,
             body=body,
+            body_doc=body_doc,
             values=values,
             onboarding_url=REDACTED_LINK_URL,
             mobile_url=None,
@@ -205,6 +228,16 @@ class OnboardingInvitationService:
             link_valid_days=_ttl_days(),
             default_subject=DEFAULT_SUBJECT,
             default_body=DEFAULT_BODY,
+            templates=[
+                InvitationTemplateRead(
+                    key=t.key,
+                    name=t.name,
+                    description=t.description,
+                    subject=t.subject,
+                    body=t.body,
+                )
+                for t in INVITATION_TEMPLATES
+            ],
             subject_max_length=SUBJECT_MAX_LENGTH,
             body_max_length=BODY_MAX_LENGTH,
             placeholders=[
@@ -220,7 +253,13 @@ class OnboardingInvitationService:
         )
 
     async def preview(
-        self, company_id: UUID, case_id: UUID, *, subject: str, body: str
+        self,
+        company_id: UUID,
+        case_id: UUID,
+        *,
+        subject: str,
+        body: str | None = None,
+        body_doc: dict[str, Any] | None = None,
     ) -> InvitationPreviewRead:
         """Reads only: no token is minted or revoked, no outbox row, no audit/history row."""
         case = await self._case(company_id, case_id)
@@ -231,6 +270,7 @@ class OnboardingInvitationService:
         rendered = self.render(
             subject=subject,
             body=body,
+            body_doc=body_doc,
             values=values,
             onboarding_url=f"{self._settings.web_app_base_url}/onboarding/{PREVIEW_LINK}",
             mobile_url=None,
@@ -240,6 +280,11 @@ class OnboardingInvitationService:
             subject=rendered.subject,
             html_body=rendered.html_body,
             text_body=rendered.text_body,
+            editable_body=(
+                render_editable_body(DEFAULT_BODY if body is None else body, values)
+                if body_doc is None
+                else None
+            ),
         )
 
     async def list_messages(self, company_id: UUID, case_id: UUID) -> list[OnboardingMessageRead]:

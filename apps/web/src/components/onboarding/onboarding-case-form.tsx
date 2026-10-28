@@ -64,7 +64,7 @@ export function OnboardingCaseForm({
             label="Personal email"
             required
             error={errors.personalEmail}
-            description="The invite link will be sent here once sending is enabled."
+            description="You will review the invitation email before anything is sent to this address."
           >
             <Input
               type="email"
