@@ -95,6 +95,8 @@ export default function LeaveYearSettingPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Leave Year"
         description="The 12-month period leave balances and yearly accrual/carry-forward run against — one setting per company (client spec §10)."
       />

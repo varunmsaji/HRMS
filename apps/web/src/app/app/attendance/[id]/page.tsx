@@ -25,6 +25,8 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import { formatDateTime, formatMinutes, zoneLabel } from "@/lib/attendance/format";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LeaveDayProjection } from "@/lib/leave-projection/types";
 
@@ -42,6 +44,7 @@ export default function AttendanceDayDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const datePattern = useCompanyDatePattern();
 
   const [day, setDay] = useState<AttendanceDay | null>(null);
   const [leaveProjections, setLeaveProjections] = useState<LeaveDayProjection[]>([]);
@@ -116,7 +119,7 @@ export default function AttendanceDayDetailPage() {
               // COMPUTED in), not the viewer's browser zone. For India V1 this always reads
               // "Asia/Kolkata (IST)"; the day it doesn't (a non-India branch, not in V1 scope)
               // this label is what keeps the page honest about which clock it's showing.
-              `${day.attendance_date} — ${day.timezone} (${zoneLabel(day.timezone)})`
+              `${formatCompanyDate(day.attendance_date, datePattern)} — ${day.timezone} (${zoneLabel(day.timezone)})`
             : undefined
         }
         actions={

@@ -23,6 +23,8 @@ import {
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { formatDateTime } from "@/lib/attendance/format";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { REGULARIZATION_TYPE_LABELS, type RegularizationRequest } from "@/lib/regularization/types";
@@ -57,6 +59,7 @@ export default function RegularizationDetailPage() {
   const { user } = useAuth();
   const tz = user?.company_timezone ?? "Asia/Kolkata";
   const { can } = usePermissions();
+  const datePattern = useCompanyDatePattern();
 
   const [request, setRequest] = useState<RegularizationRequest | null>(null);
   const [loading, setLoading] = useState(true);
@@ -118,7 +121,7 @@ export default function RegularizationDetailPage() {
         title="Regularization request"
         description={
           request
-            ? `${request.attendance_date} — ${REGULARIZATION_TYPE_LABELS[request.request_type]}`
+            ? `${formatCompanyDate(request.attendance_date, datePattern)} — ${REGULARIZATION_TYPE_LABELS[request.request_type]}`
             : undefined
         }
         actions={
@@ -170,7 +173,7 @@ export default function RegularizationDetailPage() {
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-medium text-foreground">Request</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="Attendance date" value={request.attendance_date} />
+                <Field label="Attendance date" value={formatCompanyDate(request.attendance_date, datePattern)} />
                 <Field label="Request type" value={REGULARIZATION_TYPE_LABELS[request.request_type]} />
                 <Field label="Reason" value={request.reason ?? "—"} />
                 <Field label="Attachment reference" value={request.attachment_reference ?? "—"} />

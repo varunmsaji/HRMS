@@ -26,13 +26,37 @@ import { cn } from "@/lib/utils";
 
 type Tone = "neutral" | "success" | "danger" | "warning" | "info" | "leave";
 
-const TONE: Record<Tone, { icon: string; value: string }> = {
-  neutral: { icon: "bg-muted text-foreground-secondary", value: "text-foreground" },
-  success: { icon: "bg-success-subtle text-success", value: "text-foreground" },
-  danger: { icon: "bg-danger-subtle text-danger", value: "text-foreground" },
-  warning: { icon: "bg-warning-subtle text-warning", value: "text-foreground" },
-  info: { icon: "bg-info-subtle text-info", value: "text-foreground" },
-  leave: { icon: "bg-on-leave-subtle text-on-leave", value: "text-foreground" },
+const TONE: Record<Tone, { icon: string; dot: string; value: string }> = {
+  neutral: {
+    icon: "bg-muted text-foreground-secondary",
+    dot: "bg-foreground-muted",
+    value: "text-foreground",
+  },
+  success: {
+    icon: "bg-success-subtle text-success",
+    dot: "bg-success",
+    value: "text-foreground",
+  },
+  danger: {
+    icon: "bg-danger-subtle text-danger",
+    dot: "bg-danger",
+    value: "text-foreground",
+  },
+  warning: {
+    icon: "bg-warning-subtle text-warning",
+    dot: "bg-warning",
+    value: "text-foreground",
+  },
+  info: {
+    icon: "bg-info-subtle text-info",
+    dot: "bg-info",
+    value: "text-foreground",
+  },
+  leave: {
+    icon: "bg-on-leave-subtle text-on-leave",
+    dot: "bg-on-leave",
+    value: "text-foreground",
+  },
 };
 
 interface Kpi {
@@ -50,16 +74,23 @@ interface Kpi {
   count: number;
 }
 
-export function buildKpis(kpi: KpiSet, filters: DashboardFilters, focusLabel: string): { primary: Kpi[]; secondary: Kpi[] } {
+export function buildKpis(
+  kpi: KpiSet,
+  filters: DashboardFilters,
+  focusLabel: string,
+): { primary: Kpi[]; secondary: Kpi[] } {
   const present = presentTotal(kpi);
   const total = kpi.totalEmployees;
-  // A range-scoped Needs Attention drill (filters.scope === "range") can share a bucket/flag
-  // value with a KPI card but filters a different population (the whole range, not this focus
-  // date) — never treat the card as "active" for that drill.
   const isActive = (target: { bucket?: DayBucket; flag?: DayFlag }) =>
-    !filters.scope && (target.bucket ?? "") === filters.bucket && (target.flag ?? "") === filters.flag;
-  const mk = (k: Omit<Kpi, "active">): Kpi => ({ ...k, active: k.drill ? isActive(k.drill) : false });
-  const ofWorkforce = (n: number) => (total > 0 ? `${formatPct(pct(n, total))} of workforce` : "No employees in scope");
+    !filters.scope &&
+    (target.bucket ?? "") === filters.bucket &&
+    (target.flag ?? "") === filters.flag;
+  const mk = (k: Omit<Kpi, "active">): Kpi => ({
+    ...k,
+    active: k.drill ? isActive(k.drill) : false,
+  });
+  const ofWorkforce = (n: number) =>
+    total > 0 ? `${formatPct(pct(n, total))} of workforce` : "No employees in scope";
 
   const primary: Kpi[] = [
     mk({
@@ -110,7 +141,9 @@ export function buildKpis(kpi: KpiSet, filters: DashboardFilters, focusLabel: st
       label: "Late",
       value: String(kpi.late),
       context:
-        kpi.checkedIn > 0 ? `${formatPct(pct(kpi.late, kpi.checkedIn))} of checked-in employees` : "Nobody checked in yet",
+        kpi.checkedIn > 0
+          ? `${formatPct(pct(kpi.late, kpi.checkedIn))} of checked-in employees`
+          : "Nobody checked in yet",
       icon: Clock,
       tone: "warning",
       drill: { flag: "late" },
@@ -130,7 +163,8 @@ export function buildKpis(kpi: KpiSet, filters: DashboardFilters, focusLabel: st
       key: "remote",
       label: "Remote (WFH)",
       value: String(kpi.remote),
-      context: present > 0 ? `${formatPct(pct(kpi.remote, present))} of those present` : "Nobody present",
+      context:
+        present > 0 ? `${formatPct(pct(kpi.remote, present))} of those present` : "Nobody present",
       icon: Home,
       tone: "info",
       drill: { bucket: "REMOTE" },
@@ -152,12 +186,65 @@ export function buildKpis(kpi: KpiSet, filters: DashboardFilters, focusLabel: st
   ];
 
   const secondary: Kpi[] = [
-    mk({ key: "on_duty", label: "On duty", value: String(kpi.onDuty), context: ofWorkforce(kpi.onDuty), icon: CircleCheck, tone: "info", drill: { bucket: "ON_DUTY" }, count: kpi.onDuty }),
-    mk({ key: "half_day", label: "Half day", value: String(kpi.halfDay), context: ofWorkforce(kpi.halfDay), icon: Clock, tone: "warning", drill: { bucket: "HALF_DAY" }, count: kpi.halfDay }),
-    mk({ key: "holiday", label: "Holiday", value: String(kpi.holiday), context: ofWorkforce(kpi.holiday), icon: CalendarOff, tone: "neutral", drill: { bucket: "HOLIDAY" }, count: kpi.holiday }),
-    mk({ key: "weekly_off", label: "Weekly off", value: String(kpi.weeklyOff), context: ofWorkforce(kpi.weeklyOff), icon: CalendarOff, tone: "neutral", drill: { bucket: "WEEKLY_OFF" }, count: kpi.weeklyOff }),
-    mk({ key: "incomplete", label: "Incomplete", value: String(kpi.incomplete), context: "Needs manual resolution", icon: AlertTriangle, tone: "warning", drill: { bucket: "INCOMPLETE" }, count: kpi.incomplete }),
-    mk({ key: "exceptions", label: "Exceptions", value: String(kpi.exceptions), context: "See Needs attention for the breakdown", icon: AlertTriangle, tone: "danger", count: kpi.exceptions }),
+    mk({
+      key: "on_duty",
+      label: "On duty",
+      value: String(kpi.onDuty),
+      context: ofWorkforce(kpi.onDuty),
+      icon: CircleCheck,
+      tone: "info",
+      drill: { bucket: "ON_DUTY" },
+      count: kpi.onDuty,
+    }),
+    mk({
+      key: "half_day",
+      label: "Half day",
+      value: String(kpi.halfDay),
+      context: ofWorkforce(kpi.halfDay),
+      icon: Clock,
+      tone: "warning",
+      drill: { bucket: "HALF_DAY" },
+      count: kpi.halfDay,
+    }),
+    mk({
+      key: "holiday",
+      label: "Holiday",
+      value: String(kpi.holiday),
+      context: ofWorkforce(kpi.holiday),
+      icon: CalendarOff,
+      tone: "neutral",
+      drill: { bucket: "HOLIDAY" },
+      count: kpi.holiday,
+    }),
+    mk({
+      key: "weekly_off",
+      label: "Weekly off",
+      value: String(kpi.weeklyOff),
+      context: ofWorkforce(kpi.weeklyOff),
+      icon: CalendarOff,
+      tone: "neutral",
+      drill: { bucket: "WEEKLY_OFF" },
+      count: kpi.weeklyOff,
+    }),
+    mk({
+      key: "incomplete",
+      label: "Incomplete",
+      value: String(kpi.incomplete),
+      context: "Needs manual resolution",
+      icon: AlertTriangle,
+      tone: "warning",
+      drill: { bucket: "INCOMPLETE" },
+      count: kpi.incomplete,
+    }),
+    mk({
+      key: "exceptions",
+      label: "Exceptions",
+      value: String(kpi.exceptions),
+      context: "See Needs attention for the breakdown",
+      icon: AlertTriangle,
+      tone: "danger",
+      count: kpi.exceptions,
+    }),
   ];
   return { primary, secondary };
 }
@@ -169,25 +256,58 @@ interface KpiGridProps {
   onDrill: (target: { bucket?: DayBucket; flag?: DayFlag; clear?: boolean }) => void;
 }
 
-function KpiCard({ item, onDrill, compact }: { item: Kpi; onDrill: KpiGridProps["onDrill"]; compact?: boolean }) {
+function KpiCard({
+  item,
+  onDrill,
+  compact,
+}: {
+  item: Kpi;
+  onDrill: KpiGridProps["onDrill"];
+  compact?: boolean;
+}) {
   const tone = TONE[item.tone];
   const Icon = item.icon;
-  const body = (
+  const body = compact ? (
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", tone.dot)} aria-hidden="true" />
+          <p className="truncate text-xs font-medium text-foreground-secondary">{item.label}</p>
+        </div>
+        <p className="mt-0.5 truncate text-[11px] text-foreground-muted">{item.context}</p>
+      </div>
+      <p className={cn("shrink-0 text-md font-semibold tabular-nums", tone.value)}>{item.value}</p>
+    </div>
+  ) : (
     <>
       <div className="flex items-start justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{item.label}</p>
-        <span className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md", tone.icon)}>
-          <Icon className="h-4 w-4" aria-hidden="true" />
+        <p className="text-2xs font-semibold uppercase tracking-wider text-foreground-muted">
+          {item.label}
+        </p>
+        <span
+          className={cn(
+            "flex h-6 w-6 shrink-0 items-center justify-center rounded-sm",
+            tone.icon,
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
       </div>
-      <p className={cn("mt-2 font-semibold tabular-nums", compact ? "text-lg" : "text-2xl", tone.value)}>{item.value}</p>
-      <p className="mt-1 line-clamp-2 text-xs text-foreground-secondary">{item.context}</p>
+      <p className={cn("mt-1.5 text-xl font-semibold tabular-nums", tone.value)}>{item.value}</p>
+      <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-foreground-secondary">
+        {item.context}
+      </p>
     </>
   );
+
   const frame = cn(
-    "block w-full rounded-lg border bg-surface p-4 text-left",
-    item.active ? "border-primary ring-1 ring-primary" : "border-border",
+    "block w-full rounded-md border bg-surface text-left",
+    compact ? "px-3 py-2" : "p-3.5",
+    item.active
+      ? "border-primary bg-primary-subtle/30 ring-1 ring-primary"
+      : "border-border",
   );
+
   if (!item.drill) return <div className={frame}>{body}</div>;
   const drill = item.drill;
   return (
@@ -196,7 +316,10 @@ function KpiCard({ item, onDrill, compact }: { item: Kpi; onDrill: KpiGridProps[
       onClick={() => onDrill(drill)}
       aria-pressed={item.active}
       aria-label={`${item.label}: ${item.value}. ${item.context}. Show these employees.`}
-      className={cn(frame, "transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
+      className={cn(
+        frame,
+        "transition-colors duration-motion-instant hover:border-border-strong hover:bg-surface-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
     >
       {body}
     </button>
@@ -208,15 +331,15 @@ function KpiCard({ item, onDrill, compact }: { item: Kpi; onDrill: KpiGridProps[
 export function KpiGrid({ kpi, filters, focusLabel, onDrill }: KpiGridProps) {
   const { primary, secondary } = buildKpis(kpi, filters, focusLabel);
   return (
-    <section aria-label="Attendance summary" className="space-y-3">
-      <div className="-mx-4 flex snap-x gap-3 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 xl:grid-cols-8">
+    <section aria-label="Attendance summary" className="space-y-2.5">
+      <div className="-mx-4 flex snap-x gap-2.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 xl:grid-cols-8">
         {primary.map((item) => (
-          <div key={item.key} className="min-w-[10.5rem] snap-start sm:min-w-0">
+          <div key={item.key} className="min-w-[10rem] snap-start sm:min-w-0">
             <KpiCard item={item} onDrill={onDrill} />
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {secondary.map((item) => (
           <KpiCard key={item.key} item={item} onDrill={onDrill} compact />
         ))}

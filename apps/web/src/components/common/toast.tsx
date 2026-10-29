@@ -1,11 +1,11 @@
 "use client";
 
-import { CircleCheck, TriangleAlert, X } from "lucide-react";
+import { CircleCheck, Info, TriangleAlert, X } from "lucide-react";
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-type ToastVariant = "default" | "success" | "danger";
+type ToastVariant = "default" | "success" | "warning" | "danger" | "info";
 
 interface ToastItem {
   id: string;
@@ -52,28 +52,41 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={item.id}
             role="status"
             className={cn(
-              "pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-md border bg-surface p-4 shadow-lg",
-              item.variant === "danger" && "border-danger/30",
-              item.variant === "success" && "border-success/30",
+              "pointer-events-auto flex w-full max-w-sm items-start gap-2.5 rounded-lg border bg-surface p-3.5 shadow-elevation-2",
+              item.variant === "danger" && "border-danger-border",
+              item.variant === "warning" && "border-warning-border",
+              item.variant === "success" && "border-success-border",
+              item.variant === "info" && "border-info-border",
               item.variant === "default" && "border-border",
             )}
           >
             {item.variant === "success" ? (
               <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden="true" />
             ) : null}
-            {item.variant === "danger" ? (
-              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
+            {item.variant === "danger" || item.variant === "warning" ? (
+              <TriangleAlert
+                className={cn(
+                  "mt-0.5 h-4 w-4 shrink-0",
+                  item.variant === "danger" ? "text-danger" : "text-warning",
+                )}
+                aria-hidden="true"
+              />
             ) : null}
-            <div className="flex-1">
+            {item.variant === "info" ? (
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" aria-hidden="true" />
+            ) : null}
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-foreground">{item.title}</p>
               {item.description ? (
-                <p className="mt-0.5 text-xs text-foreground-secondary">{item.description}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-foreground-secondary">
+                  {item.description}
+                </p>
               ) : null}
             </div>
             <button
               type="button"
               onClick={() => dismiss(item.id)}
-              className="rounded text-foreground-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="rounded-sm p-0.5 text-foreground-muted transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Dismiss notification"
             >
               <X className="h-4 w-4" aria-hidden="true" />

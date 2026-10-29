@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
+import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
@@ -13,7 +15,7 @@ import { PayRunEmployeeDialog } from "@/components/payroll/pay-run-employee-dial
 import { PayRunStatusBadge } from "@/components/payroll/pay-run-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -24,9 +26,21 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import type { LegalEntity } from "@/lib/legal-entity/types";
 import {
   formatInr,
@@ -54,11 +68,25 @@ const CONFIRM: Partial<Record<Action, { title: string; description: string; labe
   },
 };
 
-function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: string }) {
+function StatCell({
+  label,
+  value,
+  emphasis = false,
+}: {
+  label: string;
+  value: ReactNode;
+  emphasis?: boolean;
+}) {
   return (
-    <div className="rounded-md border border-border p-3">
-      <div className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{label}</div>
-      <div className={`mt-1 text-lg font-semibold tabular-nums ${tone ?? "text-foreground"}`}>
+    <div className="px-4 py-3.5">
+      <div className="text-2xs font-semibold uppercase tracking-wider text-foreground-muted">
+        {label}
+      </div>
+      <div
+        className={`mt-1 text-lg font-semibold tabular-nums ${
+          emphasis ? "text-primary" : "text-foreground"
+        }`}
+      >
         {value}
       </div>
     </div>
@@ -73,6 +101,7 @@ export default function PayRunDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const datePattern = useCompanyDatePattern();
   const canProcess = can("PAYROLL.RUN_PROCESS");
   const canApprove = can("PAYROLL.RUN_APPROVE");
   const canBankAdvice = can("PAYROLL.BANK_ADVICE_DOWNLOAD");
@@ -97,8 +126,6 @@ export default function PayRunDetailPage() {
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [corrections, setCorrections] = useState<PayAdjustment[]>([]);
   const [correctEmployee, setCorrectEmployee] = useState<PayRunEmployee | null>(null);
-  // One key per user intent: kept across a network-failure retry so the correction is recorded
-  // once, dropped as soon as the server has answered (PAY-B04).
   const correctionKey = useRef<string | null>(null);
   const [correctDelta, setCorrectDelta] = useState("");
   const [correctReason, setCorrectReason] = useState("");
@@ -113,7 +140,6 @@ export default function PayRunDetailPage() {
       ]);
       setRun(runData);
       setEmployees(employeeData);
-      // Phase 5.5 — day corrections recorded against this (finalised) month.
       if (runData.status === "FINALISED" || runData.status === "PAID") {
         apiClient
           .get<PayAdjustment[]>(`/payroll/adjustments?source_pay_run_id=${runData.id}`)
@@ -222,8 +248,6 @@ export default function PayRunDetailPage() {
     }
   }
 
-  /** D7 — a finalised month's paid days are corrected here and paid as arrears by the legal
-   * entity's next pay run; the attendance period stays closed. */
   async function handleCorrect() {
     if (!run || !correctEmployee) return;
     setBusy(true);
@@ -242,11 +266,15 @@ export default function PayRunDetailPage() {
       );
       correctionKey.current = null;
       setCorrectEmployee(null);
-      toast({ title: "Correction recorded", description: "It is paid in the next pay run.", variant: "success" });
+      toast({
+        title: "Correction recorded",
+        description: "It is paid in the next pay run.",
+        variant: "success",
+      });
       await load();
     } catch (err) {
       if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
-        correctionKey.current = null; // answered (and rolled back): an edited retry is a new request
+        correctionKey.current = null;
       }
       setDialogError(describeApiError(err));
     } finally {
@@ -266,7 +294,6 @@ export default function PayRunDetailPage() {
     }
   }
 
-  /** FR-PAY-018 — built on demand, never stored; the server audits each download. */
   async function downloadBankAdvice() {
     if (!run) return;
     setBusy(true);
@@ -325,11 +352,13 @@ export default function PayRunDetailPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/payroll/pay-runs"
+        backLabel="Pay Runs"
         title={`Pay run — ${formatPayMonth(run.month)}`}
-        description={`${entityName ?? "Company"} · ${run.period_start} to ${run.period_end}`}
+        description={`${entityName ?? "Company"} · ${formatCompanyDate(run.period_start, datePattern)} to ${formatCompanyDate(run.period_end, datePattern)}`}
+        badge={<PayRunStatusBadge status={run.status} />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <PayRunStatusBadge status={run.status} />
             {canProcess && actions.lockInputs ? (
               <Button type="button" disabled={busy} onClick={() => void runAction("lock-inputs")}>
                 Lock inputs
@@ -386,7 +415,12 @@ export default function PayRunDetailPage() {
               </Button>
             ) : null}
             {canProcess && actions.remove ? (
-              <Button type="button" variant="outline" disabled={busy} onClick={() => void handleDelete()}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void handleDelete()}
+              >
                 Delete
               </Button>
             ) : null}
@@ -394,75 +428,89 @@ export default function PayRunDetailPage() {
         }
       />
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            <Stat label="Employees" value={run.employee_count} />
-            <Stat label="Gross" value={computed ? formatInr(run.gross_minor) : "—"} />
-            <Stat label="Deductions" value={computed ? formatInr(run.deductions_minor) : "—"} />
-            <Stat label="Net pay" value={computed ? formatInr(run.net_minor) : "—"} />
-            <Stat
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-5 [&>*]:bg-surface">
+          <StatCell label="Employees" value={run.employee_count} />
+          <StatCell label="Gross" value={computed ? formatInr(run.gross_minor) : "—"} />
+          <StatCell label="Deductions" value={computed ? formatInr(run.deductions_minor) : "—"} />
+          <StatCell
+            label="Net pay"
+            value={computed ? formatInr(run.net_minor) : "—"}
+            emphasis={computed}
+          />
+          <div className="col-span-2 sm:col-span-1">
+            <StatCell
               label="Employer contributions"
               value={computed ? formatInr(run.employer_contributions_minor) : "—"}
             />
           </div>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-foreground-secondary">
-            <span>
-              Pay date {run.pay_date}
-              {canProcess && actions.editPayDate ? (
-                <button
-                  type="button"
-                  className="ml-2 text-primary hover:underline"
-                  onClick={() => {
-                    setPayDate(run.pay_date);
-                    setDialogError(null);
-                    setPayDateOpen(true);
-                  }}
-                >
-                  Change
-                </button>
-              ) : null}
-            </span>
-            {run.attendance_period_id ? (
-              <Link
-                href={`/app/attendance-periods/${run.attendance_period_id}`}
-                className="text-primary hover:underline"
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border bg-surface-secondary/50 px-4 py-2.5 text-xs text-foreground-secondary">
+          <span className="tabular-nums">
+            Pay date <CompanyDate value={run.pay_date} />
+            {canProcess && actions.editPayDate ? (
+              <button
+                type="button"
+                className="ml-2 font-medium text-primary hover:underline"
+                onClick={() => {
+                  setPayDate(run.pay_date);
+                  setDialogError(null);
+                  setPayDateOpen(true);
+                }}
               >
-                Attendance period
-              </Link>
+                Change
+              </button>
             ) : null}
-            {run.variance_threshold_percent ? (
-              <span>Variance threshold {run.variance_threshold_percent}%</span>
-            ) : null}
-            {run.last_rollback_reason ? <span>Last rolled back: {run.last_rollback_reason}</span> : null}
-          </div>
-          {run.status === "DRAFT" ? (
-            <p className="text-sm text-foreground-muted">
-              Lock the inputs once this month&apos;s attendance period for the company is
-              closed. Everything the pay is computed from is copied into the run at that moment.
-            </p>
+          </span>
+          {run.attendance_period_id ? (
+            <Link
+              href={`/app/attendance-periods/${run.attendance_period_id}`}
+              className="font-medium text-primary hover:underline"
+            >
+              Attendance period
+            </Link>
           ) : null}
-          {run.status === "COMPUTED" && (run.error_count > 0 || run.variance_open_count > 0) ? (
-            <div role="status" className="rounded-md border border-warning bg-warning-subtle p-3 text-sm text-foreground">
-              Before approval:{" "}
-              {[
-                run.error_count > 0 ? `${run.error_count} employee(s) with errors to fix` : null,
-                run.variance_open_count > 0
-                  ? `${run.variance_open_count} flagged variance(s) to acknowledge`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(", ")}
-              . The user who computed the run cannot approve it.
-            </div>
+          {run.variance_threshold_percent ? (
+            <span className="tabular-nums">
+              Variance threshold {run.variance_threshold_percent}%
+            </span>
           ) : null}
-        </CardContent>
-      </Card>
+          {run.last_rollback_reason ? (
+            <span>Last rolled back: {run.last_rollback_reason}</span>
+          ) : null}
+        </div>
+      </div>
+
+      {run.status === "DRAFT" ? (
+        <div className="rounded-lg border border-info-border bg-info-subtle px-4 py-3 text-xs text-foreground-secondary">
+          Lock the inputs once this month&apos;s attendance period for the company is closed.
+          Everything the pay is computed from is copied into the run at that moment.
+        </div>
+      ) : null}
+
+      {run.status === "COMPUTED" && (run.error_count > 0 || run.variance_open_count > 0) ? (
+        <div
+          role="status"
+          className="rounded-lg border border-warning-border bg-warning-subtle px-4 py-3 text-sm text-foreground"
+        >
+          Before approval:{" "}
+          {[
+            run.error_count > 0 ? `${run.error_count} employee(s) with errors to fix` : null,
+            run.variance_open_count > 0
+              ? `${run.variance_open_count} flagged variance(s) to acknowledge`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(", ")}
+          . The user who computed the run cannot approve it.
+        </div>
+      ) : null}
 
       {employees.length > 0 ? (
-        <Card>
-          <CardContent className="space-y-3 pt-6">
-            <div className="max-w-xs">
+        <TableContainer>
+          <TableToolbar>
+            <div className="w-full max-w-xs">
               <NativeSelect
                 aria-label="Filter employees"
                 value={filter}
@@ -473,146 +521,157 @@ export default function PayRunDetailPage() {
                 <option value="VARIANCE">Flagged variance</option>
               </NativeSelect>
             </div>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Employee</th>
-                    <th className="px-3 py-2 text-right font-medium">Paid days</th>
-                    <th className="px-3 py-2 text-right font-medium">LOP</th>
-                    <th className="px-3 py-2 text-right font-medium">Gross</th>
-                    <th className="px-3 py-2 text-right font-medium">Net</th>
-                    <th className="px-3 py-2 text-left font-medium">Variance</th>
-                    <th className="px-3 py-2 text-left font-medium">Issues</th>
-                    <th className="px-3 py-2 text-right font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {visible.map((employee) => (
-                    <tr key={employee.id}>
-                      <td className="px-3 py-2">
-                        <div className="font-medium text-foreground">
-                          {employee.employee_name ?? "Employee"}
-                        </div>
-                        <div className="text-xs text-foreground-muted">
-                          {employee.employee_code}
-                          {employee.pay_basis === "DAILY_WAGE" ? " · daily-wage" : ""}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{employee.paid_days ?? "—"}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{employee.lop_days ?? "—"}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {employee.is_computed ? formatInr(employee.gross_minor) : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {employee.is_computed ? formatInr(employee.net_minor) : "—"}
-                      </td>
-                      <td className="px-3 py-2">
-                        {employee.variance_flagged ? (
-                          <div className="space-y-1">
-                            <Badge variant={employee.variance_reason ? "outline" : "warning"}>
-                              {employee.variance_percent !== null
-                                ? `${employee.variance_percent}%`
-                                : "Changed"}
-                            </Badge>
-                            {employee.variance_reason ? (
-                              <div className="text-xs text-foreground-muted">
-                                {employee.variance_reason}
-                              </div>
-                            ) : canProcess && run.status === "COMPUTED" ? (
-                              <button
-                                type="button"
-                                className="block text-xs text-primary hover:underline"
-                                onClick={() => {
-                                  setAckEmployee(employee);
-                                  setAckReason("");
-                                  setDialogError(null);
-                                }}
-                              >
-                                Acknowledge
-                              </button>
-                            ) : null}
+          </TableToolbar>
+
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Employee</TableHead>
+                <TableHead align="right">Paid days</TableHead>
+                <TableHead align="right">LOP</TableHead>
+                <TableHead align="right">Gross</TableHead>
+                <TableHead align="right">Net</TableHead>
+                <TableHead>Variance</TableHead>
+                <TableHead>Issues</TableHead>
+                <TableHead align="right">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visible.map((employee) => (
+                <TableRow key={employee.id}>
+                  <TableCell>
+                    <EmployeeIdentityCell
+                      name={employee.employee_name ?? "Employee"}
+                      code={employee.employee_code}
+                      subtitle={employee.pay_basis === "DAILY_WAGE" ? "daily-wage" : undefined}
+                      size="sm"
+                    />
+                  </TableCell>
+                  <TableCell align="right" numeric>
+                    {employee.paid_days ?? "—"}
+                  </TableCell>
+                  <TableCell align="right" numeric className="text-foreground-secondary">
+                    {employee.lop_days ?? "—"}
+                  </TableCell>
+                  <TableCell align="right" numeric>
+                    {employee.is_computed ? formatInr(employee.gross_minor) : "—"}
+                  </TableCell>
+                  <TableCell align="right" numeric className="font-semibold text-foreground">
+                    {employee.is_computed ? formatInr(employee.net_minor) : "—"}
+                  </TableCell>
+                  <TableCell>
+                    {employee.variance_flagged ? (
+                      <div className="space-y-1">
+                        <Badge variant={employee.variance_reason ? "outline" : "warning"}>
+                          {employee.variance_percent !== null
+                            ? `${employee.variance_percent}%`
+                            : "Changed"}
+                        </Badge>
+                        {employee.variance_reason ? (
+                          <div className="text-xs text-foreground-muted">
+                            {employee.variance_reason}
                           </div>
-                        ) : employee.variance_percent !== null ? (
-                          <span className="text-foreground-muted">{employee.variance_percent}%</span>
-                        ) : (
-                          <span className="text-foreground-muted">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-1">
-                          {employee.issues.map((issue) => (
-                            <Badge
-                              key={`${issue.code}-${issue.message}`}
-                              variant={issue.severity === "ERROR" ? "danger" : "warning"}
-                              title={issue.message}
-                            >
-                              {issue.code.replaceAll("_", " ").toLowerCase()}
-                            </Badge>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <div className="flex justify-end gap-3">
+                        ) : canProcess && run.status === "COMPUTED" ? (
                           <button
                             type="button"
-                            className="text-sm font-medium text-primary hover:underline"
-                            onClick={() => setDetailEmployeeId(employee.employee_id)}
+                            className="block text-xs font-medium text-primary hover:underline"
+                            onClick={() => {
+                              setAckEmployee(employee);
+                              setAckReason("");
+                              setDialogError(null);
+                            }}
                           >
-                            View
+                            Acknowledge
                           </button>
-                          {computed && employee.is_computed ? (
-                            <Link
-                              href={`/app/payroll/pay-runs/${run.id}/payslips/${employee.employee_id}`}
-                              className="text-sm font-medium text-primary hover:underline"
-                            >
-                              Payslip
-                            </Link>
-                          ) : null}
-                          {canProcess &&
-                          (run.status === "FINALISED" || run.status === "PAID") &&
-                          employee.paid_days !== null ? (
-                            <button
-                              type="button"
-                              className="text-sm font-medium text-primary hover:underline"
-                              onClick={() => {
-                                setCorrectEmployee(employee);
-                                correctionKey.current = null;
-                                setCorrectDelta("");
-                                setCorrectReason("");
-                                setDialogError(null);
-                              }}
-                            >
-                              Correct days
-                            </button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+                        ) : null}
+                      </div>
+                    ) : employee.variance_percent !== null ? (
+                      <span className="tabular-nums text-foreground-muted">
+                        {employee.variance_percent}%
+                      </span>
+                    ) : (
+                      <span className="text-foreground-muted">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {employee.issues.map((issue) => (
+                        <Badge
+                          key={`${issue.code}-${issue.message}`}
+                          variant={issue.severity === "ERROR" ? "danger" : "warning"}
+                          title={issue.message}
+                        >
+                          {issue.code.replaceAll("_", " ").toLowerCase()}
+                        </Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell align="right">
+                    <div className="flex justify-end gap-3">
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-primary hover:underline"
+                        onClick={() => setDetailEmployeeId(employee.employee_id)}
+                      >
+                        View
+                      </button>
+                      {computed && employee.is_computed ? (
+                        <Link
+                          href={`/app/payroll/pay-runs/${run.id}/payslips/${employee.employee_id}`}
+                          className="text-xs font-medium text-primary hover:underline"
+                        >
+                          Payslip
+                        </Link>
+                      ) : null}
+                      {canProcess &&
+                      (run.status === "FINALISED" || run.status === "PAID") &&
+                      employee.paid_days !== null ? (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-primary hover:underline"
+                          onClick={() => {
+                            setCorrectEmployee(employee);
+                            correctionKey.current = null;
+                            setCorrectDelta("");
+                            setCorrectReason("");
+                            setDialogError(null);
+                          }}
+                        >
+                          Correct days
+                        </button>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       ) : null}
 
       {corrections.length > 0 ? (
         <Card>
-          <CardContent className="space-y-2 pt-6">
-            <h3 className="text-sm font-medium text-foreground">Day corrections for this month</h3>
-            <ul className="divide-y divide-border rounded-md border border-border text-sm">
+          <CardHeader>
+            <CardTitle>Day corrections for this month</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <ul className="divide-y divide-border text-sm">
               {corrections.map((correction) => {
                 const employee = employees.find((e) => e.employee_id === correction.employee_id);
                 return (
-                  <li key={correction.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                  <li
+                    key={correction.id}
+                    className="flex flex-wrap items-center justify-between gap-2 px-5 py-3"
+                  >
                     <span>
                       <span className="font-medium text-foreground">
                         {employee?.employee_name ?? "Employee"}
                       </span>{" "}
-                      {Number(correction.paid_days_delta) > 0 ? "+" : ""}
-                      {correction.paid_days_delta} day(s) ·{" "}
-                      <span className="text-foreground-muted">{correction.reason}</span>
+                      <span className="tabular-nums">
+                        {Number(correction.paid_days_delta) > 0 ? "+" : ""}
+                        {correction.paid_days_delta} day(s)
+                      </span>{" "}
+                      · <span className="text-foreground-muted">{correction.reason}</span>
                     </span>
                     <span className="flex items-center gap-2">
                       <Badge variant={correction.status === "APPLIED" ? "success" : "warning"}>
@@ -621,7 +680,7 @@ export default function PayRunDetailPage() {
                       {canProcess && correction.status === "PENDING" ? (
                         <button
                           type="button"
-                          className="text-xs text-primary hover:underline"
+                          className="text-xs font-medium text-primary hover:underline"
                           disabled={busy}
                           onClick={() => void withdrawCorrection(correction)}
                         >
@@ -653,20 +712,45 @@ export default function PayRunDetailPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <FormField id="correct-delta" label="Change in paid days" required description="e.g. 1, 0.5 or -1">
-              <Input inputMode="decimal" value={correctDelta} onChange={(e) => setCorrectDelta(e.target.value)} />
+            <FormField
+              id="correct-delta"
+              label="Change in paid days"
+              required
+              description="e.g. 1, 0.5 or -1"
+            >
+              <Input
+                inputMode="decimal"
+                value={correctDelta}
+                onChange={(e) => setCorrectDelta(e.target.value)}
+              />
             </FormField>
-            <FormField id="correct-reason" label="Reason" required error={dialogError ?? undefined}>
-              <Input value={correctReason} maxLength={1000} onChange={(e) => setCorrectReason(e.target.value)} />
+            <FormField
+              id="correct-reason"
+              label="Reason"
+              required
+              error={dialogError ?? undefined}
+            >
+              <Input
+                value={correctReason}
+                maxLength={1000}
+                onChange={(e) => setCorrectReason(e.target.value)}
+              />
             </FormField>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCorrectEmployee(null)} disabled={busy}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCorrectEmployee(null)}
+              disabled={busy}
+            >
               Cancel
             </Button>
             <Button
               type="button"
-              disabled={busy || !/^-?\d+(\.5|\.0)?$/.test(correctDelta.trim()) || !correctReason.trim()}
+              disabled={
+                busy || !/^-?\d+(\.5|\.0)?$/.test(correctDelta.trim()) || !correctReason.trim()
+              }
               onClick={() => void handleCorrect()}
             >
               Record correction
@@ -688,17 +772,29 @@ export default function PayRunDetailPage() {
             <DialogDescription>{confirmCopy?.description}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setConfirm(null)} disabled={busy}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirm(null)}
+              disabled={busy}
+            >
               Cancel
             </Button>
-            <Button type="button" disabled={busy} onClick={() => confirm && void runAction(confirm)}>
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => confirm && void runAction(confirm)}
+            >
               {busy ? "Working…" : confirmCopy?.label}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={ackEmployee !== null} onOpenChange={(next) => !busy && !next && setAckEmployee(null)}>
+      <Dialog
+        open={ackEmployee !== null}
+        onOpenChange={(next) => !busy && !next && setAckEmployee(null)}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Acknowledge variance</DialogTitle>
@@ -712,14 +808,32 @@ export default function PayRunDetailPage() {
                 : null}
             </DialogDescription>
           </DialogHeader>
-          <FormField id="variance-reason" label="Reason" required error={dialogError ?? undefined}>
-            <Input value={ackReason} maxLength={1000} onChange={(e) => setAckReason(e.target.value)} />
+          <FormField
+            id="variance-reason"
+            label="Reason"
+            required
+            error={dialogError ?? undefined}
+          >
+            <Input
+              value={ackReason}
+              maxLength={1000}
+              onChange={(e) => setAckReason(e.target.value)}
+            />
           </FormField>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setAckEmployee(null)} disabled={busy}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAckEmployee(null)}
+              disabled={busy}
+            >
               Cancel
             </Button>
-            <Button type="button" disabled={busy || !ackReason.trim()} onClick={() => void handleAcknowledge()}>
+            <Button
+              type="button"
+              disabled={busy || !ackReason.trim()}
+              onClick={() => void handleAcknowledge()}
+            >
               Acknowledge
             </Button>
           </DialogFooter>
@@ -739,7 +853,9 @@ export default function PayRunDetailPage() {
             <FormField id="rollback-to" label="Roll back to">
               <NativeSelect
                 value={rollbackTo}
-                onChange={(e) => setRollbackTo(e.target.value as "DRAFT" | "INPUTS_LOCKED")}
+                onChange={(e) =>
+                  setRollbackTo(e.target.value as "DRAFT" | "INPUTS_LOCKED")
+                }
               >
                 {actions.rollbackTo.map((target) => (
                   <option key={target} value={target}>
@@ -748,7 +864,12 @@ export default function PayRunDetailPage() {
                 ))}
               </NativeSelect>
             </FormField>
-            <FormField id="rollback-reason" label="Reason" required error={dialogError ?? undefined}>
+            <FormField
+              id="rollback-reason"
+              label="Reason"
+              required
+              error={dialogError ?? undefined}
+            >
               <Input
                 value={rollbackReason}
                 maxLength={1000}
@@ -757,10 +878,19 @@ export default function PayRunDetailPage() {
             </FormField>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRollbackOpen(false)} disabled={busy}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRollbackOpen(false)}
+              disabled={busy}
+            >
               Cancel
             </Button>
-            <Button type="button" disabled={busy || !rollbackReason.trim()} onClick={() => void handleRollback()}>
+            <Button
+              type="button"
+              disabled={busy || !rollbackReason.trim()}
+              onClick={() => void handleRollback()}
+            >
               Roll back
             </Button>
           </DialogFooter>
@@ -774,13 +904,26 @@ export default function PayRunDetailPage() {
             <DialogDescription>When salaries for this month are paid.</DialogDescription>
           </DialogHeader>
           <FormField id="pay-date" label="Pay date" required error={dialogError ?? undefined}>
-            <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            <Input
+              type="date"
+              value={payDate}
+              onChange={(e) => setPayDate(e.target.value)}
+            />
           </FormField>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPayDateOpen(false)} disabled={busy}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPayDateOpen(false)}
+              disabled={busy}
+            >
               Cancel
             </Button>
-            <Button type="button" disabled={busy || !payDate} onClick={() => void handlePayDate()}>
+            <Button
+              type="button"
+              disabled={busy || !payDate}
+              onClick={() => void handlePayDate()}
+            >
               Save
             </Button>
           </DialogFooter>

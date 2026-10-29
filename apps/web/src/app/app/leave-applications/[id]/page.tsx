@@ -11,6 +11,7 @@ import { useToast } from "@/components/common/toast";
 import { LeaveApplicationReviewDialog } from "@/components/leave-application/leave-application-review-dialog";
 import { LeaveApplicationStatusBadge } from "@/components/leave-application/leave-application-status-badge";
 import { Badge } from "@/components/ui/badge";
+import { HorizontalScroll } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -25,6 +26,9 @@ import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday, formatDateTime } from "@/lib/attendance/format";
+import { CompanyDate } from "@/components/common/company-date";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LeaveApplication } from "@/lib/leave-application/types";
@@ -128,6 +132,7 @@ export default function LeaveApplicationDetailPage() {
   // it starts, and by HR (`LEAVE.APPLICATION_CANCEL_APPROVED`) at any time — with a reason once
   // it has started. Managers never cancel approved leave.
   const canCancelApproved = can("LEAVE.APPLICATION_CANCEL_APPROVED");
+  const datePattern = useCompanyDatePattern();
   const hasStarted = application ? businessToday(tz) >= application.start_date : false;
   const canCancel =
     application?.status === "SUBMITTED"
@@ -144,8 +149,8 @@ export default function LeaveApplicationDetailPage() {
         description={
           application
             ? application.start_date === application.end_date
-              ? application.start_date
-              : `${application.start_date} – ${application.end_date}`
+              ? formatCompanyDate(application.start_date, datePattern)
+              : `${formatCompanyDate(application.start_date, datePattern)} – ${formatCompanyDate(application.end_date, datePattern)}`
             : undefined
         }
         actions={
@@ -213,7 +218,7 @@ export default function LeaveApplicationDetailPage() {
           <Card>
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-medium text-foreground">Day breakdown</h2>
-              <div className="overflow-x-auto rounded-md border border-border">
+              <HorizontalScroll className="rounded-md border border-border">
                 <table className="w-full text-sm">
                   <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                     <tr>
@@ -228,7 +233,9 @@ export default function LeaveApplicationDetailPage() {
                   <tbody className="divide-y divide-border">
                     {application.days.map((day) => (
                       <tr key={day.id}>
-                        <td className="px-3 py-2">{day.calendar_date}</td>
+                        <td className="px-3 py-2">
+                          <CompanyDate value={day.calendar_date} />
+                        </td>
                         <td className="px-3 py-2 text-right">{day.fraction}</td>
                         <td className="px-3 py-2">{day.half ?? "—"}</td>
                         <td className="px-3 py-2">{day.is_sandwich_generated ? "Yes" : "—"}</td>
@@ -249,7 +256,7 @@ export default function LeaveApplicationDetailPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </HorizontalScroll>
             </CardContent>
           </Card>
 

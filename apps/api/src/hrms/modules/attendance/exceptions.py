@@ -1223,3 +1223,76 @@ class LeaveProjectionDateNotInApplicationError(ValidationError):
             message,
             details=[{"field": "attendance_date", "code": self.code, "message": message}],
         )
+
+
+# ---------------------------------------------------------------------------
+# Geofencing
+# ---------------------------------------------------------------------------
+
+#: Employee-facing text per outcome. Deliberately contains no coordinates.
+GEOFENCE_MESSAGES = {
+    "OUTSIDE_GEOFENCE": (
+        "You appear to be outside an approved workplace, so this punch was not recorded."
+    ),
+    "OUTSIDE_GEOFENCE_UNCERTAIN": (
+        "Your location is just outside an approved workplace and the GPS reading is not precise "
+        "enough to be sure. Move to an open area, wait for a better signal and try again."
+    ),
+    "LOCATION_TOO_INACCURATE": (
+        "Your device's location is not accurate enough. Enable precise location, move to an "
+        "open area and try again."
+    ),
+    "LOCATION_STALE": "The location reading is too old. Try again to get a fresh reading.",
+    "LOCATION_INVALID": "The location reading was not valid. Try again.",
+    "LOCATION_REQUIRED": "Your company requires your location to record attendance.",
+    "LOCATION_UNAVAILABLE_CLIENT": (
+        "Your device could not provide its location. Turn on location services, allow location "
+        "access for this app and try again, or contact HR."
+    ),
+    "NO_APPLICABLE_WORKPLACE": (
+        "No approved workplace is configured for you. Contact HR to have your workplace set up."
+    ),
+}
+
+
+class GeofenceRejectedError(AppError):
+    """A self-service punch was refused by the geofence policy. 422: the request was understood
+    but this location/timing cannot be accepted; the client may retry with a better fix.
+    `details[0]` carries the machine-readable outcome and the (coordinate-free) measurements."""
+
+    status_code = 422
+
+    def __init__(
+        self,
+        outcome: str,
+        *,
+        distance_m: float | None = None,
+        radius_m: float | None = None,
+        accuracy_m: float | None = None,
+        workplace_name: str | None = None,
+    ) -> None:
+        self.outcome = outcome
+        message = GEOFENCE_MESSAGES.get(outcome, "This punch was refused by the location policy.")
+        context: dict[str, Any] = {}
+        if distance_m is not None:
+            context["distance_m"] = distance_m
+        if radius_m is not None:
+            context["radius_m"] = radius_m
+        if accuracy_m is not None:
+            context["accuracy_m"] = accuracy_m
+        if workplace_name is not None:
+            context["workplace_name"] = workplace_name
+        detail: dict[str, Any] = {
+            "field": "location",
+            "code": outcome,
+            "message": message,
+            "context": context or None,
+        }
+        super().__init__(message, code=f"PUNCH_{outcome}", details=[detail])
+
+
+class WorkplaceAuthorizationExistsError(ConflictError):
+    code = "WORKPLACE_AUTHORIZATION_EXISTS"
+
+    def __init__(self) -> None:
+        super().__init__("This employee is already authorised for that workplace")

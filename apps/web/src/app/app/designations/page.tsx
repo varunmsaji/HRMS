@@ -1,6 +1,6 @@
 "use client";
 
-import { Briefcase } from "lucide-react";
+import { Briefcase, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { Department } from "@/lib/department/types";
@@ -42,7 +50,9 @@ export default function DesignationsPage() {
   const [error, setError] = useState<ApiError | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [formValues, setFormValues] = useState<DesignationFormValues>(EMPTY_DESIGNATION_FORM_VALUES);
+  const [formValues, setFormValues] = useState<DesignationFormValues>(
+    EMPTY_DESIGNATION_FORM_VALUES,
+  );
   const [formErrors, setFormErrors] = useState<DesignationFormErrors>({});
   const [saving, setSaving] = useState(false);
 
@@ -76,7 +86,9 @@ export default function DesignationsPage() {
 
   function departmentName(departmentId: string | null): string | null {
     if (!departmentId) return null;
-    return departments.find((department) => department.id === departmentId)?.name ?? "Unknown department";
+    return (
+      departments.find((department) => department.id === departmentId)?.name ?? "Unknown department"
+    );
   }
 
   function gradeName(gradeId: string | null): string | null {
@@ -139,22 +151,25 @@ export default function DesignationsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Designations"
         description="Job titles your employees will hold — optionally scoped to a department."
         actions={
           designations && designations.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Designation
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading designations…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading designations…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -163,9 +178,11 @@ export default function DesignationsPage() {
               }
               onRetry={() => void loadDesignations()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && designations && designations.length === 0 ? (
+        {!loading && !error && designations && designations.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Briefcase}
               title="No designations have been configured yet."
@@ -176,34 +193,54 @@ export default function DesignationsPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && designations && designations.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && designations && designations.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Designation</TableHead>
+                <TableHead>Department / Grade</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {designations.map((designation) => (
-                <li key={designation.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/designations/${designation.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{designation.title}</p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {[departmentName(designation.department_id), gradeName(designation.grade_id)]
-                          .filter(Boolean)
-                          .join(" · ") || "No department · No grade"}
-                      </p>
-                    </div>
+                <TableRow key={designation.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/designations/${designation.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {designation.title}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {[departmentName(designation.department_id), gradeName(designation.grade_id)]
+                      .filter(Boolean)
+                      .join(" · ") || "No department · No grade"}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={designation.is_active ? "secondary" : "outline"}>
                       {designation.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/designations/${designation.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">
@@ -221,7 +258,12 @@ export default function DesignationsPage() {
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={saving}>

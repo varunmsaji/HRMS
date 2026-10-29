@@ -18,7 +18,7 @@ interface AttendancePeriodStatusBadgeProps {
 export function AttendancePeriodStatusBadge({ status }: AttendancePeriodStatusBadgeProps) {
   const known = status in STATUS_VARIANT ? (status as AttendancePeriodStatus) : null;
   return (
-    <Badge variant={known ? STATUS_VARIANT[known] : "outline"}>
+    <Badge variant={known ? STATUS_VARIANT[known] : "outline"} dot>
       {known ? ATTENDANCE_PERIOD_STATUS_LABELS[known] : status}
     </Badge>
   );

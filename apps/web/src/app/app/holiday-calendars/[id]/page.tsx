@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { HolidayYearCalendar } from "@/components/holiday-calendar/holiday-year-calendar";
 import { HolidayCalendarForm } from "@/components/holiday-calendar/holiday-calendar-form";
+import { CompanyDate } from "@/components/common/company-date";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
-import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,6 @@ import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dia
 import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
-import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Holiday, HolidayCalendar } from "@/lib/holiday-calendar/types";
 import { HOLIDAY_TYPES } from "@/lib/holiday-calendar/types";
@@ -63,8 +63,8 @@ export default function HolidayCalendarDetailPage() {
 
   const [calendar, setCalendar] = useState<HolidayCalendar | null>(null);
   const [holidays, setHolidays] = useState<Holiday[] | null>(null);
-  const [holidaysPagination, setHolidaysPagination] = useState<PaginationMeta | null>(null);
-  const [holidaysPage, setHolidaysPage] = useState(1);
+  const [holidayCount, setHolidayCount] = useState<number | null>(null);
+  const [year, setYear] = useState(() => new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -89,24 +89,25 @@ export default function HolidayCalendarDetailPage() {
   const [savingEditHoliday, setSavingEditHoliday] = useState(false);
 
   const load = useCallback(
-    async (targetHolidaysPage: number) => {
+    async (targetYear: number) => {
       setLoading(true);
       setError(null);
       try {
         const [calendarData, holidayResult] = await Promise.all([
           apiClient.get<HolidayCalendar>(`/holiday-calendars/${params.id}`),
           apiClient.getList<Holiday>(`/holiday-calendars/${params.id}/holidays`, {
-            page: targetHolidaysPage,
+            year: targetYear,
+            per_page: 100,
           }),
         ]);
         setCalendar(calendarData);
         setHolidays(holidayResult.data);
-        setHolidaysPagination(holidayResult.pagination);
+        setHolidayCount(holidayResult.pagination?.total ?? holidayResult.data.length);
         return calendarData;
       } catch (err) {
         setCalendar(null);
         setHolidays(null);
-        setHolidaysPagination(null);
+        setHolidayCount(null);
         setError(
           err instanceof ApiError
             ? err
@@ -121,9 +122,9 @@ export default function HolidayCalendarDetailPage() {
   );
 
   useEffect(() => {
-    void load(holidaysPage);
+    void load(year);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [holidaysPage]);
+  }, [year]);
 
   function startEditing() {
     if (!calendar) return;
@@ -171,7 +172,7 @@ export default function HolidayCalendarDetailPage() {
           setEditing(false);
           setFormValues(null);
           toast({ title: "Holiday calendar saved", variant: "success" });
-          await load(holidaysPage);
+          await load(year);
         },
       });
       return;
@@ -216,7 +217,7 @@ export default function HolidayCalendarDetailPage() {
   }
 
   async function reloadLatest() {
-    const latest = await load(holidaysPage);
+    const latest = await load(year);
     if (latest) {
       setEditing(false);
       setFormValues(null);
@@ -257,8 +258,8 @@ export default function HolidayCalendarDetailPage() {
     }
   }
 
-  function openAddHoliday() {
-    setHolidayValues(EMPTY_HOLIDAY_FORM_VALUES);
+  function openAddHoliday(date?: string) {
+    setHolidayValues({ ...EMPTY_HOLIDAY_FORM_VALUES, date: date ?? "" });
     setHolidayErrors({});
     setAddHolidayOpen(true);
   }
@@ -286,13 +287,12 @@ export default function HolidayCalendarDetailPage() {
   }
 
   async function reloadHolidays() {
-    // Holidays are ordered by date, so reload the page being viewed rather than assuming page 1.
     const { data, pagination: meta } = await apiClient.getList<Holiday>(
       `/holiday-calendars/${params.id}/holidays`,
-      { page: holidaysPage },
+      { year, per_page: 100 },
     );
     setHolidays(data);
-    setHolidaysPagination(meta);
+    setHolidayCount(meta?.total ?? data.length);
   }
 
   function openEditHoliday(holiday: Holiday) {
@@ -340,9 +340,9 @@ export default function HolidayCalendarDetailPage() {
         expected_version: holiday.version,
         patch: { is_active: !holiday.is_active },
       },
-      title: holiday.is_active ? "Deactivate holiday" : "Reactivate holiday",
+      title: holiday.is_active ? "Delete holiday" : "Restore holiday",
       onDone: async () => {
-        toast({ title: "Holiday updated", variant: "success" });
+        toast({ title: holiday.is_active ? "Holiday deleted" : "Holiday restored", variant: "success" });
         await reloadHolidays();
       },
     });
@@ -389,7 +389,7 @@ export default function HolidayCalendarDetailPage() {
                     ? "This holiday calendar could not be found."
                     : error.message
               }
-              onRetry={error.status === 404 ? undefined : () => void load(holidaysPage)}
+              onRetry={error.status === 404 ? undefined : () => void load(year)}
             />
           ) : null}
 
@@ -445,7 +445,7 @@ export default function HolidayCalendarDetailPage() {
                   <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                     Holidays
                   </dt>
-                  <dd className="mt-0.5 text-sm text-foreground">{holidaysPagination?.total ?? holidays?.length ?? 0}</dd>
+                  <dd className="mt-0.5 text-sm text-foreground">{holidayCount ?? holidays?.length ?? 0}</dd>
                 </div>
               </dl>
             </div>
@@ -456,18 +456,48 @@ export default function HolidayCalendarDetailPage() {
       {!loading && !error && calendar ? (
         <Card>
           <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-foreground">Holidays</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  aria-label="Previous year"
+                  onClick={() => setYear((y) => y - 1)}
+                >
+                  ←
+                </Button>
+                <h3 className="min-w-16 text-center text-sm font-medium text-foreground">{year}</h3>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  aria-label="Next year"
+                  onClick={() => setYear((y) => y + 1)}
+                >
+                  →
+                </Button>
+              </div>
               {canManage ? (
-                <Button type="button" size="sm" onClick={openAddHoliday}>
+                <Button type="button" size="sm" onClick={() => openAddHoliday()}>
                   Add Holiday
                 </Button>
               ) : null}
             </div>
 
+            <div className="mt-4">
+              <HolidayYearCalendar
+                year={year}
+                holidays={holidays ?? []}
+                onDayClick={canManage ? openAddHoliday : undefined}
+              />
+            </div>
+
+            <h3 className="mt-6 text-sm font-medium text-foreground">Holidays in {year}</h3>
+
             {holidays && holidays.length === 0 ? (
               <p className="mt-4 text-sm text-foreground-muted">
-                No holidays have been added to this calendar yet.
+                No holidays in this calendar for {year}.
               </p>
             ) : null}
 
@@ -488,7 +518,9 @@ export default function HolidayCalendarDetailPage() {
                             {holiday.holiday_type.replace("_", " ")}
                           </span>
                         </p>
-                        <p className="mt-0.5 text-xs text-foreground-muted">{holiday.date}</p>
+                        <p className="mt-0.5 text-xs text-foreground-muted">
+                          <CompanyDate value={holiday.date} />
+                        </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant={holiday.is_active ? "secondary" : "outline"}>
@@ -511,7 +543,7 @@ export default function HolidayCalendarDetailPage() {
                             size="sm"
                             onClick={() => void toggleHolidayActive(holiday)}
                           >
-                            {holiday.is_active ? "Deactivate" : "Reactivate"}
+                            {holiday.is_active ? "Delete" : "Restore"}
                           </Button>
                         ) : null}
                       </div>
@@ -520,13 +552,6 @@ export default function HolidayCalendarDetailPage() {
               </ul>
             ) : null}
 
-            {holidaysPagination ? (
-              <PaginationControls
-                pagination={holidaysPagination}
-                onPageChange={setHolidaysPage}
-                disabled={loading}
-              />
-            ) : null}
           </CardContent>
         </Card>
       ) : null}

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CompensationForm } from "@/components/employee/compensation-form";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { EffectiveDateBadge } from "@/components/employee/effective-date-badge";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -204,7 +205,9 @@ export function CompensationPanel({ employeeId }: CompensationPanelProps) {
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Effective from</dt>
-                    <dd className="mt-0.5 text-sm text-foreground">{current.effective_from}</dd>
+                    <dd className="mt-0.5 text-sm text-foreground">
+                      <CompanyDate value={current.effective_from} />
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Reason</dt>
@@ -235,7 +238,7 @@ export function CompensationPanel({ employeeId }: CompensationPanelProps) {
                           <EffectiveDateBadge effectiveTo={item.effective_to} />
                         </div>
                         <p className="mt-0.5 text-xs text-foreground-muted">
-                          {item.effective_from} – {item.effective_to} ·{" "}
+                          <CompanyDate value={item.effective_from} /> – <CompanyDate value={item.effective_to} /> ·{" "}
                           {REVISION_TYPE_LABELS[item.revision_type as RevisionType] ?? item.revision_type}
                         </p>
                         {item.revision_reason ? (

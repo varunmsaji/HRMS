@@ -10,7 +10,7 @@ import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
-import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,13 +21,25 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
+import { CompanyDate } from "@/components/common/company-date";
 import { formatDateTime } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { LeaveBalance, LeaveLedgerEntry } from "@/lib/leave-ledger/types";
+import { cn } from "@/lib/utils";
 
 interface EncashmentFormValues {
   days: string;
@@ -81,12 +93,11 @@ export default function LeaveBalancesPage() {
   );
   const [encashmentError, setEncashmentError] = useState<string | null>(null);
   const [encashmentSaving, setEncashmentSaving] = useState(false);
-  // Kept across a retry after a network failure so the server encashes once; dropped once answered.
   const encashmentKey = useRef<string | null>(null);
 
-  const targetEmployeeId = view === "MINE" ? user?.employee_id ?? "" : selectedEmployeeId;
+  const targetEmployeeId = view === "MINE" ? (user?.employee_id ?? "") : selectedEmployeeId;
 
-  const employeeById = useMemo(() => {
+  useMemo(() => {
     const map = new Map<string, EmployeeOption>();
     for (const emp of employees) map.set(emp.id, emp);
     return map;
@@ -94,15 +105,12 @@ export default function LeaveBalancesPage() {
 
   useEffect(() => {
     if (view !== "TEAM") return;
-    // Reference-data dropdown, not a paginated table — request the server's max page size.
-    // Companies with >100 employees will see a truncated list here (known limitation).
     void apiClient
       .getList<EmployeeOption>("/employees", { per_page: 100 })
       .then(({ data }) => setEmployees(data))
       .catch(() => setEmployees([]));
   }, [view]);
 
-  // Switching employee invalidates whatever ledger page we were on.
   useEffect(() => {
     setLedgerPage(1);
   }, [targetEmployeeId]);
@@ -181,7 +189,7 @@ export default function LeaveBalancesPage() {
       await load(ledgerPage);
     } catch (err) {
       if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
-        encashmentKey.current = null; // answered (and rolled back): an edited retry is new
+        encashmentKey.current = null;
       }
       setEncashmentError(describeApiError(err));
     } finally {
@@ -196,30 +204,42 @@ export default function LeaveBalancesPage() {
         description="Current balance per leave type, and the append-only ledger behind it (accruals, applications, manual adjustments)."
       />
 
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant={view === "MINE" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setView("MINE")}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          role="group"
+          aria-label="Balance scope"
+          className="inline-flex rounded-md border border-border bg-surface p-0.5"
         >
-          My balance
-        </Button>
-        {canViewAll ? (
-          <Button
+          <button
             type="button"
-            variant={view === "TEAM" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("TEAM")}
+            onClick={() => setView("MINE")}
+            className={cn(
+              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+              view === "MINE"
+                ? "bg-primary text-on-primary"
+                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+            )}
           >
-            Team balances
-          </Button>
-        ) : null}
-      </div>
+            My balance
+          </button>
+          {canViewAll ? (
+            <button
+              type="button"
+              onClick={() => setView("TEAM")}
+              className={cn(
+                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                view === "TEAM"
+                  ? "bg-primary text-on-primary"
+                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+              )}
+            >
+              Team balances
+            </button>
+          ) : null}
+        </div>
 
-      {view === "TEAM" ? (
-        <Card>
-          <CardContent className="pt-6">
+        {view === "TEAM" ? (
+          <div className="w-full max-w-sm">
             <FormField id="leave-balances-employee" label="Employee">
               <NativeSelect
                 value={selectedEmployeeId}
@@ -233,32 +253,28 @@ export default function LeaveBalancesPage() {
                 ))}
               </NativeSelect>
             </FormField>
-          </CardContent>
-        </Card>
-      ) : null}
+          </div>
+        ) : null}
+      </div>
 
       {!targetEmployeeId && view === "TEAM" ? (
-        <Card>
-          <CardContent className="pt-6">
-            <EmptyState icon={Wallet} title="Choose an employee to view their leave balance." />
-          </CardContent>
-        </Card>
+        <EmptyState icon={Wallet} title="Choose an employee to view their leave balance." />
       ) : null}
 
       {!targetEmployeeId && view === "MINE" ? (
-        <Card>
-          <CardContent className="pt-6">
-            <ErrorState message="Your user account has no linked employee record." />
-          </CardContent>
-        </Card>
+        <ErrorState message="Your user account has no linked employee record." />
       ) : null}
 
       {targetEmployeeId ? (
-        <>
-          <Card>
-            <CardContent className="pt-6">
-              {loading ? <LoadingState label="Loading balances…" /> : null}
-              {error && !loading ? (
+        <div className="space-y-6">
+          <TableContainer>
+            <TableToolbar>
+              <h2 className="text-sm font-semibold text-foreground">Available Leave Balances</h2>
+            </TableToolbar>
+
+            {loading ? <LoadingState label="Loading balances…" /> : null}
+            {error && !loading ? (
+              <div className="p-6">
                 <ErrorState
                   message={
                     error.status === 403
@@ -267,104 +283,122 @@ export default function LeaveBalancesPage() {
                   }
                   onRetry={() => void load(ledgerPage)}
                 />
-              ) : null}
-              {!loading && !error && balances && balances.length === 0 ? (
+              </div>
+            ) : null}
+            {!loading && !error && balances && balances.length === 0 ? (
+              <div className="p-6">
                 <EmptyState
                   icon={Wallet}
                   title="No balance-backed leave types configured yet."
                   description="LOP-style leave types (requires_balance=false) never appear here."
                 />
-              ) : null}
-              {!loading && !error && balances && balances.length > 0 ? (
-                <div className="overflow-x-auto rounded-md border border-border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-medium">Leave type</th>
-                        <th className="px-3 py-2 text-right font-medium">Available balance</th>
-                        <th className="px-3 py-2 text-right font-medium">Reserved / pending</th>
-                        {canAdjust ? <th className="px-3 py-2 text-right font-medium">Encashment</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {balances.map((balance) => (
-                        <tr key={balance.leave_type_id}>
-                          <td className="px-3 py-2 font-medium text-foreground">
-                            {balance.leave_type_name}{" "}
-                            <span className="text-foreground-muted">({balance.leave_type_code})</span>
-                          </td>
-                          <td className="px-3 py-2 text-right text-foreground">{balance.balance}</td>
-                          <td className="px-3 py-2 text-right text-foreground-secondary">
-                            {balance.reserved_balance}
-                          </td>
-                          {canAdjust ? (
-                            <td className="px-3 py-2 text-right">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openEncash(balance)}
-                              >
-                                Encash
-                              </Button>
-                            </td>
-                          ) : null}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
+              </div>
+            ) : null}
+            {!loading && !error && balances && balances.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Leave type</TableHead>
+                    <TableHead align="right">Available balance</TableHead>
+                    <TableHead align="right">Reserved / pending</TableHead>
+                    {canAdjust ? <TableHead align="right">Encashment</TableHead> : null}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {balances.map((balance) => (
+                    <TableRow key={balance.leave_type_id}>
+                      <TableCell className="font-medium text-foreground">
+                        {balance.leave_type_name}{" "}
+                        <span className="font-mono text-xs text-foreground-muted">
+                          ({balance.leave_type_code})
+                        </span>
+                      </TableCell>
+                      <TableCell align="right" numeric className="font-semibold text-foreground">
+                        {balance.balance}
+                      </TableCell>
+                      <TableCell align="right" numeric className="text-foreground-secondary">
+                        {balance.reserved_balance}
+                      </TableCell>
+                      {canAdjust ? (
+                        <TableCell align="right">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            onClick={() => openEncash(balance)}
+                          >
+                            Encash
+                          </Button>
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+          </TableContainer>
 
-          <Card>
-            <CardContent className="pt-6">
-              <h2 className="mb-4 text-sm font-medium text-foreground">
-                Ledger{canAdjust ? " (append-only — a correction is always a new entry, never an edit)" : ""}
+          <TableContainer>
+            <TableToolbar>
+              <h2 className="text-sm font-semibold text-foreground">
+                Ledger
+                {canAdjust
+                  ? " (append-only — a correction is always a new entry, never an edit)"
+                  : ""}
               </h2>
-              {!loading && !error && ledger && ledger.length === 0 ? (
-                <p className="text-sm text-foreground-muted">No ledger activity yet.</p>
-              ) : null}
-              {!loading && !error && ledger && ledger.length > 0 ? (
-                <div className="overflow-x-auto rounded-md border border-border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-medium">Date</th>
-                        <th className="px-3 py-2 text-left font-medium">Type</th>
-                        <th className="px-3 py-2 text-right font-medium">Amount</th>
-                        <th className="px-3 py-2 text-left font-medium">Reason</th>
-                        <th className="px-3 py-2 text-left font-medium">Recorded</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {ledger.map((entry) => (
-                        <tr key={entry.id}>
-                          <td className="px-3 py-2">{entry.effective_date}</td>
-                          <td className="px-3 py-2">{entry.entry_type}</td>
-                          <td className="px-3 py-2 text-right">{entry.amount}</td>
-                          <td className="px-3 py-2 text-foreground-secondary">{entry.reason ?? "—"}</td>
-                          <td className="px-3 py-2 text-xs text-foreground-muted">
-                            {formatDateTime(entry.created_at, tz)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
+            </TableToolbar>
 
-              {!loading && !error && ledgerPagination ? (
-                <PaginationControls
-                  pagination={ledgerPagination}
-                  onPageChange={setLedgerPage}
-                  disabled={loading}
-                />
-              ) : null}
-            </CardContent>
-          </Card>
-        </>
+            {!loading && !error && ledger && ledger.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-foreground-muted">
+                No ledger activity yet.
+              </p>
+            ) : null}
+            {!loading && !error && ledger && ledger.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Date</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead align="right">Amount</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead>Recorded</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {ledger.map((entry) => (
+                    <TableRow key={entry.id}>
+                      <TableCell className="tabular-nums text-foreground-secondary">
+                        <CompanyDate value={entry.effective_date} />
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="font-mono text-2xs">
+                          {entry.entry_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell align="right" numeric className="font-medium text-foreground">
+                        {entry.amount}
+                      </TableCell>
+                      <TableCell className="text-foreground-secondary">
+                        {entry.reason ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs tabular-nums text-foreground-muted">
+                        {formatDateTime(entry.created_at, tz)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : null}
+
+            {!loading && !error && ledgerPagination ? (
+              <PaginationControls
+                pagination={ledgerPagination}
+                onPageChange={setLedgerPage}
+                disabled={loading}
+              />
+            ) : null}
+          </TableContainer>
+        </div>
       ) : null}
 
       <Dialog
@@ -400,7 +434,9 @@ export default function LeaveBalancesPage() {
             <FormField id="encashment-reason" label="Reason">
               <Input
                 value={encashmentValues.reason}
-                onChange={(e) => setEncashmentValues((c) => ({ ...c, reason: e.target.value }))}
+                onChange={(e) =>
+                  setEncashmentValues((c) => ({ ...c, reason: e.target.value }))
+                }
                 maxLength={2000}
               />
             </FormField>
@@ -419,7 +455,11 @@ export default function LeaveBalancesPage() {
             >
               Cancel
             </Button>
-            <Button type="button" onClick={() => void handleEncash()} disabled={encashmentSaving}>
+            <Button
+              type="button"
+              onClick={() => void handleEncash()}
+              disabled={encashmentSaving}
+            >
               {encashmentSaving ? "Recording…" : "Record encashment"}
             </Button>
           </DialogFooter>

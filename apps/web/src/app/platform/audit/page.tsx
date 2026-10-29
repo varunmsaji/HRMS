@@ -2,18 +2,39 @@
 
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
+import { Badge } from "@/components/ui/badge";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import type { PaginationMeta } from "@/lib/api/types";
 import { describeApiError } from "@/lib/api/errors";
 import { platformApi, type AuditEntry } from "@/lib/platform/api";
 
 const ACTIONS = [
-  "COMPANY_APPROVED", "COMPANY_REJECTED", "COMPANY_SUSPENDED", "COMPANY_REACTIVATED", "COMPANY_TERMINATED",
-  "SUBSCRIPTION_CHANGED", "COMPANY_ADMIN_UNLOCKED", "COMPANY_ADMIN_VERIFICATION_RESENT",
-  "PLATFORM_ADMIN_CREATED", "PLATFORM_ADMIN_DISABLED", "PLATFORM_ADMIN_ENABLED",
-  "PLATFORM_ADMIN_PASSWORD_RESET", "PLATFORM_LOGIN", "PLATFORM_LOGOUT",
+  "COMPANY_APPROVED",
+  "COMPANY_REJECTED",
+  "COMPANY_SUSPENDED",
+  "COMPANY_REACTIVATED",
+  "COMPANY_TERMINATED",
+  "SUBSCRIPTION_CHANGED",
+  "COMPANY_ADMIN_UNLOCKED",
+  "COMPANY_ADMIN_VERIFICATION_RESENT",
+  "PLATFORM_ADMIN_CREATED",
+  "PLATFORM_ADMIN_DISABLED",
+  "PLATFORM_ADMIN_ENABLED",
+  "PLATFORM_ADMIN_PASSWORD_RESET",
+  "PLATFORM_LOGIN",
+  "PLATFORM_LOGOUT",
 ];
 
 export default function PlatformAuditPage() {
@@ -26,50 +47,81 @@ export default function PlatformAuditPage() {
   useEffect(() => {
     platformApi
       .auditLog({ page, action: action || undefined })
-      .then((r) => { setItems(r.items); setPagination(r.pagination); })
+      .then((r) => {
+        setItems(r.items);
+        setPagination(r.pagination);
+      })
       .catch((e) => setError(describeApiError(e)));
   }, [page, action]);
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Audit log</h1>
-      <NativeSelect className="w-72" value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }} aria-label="Action filter">
-        <option value="">All actions</option>
-        {ACTIONS.map((a) => (<option key={a} value={a}>{a.replaceAll("_", " ").toLowerCase()}</option>))}
-      </NativeSelect>
-      {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
-      <Card>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border text-left text-foreground-muted">
-              <tr>
-                <th className="px-4 py-2 font-medium">When</th>
-                <th className="px-4 py-2 font-medium">Who</th>
-                <th className="px-4 py-2 font-medium">Action</th>
-                <th className="px-4 py-2 font-medium">Change</th>
-                <th className="px-4 py-2 font-medium">Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((e) => (
-                <tr key={e.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-2 whitespace-nowrap">{new Date(e.created_at).toLocaleString()}</td>
-                  <td className="px-4 py-2">{e.actor_username ?? "—"}</td>
-                  <td className="px-4 py-2">{e.action}</td>
-                  <td className="px-4 py-2">{e.before_status && e.after_status ? `${e.before_status} → ${e.after_status}` : "—"}</td>
-                  <td className="px-4 py-2">{e.reason ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
-      {pagination && pagination.total_pages > 1 ? (
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-          <Button variant="outline" size="sm" disabled={page >= pagination.total_pages} onClick={() => setPage(page + 1)}>Next</Button>
-        </div>
+      <PageHeader
+        title="Audit log"
+        description="Immutable record of platform administrative actions across all tenants."
+      />
+      {error ? (
+        <p role="alert" className="text-sm text-danger">
+          {error}
+        </p>
       ) : null}
+      <TableContainer>
+        <TableToolbar>
+          <NativeSelect
+            className="w-72"
+            value={action}
+            onChange={(e) => {
+              setAction(e.target.value);
+              setPage(1);
+            }}
+            aria-label="Action filter"
+          >
+            <option value="">All actions</option>
+            {ACTIONS.map((a) => (
+              <option key={a} value={a}>
+                {a.replaceAll("_", " ").toLowerCase()}
+              </option>
+            ))}
+          </NativeSelect>
+        </TableToolbar>
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>When</TableHead>
+              <TableHead>Who</TableHead>
+              <TableHead>Action</TableHead>
+              <TableHead>Change</TableHead>
+              <TableHead>Reason</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((e) => (
+              <TableRow key={e.id}>
+                <TableCell className="whitespace-nowrap tabular-nums text-foreground-secondary">
+                  {new Date(e.created_at).toLocaleString()}
+                </TableCell>
+                <TableCell className="font-medium text-foreground">
+                  {e.actor_username ?? "—"}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="font-mono text-2xs">
+                    {e.action}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-xs text-foreground-secondary">
+                  {e.before_status && e.after_status
+                    ? `${e.before_status} → ${e.after_status}`
+                    : "—"}
+                </TableCell>
+                <TableCell className="text-foreground-secondary">{e.reason ?? "—"}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {pagination ? (
+          <PaginationControls pagination={pagination} onPageChange={setPage} />
+        ) : null}
+      </TableContainer>
     </div>
   );
 }

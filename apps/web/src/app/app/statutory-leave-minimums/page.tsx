@@ -1,6 +1,6 @@
 "use client";
 
-import { Scale } from "lucide-react";
+import { Plus, Scale } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { EmptyState } from "@/components/common/empty-state";
@@ -10,7 +10,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { StatutoryLeaveMinimumForm } from "@/components/statutory-leave-minimum/statutory-leave-minimum-form";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +17,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -135,22 +143,25 @@ export default function StatutoryLeaveMinimumsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Statutory Leave Minimums"
         description="The legal compliance floor (client spec §16) — a leave policy cannot be published below the strictest minimum configured here for its leave type's statutory category. No figures are pre-filled; enter the minimums that apply to your states."
         actions={
           canManage && minimums && minimums.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Minimum
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading statutory minimums…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading statutory minimums…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -159,9 +170,11 @@ export default function StatutoryLeaveMinimumsPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && minimums && minimums.length === 0 ? (
+        {!loading && !error && minimums && minimums.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Scale}
               title="No statutory minimums configured yet."
@@ -174,41 +187,54 @@ export default function StatutoryLeaveMinimumsPage() {
                 ) : undefined
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && minimums && minimums.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && minimums && minimums.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Category</TableHead>
+                <TableHead align="right">Minimum days / year</TableHead>
+                <TableHead>Scope</TableHead>
+                <TableHead>Notes</TableHead>
+                {canManage ? <TableHead align="right">Actions</TableHead> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {minimums.map((minimum) => (
-                <li
-                  key={minimum.id}
-                  className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {minimum.leave_category} — {minimum.min_days_per_year} days / year
-                    </p>
-                    <p className="mt-0.5 text-xs text-foreground-muted">{scopeLabel(minimum)}</p>
-                    {minimum.note ? (
-                      <p className="mt-0.5 text-xs text-foreground-muted">{minimum.note}</p>
-                    ) : null}
-                  </div>
+                <TableRow key={minimum.id}>
+                  <TableCell className="font-medium text-foreground">
+                    {minimum.leave_category} — {minimum.min_days_per_year} days / year
+                  </TableCell>
+                  <TableCell align="right" numeric className="font-semibold text-foreground">
+                    {minimum.min_days_per_year}
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {scopeLabel(minimum)}
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-muted">
+                    {minimum.note ?? "—"}
+                  </TableCell>
                   {canManage ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={deletingId === minimum.id}
-                      onClick={() => void handleDelete(minimum)}
-                    >
-                      {deletingId === minimum.id ? "Removing…" : "Remove"}
-                    </Button>
+                    <TableCell align="right">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        disabled={deletingId === minimum.id}
+                        onClick={() => void handleDelete(minimum)}
+                      >
+                        {deletingId === minimum.id ? "Removing…" : "Remove"}
+                      </Button>
+                    </TableCell>
                   ) : null}
-                </li>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-lg">

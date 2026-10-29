@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
+import { CompanyDate } from "@/components/common/company-date";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -14,7 +14,7 @@ import { RegularizationPolicyForm } from "@/components/regularization-policy/reg
 import { RegularizationPolicyVersionForm } from "@/components/regularization-policy/regularization-policy-version-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +23,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -42,6 +52,7 @@ import {
   type RegularizationPolicyVersionFormErrors,
   type RegularizationPolicyVersionFormValues,
 } from "@/lib/regularization-policy/validate-regularization-policy";
+import { cn } from "@/lib/utils";
 
 type TabKey = "overview" | "versions";
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -73,7 +84,8 @@ export default function RegularizationPolicyDetailPage() {
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
 
-  const [draftValues, setDraftValues] = useState<RegularizationPolicyVersionFormValues | null>(null);
+  const [draftValues, setDraftValues] =
+    useState<RegularizationPolicyVersionFormValues | null>(null);
   const [draftErrors, setDraftErrors] = useState<RegularizationPolicyVersionFormErrors>({});
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftStaleMessage, setDraftStaleMessage] = useState<string | null>(null);
@@ -198,7 +210,11 @@ export default function RegularizationPolicyDetailPage() {
           return;
         }
       }
-      toast({ title: "Could not save policy", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not save policy",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -224,7 +240,10 @@ export default function RegularizationPolicyDetailPage() {
         { ifMatch: String(policy.version) },
       );
       setPolicy(updated);
-      toast({ title: updated.is_active ? "Policy reactivated" : "Policy deactivated", variant: "success" });
+      toast({
+        title: updated.is_active ? "Policy reactivated" : "Policy deactivated",
+        variant: "success",
+      });
       setConfirmOpen(false);
     } catch (err) {
       toast({
@@ -298,7 +317,11 @@ export default function RegularizationPolicyDetailPage() {
           return;
         }
       }
-      toast({ title: "Could not save draft", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not save draft",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSavingDraft(false);
     }
@@ -344,18 +367,18 @@ export default function RegularizationPolicyDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/app/regularization-policies"
-          className="text-sm text-foreground-secondary hover:underline"
-        >
-          ← Regularization Policies
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/regularization-policies"
+        backLabel="Regularization Policies"
         title={policy?.name ?? "Regularization Policy"}
         description="Identity on the Overview tab; windows/caps/allowed-types live on the Versions tab."
+        badge={
+          policy ? (
+            <Badge variant={policy.is_active ? "secondary" : "outline"}>
+              {policy.is_active ? "Active" : "Inactive"}
+            </Badge>
+          ) : undefined
+        }
         actions={
           canManage && policy && !editing && tab === "overview" ? (
             <div className="flex items-center gap-2">
@@ -372,7 +395,7 @@ export default function RegularizationPolicyDetailPage() {
 
       {loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <LoadingState label="Loading policy…" />
           </CardContent>
         </Card>
@@ -380,7 +403,7 @@ export default function RegularizationPolicyDetailPage() {
 
       {error && !loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <ErrorState
               message={
                 error.status === 403
@@ -405,11 +428,12 @@ export default function RegularizationPolicyDetailPage() {
                 role="tab"
                 aria-selected={tab === item.key}
                 onClick={() => setTab(item.key)}
-                className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                className={cn(
+                  "shrink-0 border-b-2 px-3.5 py-2.5 text-sm font-medium transition-colors duration-motion-instant focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   tab === item.key
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-foreground-muted hover:text-foreground"
-                }`}
+                    ? "border-primary text-primary"
+                    : "border-transparent text-foreground-secondary hover:border-border-strong hover:text-foreground",
+                )}
               >
                 {item.label}
               </button>
@@ -418,7 +442,7 @@ export default function RegularizationPolicyDetailPage() {
 
           {tab === "overview" ? (
             <Card>
-              <CardContent className="pt-6">
+              <CardContent>
                 {staleMessage ? (
                   <ConcurrencyConflictBanner
                     message={staleMessage}
@@ -433,37 +457,43 @@ export default function RegularizationPolicyDetailPage() {
                       errors={formErrors}
                       onChange={setFormValues}
                     />
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 border-t border-border pt-4">
                       <Button type="button" onClick={() => void handleSave()} disabled={saving}>
                         {saving ? "Saving…" : "Save changes"}
                       </Button>
-                      <Button type="button" variant="outline" onClick={cancelEditing} disabled={saving}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={cancelEditing}
+                        disabled={saving}
+                      >
                         Cancel
                       </Button>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <Badge variant={policy.is_active ? "secondary" : "outline"}>
-                      {policy.is_active ? "Active" : "Inactive"}
-                    </Badge>
                     <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
-                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-                          Policy name
-                        </dt>
-                        <dd className="mt-0.5 text-sm text-foreground">{policy.name}</dd>
+                        <dt className="text-xs font-medium text-foreground-muted">Policy name</dt>
+                        <dd className="mt-0.5 text-sm font-medium text-foreground">
+                          {policy.name}
+                        </dd>
                       </div>
                       <div>
-                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-                          Policy code
-                        </dt>
-                        <dd className="mt-0.5 text-sm text-foreground">{policy.code ?? "—"}</dd>
+                        <dt className="text-xs font-medium text-foreground-muted">Policy code</dt>
+                        <dd className="mt-0.5 font-mono text-sm text-foreground">
+                          {policy.code ?? "—"}
+                        </dd>
                       </div>
                     </dl>
                     <p className="text-xs text-foreground-muted">
                       Configure windows, caps, and allowed types on the{" "}
-                      <button type="button" className="underline" onClick={() => setTab("versions")}>
+                      <button
+                        type="button"
+                        className="font-medium text-primary hover:underline"
+                        onClick={() => setTab("versions")}
+                      >
                         Versions tab
                       </button>
                       .
@@ -478,7 +508,7 @@ export default function RegularizationPolicyDetailPage() {
             <div className="space-y-6">
               {versionsLoading && versions === null ? (
                 <Card>
-                  <CardContent className="pt-6">
+                  <CardContent>
                     <LoadingState label="Loading versions…" />
                   </CardContent>
                 </Card>
@@ -487,31 +517,33 @@ export default function RegularizationPolicyDetailPage() {
               {versions !== null ? (
                 <>
                   <Card>
-                    <CardContent className="space-y-4 pt-6">
-                      <h3 className="text-sm font-medium text-foreground">Currently published</h3>
+                    <CardHeader>
+                      <CardTitle>Currently published</CardTitle>
+                    </CardHeader>
+                    <CardContent>
                       {currentPublished ? (
                         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                           <div>
-                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                            <dt className="text-xs font-medium text-foreground-muted">
                               Effective from
                             </dt>
-                            <dd className="mt-0.5 text-sm text-foreground">
-                              {currentPublished.effective_from}
+                            <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                              <CompanyDate value={currentPublished.effective_from} />
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                            <dt className="text-xs font-medium text-foreground-muted">
                               Approval chain
                             </dt>
-                            <dd className="mt-0.5 text-sm text-foreground">
+                            <dd className="mt-0.5 text-sm font-medium text-foreground">
                               {currentPublished.approval_chain.replaceAll("_", " ")}
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                            <dt className="text-xs font-medium text-foreground-muted">
                               Allowed types
                             </dt>
-                            <dd className="mt-0.5 text-sm text-foreground">
+                            <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
                               {currentPublished.allowed_types.length} configured
                             </dd>
                           </div>
@@ -523,20 +555,20 @@ export default function RegularizationPolicyDetailPage() {
                   </Card>
 
                   <Card>
-                    <CardContent className="space-y-4 pt-6">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-medium text-foreground">Draft</h3>
-                        {canManage && !draft ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => void handleCreateDraft()}
-                            disabled={creatingDraft}
-                          >
-                            {creatingDraft ? "Creating…" : "New draft"}
-                          </Button>
-                        ) : null}
-                      </div>
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <CardTitle>Draft</CardTitle>
+                      {canManage && !draft ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void handleCreateDraft()}
+                          disabled={creatingDraft}
+                        >
+                          {creatingDraft ? "Creating…" : "New draft"}
+                        </Button>
+                      ) : null}
+                    </CardHeader>
+                    <CardContent className="space-y-4">
                       {!draft ? (
                         <p className="text-sm text-foreground-muted">
                           No open draft. Start one to change this policy&apos;s rules.
@@ -556,7 +588,7 @@ export default function RegularizationPolicyDetailPage() {
                             errors={draftErrors}
                             onChange={setDraftValues}
                           />
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
                             {canManage ? (
                               <>
                                 <Button
@@ -590,24 +622,37 @@ export default function RegularizationPolicyDetailPage() {
                   </Card>
 
                   {historical.length > 0 ? (
-                    <Card>
-                      <CardContent className="pt-6">
-                        <h3 className="text-sm font-medium text-foreground">History</h3>
-                        <ul className="mt-3 divide-y divide-border">
+                    <TableContainer>
+                      <TableToolbar>
+                        <h3 className="text-sm font-semibold text-foreground">History</h3>
+                      </TableToolbar>
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="hover:bg-transparent">
+                            <TableHead>Effective period</TableHead>
+                            <TableHead>Summary</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {historical.map((version) => (
-                            <li key={version.id} className="py-3 first:pt-0 last:pb-0">
-                              <p className="text-sm font-medium text-foreground">
+                            <TableRow key={version.id}>
+                              <TableCell className="tabular-nums text-foreground-secondary">
+                                <CompanyDate value={version.effective_from} /> –{" "}
+                                {version.effective_to ? (
+                                  <CompanyDate value={version.effective_to} />
+                                ) : (
+                                  "open"
+                                )}
+                              </TableCell>
+                              <TableCell className="font-medium text-foreground">
                                 {version.approval_chain.replaceAll("_", " ")} —{" "}
                                 {version.allowed_types.length} allowed types
-                              </p>
-                              <p className="mt-0.5 text-xs text-foreground-muted">
-                                {version.effective_from} – {version.effective_to ?? "open"}
-                              </p>
-                            </li>
+                              </TableCell>
+                            </TableRow>
                           ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   ) : null}
                 </>
               ) : null}
@@ -616,10 +661,15 @@ export default function RegularizationPolicyDetailPage() {
         </>
       ) : null}
 
-      <Dialog open={confirmOpen} onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}>
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{policy?.is_active ? "Deactivate policy?" : "Reactivate policy?"}</DialogTitle>
+            <DialogTitle>
+              {policy?.is_active ? "Deactivate policy?" : "Reactivate policy?"}
+            </DialogTitle>
             <DialogDescription>
               {policy?.is_active
                 ? "This policy will no longer be assignable to a new scope. Existing assignments are unaffected."
@@ -627,7 +677,12 @@ export default function RegularizationPolicyDetailPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setConfirmOpen(false)} disabled={statusChanging}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={statusChanging}
+            >
               Cancel
             </Button>
             <Button

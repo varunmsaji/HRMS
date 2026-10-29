@@ -3,105 +3,152 @@
 @tailwind utilities;
 
 /*
- * Design tokens per docs/design/01_Design_System.md §9 (light) / §10 (dark).
- * Every color is a light/dark PAIR, never a single value with a filter.
- * Consumed by apps/web/tailwind.config.ts via var(--color-*).
+ * Staff Spectrum (Krewoxa) Enterprise Design Tokens
+ * Canonical implementation of docs/design/01_Design_System.md.
  *
- * Precedence (low -> high): :root (light default) -> prefers-color-scheme
- * (system dark, unless explicitly overridden to light) -> [data-theme]
- * (explicit user override, always wins). No JS toggle exists yet — that
- * lands with the app shell (Task 1.4.x) — this just makes the tokens ready.
+ * Every token is defined as an explicit light/dark pair.
+ * Semantic foreground colors are contrast-calibrated (≥ 4.5:1 WCAG AA)
+ * against both white surfaces and their paired `*-subtle` fills.
  */
 :root {
-  /* Surfaces & text — Stitch "Staff Spectrum HRMS" design system (technobeala project) */
+  /* Surfaces & Structural Borders */
   --color-background: #f8fafc;
   --color-surface: #ffffff;
+  --color-surface-secondary: #f8fafc;
+  --color-surface-elevated: #ffffff;
+  --color-muted: #f1f5f9;
+  --color-border-subtle: #f1f5f9;
   --color-border: #e2e8f0;
   --color-border-strong: #cbd5e1;
+
+  /* Neutral Text Hierarchy */
   --color-foreground: #0f172a;
-  --color-foreground-secondary: #475569;
+  --color-foreground-secondary: #334155;
   --color-foreground-muted: #64748b;
   --color-foreground-disabled: #94a3b8;
 
-  /* Brand hue — blue family anchored at #2563EB, per Stitch's primary-container */
+  /* Brand Hue — Reserved for primary actions, active indicators, and focus rings */
   --color-primary: #2563eb;
   --color-primary-hover: #1d4ed8;
   --color-primary-active: #1e40af;
-  --color-primary-subtle: #dbeafe;
+  --color-primary-subtle: #eff6ff;
+  --color-primary-border: #bfdbfe;
   --color-primary-disabled: #93c5fd;
   --color-on-primary: #ffffff;
 
-  /* Semantic set — danger/info follow Stitch's error/tertiary; success/warning unspecified there, kept */
-  --color-success: #16a34a;
+  /* Semantic Status Set — WCAG AA contrast on subtle fills */
+  --color-success: #15803d;
   --color-success-subtle: #f0fdf4;
-  --color-warning: #f59e0b;
+  --color-success-border: #bbf7d0;
+
+  --color-warning: #b45309;
   --color-warning-subtle: #fffbeb;
-  --color-danger: #ef4444;
-  --color-danger-subtle: #fee2e2;
-  --color-info: #0ea5e9;
-  --color-info-subtle: #e0f2fe;
+  --color-warning-border: #fde68a;
 
-  /* HRMS status states (§1.4) — violet distinct from brand indigo by design */
-  --color-on-leave: #8b5cf6;
+  --color-danger: #b91c1c;
+  --color-danger-subtle: #fef2f2;
+  --color-danger-border: #fecaca;
+
+  --color-info: #0369a1;
+  --color-info-subtle: #f0f9ff;
+  --color-info-border: #bae6fd;
+
+  /* HRMS Operational States (§1.4) */
+  --color-on-leave: #6d28d9;
   --color-on-leave-subtle: #f5f3ff;
-  --color-holiday: #64748b;
-  --color-holiday-subtle: #f1f5f9;
-  --color-half-day: #f59e0b;
-  --color-half-day-subtle: #fffbeb;
-  --color-wfh: #0d9488;
-  --color-wfh-subtle: #f0fdfa;
+  --color-on-leave-border: #ddd6fe;
 
-  /* Neutral-subtle surface — backs shadcn's muted/secondary/accent slots
-   * (see tailwind.config.ts), none of which the design system distinguishes. */
-  --color-muted: #f1f5f9;
+  --color-holiday: #475569;
+  --color-holiday-subtle: #f1f5f9;
+  --color-holiday-border: #cbd5e1;
+
+  --color-half-day: #b45309;
+  --color-half-day-subtle: #fffbeb;
+  --color-half-day-border: #fde68a;
+
+  --color-wfh: #0f766e;
+  --color-wfh-subtle: #f0fdfa;
+  --color-wfh-border: #99f6e4;
+
+  /* Elevation Shadows */
+  --shadow-elevation-1: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  --shadow-elevation-2: 0 4px 12px -2px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+  --shadow-elevation-3: 0 12px 24px -4px rgba(15, 23, 42, 0.12), 0 4px 8px -2px rgba(15, 23, 42, 0.06);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --color-background: #0f172a;
-    --color-surface: #1e293b;
+    --color-background: #0b1120;
+    --color-surface: #111827;
+    --color-surface-secondary: #1e293b;
+    --color-surface-elevated: #1e293b;
+    --color-muted: #1e293b;
+    --color-border-subtle: rgba(226, 232, 240, 0.07);
     --color-border: rgba(226, 232, 240, 0.12);
-    --color-border-strong: rgba(226, 232, 240, 0.2);
-    --color-foreground: #f1f5f9;
+    --color-border-strong: rgba(226, 232, 240, 0.22);
+
+    --color-foreground: #f8fafc;
     --color-foreground-secondary: #cbd5e1;
     --color-foreground-muted: #94a3b8;
     --color-foreground-disabled: #64748b;
 
-    --color-primary: #3b82f6; /* Stitch's surface-tint value — the dark-mode brand step */
+    --color-primary: #3b82f6;
     --color-primary-hover: #60a5fa;
     --color-primary-active: #93c5fd;
-    --color-primary-subtle: #1e3a8a;
+    --color-primary-subtle: rgba(59, 130, 246, 0.15);
+    --color-primary-border: rgba(59, 130, 246, 0.35);
     --color-primary-disabled: #1e40af;
     --color-on-primary: #ffffff;
 
     --color-success: #4ade80;
-    --color-success-subtle: #052e16;
+    --color-success-subtle: rgba(34, 197, 94, 0.14);
+    --color-success-border: rgba(74, 222, 128, 0.3);
+
     --color-warning: #fbbf24;
-    --color-warning-subtle: #451a03;
+    --color-warning-subtle: rgba(245, 158, 11, 0.14);
+    --color-warning-border: rgba(251, 191, 36, 0.3);
+
     --color-danger: #f87171;
-    --color-danger-subtle: #450a0a;
+    --color-danger-subtle: rgba(239, 68, 68, 0.14);
+    --color-danger-border: rgba(248, 113, 113, 0.3);
+
     --color-info: #38bdf8;
-    --color-info-subtle: #0c4a6e;
+    --color-info-subtle: rgba(14, 165, 233, 0.14);
+    --color-info-border: rgba(56, 189, 248, 0.3);
 
     --color-on-leave: #a78bfa;
-    --color-on-leave-subtle: #2e1065;
-    --color-holiday: #94a3b8;
-    --color-holiday-subtle: #1e293b;
-    --color-half-day: #fbbf24;
-    --color-half-day-subtle: #451a03;
-    --color-wfh: #2dd4bf;
-    --color-wfh-subtle: #042f2e;
+    --color-on-leave-subtle: rgba(139, 92, 246, 0.15);
+    --color-on-leave-border: rgba(167, 139, 250, 0.3);
 
-    --color-muted: #334155;
+    --color-holiday: #94a3b8;
+    --color-holiday-subtle: rgba(148, 163, 184, 0.12);
+    --color-holiday-border: rgba(148, 163, 184, 0.25);
+
+    --color-half-day: #fbbf24;
+    --color-half-day-subtle: rgba(245, 158, 11, 0.14);
+    --color-half-day-border: rgba(251, 191, 36, 0.3);
+
+    --color-wfh: #2dd4bf;
+    --color-wfh-subtle: rgba(20, 184, 166, 0.14);
+    --color-wfh-border: rgba(45, 212, 191, 0.3);
+
+    --shadow-elevation-1: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-elevation-2: 0 4px 12px -2px rgba(0, 0, 0, 0.45);
+    --shadow-elevation-3: 0 12px 24px -4px rgba(0, 0, 0, 0.6);
   }
 }
 
 :root[data-theme="dark"] {
-  --color-background: #0f172a;
-  --color-surface: #1e293b;
+  --color-background: #0b1120;
+  --color-surface: #111827;
+  --color-surface-secondary: #1e293b;
+  --color-surface-elevated: #1e293b;
+  --color-muted: #1e293b;
+  --color-border-subtle: rgba(226, 232, 240, 0.07);
   --color-border: rgba(226, 232, 240, 0.12);
-  --color-border-strong: rgba(226, 232, 240, 0.2);
-  --color-foreground: #f1f5f9;
+  --color-border-strong: rgba(226, 232, 240, 0.22);
+
+  --color-foreground: #f8fafc;
   --color-foreground-secondary: #cbd5e1;
   --color-foreground-muted: #94a3b8;
   --color-foreground-disabled: #64748b;
@@ -109,38 +156,79 @@
   --color-primary: #3b82f6;
   --color-primary-hover: #60a5fa;
   --color-primary-active: #93c5fd;
-  --color-primary-subtle: #1e3a8a;
+  --color-primary-subtle: rgba(59, 130, 246, 0.15);
+  --color-primary-border: rgba(59, 130, 246, 0.35);
   --color-primary-disabled: #1e40af;
   --color-on-primary: #ffffff;
 
   --color-success: #4ade80;
-  --color-success-subtle: #052e16;
+  --color-success-subtle: rgba(34, 197, 94, 0.14);
+  --color-success-border: rgba(74, 222, 128, 0.3);
+
   --color-warning: #fbbf24;
-  --color-warning-subtle: #451a03;
+  --color-warning-subtle: rgba(245, 158, 11, 0.14);
+  --color-warning-border: rgba(251, 191, 36, 0.3);
+
   --color-danger: #f87171;
-  --color-danger-subtle: #450a0a;
+  --color-danger-subtle: rgba(239, 68, 68, 0.14);
+  --color-danger-border: rgba(248, 113, 113, 0.3);
+
   --color-info: #38bdf8;
-  --color-info-subtle: #0c4a6e;
+  --color-info-subtle: rgba(14, 165, 233, 0.14);
+  --color-info-border: rgba(56, 189, 248, 0.3);
 
   --color-on-leave: #a78bfa;
-  --color-on-leave-subtle: #2e1065;
-  --color-holiday: #94a3b8;
-  --color-holiday-subtle: #1e293b;
-  --color-half-day: #fbbf24;
-  --color-half-day-subtle: #451a03;
-  --color-wfh: #2dd4bf;
-  --color-wfh-subtle: #042f2e;
+  --color-on-leave-subtle: rgba(139, 92, 246, 0.15);
+  --color-on-leave-border: rgba(167, 139, 250, 0.3);
 
-  --color-muted: #334155;
+  --color-holiday: #94a3b8;
+  --color-holiday-subtle: rgba(148, 163, 184, 0.12);
+  --color-holiday-border: rgba(148, 163, 184, 0.25);
+
+  --color-half-day: #fbbf24;
+  --color-half-day-subtle: rgba(245, 158, 11, 0.14);
+  --color-half-day-border: rgba(251, 191, 36, 0.3);
+
+  --color-wfh: #2dd4bf;
+  --color-wfh-subtle: rgba(20, 184, 166, 0.14);
+  --color-wfh-border: rgba(45, 212, 191, 0.3);
+
+  --shadow-elevation-1: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-elevation-2: 0 4px 12px -2px rgba(0, 0, 0, 0.45);
+  --shadow-elevation-3: 0 12px 24px -4px rgba(0, 0, 0, 0.6);
 }
 
-/*
- * No explicit font-family here: Tailwind's Preflight applies
- * theme.fontFamily.sans (Inter, wired in tailwind.config.ts from the
- * next/font variable in layout.tsx) to <html> automatically, so the whole
- * document inherits it from one config source instead of two.
- */
-body {
-  color: var(--color-foreground);
-  background: var(--color-background);
+@layer base {
+  html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  body {
+    color: var(--color-foreground);
+    background-color: var(--color-background);
+    font-size: 0.875rem;
+    line-height: 1.4285714;
+  }
+
+  /* Ensure numeric alignment in data tables and financial figures */
+  table td,
+  table th,
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Respect user reduced-motion preferences across all animations and transitions */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

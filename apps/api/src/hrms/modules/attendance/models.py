@@ -143,6 +143,13 @@ class AttendancePolicyVersion(Base, TimestampMixin):
     # Lock-time default for still-INCOMPLETE days (§11.4)
     incomplete_at_lock_behaviour: Mapped[str] = mapped_column(String(20), default="TREAT_ABSENT")
 
+    # Geofencing for self-service punches (see `geofence.py`). DISABLED is the default for every
+    # existing and new version: nothing changes until an administrator publishes a version with
+    # OPTIONAL (record + flag, never blocks) or REQUIRED (blocks outside the fence).
+    geofence_mode: Mapped[str] = mapped_column(String(10), default="DISABLED")
+    geofence_max_accuracy_m: Mapped[int] = mapped_column(Integer, default=100)
+    geofence_max_age_seconds: Mapped[int] = mapped_column(Integer, default=60)
+
     publish_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     published_by: Mapped[UUID | None] = mapped_column(
@@ -1266,3 +1273,67 @@ class LeaveDayProjection(Base, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
     )
     version: Mapped[int] = mapped_column(Integer, default=1)
+
+
+# ---------------------------------------------------------------------------
+# Geofencing — extra authorised workplaces + the attempt log
+# ---------------------------------------------------------------------------
+
+
+class EmployeeWorkplaceAuthorization(Base):
+    """An *additional* workplace (`Branch`) an employee may punch at, beyond the branch on their
+    current assignment. Written only by administrators; an employee can never add or choose one.
+    The workplace geofence itself is the `Branch` row (latitude/longitude/geofence_radius_m) — no
+    second location model exists."""
+
+    __tablename__ = "employee_workplace_authorization"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), index=True)
+    branch_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GeofenceAttempt(Base):
+    """One evaluated self-service punch location. Append-only (never updated).
+
+    Retained: outcome, reason, nearest workplace, distance/radius/accuracy, the device's capture
+    time, and coordinates rounded to 4 dp (~11 m) so HR can review a dispute. Not retained: the
+    raw fix, device identifiers, any track of movement. Rows older than
+    `geofence_attempt_retention_days` are purged by `purge_expired_geofence_attempts`; the punch
+    itself (and its audit event) is unaffected."""
+
+    __tablename__ = "geofence_attempt"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True))
+    punch_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("punch.id", ondelete="SET NULL"), nullable=True
+    )
+    direction: Mapped[str] = mapped_column(String(10))
+    source: Mapped[str] = mapped_column(String(20))
+    mode: Mapped[str] = mapped_column(String(10))
+    outcome: Mapped[str] = mapped_column(String(40))
+    accepted: Mapped[bool] = mapped_column(Boolean)
+    branch_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    distance_m: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    radius_m: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    accuracy_m: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(7, 4), nullable=True)
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(8, 4), nullable=True)
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    client_error: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

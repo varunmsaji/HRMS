@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AssignmentForm } from "@/components/employee/assignment-form";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { EffectiveDateBadge } from "@/components/employee/effective-date-badge";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -284,7 +285,9 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                       Effective from
                     </dt>
-                    <dd className="mt-0.5 text-sm text-foreground">{current.effective_from}</dd>
+                    <dd className="mt-0.5 text-sm text-foreground">
+                      <CompanyDate value={current.effective_from} />
+                    </dd>
                   </div>
                 </dl>
               ) : (
@@ -313,7 +316,8 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
                           <EffectiveDateBadge effectiveTo={item.effective_to} />
                         </div>
                         <p className="mt-0.5 text-xs text-foreground-muted">
-                          {item.effective_from} – {item.effective_to} · {nameIn(refs?.departments, item.department_id)}
+                          <CompanyDate value={item.effective_from} /> –{" "}
+                          <CompanyDate value={item.effective_to} /> · {nameIn(refs?.departments, item.department_id)}
                           {" · "}
                           {nameIn(refs?.designations, item.designation_id)}
                         </p>

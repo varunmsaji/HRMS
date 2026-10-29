@@ -71,6 +71,19 @@ export const INCOMPLETE_AT_LOCK_BEHAVIOURS = [
   "KEEP_INCOMPLETE",
 ] as const;
 
+export const GEOFENCE_MODES = ["DISABLED", "OPTIONAL", "REQUIRED"] as const;
+
+export const GEOFENCE_MODE_LABELS: Record<(typeof GEOFENCE_MODES)[number], string> = {
+  DISABLED: "Disabled — location is not checked (current behaviour)",
+  OPTIONAL: "Optional — record and flag location, never block a punch",
+  REQUIRED: "Required — block self-service punches outside an approved workplace",
+};
+
+export const GEOFENCE_ACCURACY_MIN_M = 5;
+export const GEOFENCE_ACCURACY_MAX_M = 500;
+export const GEOFENCE_AGE_MIN_S = 5;
+export const GEOFENCE_AGE_MAX_S = 300;
+
 export interface AttendancePolicyVersion {
   id: string;
   company_id: string;
@@ -108,6 +121,9 @@ export interface AttendancePolicyVersion {
   excess_break_count_window: "MONTH";
   excess_break_days_to_half_day_count: number | null;
   incomplete_at_lock_behaviour: (typeof INCOMPLETE_AT_LOCK_BEHAVIOURS)[number];
+  geofence_mode: (typeof GEOFENCE_MODES)[number];
+  geofence_max_accuracy_m: number;
+  geofence_max_age_seconds: number;
 
   hour_bands: AttendancePolicyHourBand[];
   late_bands: AttendancePolicyLateBand[];

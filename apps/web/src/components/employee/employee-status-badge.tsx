@@ -37,6 +37,8 @@ interface EmployeeStatusBadgeProps {
 export function EmployeeStatusBadge({ status }: EmployeeStatusBadgeProps) {
   const known = status in STATUS_VARIANT ? (status as EmployeeStatus) : null;
   return (
-    <Badge variant={known ? STATUS_VARIANT[known] : "outline"}>{known ? STATUS_LABEL[known] : status}</Badge>
+    <Badge variant={known ? STATUS_VARIANT[known] : "outline"} dot>
+      {known ? STATUS_LABEL[known] : status}
+    </Badge>
   );
 }

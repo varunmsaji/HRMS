@@ -24,6 +24,8 @@ import { DayGrid, DayGridLegend } from "@/components/work-calendar/day-grid";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import type { HolidayCalendar } from "@/lib/holiday-calendar/types";
 import type {
   WorkCalendarSetupConfirmed,
@@ -43,6 +45,7 @@ function todayIso(): string {
 export default function WorkCalendarSetupPage() {
   const { toast } = useToast();
   const { can } = usePermissions();
+  const datePattern = useCompanyDatePattern();
   const canManage = can("ORG.CALENDAR.MANAGE");
 
   const [status, setStatus] = useState<WorkCalendarSetupStatus | null>(null);
@@ -214,7 +217,7 @@ export default function WorkCalendarSetupPage() {
                 ? "The work calendar has been activated."
                 : "A company-wide work calendar is already active."}
               {status.company_assignment
-                ? ` It applies from ${status.company_assignment.effective_from}.`
+                ? ` It applies from ${formatCompanyDate(status.company_assignment.effective_from, datePattern)}.`
                 : ""}
             </p>
             {status.company_assignment ? (

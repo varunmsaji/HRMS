@@ -1,9 +1,10 @@
 "use client";
 
-import { Lock } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -11,8 +12,17 @@ import { PageHeader } from "@/components/common/page-header";
 import { AttendancePeriodStatusBadge } from "@/components/attendance-period/attendance-period-status-badge";
 import { CreatePeriodDialog } from "@/components/attendance-period/create-period-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -38,7 +48,6 @@ export default function AttendancePeriodsPage() {
     setLoading(true);
     setError(null);
     try {
-      // Entity names are a nicety — a caller who cannot read companies still gets the list.
       const [data, entities] = await Promise.all([
         apiClient.get<AttendancePeriod[]>("/attendance-periods"),
         apiClient.get<LegalEntity[]>("/legal-entities").catch(() => [] as LegalEntity[]),
@@ -69,21 +78,24 @@ export default function AttendancePeriodsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Attendance Periods"
         description="Close and lock each company's attendance for a month once every exception in it is resolved."
         actions={
           canManage ? (
             <Button type="button" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               New period
             </Button>
           ) : undefined
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {legalEntities.length > 1 ? (
-            <div className="mb-4 max-w-xs">
+      <TableContainer>
+        {legalEntities.length > 1 ? (
+          <TableToolbar>
+            <div className="w-full max-w-xs">
               <NativeSelect
                 aria-label="Filter by company"
                 value={entityFilter}
@@ -97,9 +109,11 @@ export default function AttendancePeriodsPage() {
                 ))}
               </NativeSelect>
             </div>
-          ) : null}
-          {loading ? <LoadingState label="Loading attendance periods…" /> : null}
-          {error && !loading ? (
+          </TableToolbar>
+        ) : null}
+        {loading ? <LoadingState label="Loading attendance periods…" /> : null}
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -108,61 +122,62 @@ export default function AttendancePeriodsPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
-          {!loading && !error && periods && periods.length === 0 ? (
+          </div>
+        ) : null}
+        {!loading && !error && periods && periods.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Lock}
               title="No attendance periods yet."
               description="Create one to start closing and locking a date range of attendance."
             />
-          ) : null}
-          {!loading && !error && visiblePeriods && visiblePeriods.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Label</th>
-                    <th className="px-3 py-2 text-left font-medium">Company</th>
-                    <th className="px-3 py-2 text-left font-medium">Range</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-left font-medium">Last validation</th>
-                    <th className="px-3 py-2 text-right font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {visiblePeriods.map((period) => (
-                    <tr key={period.id} className="hover:bg-accent">
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {period.label ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {entityName(period.legal_entity_id)}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {period.period_start} – {period.period_end}
-                      </td>
-                      <td className="px-3 py-2">
-                        <AttendancePeriodStatusBadge status={period.status} />
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {period.last_validation_status ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <Link
-                          href={`/app/attendance-periods/${period.id}`}
-                          className="text-sm font-medium text-primary hover:underline"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : null}
+        {!loading && !error && visiblePeriods && visiblePeriods.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Label</TableHead>
+                <TableHead>Company</TableHead>
+                <TableHead>Range</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Last validation</TableHead>
+                <TableHead align="right">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visiblePeriods.map((period) => (
+                <TableRow key={period.id}>
+                  <TableCell className="font-medium text-foreground">
+                    {period.label ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-foreground-secondary">
+                    {entityName(period.legal_entity_id)}
+                  </TableCell>
+                  <TableCell className="tabular-nums text-foreground-secondary">
+                    <CompanyDate value={period.period_start} /> –{" "}
+                    <CompanyDate value={period.period_end} />
+                  </TableCell>
+                  <TableCell>
+                    <AttendancePeriodStatusBadge status={period.status} />
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {period.last_validation_status ?? "—"}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/attendance-periods/${period.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <CreatePeriodDialog
         open={createOpen}

@@ -215,6 +215,8 @@ async def _cleanup_attendance_day(*, company_id: UUID) -> None:
     async with factory() as session:
         await set_rls_company_id(session, str(company_id))
         for table in (
+            "geofence_attempt",
+            "employee_workplace_authorization",
             "attendance_break",
             "attendance_day",
             "shift_roster",

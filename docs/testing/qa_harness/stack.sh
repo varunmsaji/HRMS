@@ -30,7 +30,7 @@ shift 2
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 HARNESS="$REPO/docs/testing/qa_harness"
-QA_ROOT="/media/varun/varun12/work/staff-spectrum/qa_runs"          # constant: NOT overridable from the environment
+QA_ROOT="/media/varun/varun13/work/staff-spectrum/qa_runs"          # constant: NOT overridable from the environment
 RDIR="$QA_ROOT/$RUN"
 HOLD="qa-$RUN-net"; PG="qa-$RUN-pg"; RD="qa-$RUN-redis"; MN="qa-$RUN-minio"
 DB="hrms_qa_${RUN//-/_}"
@@ -47,7 +47,7 @@ for n in "$HOLD" "$PG" "$RD" "$MN"; do [[ "$n" == qa-* ]] || die "non-qa name $n
 
 assert_qa_root() {   # QA data must live on a different filesystem than / and under the approved prefix
   local parent; parent="$(dirname "$QA_ROOT")"
-  [[ "$(readlink -f "$parent")" == /media/varun/varun12/work/staff-spectrum ]] || die "QA root parent moved"
+  [[ "$(readlink -f "$parent")" == /media/varun/varun13/work/staff-spectrum ]] || die "QA root parent moved"
   [[ "$(stat -c %D "$parent")" != "$(stat -c %D /)" ]] || die "QA root is on the root filesystem"
   [[ ! -L "$QA_ROOT" && ! -L "$RDIR" ]] || die "symlinked QA path"
 }

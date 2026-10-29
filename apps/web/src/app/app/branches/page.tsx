@@ -1,6 +1,6 @@
 "use client";
 
-import { Building } from "lucide-react";
+import { Building, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -13,7 +13,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +21,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { Branch } from "@/lib/branch/types";
@@ -48,9 +56,6 @@ export default function BranchesPage() {
   const [formErrors, setFormErrors] = useState<BranchFormErrors>({});
   const [saving, setSaving] = useState(false);
 
-  // First-run-only: replaces the old "go to Companies first" dead end. Most companies only
-  // ever have one company, so we collect just its name here, inline, instead of making the
-  // user understand a separate top-level concept before they can add their first branch.
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   const [quickSetupName, setQuickSetupName] = useState("");
   const [quickSetupError, setQuickSetupError] = useState<string | undefined>(undefined);
@@ -91,8 +96,6 @@ export default function BranchesPage() {
   function openCreate() {
     setFormValues({
       ...EMPTY_BRANCH_FORM_VALUES,
-      // The common case: exactly one company, so there's nothing to pick — pre-fill it and
-      // the form hides the selector (see `hideLegalEntitySelector` below).
       legalEntityId: legalEntities.length === 1 ? legalEntities[0].id : "",
     });
     setFormErrors({});
@@ -118,7 +121,6 @@ export default function BranchesPage() {
       const created = await apiClient.post<LegalEntity>("/legal-entities", { name });
       setLegalEntities((prev) => [...prev, created]);
       setQuickSetupOpen(false);
-      // Straight into "Add Branch" — that's what the user was actually trying to do.
       setFormValues({ ...EMPTY_BRANCH_FORM_VALUES, legalEntityId: created.id });
       setFormErrors({});
       setCreateOpen(true);
@@ -189,22 +191,25 @@ export default function BranchesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Branches"
         description="Physical work locations under your companies."
         actions={
           branches && branches.length > 0 ? (
             <Button type="button" onClick={openCreate} disabled={hasNoLegalEntities}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Branch
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading branches…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading branches…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -213,9 +218,11 @@ export default function BranchesPage() {
               }
               onRetry={() => void loadBranches()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {hasNoLegalEntities && branches && branches.length === 0 ? (
+        {hasNoLegalEntities && branches && branches.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Building}
               title="Let's set up your company."
@@ -226,9 +233,11 @@ export default function BranchesPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!hasNoLegalEntities && !loading && !error && branches && branches.length === 0 ? (
+        {!hasNoLegalEntities && !loading && !error && branches && branches.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Building}
               title="No branches have been configured yet."
@@ -239,33 +248,53 @@ export default function BranchesPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && branches && branches.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && branches && branches.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Branch</TableHead>
+                <TableHead>Company / City</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {branches.map((branch) => (
-                <li key={branch.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/branches/${branch.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{branch.name}</p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {legalEntityName(branch.legal_entity_id)}
-                        {branch.city ? ` · ${branch.city}` : ""}
-                      </p>
-                    </div>
+                <TableRow key={branch.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/branches/${branch.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {branch.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {legalEntityName(branch.legal_entity_id)}
+                    {branch.city ? ` · ${branch.city}` : ""}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={branch.is_active ? "secondary" : "outline"}>
                       {branch.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/branches/${branch.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">
@@ -283,7 +312,12 @@ export default function BranchesPage() {
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={saving}>
@@ -323,7 +357,11 @@ export default function BranchesPage() {
             >
               Cancel
             </Button>
-            <Button type="button" onClick={() => void handleQuickSetup()} disabled={quickSetupSaving}>
+            <Button
+              type="button"
+              onClick={() => void handleQuickSetup()}
+              disabled={quickSetupSaving}
+            >
               {quickSetupSaving ? "Saving…" : "Continue"}
             </Button>
           </DialogFooter>

@@ -78,6 +78,7 @@ def service() -> OrganisationService:
     svc._repo = AsyncMock()
     svc._audit = AsyncMock()
     svc._assert_master_not_in_use = AsyncMock()
+    svc._assert_no_workplace_authorizations = AsyncMock()
     return svc
 
 
@@ -281,3 +282,53 @@ async def test_update_branch_noop_when_patch_empty(service: OrganisationService)
     assert result.name == branch.name
     service._repo.update_branch.assert_not_awaited()
     service._audit.record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deactivate_blocked_while_workplace_authorizations_exist(
+    service: OrganisationService,
+) -> None:
+    from hrms.modules.organisation.exceptions import BranchHasWorkplaceAuthorizationsError
+
+    service._assert_no_workplace_authorizations = AsyncMock(
+        side_effect=BranchHasWorkplaceAuthorizationsError(authorization_count=2)
+    )
+    branch = _branch(is_active=True)
+    service._repo.get_branch.return_value = branch
+    service._repo.count_active_departments_for_branch.return_value = 0
+
+    with pytest.raises(BranchHasWorkplaceAuthorizationsError) as exc_info:
+        await service.update_branch(
+            branch.company_id,
+            branch.id,
+            BranchUpdate(is_active=False),
+            expected_version=1,
+            actor_user_id=uuid4(),
+        )
+    assert exc_info.value.code == "BRANCH_HAS_WORKPLACE_AUTHORIZATIONS"
+    assert exc_info.value.details[0]["context"] == {"authorization_count": 2}
+    service._repo.update_branch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_workplace_authorization_guard_counts_only_this_branch(
+    service: OrganisationService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hrms.modules.attendance.geofence_repository import GeofenceRepository
+    from hrms.modules.organisation.exceptions import BranchHasWorkplaceAuthorizationsError
+
+    this_branch, other_branch, company = uuid4(), uuid4(), uuid4()
+
+    async def counts(self: object, session: object, *, company_id: object) -> dict:
+        return {other_branch: 5}
+
+    monkeypatch.setattr(GeofenceRepository, "authorization_counts_by_branch", counts)
+    # Real implementation under test, not the fixture's stub.
+    await OrganisationService._assert_no_workplace_authorizations(service, company, this_branch)
+
+    async def counts_this(self: object, session: object, *, company_id: object) -> dict:
+        return {this_branch: 1}
+
+    monkeypatch.setattr(GeofenceRepository, "authorization_counts_by_branch", counts_this)
+    with pytest.raises(BranchHasWorkplaceAuthorizationsError):
+        await OrganisationService._assert_no_workplace_authorizations(service, company, this_branch)

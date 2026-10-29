@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardList } from "lucide-react";
+import { ClipboardList, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { LeavePolicy } from "@/lib/leave-policy/types";
@@ -99,7 +107,10 @@ export default function LeavePoliciesPage() {
         buildLeavePolicyCreatePayload(formValues),
       );
       setCreateOpen(false);
-      toast({ title: "Leave policy added — configure it on the Versions tab", variant: "success" });
+      toast({
+        title: "Leave policy added — configure it on the Versions tab",
+        variant: "success",
+      });
       await loadPolicies();
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
@@ -115,7 +126,11 @@ export default function LeavePoliciesPage() {
         toast({ title: "You don't have permission to add leave policies", variant: "danger" });
         return;
       }
-      toast({ title: "Could not add policy", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not add policy",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -124,22 +139,25 @@ export default function LeavePoliciesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Leave Policies"
         description="Request/approval rules, accrual, and the sandwich rule for each leave type."
         actions={
           policies && policies.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Policy
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading leave policies…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading leave policies…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -148,9 +166,11 @@ export default function LeavePoliciesPage() {
               }
               onRetry={() => void loadPolicies()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && policies && policies.length === 0 ? (
+        {!loading && !error && policies && policies.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={ClipboardList}
               title="No leave policies have been configured yet."
@@ -161,37 +181,57 @@ export default function LeavePoliciesPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && policies && policies.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && policies && policies.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Policy</TableHead>
+                <TableHead>Leave Type</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {policies.map((policy) => (
-                <li key={policy.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/leave-policies/${policy.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        {policy.name}
-                        {policy.code ? (
-                          <span className="text-foreground-muted"> ({policy.code})</span>
-                        ) : null}
-                      </p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {leaveTypeById.get(policy.leave_type_id)?.name ?? policy.leave_type_id}
-                      </p>
-                    </div>
+                <TableRow key={policy.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/leave-policies/${policy.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {policy.name}
+                      {policy.code ? (
+                        <span className="ml-1 font-mono text-xs text-foreground-muted">
+                          ({policy.code})
+                        </span>
+                      ) : null}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {leaveTypeById.get(policy.leave_type_id)?.name ?? policy.leave_type_id}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={policy.is_active ? "secondary" : "outline"}>
                       {policy.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/leave-policies/${policy.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Configure
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">

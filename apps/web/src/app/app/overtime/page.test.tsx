@@ -112,7 +112,7 @@ describe("OvertimePage", () => {
   it("does not render a create/submit action anywhere on the page", async () => {
     mockLoad([sampleRecord]);
     render(<OvertimePage />);
-    await screen.findByText("2026-08-10");
+    await screen.findByText("10/08/2026");
     expect(screen.queryByRole("button", { name: /new/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /submit/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /create/i })).not.toBeInTheDocument();
@@ -122,7 +122,7 @@ describe("OvertimePage", () => {
     mockLoad([sampleRecord]);
     render(<OvertimePage />);
 
-    expect(await screen.findByText("2026-08-10")).toBeInTheDocument();
+    expect(await screen.findByText("10/08/2026")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
     expect(screen.getByText("Holiday")).toBeInTheDocument();
   });
@@ -150,7 +150,7 @@ describe("OvertimePage", () => {
     mockLoad([sampleRecord]);
     const user = userEvent.setup();
     render(<OvertimePage />);
-    await screen.findByText("2026-08-10");
+    await screen.findByText("10/08/2026");
 
     await user.click(screen.getByRole("button", { name: /my overtime/i }));
     expect(mockedGet).toHaveBeenCalledWith(expect.stringContaining("employee_id=emp-1"));

@@ -1,10 +1,11 @@
 "use client";
 
-import { Banknote } from "lucide-react";
+import { Banknote, Plus, Settings2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -13,7 +14,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { PayRunStatusBadge } from "@/components/payroll/pay-run-status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
@@ -129,7 +139,11 @@ export default function PayRunsPage() {
       setThreshold(current.variance_threshold_percent);
       setSettingsOpen(true);
     } catch (err) {
-      toast({ title: "Could not load settings", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not load settings",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     }
   }
 
@@ -162,6 +176,7 @@ export default function PayRunsPage() {
           <div className="flex flex-wrap gap-2">
             {canSetup ? (
               <Button type="button" variant="outline" onClick={() => void openSettings()}>
+                <Settings2 className="h-4 w-4" aria-hidden="true" />
                 Settings
               </Button>
             ) : null}
@@ -174,6 +189,7 @@ export default function PayRunsPage() {
                   setCreateOpen(true);
                 }}
               >
+                <Plus className="h-4 w-4" aria-hidden="true" />
                 New pay run
               </Button>
             ) : null}
@@ -181,10 +197,10 @@ export default function PayRunsPage() {
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {legalEntities.length > 1 ? (
-            <div className="mb-4 max-w-xs">
+      <TableContainer>
+        {legalEntities.length > 1 ? (
+          <TableToolbar>
+            <div className="w-full max-w-xs">
               <NativeSelect
                 aria-label="Filter by company"
                 value={entityFilter}
@@ -198,80 +214,94 @@ export default function PayRunsPage() {
                 ))}
               </NativeSelect>
             </div>
-          ) : null}
-          {loading ? <LoadingState label="Loading pay runs…" /> : null}
-          {error && !loading ? (
+          </TableToolbar>
+        ) : null}
+
+        {loading ? <LoadingState label="Loading pay runs…" /> : null}
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
-                error.status === 403 ? "You do not have permission to view pay runs." : error.message
+                error.status === 403
+                  ? "You do not have permission to view pay runs."
+                  : error.message
               }
               onRetry={() => void load()}
             />
-          ) : null}
-          {!loading && !error && runs && runs.length === 0 ? (
+          </div>
+        ) : null}
+        {!loading && !error && runs && runs.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Banknote}
               title="No pay runs yet."
               description="Close the month's attendance period for a company, then create its pay run."
             />
-          ) : null}
-          {!loading && !error && visibleRuns && visibleRuns.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Month</th>
-                    <th className="px-3 py-2 text-left font-medium">Company</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-right font-medium">Employees</th>
-                    <th className="px-3 py-2 text-right font-medium">Net pay</th>
-                    <th className="px-3 py-2 text-left font-medium">Pay date</th>
-                    <th className="px-3 py-2 text-right font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {visibleRuns.map((run) => (
-                    <tr key={run.id} className="hover:bg-accent">
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {formatPayMonth(run.month)}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {entityName(run.legal_entity_id)}
-                      </td>
-                      <td className="px-3 py-2">
-                        <PayRunStatusBadge status={run.status} />
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{run.employee_count}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {run.status === "DRAFT" || run.status === "INPUTS_LOCKED"
-                          ? "—"
-                          : formatInr(run.net_minor)}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">{run.pay_date}</td>
-                      <td className="px-3 py-2 text-right">
-                        <Link
-                          href={`/app/payroll/pay-runs/${run.id}`}
-                          className="text-sm font-medium text-primary hover:underline"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : null}
+        {!loading && !error && visibleRuns && visibleRuns.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Month</TableHead>
+                <TableHead>Company</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Employees</TableHead>
+                <TableHead align="right">Net pay</TableHead>
+                <TableHead>Pay date</TableHead>
+                <TableHead align="right">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visibleRuns.map((run) => (
+                <TableRow key={run.id}>
+                  <TableCell className="font-medium text-foreground">
+                    <Link
+                      href={`/app/payroll/pay-runs/${run.id}`}
+                      className="hover:text-primary hover:underline"
+                    >
+                      {formatPayMonth(run.month)}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-foreground-secondary">
+                    {entityName(run.legal_entity_id)}
+                  </TableCell>
+                  <TableCell>
+                    <PayRunStatusBadge status={run.status} />
+                  </TableCell>
+                  <TableCell align="right" numeric>
+                    {run.employee_count}
+                  </TableCell>
+                  <TableCell align="right" numeric className="font-medium text-foreground">
+                    {run.status === "DRAFT" || run.status === "INPUTS_LOCKED"
+                      ? "—"
+                      : formatInr(run.net_minor)}
+                  </TableCell>
+                  <TableCell className="tabular-nums text-foreground-secondary">
+                    <CompanyDate value={run.pay_date} />
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/payroll/pay-runs/${run.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(next) => !saving && setCreateOpen(next)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>New pay run</DialogTitle>
             <DialogDescription>
-              One pay run per company per month. Its inputs can be locked once that
-              month&apos;s attendance period is closed.
+              One pay run per company per month. Its inputs can be locked once that month&apos;s
+              attendance period is closed.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -294,7 +324,12 @@ export default function PayRunsPage() {
             ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button
@@ -330,7 +365,12 @@ export default function PayRunsPage() {
             />
           </FormField>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setSettingsOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setSettingsOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button

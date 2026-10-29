@@ -8,6 +8,7 @@ import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-con
 import { ShiftForm } from "@/components/shift/shift-form";
 import { ShiftPublishDialog } from "@/components/shift/shift-publish-dialog";
 import { ShiftVersionForm } from "@/components/shift/shift-version-form";
+import { CompanyDate } from "@/components/common/company-date";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
@@ -619,7 +620,7 @@ export default function ShiftDetailPage() {
                               Effective from
                             </dt>
                             <dd className="mt-0.5 text-sm text-foreground">
-                              {currentPublished.effective_from}
+                              <CompanyDate value={currentPublished.effective_from} />
                             </dd>
                           </div>
                         </dl>
@@ -713,7 +714,12 @@ export default function ShiftDetailPage() {
                                 {version.shift_type} — {formatVersionTiming(version)}
                               </p>
                               <p className="mt-0.5 text-xs text-foreground-muted">
-                                {version.effective_from} – {version.effective_to ?? "open"}
+                                <CompanyDate value={version.effective_from} /> –{" "}
+                                {version.effective_to ? (
+                                  <CompanyDate value={version.effective_to} />
+                                ) : (
+                                  "open"
+                                )}
                               </p>
                             </li>
                           ))}

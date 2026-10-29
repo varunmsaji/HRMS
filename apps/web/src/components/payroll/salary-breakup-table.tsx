@@ -1,3 +1,4 @@
+import { HorizontalScroll } from "@/components/ui/table";
 import { COMPONENT_TYPE_LABELS, formatInr, type SalaryBreakup } from "@/lib/payroll/types";
 
 /** Monthly and annual amount per component, with gross, employer contributions and CTC totals
@@ -24,7 +25,7 @@ export function SalaryBreakupTable({ breakup }: { breakup: SalaryBreakup }) {
     </tr>
   );
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
+    <HorizontalScroll className="rounded-md border border-border">
       <table className="w-full text-sm">
         <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
           <tr>
@@ -49,6 +50,6 @@ export function SalaryBreakupTable({ breakup }: { breakup: SalaryBreakup }) {
           {total("Cost to company", breakup.monthly_ctc_minor)}
         </tbody>
       </table>
-    </div>
+    </HorizontalScroll>
   );
 }

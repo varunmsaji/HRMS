@@ -13,7 +13,7 @@ caller is punching for themselves or on behalf of someone else, so — like
 `employee/router.py::create_assignment` — it cannot be a static `Depends(require_permission(CODE))`
 and instead calls `rbac.resolve_data_scope()` directly."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -56,8 +56,10 @@ from hrms.modules.attendance.face_rate_limit import (
     face_enrollment_rate_limit,
     face_punch_rate_limit,
     face_review_photo_rate_limit,
+    punch_rate_limit,
 )
 from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
+from hrms.modules.attendance.geofence_form import parse_form_location
 from hrms.modules.attendance.permissions import (
     ATTENDANCE_FACE_ENROLLMENT_MANAGE,
     ATTENDANCE_LEAVE_PROJECTION_SYNC,
@@ -796,6 +798,7 @@ async def get_policy_resolution(
 async def create_self_punch(
     body: PunchCreateSelf,
     request: Request,
+    _rate_limit: Annotated[None, Depends(punch_rate_limit)],
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
@@ -829,6 +832,8 @@ async def create_self_punch(
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
+        location=body.location,
+        location_error=body.location_error,
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
@@ -2047,6 +2052,11 @@ async def create_face_punch(
     frames: Annotated[list[UploadFile] | None, File()] = None,
     liveness_session_id: Annotated[UUID | None, Form()] = None,
     idempotency_key: Annotated[str | None, Form()] = None,
+    location_latitude: Annotated[float | None, Form()] = None,
+    location_longitude: Annotated[float | None, Form()] = None,
+    location_accuracy_m: Annotated[float | None, Form()] = None,
+    location_captured_at: Annotated[datetime | None, Form()] = None,
+    location_error: Annotated[str | None, Form()] = None,
 ) -> DataEnvelope[FacePunchRead]:
     """Step 2 of a face punch. Same contract as `POST /attendance/punches/me` — no time, source
     or employee field; the server stamps the instant — plus `liveness_session_id` (from step 1)
@@ -2060,6 +2070,13 @@ async def create_face_punch(
     returned instead of a second punch. The same key with a different direction is a 409."""
     if user.employee_id is None:
         raise ValidationError("The caller has no linked employee record")
+    location = parse_form_location(
+        latitude=location_latitude,
+        longitude=location_longitude,
+        accuracy_m=location_accuracy_m,
+        captured_at=location_captured_at,
+        error=location_error,
+    )
     uploads = frames or []
     if len(uploads) > FACE_LIVENESS_MAX_FRAMES:
         raise FaceImageInvalidError(
@@ -2078,6 +2095,8 @@ async def create_face_punch(
         idempotency_key=idempotency_key,
         scope=scope,
         actor_user_id=tenant.user_id,
+        location=location,
+        location_error=location_error,
         **_client_meta(request),
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))

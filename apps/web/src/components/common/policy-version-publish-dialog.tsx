@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 
 interface VersionLike {
@@ -44,6 +46,7 @@ export function PolicyVersionPublishDialog<T extends VersionLike>({
   onPublished,
   onStale,
 }: PolicyVersionPublishDialogProps<T>) {
+  const datePattern = useCompanyDatePattern();
   const [reason, setReason] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +87,7 @@ export function PolicyVersionPublishDialog<T extends VersionLike>({
           <DialogTitle>Publish this version?</DialogTitle>
           <DialogDescription>
             {currentPublished
-              ? `This closes the version currently effective from ${currentPublished.effective_from ?? "—"} and makes this one effective from ${draft.effective_from ?? "the date set above"}. Published versions are immutable.`
+              ? `This closes the version currently effective from ${currentPublished.effective_from ? formatCompanyDate(currentPublished.effective_from, datePattern) : "—"} and makes this one effective from ${draft.effective_from ? formatCompanyDate(draft.effective_from, datePattern) : "the date set above"}. Published versions are immutable.`
               : "This makes the policy live from the effective date set above. Published versions are immutable — a correction requires a new draft."}
           </DialogDescription>
         </DialogHeader>

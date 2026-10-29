@@ -20,7 +20,7 @@
 #   browser_stack.sh e2e      <RUN_ID>     # prove, then playwright
 #   browser_stack.sh down     <RUN_ID> --confirm
 #
-# Data lives under /media/varun/varun12/work/staff-spectrum/qa_runs/<RUN_ID>/ (mode 700).
+# Data lives under /media/varun/varun13/work/staff-spectrum/qa_runs/<RUN_ID>/ (mode 700).
 # The env file there holds the disposable passwords. It is not in the git repo.
 # Nothing here connects to hrms_dev. `down` removes only containers labelled for this RUN_ID.
 set -euo pipefail
@@ -34,7 +34,7 @@ shift 2
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 HARNESS="$REPO/docs/testing/qa_harness"
-QA_ROOT="/media/varun/varun12/work/staff-spectrum/qa_runs"
+QA_ROOT="/media/varun/varun13/work/staff-spectrum/qa_runs"
 RDIR="$QA_ROOT/$RUN"
 PG="qa-$RUN-pg"
 RD="qa-$RUN-redis"
@@ -52,7 +52,7 @@ for n in "$PG" "$RD"; do [[ "$n" == qa-browser-* ]] || die "non-browser name $n"
 
 assert_root() {
   local parent; parent="$(dirname "$QA_ROOT")"
-  [[ "$(readlink -f "$parent")" == /media/varun/varun12/work/staff-spectrum ]] || die "QA root parent moved"
+  [[ "$(readlink -f "$parent")" == /media/varun/varun13/work/staff-spectrum ]] || die "QA root parent moved"
   [[ "$(stat -c %D "$parent")" != "$(stat -c %D /)" ]] || die "QA root is on the root filesystem"
   [[ ! -L "$QA_ROOT" && ! -L "$RDIR" ]] || die "symlinked QA path"
 }
@@ -68,6 +68,32 @@ load_env() {
   [[ "${REDIS_URL:-}" == "redis://127.0.0.1:${RD_PORT}/2" ]] || die "REDIS_URL is not the disposable redis"
   [[ "${MIGRATIONS_DATABASE_URL:-}" == *"127.0.0.1:${PG_PORT}/${DB}"* ]] || die "MIGRATIONS_DATABASE_URL is not the disposable database"
   [[ "${MIGRATIONS_DATABASE_URL}" != *hrms_dev* ]] || die "migrations URL points at hrms_dev"
+}
+
+stop_recorded() {
+  local pidfile="$1" port="$2" pid
+  [[ -f "$pidfile" ]] || return 0
+  pid="$(cat "$pidfile")"
+  if [[ -d "/proc/$pid" ]] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "port ${port}"; then
+    kill "$pid" 2>/dev/null || true
+  fi
+  rm -f "$pidfile"
+}
+
+# `next dev` leaves a next-server child whose command line does not include the port.
+# Stop a remaining listener only when it is bound to loopback and its cwd is this repo.
+stop_loopback_listener() {
+  local port="$1" line addr pid cwd
+  while read -r line; do
+    [[ -n "$line" ]] || continue
+    addr="${line%% *}"
+    [[ "$addr" == "127.0.0.1:${port}" ]] || die "port ${port} is not loopback-only (${addr})"
+    pid="$(sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' <<<"$line" | head -1)"
+    [[ -n "$pid" ]] || die "could not identify the process listening on 127.0.0.1:${port}"
+    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+    [[ "$cwd" == "$REPO" || "$cwd" == "$REPO"/* ]] || die "127.0.0.1:${port} is held by pid ${pid} outside this repo"
+    kill "$pid" 2>/dev/null || true
+  done < <(ss -ltnp "sport = :${port}" | awk 'NR>1 {print $4, $0}')
 }
 
 case "$CMD" in
@@ -228,23 +254,11 @@ e2e)
   ;;
 down)
   [[ "${1:-}" == "--confirm" ]] || die "down removes this run's containers; pass --confirm"
-  if [[ -f "$RDIR/api.pid" ]]; then
-    pid="$(cat "$RDIR/api.pid")"
-    if [[ -d "/proc/$pid" ]] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "port ${API_PORT}"; then
-      kill "$pid" 2>/dev/null || true
-    fi
-    rm -f "$RDIR/api.pid"
-  fi
-  if [[ -f "$RDIR/web.pid" ]]; then
-    pid="$(cat "$RDIR/web.pid")"
-    if [[ -d "/proc/$pid" ]] && tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q "port ${WEB_PORT}"; then
-      kill "$pid" 2>/dev/null || true
-      # next dev may leave a child; stop only children whose command line includes this port
-      pkill -P "$pid" 2>/dev/null || true
-    fi
-    rm -f "$RDIR/web.pid"
-  fi
+  stop_recorded "$RDIR/api.pid" "$API_PORT"
+  stop_recorded "$RDIR/web.pid" "$WEB_PORT"
   sleep 1
+  stop_loopback_listener "$API_PORT"
+  stop_loopback_listener "$WEB_PORT"
   for c in $(docker ps -aq --filter "label=qa.run=$RUN" --filter "label=qa.purpose=browser"); do
     name="$(docker inspect -f '{{.Name}}' "$c")"
     [[ "$name" == "/qa-$RUN-"* ]] || die "refusing to remove $name"

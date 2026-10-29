@@ -1,7 +1,9 @@
 "use client";
 
+import { UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -11,7 +13,7 @@ import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +23,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -74,7 +85,6 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
     try {
-      // GET /v1/users is paginated (FINDING-03) — server-side, bounded page size.
       const { data, pagination: meta } = await apiClient.getList<UserSummary>("/users", {
         page: targetPage,
       });
@@ -117,7 +127,11 @@ export default function UsersPage() {
         toast({ title: err.message, variant: "danger" });
         return;
       }
-      toast({ title: "Could not update roles", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not update roles",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSavingRoles(false);
     }
@@ -131,13 +145,18 @@ export default function UsersPage() {
     }
     setInviting(true);
     try {
-      const result = await apiClient.post<{ email: string; email_sent: boolean }>("/users/invite", {
-        email: inviteEmail.trim(),
-        role_code: inviteRole,
-      });
+      const result = await apiClient.post<{ email: string; email_sent: boolean }>(
+        "/users/invite",
+        {
+          email: inviteEmail.trim(),
+          role_code: inviteRole,
+        },
+      );
       toast({
         title: `Invite sent to ${result.email}`,
-        description: result.email_sent ? undefined : "Created, but the email could not be delivered.",
+        description: result.email_sent
+          ? undefined
+          : "Created, but the email could not be delivered.",
         variant: "success",
       });
       setInviteOpen(false);
@@ -148,7 +167,11 @@ export default function UsersPage() {
         setInviteError(err.message);
         return;
       }
-      toast({ title: "Could not send invite", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not send invite",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setInviting(false);
     }
@@ -157,85 +180,109 @@ export default function UsersPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Users"
         description="Everyone with a login to this company, and the roles they hold."
         actions={
           canManageUsers ? (
             <Button type="button" onClick={() => setInviteOpen(true)}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
               Invite user
             </Button>
           ) : null
         }
       />
 
-      {loading ? (
-        <Card>
-          <CardContent className="pt-6">
-            <LoadingState label="Loading users…" />
-          </CardContent>
-        </Card>
-      ) : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading users…" /> : null}
 
-      {error && !loading ? (
-        <Card>
-          <CardContent className="pt-6">
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState message={error.message} onRetry={() => void load(page)} />
-          </CardContent>
-        </Card>
-      ) : null}
+          </div>
+        ) : null}
 
-      {!loading && !error && users && users.length === 0 ? (
-        <EmptyState title="No users yet" description="Invite someone to get started." />
-      ) : null}
+        {!loading && !error && users && users.length === 0 ? (
+          <div className="p-6">
+            <EmptyState title="No users yet" description="Invite someone to get started." />
+          </div>
+        ) : null}
 
-      {!loading && !error && users && users.length > 0 ? (
-        <Card>
-          <CardContent className="divide-y divide-border p-0">
-            {users.map((user) => (
-              <div key={user.user_id} className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-medium text-foreground">{userName(user)}</p>
-                    {user.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
-                  </div>
-                  <p className="truncate text-sm text-foreground-secondary">{user.email ?? "—"}</p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {user.role_codes.length === 0 ? (
-                      <Badge variant="outline">No roles</Badge>
-                    ) : (
-                      user.role_codes.map((code) => (
-                        <Badge key={code} variant="secondary">
-                          {code}
-                        </Badge>
-                      ))
-                    )}
-                  </div>
-                </div>
-                {canManageRoles ? (
-                  <Button type="button" variant="outline" onClick={() => openRoleDialog(user)}>
-                    Manage roles
-                  </Button>
-                ) : null}
-              </div>
-            ))}
-          </CardContent>
-          {pagination ? (
-            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
-          ) : null}
-        </Card>
-      ) : null}
+        {!loading && !error && users && users.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>User</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Roles</TableHead>
+                {canManageRoles ? <TableHead align="right">Actions</TableHead> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.map((user) => (
+                <TableRow key={user.user_id}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <EmployeeIdentityCell name={userName(user)} size="sm" />
+                      {user.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-foreground-secondary">{user.email ?? "—"}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {user.role_codes.length === 0 ? (
+                        <Badge variant="outline">No roles</Badge>
+                      ) : (
+                        user.role_codes.map((code) => (
+                          <Badge key={code} variant="secondary" className="font-mono text-2xs">
+                            {code}
+                          </Badge>
+                        ))
+                      )}
+                    </div>
+                  </TableCell>
+                  {canManageRoles ? (
+                    <TableCell align="right">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => openRoleDialog(user)}
+                      >
+                        Manage roles
+                      </Button>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
 
-      <Dialog open={roleDialogUser !== null} onOpenChange={(open) => (!savingRoles && !open ? setRoleDialogUser(null) : null)}>
+        {pagination ? (
+          <PaginationControls
+            pagination={pagination}
+            onPageChange={setPage}
+            disabled={loading}
+          />
+        ) : null}
+      </TableContainer>
+
+      <Dialog
+        open={roleDialogUser !== null}
+        onOpenChange={(open) => (!savingRoles && !open ? setRoleDialogUser(null) : null)}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Manage roles — {roleDialogUser ? userName(roleDialogUser) : ""}</DialogTitle>
+            <DialogTitle>
+              Manage roles — {roleDialogUser ? userName(roleDialogUser) : ""}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
             {ASSIGNABLE_ROLES.map((code) => (
               <label key={code} className="flex items-center gap-2 text-sm text-foreground">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-border"
+                <Checkbox
                   checked={roleSelection.has(code)}
                   onChange={(e) => {
                     setRoleSelection((current) => {
@@ -251,7 +298,12 @@ export default function UsersPage() {
             ))}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRoleDialogUser(null)} disabled={savingRoles}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRoleDialogUser(null)}
+              disabled={savingRoles}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleSaveRoles()} disabled={savingRoles}>
@@ -268,7 +320,10 @@ export default function UsersPage() {
           </DialogHeader>
           <div className="space-y-4">
             {inviteError ? (
-              <div role="alert" className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger">
+              <div
+                role="alert"
+                className="rounded-md border border-danger-border bg-danger-subtle px-3 py-2 text-sm text-danger"
+              >
                 {inviteError}
               </div>
             ) : null}
@@ -281,7 +336,11 @@ export default function UsersPage() {
               />
             </FormField>
             <FormField id="inviteRole" label="Role" required>
-              <NativeSelect value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} disabled={inviting}>
+              <NativeSelect
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+                disabled={inviting}
+              >
                 {ASSIGNABLE_ROLES.map((code) => (
                   <option key={code} value={code}>
                     {code}
@@ -291,7 +350,12 @@ export default function UsersPage() {
             </FormField>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setInviteOpen(false)} disabled={inviting}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setInviteOpen(false)}
+              disabled={inviting}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleInvite()} disabled={inviting}>

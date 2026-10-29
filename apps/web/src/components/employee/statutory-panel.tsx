@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { EffectiveDateBadge } from "@/components/employee/effective-date-badge";
 import { StatutoryForm } from "@/components/employee/statutory-form";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -225,7 +226,9 @@ export function StatutoryPanel({ employeeId }: StatutoryPanelProps) {
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Effective from</dt>
-                    <dd className="mt-0.5 text-sm text-foreground">{current.effective_from}</dd>
+                    <dd className="mt-0.5 text-sm text-foreground">
+                      <CompanyDate value={current.effective_from} />
+                    </dd>
                   </div>
                 </dl>
               ) : (
@@ -252,7 +255,7 @@ export function StatutoryPanel({ employeeId }: StatutoryPanelProps) {
                           <EffectiveDateBadge effectiveTo={item.effective_to} />
                         </div>
                         <p className="mt-0.5 text-xs text-foreground-muted">
-                          {item.effective_from} – {item.effective_to}
+                          <CompanyDate value={item.effective_from} /> – <CompanyDate value={item.effective_to} />
                         </p>
                         {item.revision_reason ? (
                           <p className="mt-1 text-xs text-foreground-muted">{item.revision_reason}</p>

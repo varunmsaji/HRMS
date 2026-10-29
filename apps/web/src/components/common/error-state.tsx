@@ -1,4 +1,4 @@
-import { TriangleAlert } from "lucide-react";
+import { ShieldAlert, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -10,22 +10,47 @@ interface ErrorStateProps {
   className?: string;
 }
 
-export function ErrorState({ title = "Something went wrong", message, onRetry, className }: ErrorStateProps) {
+export function ErrorState({
+  title,
+  message,
+  onRetry,
+  className,
+}: ErrorStateProps) {
+  const isPermissionError =
+    /permission|no access|forbidden/i.test(message) ||
+    (title ? /permission|no access/i.test(title) : false);
+
+  const resolvedTitle =
+    title ?? (isPermissionError ? "Access restricted" : "Something went wrong");
+  const Icon = isPermissionError ? ShieldAlert : TriangleAlert;
+
   return (
     <div
       role="alert"
       className={cn(
-        "flex flex-col items-center gap-3 rounded-md border border-danger/30 bg-danger-subtle px-6 py-8 text-center",
+        "flex flex-col items-center gap-3 rounded-lg border px-6 py-8 text-center",
+        isPermissionError
+          ? "border-warning-border bg-warning-subtle/60"
+          : "border-danger-border bg-danger-subtle/60",
         className,
       )}
     >
-      <TriangleAlert className="h-5 w-5 text-danger" aria-hidden="true" />
-      <div>
-        <p className="text-sm font-medium text-foreground">{title}</p>
-        <p className="mt-1 text-sm text-foreground-secondary">{message}</p>
+      <div
+        className={cn(
+          "flex h-9 w-9 items-center justify-center rounded-md border bg-surface",
+          isPermissionError
+            ? "border-warning-border text-warning"
+            : "border-danger-border text-danger",
+        )}
+      >
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </div>
+      <div className="max-w-md space-y-1">
+        <p className="text-sm font-semibold text-foreground">{resolvedTitle}</p>
+        <p className="text-xs leading-relaxed text-foreground-secondary">{message}</p>
       </div>
       {onRetry ? (
-        <Button variant="outline" size="sm" onClick={onRetry}>
+        <Button variant="outline" size="sm" onClick={onRetry} className="mt-1">
           Try again
         </Button>
       ) : null}

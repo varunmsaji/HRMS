@@ -102,7 +102,7 @@ describe("OvertimeDetailPage", () => {
     expect((await screen.findAllByText("Holiday")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
     expect(screen.getByText(/OT_HOLIDAY \(1.5000x\)/)).toBeInTheDocument();
-    expect(screen.getByText(/expires 2026-11-08/)).toBeInTheDocument();
+    expect(screen.getByText(/expires 08\/11\/2026/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^approve$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^reject$/i })).toBeInTheDocument();
   });

@@ -236,7 +236,7 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
               onChange={(e) => setRejectNote(e.target.value)}
               maxLength={500}
               rows={3}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
             />
           </div>
           <DialogFooter>

@@ -13,6 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError, getStaleResourceCurrent } from "@/lib/api/errors";
 import type { CompanyProfile } from "@/lib/company/types";
+import { rememberCompanyDateFormat } from "@/lib/dates/use-company-date";
 import {
   buildProfilePatch,
   profileToFormValues,
@@ -38,6 +39,7 @@ export default function CompanyProfilePage() {
     try {
       const data = await apiClient.get<CompanyProfile>("/companies/current");
       setProfile(data);
+      rememberCompanyDateFormat(data.locale?.date_format);
       return data;
     } catch (err) {
       setProfile(null);
@@ -96,6 +98,7 @@ export default function CompanyProfilePage() {
         ifMatch: String(profile.version),
       });
       setProfile(updated);
+      rememberCompanyDateFormat(updated.locale?.date_format);
       setEditing(false);
       setFormValues(null);
       toast({ title: "Company profile saved", variant: "success" });
@@ -148,6 +151,8 @@ export default function CompanyProfilePage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Company profile"
         description="Your organisation's registered details."
         actions={

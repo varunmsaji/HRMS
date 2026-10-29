@@ -3,6 +3,7 @@
 import { Printer } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { Button } from "@/components/ui/button";
 import { formatInr, formatPayMonth, type Payslip, type PayslipLine } from "@/lib/payroll/types";
 
@@ -110,7 +111,7 @@ export function PayslipView({ payslip }: { payslip: Payslip }) {
             <Fact label="Employee code" value={payslip.employee_code} />
             <Fact label="Designation" value={payslip.designation} />
             <Fact label="Department" value={payslip.department} />
-            <Fact label="Date of joining" value={payslip.date_of_joining} />
+            <Fact label="Date of joining" value={<CompanyDate value={payslip.date_of_joining} />} />
             <Fact label="PAN" value={payslip.pan_masked} />
           </div>
           <div>
@@ -127,7 +128,7 @@ export function PayslipView({ payslip }: { payslip: Payslip }) {
             <Fact label="Days in month" value={payslip.days_in_month} />
             <Fact label="Paid days" value={payslip.paid_days} />
             <Fact label="Loss of pay days" value={payslip.lop_days} />
-            <Fact label="Pay date" value={payslip.pay_date} />
+            <Fact label="Pay date" value={<CompanyDate value={payslip.pay_date} />} />
           </div>
         </section>
 
@@ -157,7 +158,7 @@ export function PayslipView({ payslip }: { payslip: Payslip }) {
         {payslip.leave_balances.length > 0 ? (
           <section>
             <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-foreground-muted">
-              Leave balance on {payslip.period_end}
+              Leave balance on <CompanyDate value={payslip.period_end} />
             </h3>
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
               {payslip.leave_balances.map((balance) => (

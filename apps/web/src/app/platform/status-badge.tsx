@@ -11,5 +11,9 @@ const VARIANT: Record<CompanyStatus, "warning" | "info" | "success" | "danger" |
 };
 
 export function StatusBadge({ status }: { status: CompanyStatus }) {
-  return <Badge variant={VARIANT[status]}>{status.replace("_", " ")}</Badge>;
+  return (
+    <Badge variant={VARIANT[status]} dot>
+      {status.replace("_", " ")}
+    </Badge>
+  );
 }

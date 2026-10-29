@@ -176,7 +176,7 @@ export function PunchEntryDialog({
             </NativeSelect>
           </FormField>
           {isSelf ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-foreground-secondary">
               Recorded at the current time — self-service punches can no longer be backdated or
               set from your device&rsquo;s clock.
             </p>

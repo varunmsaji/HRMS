@@ -1,8 +1,9 @@
 "use client";
 
-import { Link2 } from "lucide-react";
+import { Link2, Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -12,7 +13,6 @@ import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dialog";
 import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
@@ -41,8 +51,6 @@ interface NamedOption {
   id: string;
   name?: string;
   title?: string;
-  /** Only present on `/leave-policies` rows — used to filter the policy picker down to the
-   * selected leave type (LD-11: multiple `LeavePolicy` rows can share a scope, one per type). */
   leave_type_id?: string;
 }
 
@@ -130,7 +138,6 @@ export default function PolicyAssignmentsPage() {
     }
   }, []);
 
-  // Changing the kind filter invalidates the current page — jump back to page 1.
   useEffect(() => {
     setPage(1);
   }, [filterKind]);
@@ -201,7 +208,6 @@ export default function PolicyAssignmentsPage() {
       reason: form.reason.trim() || null,
     };
     if (form.policyKind === "WORK_CALENDAR" || form.policyKind === "WEEKLY_OFF") {
-      // These change what days mean for employees: review the impact before saving.
       const current = (assignments ?? []).find(
         (a) =>
           a.policy_kind === form.policyKind &&
@@ -258,34 +264,41 @@ export default function PolicyAssignmentsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Policy Assignments"
         description="Assign a Work Calendar, Weekly-Off Pattern, Attendance/Overtime/Regularization/Leave Policy to a scope. Most specific wins: EMPLOYEE > SHIFT > DESIGNATION > GRADE > DEPARTMENT > BRANCH > LEGAL_ENTITY > COMPANY."
         actions={
           <Button type="button" onClick={openCreate}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
             New Assignment
           </Button>
         }
       />
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <FormField id="filter-kind" label="Filter by policy kind">
-            <NativeSelect
-              value={filterKind}
-              onChange={(e) => setFilterKind(e.target.value as PolicyKind | "")}
-            >
-              <option value="">All kinds</option>
-              {POLICY_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {POLICY_KIND_LABELS[kind]}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
+      <TableContainer>
+        <TableToolbar>
+          <div className="w-full max-w-xs">
+            <FormField id="filter-kind" label="Filter by policy kind">
+              <NativeSelect
+                value={filterKind}
+                onChange={(e) => setFilterKind(e.target.value as PolicyKind | "")}
+              >
+                <option value="">All kinds</option>
+                {POLICY_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {POLICY_KIND_LABELS[kind]}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+          </div>
+        </TableToolbar>
 
-          {loading ? <LoadingState label="Loading assignments…" /> : null}
+        {loading ? <LoadingState label="Loading assignments…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -294,9 +307,11 @@ export default function PolicyAssignmentsPage() {
               }
               onRetry={() => void loadAssignments(filterKind, page)}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && assignments && assignments.length === 0 ? (
+        {!loading && !error && assignments && assignments.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Link2}
               title="No policy assignments yet."
@@ -307,39 +322,61 @@ export default function PolicyAssignmentsPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && assignments && assignments.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && assignments && assignments.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Policy &amp; Scope</TableHead>
+                <TableHead>Effective Range</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {assignments.map((a) => (
-                <li key={a.id} className="py-4 first:pt-0 last:pb-0">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        {POLICY_KIND_LABELS[a.policy_kind]} → {a.scope_type}
-                        {a.scope_id ? ` (${a.scope_id})` : ""}
-                      </p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        Policy {a.policy_id}
-                        {a.leave_type_id ? ` · Leave type ${a.leave_type_id}` : ""} ·{" "}
-                        {a.effective_from} – {a.effective_to ?? "open"}
-                        {a.reason ? ` · ${a.reason}` : ""}
-                      </p>
-                    </div>
+                <TableRow key={a.id}>
+                  <TableCell>
+                    <p className="font-medium text-foreground">
+                      {POLICY_KIND_LABELS[a.policy_kind]} → {a.scope_type}
+                      {a.scope_id ? ` (${a.scope_id})` : ""}
+                    </p>
+                    <p className="mt-0.5 text-xs text-foreground-muted">
+                      Policy {a.policy_id}
+                      {a.leave_type_id ? ` · Leave type ${a.leave_type_id}` : ""}
+                      {a.reason ? ` · ${a.reason}` : ""}
+                    </p>
+                  </TableCell>
+                  <TableCell className="tabular-nums text-xs text-foreground-secondary">
+                    <CompanyDate value={a.effective_from} /> –{" "}
+                    {a.effective_to ? <CompanyDate value={a.effective_to} /> : "open"}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={a.effective_to === null ? "secondary" : "outline"}>
-                      {a.effective_to === null ? "Current" : `Ended ${a.effective_to}`}
+                      {a.effective_to === null ? (
+                        "Current"
+                      ) : (
+                        <>
+                          Ended <CompanyDate value={a.effective_to} />
+                        </>
+                      )}
                     </Badge>
-                  </div>
-                </li>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
+            </TableBody>
+          </Table>
+        ) : null}
 
-          {!loading && !error && pagination ? (
-            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
-          ) : null}
-        </CardContent>
-      </Card>
+        {!loading && !error && pagination ? (
+          <PaginationControls
+            pagination={pagination}
+            onPageChange={setPage}
+            disabled={loading}
+          />
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">

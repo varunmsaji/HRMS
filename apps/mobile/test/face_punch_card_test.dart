@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
+import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/domain/face_liveness_capture.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_punch_card.dart';
 
@@ -56,6 +57,8 @@ class _FakeRepository implements AttendanceRepository {
     required String livenessSessionId,
     required List<List<int>> frames,
     required String idempotencyKey,
+    PunchLocation? location,
+    LocationFailure? locationError,
   }) {
     punches.add(_Punch(direction, livenessSessionId, frames, idempotencyKey));
     return respond();

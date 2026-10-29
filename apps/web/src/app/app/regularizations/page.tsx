@@ -1,9 +1,11 @@
 "use client";
 
-import { FileClock } from "lucide-react";
+import { FileClock, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -12,9 +14,18 @@ import { PageHeader } from "@/components/common/page-header";
 import { RegularizationRequestDialog } from "@/components/regularization/regularization-request-dialog";
 import { RegularizationStatusBadge } from "@/components/regularization/regularization-status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
@@ -28,6 +39,7 @@ import {
   type RegularizationStatus,
   type RegularizationType,
 } from "@/lib/regularization/types";
+import { cn } from "@/lib/utils";
 
 interface EmployeeOption {
   id: string;
@@ -131,35 +143,50 @@ export default function RegularizationsPage() {
         actions={
           canCreate ? (
             <Button type="button" onClick={() => setDialogOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               New request
             </Button>
           ) : undefined
         }
       />
 
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant={view === "MINE" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setView("MINE")}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          role="group"
+          aria-label="Regularization scope"
+          className="inline-flex rounded-md border border-border bg-surface p-0.5"
         >
-          My requests
-        </Button>
-        {canApprove || canSubmitOnBehalf ? (
-          <Button
+          <button
             type="button"
-            variant={view === "TEAM" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("TEAM")}
+            onClick={() => setView("MINE")}
+            className={cn(
+              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+              view === "MINE"
+                ? "bg-primary text-on-primary"
+                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+            )}
           >
-            Team requests
-          </Button>
-        ) : null}
+            My requests
+          </button>
+          {canApprove || canSubmitOnBehalf ? (
+            <button
+              type="button"
+              onClick={() => setView("TEAM")}
+              className={cn(
+                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                view === "TEAM"
+                  ? "bg-primary text-on-primary"
+                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+              )}
+            >
+              Team requests
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <Card>
-        <CardContent className="grid grid-cols-1 gap-4 pt-6 sm:grid-cols-4">
+      <TableContainer>
+        <TableToolbar className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <FormField id="regularizations-date-from" label="From">
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </FormField>
@@ -193,8 +220,15 @@ export default function RegularizationsPage() {
             </NativeSelect>
           </FormField>
           {view === "TEAM" ? (
-            <FormField id="regularizations-employee" label="Employee" className="sm:col-span-2">
-              <NativeSelect value={employeeFilter} onChange={(e) => setEmployeeFilter(e.target.value)}>
+            <FormField
+              id="regularizations-employee"
+              label="Employee"
+              className="sm:col-span-2"
+            >
+              <NativeSelect
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+              >
                 <option value="">All employees</option>
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
@@ -204,13 +238,11 @@ export default function RegularizationsPage() {
               </NativeSelect>
             </FormField>
           ) : null}
-        </CardContent>
-      </Card>
+        </TableToolbar>
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading regularization requests…" /> : null}
-          {error && !loading ? (
+        {loading ? <LoadingState label="Loading regularization requests…" /> : null}
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -219,8 +251,10 @@ export default function RegularizationsPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
-          {!loading && !error && requests && requests.length === 0 ? (
+          </div>
+        ) : null}
+        {!loading && !error && requests && requests.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={FileClock}
               title="No regularization requests in this range."
@@ -237,52 +271,58 @@ export default function RegularizationsPage() {
                 ) : undefined
               }
             />
-          ) : null}
-          {!loading && !error && requests && requests.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Date</th>
-                    <th className="px-3 py-2 text-left font-medium">Employee</th>
-                    <th className="px-3 py-2 text-left font-medium">Type</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-left font-medium">Stage</th>
-                    <th className="px-3 py-2 text-right font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {requests.map((request) => (
-                    <tr key={request.id} className="hover:bg-accent">
-                      <td className="px-3 py-2 text-foreground-secondary">{request.attendance_date}</td>
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {employeeDisplayName(employeeById.get(request.employee_id), request.employee_id)}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {REGULARIZATION_TYPE_LABELS[request.request_type]}
-                      </td>
-                      <td className="px-3 py-2">
-                        <RegularizationStatusBadge status={request.status} />
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {request.approval_stage ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <Link
-                          href={`/app/regularizations/${request.id}`}
-                          className="text-sm font-medium text-primary hover:underline"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : null}
+        {!loading && !error && requests && requests.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Date</TableHead>
+                <TableHead>Employee</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Stage</TableHead>
+                <TableHead align="right">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {requests.map((request) => (
+                <TableRow key={request.id}>
+                  <TableCell className="tabular-nums text-foreground-secondary">
+                    <CompanyDate value={request.attendance_date} />
+                  </TableCell>
+                  <TableCell>
+                    <EmployeeIdentityCell
+                      name={employeeDisplayName(
+                        employeeById.get(request.employee_id),
+                        request.employee_id,
+                      )}
+                      size="sm"
+                    />
+                  </TableCell>
+                  <TableCell className="text-foreground-secondary">
+                    {REGULARIZATION_TYPE_LABELS[request.request_type]}
+                  </TableCell>
+                  <TableCell>
+                    <RegularizationStatusBadge status={request.status} />
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {request.approval_stage ?? "—"}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/regularizations/${request.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <RegularizationRequestDialog
         open={dialogOpen}

@@ -82,7 +82,8 @@ describe("AttendancePeriodsPage", () => {
     render(<AttendancePeriodsPage />);
 
     expect(await screen.findByText("August 2026")).toBeInTheDocument();
-    expect(screen.getByText("2026-08-01 – 2026-08-31")).toBeInTheDocument();
+    expect(screen.getByText(/01\/08\/2026/)).toBeInTheDocument();
+    expect(screen.getByText(/31\/08\/2026/)).toBeInTheDocument();
     expect(screen.getByText("Open")).toBeInTheDocument();
   });
 

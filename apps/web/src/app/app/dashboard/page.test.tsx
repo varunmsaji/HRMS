@@ -98,10 +98,7 @@ describe("CompanyDashboardPage", () => {
     mockThreeCalls([dashboard, subscription, profile]);
     render(<CompanyDashboardPage />);
 
-    const expectedTrialDate = new Date(subscription.trial_ends_at as string).toLocaleDateString(
-      undefined,
-      { year: "numeric", month: "short", day: "numeric" },
-    );
+    const expectedTrialDate = "21/08/2026";
 
     expect(await screen.findByText("Acme Manufacturing")).toBeInTheDocument();
     expect(screen.getByText("Free (FREE)")).toBeInTheDocument();

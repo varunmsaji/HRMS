@@ -4,22 +4,34 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  "inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-xs font-medium leading-4 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80",
+          "border-primary-border bg-primary-subtle text-primary",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "border-border bg-muted text-foreground-secondary",
         destructive:
-          "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
-        outline: "text-foreground",
-        success: "border-transparent bg-success-subtle text-success",
-        warning: "border-transparent bg-warning-subtle text-warning",
-        danger: "border-transparent bg-danger-subtle text-danger",
-        info: "border-transparent bg-info-subtle text-info",
-        "on-leave": "border-transparent bg-on-leave-subtle text-on-leave",
+          "border-danger-border bg-danger-subtle text-danger",
+        outline:
+          "border-border bg-surface text-foreground-secondary",
+        success:
+          "border-success-border bg-success-subtle text-success",
+        warning:
+          "border-warning-border bg-warning-subtle text-warning",
+        danger:
+          "border-danger-border bg-danger-subtle text-danger",
+        info:
+          "border-info-border bg-info-subtle text-info",
+        "on-leave":
+          "border-on-leave-border bg-on-leave-subtle text-on-leave",
+        holiday:
+          "border-holiday-border bg-holiday-subtle text-holiday",
+        "half-day":
+          "border-half-day-border bg-half-day-subtle text-half-day",
+        wfh:
+          "border-wfh-border bg-wfh-subtle text-wfh",
       },
     },
     defaultVariants: {
@@ -30,11 +42,21 @@ const badgeVariants = cva(
 
 export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof badgeVariants> {}
+    VariantProps<typeof badgeVariants> {
+  dot?: boolean
+}
 
-function Badge({ className, variant, ...props }: BadgeProps) {
+function Badge({ className, variant, dot = false, children, ...props }: BadgeProps) {
   return (
-    <div className={cn(badgeVariants({ variant }), className)} {...props} />
+    <div className={cn(badgeVariants({ variant }), className)} {...props}>
+      {dot ? (
+        <span
+          aria-hidden="true"
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-current"
+        />
+      ) : null}
+      {children}
+    </div>
   )
 }
 

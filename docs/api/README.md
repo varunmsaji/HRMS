@@ -14,6 +14,7 @@ Audit-based documentation of the API **as implemented** in `apps/api` (FastAPI, 
 | [DATA_MODELS.md](DATA_MODELS.md) · [models/](models/) | Shared schemas, per-module data dictionaries, [string vocabularies](models/ENUMS.md) |
 | [ENDPOINT_INVENTORY.md](ENDPOINT_INVENTORY.md) | Registry of all 333 operations by module (auth, permission, tier, tests) |
 | [modules/](modules/) | One reference per module, a section per endpoint: [identity](modules/identity.md) · [organisation](modules/organisation.md) · [employee](modules/employee.md) · [attendance](modules/attendance.md) · [leave](modules/leave.md) · [payroll](modules/payroll.md) · [onboarding](modules/onboarding.md) · [account_invite](modules/account_invite.md) · [employee_import](modules/employee_import.md) · [platform](modules/platform.md) *(not for mobile)* · [health](modules/health.md) |
+| [GEOFENCING.md](GEOFENCING.md) · [../operations/ATTENDANCE_GEOFENCING.md](../operations/ATTENDANCE_GEOFENCING.md) | Location-checked attendance: policy modes, punch request/response additions, geofence/authorisation/attempt endpoints, privacy, security limits, rollout (hand-written; not yet in the generated inventory) |
 | [PERMISSIONS.md](PERMISSIONS.md) | Permission codes and the routes that use them |
 | [openapi.json](openapi.json) | Enriched OpenAPI 3.1 (servers, security schemes incl. refresh cookie, error envelope, `x-hrms-*` metadata) |
 | [postman/](postman/) | Importable collection + environment template |

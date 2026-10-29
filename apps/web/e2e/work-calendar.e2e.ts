@@ -403,7 +403,7 @@ test.describe("work calendar", () => {
     const employeeProblems = watchFailures(employeePage);
     await login(employeePage, employeeEmail);
     await employeePage.goto("/app/me/calendar");
-    await expect(employeePage.getByText(/part of this month|Not set up/)).toBeVisible();
+    await expect(employeePage.getByRole("status").filter({ hasText: "part of this month" })).toBeVisible();
     const holiday = employeePage.locator('[data-date="2026-10-28"]');
     await expect(holiday).toHaveAttribute("data-date", "2026-10-28");
     await expect(employeePage.locator('[data-date="2026-10-30"]')).toContainText("Pending leave");
@@ -440,8 +440,16 @@ async function leaveTypeId(): Promise<string> {
 
 async function acknowledgeAndConfirm(dialog: ReturnType<Page["getByRole"]>): Promise<void> {
   await expect(dialog).toBeVisible();
-  const checkbox = dialog.getByRole("checkbox");
-  if ((await checkbox.count()) > 0) await checkbox.check();
-  await dialog.getByRole("button", { name: "Confirm change" }).click();
+  await expect(dialog.getByText("Calculating impact…")).toHaveCount(0);
+  const button = dialog.getByRole("button", { name: "Confirm change" });
+  const checkbox = dialog.getByRole("checkbox", { name: /will not be changed/ });
+  // The preview can refresh once as the dialog settles, which clears the acknowledgement.
+  // Retry until a click is accepted.
+  await expect(async () => {
+    if ((await checkbox.count()) > 0 && !(await checkbox.isChecked())) {
+      await checkbox.check();
+    }
+    await button.click({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   await expect(dialog).toBeHidden();
 }

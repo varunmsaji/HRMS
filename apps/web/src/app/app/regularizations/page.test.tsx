@@ -109,7 +109,7 @@ describe("RegularizationsPage", () => {
 
     expect(await screen.findByText("Missing punch")).toBeInTheDocument();
     expect(screen.getByText("Submitted")).toBeInTheDocument();
-    expect(screen.getByText("2026-08-10")).toBeInTheDocument();
+    expect(screen.getByText("10/08/2026")).toBeInTheDocument();
   });
 
   it("shows the permission-denied message on a 403", async () => {

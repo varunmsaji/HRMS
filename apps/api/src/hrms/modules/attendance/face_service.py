@@ -71,6 +71,7 @@ from hrms.modules.attendance.face_verification import (
     FaceProviderNoFaceError,
     FaceVerificationProvider,
 )
+from hrms.modules.attendance.geofence_service import GeofenceService
 from hrms.modules.attendance.liveness import (
     LivenessAssessment,
     LivenessEngine,
@@ -97,6 +98,7 @@ from hrms.modules.attendance.schemas import (
     FaceLivenessSessionRead,
     FaceProfileRead,
     FacePunchRead,
+    PunchLocation,
     PunchRead,
     face_profile_to_read,
     face_window_to_read,
@@ -1348,6 +1350,8 @@ class FacePunchService:
         idempotency_key: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        location: PunchLocation | None = None,
+        location_error: str | None = None,
     ) -> FacePunchRead:
         """`idempotency_key` (optional, client-generated) makes a retry after a lost response
         safe: the same key from the same employee for the same direction returns the original
@@ -1387,6 +1391,20 @@ class FacePunchService:
             )
             if replay is not None:
                 return replay
+        # Cheap location check up front so a refused location does not spend the one-time
+        # liveness challenge or the (slow, possibly paid) face work. The authoritative check still
+        # runs in `record_punch_outcome`, which every punch passes through.
+        await GeofenceService(self._session).enforce(
+            company_id,
+            employee_id,
+            direction=direction,
+            source="FACE",
+            location=location,
+            location_error=location_error,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         await self._enforce_attempt_limit(company_id, employee_id)
         if stored_key is not None:
             awaited = await self._await_in_flight_duplicate(
@@ -1582,6 +1600,8 @@ class FacePunchService:
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            location=location,
+            location_error=location_error,
         )
         if replayed:
             # Lost a race with a concurrent request carrying the same key (the advisory lock

@@ -87,6 +87,11 @@ from hrms.modules.attendance.exceptions import (
     StaleShiftRosterResourceError,
     WorkOnLeaveNotFlaggedError,
 )
+from hrms.modules.attendance.geofence_service import (
+    GEOFENCED_SOURCES,
+    GeofenceEvaluation,
+    GeofenceService,
+)
 from hrms.modules.attendance.models import (
     AttendanceDay,
     AttendancePeriod,
@@ -148,6 +153,7 @@ from hrms.modules.attendance.schemas import (
     OvertimeRecordRead,
     OvertimeReviewInput,
     PolicyResolutionRead,
+    PunchLocation,
     PunchRead,
     RegularizationPolicyCreate,
     RegularizationPolicyRead,
@@ -433,6 +439,9 @@ class AttendanceService:
                 "excess_break_count_window": body.excess_break_count_window,
                 "excess_break_days_to_half_day_count": body.excess_break_days_to_half_day_count,
                 "incomplete_at_lock_behaviour": body.incomplete_at_lock_behaviour,
+                "geofence_mode": body.geofence_mode,
+                "geofence_max_accuracy_m": body.geofence_max_accuracy_m,
+                "geofence_max_age_seconds": body.geofence_max_age_seconds,
                 "publish_reason": None,
                 "published_at": None,
                 "published_by": None,
@@ -2571,6 +2580,8 @@ class PunchService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        location: PunchLocation | None = None,
+        location_error: str | None = None,
     ) -> PunchRead:
         """`record_punch_outcome` without the replay flag — see it for the full contract."""
         read, _replayed = await self.record_punch_outcome(
@@ -2586,6 +2597,8 @@ class PunchService:
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            location=location,
+            location_error=location_error,
         )
         return read
 
@@ -2605,6 +2618,8 @@ class PunchService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        location: PunchLocation | None = None,
+        location_error: str | None = None,
     ) -> tuple[PunchRead, bool]:
         """Returns `(punch, replayed)`: `replayed` is True when an earlier row with the same
         `idempotency_key` was returned instead of writing a new one (callers that attach
@@ -2659,6 +2674,23 @@ class PunchService:
                     raise DuplicatePunchIdempotencyKeyError()
                 _ensure_same_logical_punch(existing, direction=direction, source=source)
                 return punch_to_read(existing), True
+
+        # Geofence — after the idempotency replay (an already-recorded punch is returned as it
+        # was, never re-judged against a new location) and before anything is written. Only
+        # self-service sources are checked; HR corrections (`ADMIN`) and regularizations are not.
+        geofence: GeofenceEvaluation | None = None
+        if source in GEOFENCED_SOURCES:
+            geofence = await GeofenceService(self._session).enforce(
+                company_id,
+                employee_id,
+                direction=direction,
+                source=source,
+                location=location,
+                location_error=location_error,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
         now = datetime.now(UTC)
         punch_time = now if requested_punch_time is None else requested_punch_time
@@ -2726,6 +2758,18 @@ class PunchService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        if geofence is not None:
+            await GeofenceService(self._session).record_accepted(
+                company_id,
+                employee_id,
+                direction=direction,
+                source=source,
+                evaluation=geofence,
+                location=location,
+                location_error=location_error,
+                punch_id=punch_id,
+            )
+            read = read.model_copy(update={"geofence": geofence.to_read()})
         await self._try_immediate_calculate(
             company_id,
             employee_id,

@@ -328,6 +328,10 @@ class Settings(BaseSettings):
     # identity control, and a whole office can share one NAT address. The client IP is
     # `request.client.host`, which is the real peer unless it is a `trusted_proxy_hosts` entry.
     face_punch_requests_per_minute_per_ip: int = Field(default=600, ge=1)
+    # Plain self-service punches (geofenced when the policy says so): same flood-ceiling idea.
+    punch_requests_per_minute_per_ip: int = Field(default=600, ge=1)
+    # Geofence attempt rows (rounded coordinates + outcome) are purged after this many days.
+    geofence_attempt_retention_days: int = Field(default=90, ge=1, le=3650)
     face_enrollment_requests_per_minute_per_ip: int = Field(default=60, ge=1)
     face_review_photo_requests_per_minute_per_ip: int = Field(default=120, ge=1)
 

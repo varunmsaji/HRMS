@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -339,14 +340,20 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                       Joining date
                     </dt>
-                    <dd className="mt-0.5 text-sm text-foreground">{current.joining_date}</dd>
+                    <dd className="mt-0.5 text-sm text-foreground">
+                      <CompanyDate value={current.joining_date} />
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                       Probation end date
                     </dt>
                     <dd className="mt-0.5 text-sm text-foreground">
-                      {current.probation_end_date ?? "Not configured"}
+                      {current.probation_end_date ? (
+                        <CompanyDate value={current.probation_end_date} />
+                      ) : (
+                        "Not configured"
+                      )}
                     </dd>
                   </div>
                   <div>
@@ -388,7 +395,12 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
                         <div>
                           <p className="text-sm font-medium text-foreground">{legalEntityName(item.legal_entity_id)}</p>
                           <p className="mt-0.5 text-xs text-foreground-muted">
-                            {item.joining_date} – {item.last_working_day ?? "—"}
+                            <CompanyDate value={item.joining_date} /> –{" "}
+                            {item.last_working_day ? (
+                              <CompanyDate value={item.last_working_day} />
+                            ) : (
+                              "—"
+                            )}
                           </p>
                         </div>
                         <Badge variant="outline">Terminated</Badge>

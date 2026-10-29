@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { LegalEntity } from "@/lib/legal-entity/types";
@@ -116,22 +124,27 @@ export default function LegalEntitiesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Companies"
         description="The legally registered company that employs your workforce. Add your locations as branches under it."
         actions={
           entities && entities.length > 0 ? (
-            <Link href="/app/branches" className="text-sm text-foreground-secondary hover:underline">
+            <Link
+              href="/app/branches"
+              className="text-sm font-medium text-primary hover:underline"
+            >
               Manage branches →
             </Link>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading companies…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading companies…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -140,9 +153,11 @@ export default function LegalEntitiesPage() {
               }
               onRetry={() => void loadEntities()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && entities && entities.length === 0 ? (
+        {!loading && !error && entities && entities.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Landmark}
               title="No companies have been configured yet."
@@ -153,32 +168,52 @@ export default function LegalEntitiesPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && entities && entities.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && entities && entities.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Company</TableHead>
+                <TableHead>Registration / PAN</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {entities.map((entity) => (
-                <li key={entity.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/legal-entities/${entity.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{entity.name}</p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {entity.pan ? `PAN ${entity.pan}` : "No PAN on file"}
-                      </p>
-                    </div>
+                <TableRow key={entity.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/legal-entities/${entity.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {entity.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-foreground-secondary">
+                    {entity.pan ? `PAN ${entity.pan}` : "No PAN on file"}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={entity.is_active ? "secondary" : "outline"}>
                       {entity.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/legal-entities/${entity.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">
@@ -194,7 +229,12 @@ export default function LegalEntitiesPage() {
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={saving}>

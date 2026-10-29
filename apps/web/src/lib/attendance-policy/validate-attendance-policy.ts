@@ -1,4 +1,10 @@
 import type { ErrorDetail } from "@/lib/api/types";
+import {
+  GEOFENCE_ACCURACY_MAX_M,
+  GEOFENCE_ACCURACY_MIN_M,
+  GEOFENCE_AGE_MAX_S,
+  GEOFENCE_AGE_MIN_S,
+} from "@/lib/attendance-policy/types";
 import type { AttendancePolicy, AttendancePolicyVersion } from "@/lib/attendance-policy/types";
 
 // ---------------------------------------------------------------------------
@@ -100,6 +106,9 @@ export interface AttendancePolicyVersionFormValues {
   excessBreakDaysToHalfDayCount: string;
   earlyDepartureRequiresApproval: boolean;
   incompleteAtLockBehaviour: string;
+  geofenceMode: string;
+  geofenceMaxAccuracyM: string;
+  geofenceMaxAgeSeconds: string;
   hourBands: PolicyBandFormRow[];
   lateBands: PolicyBandFormRow[];
   earlyDepartureBands: PolicyBandFormRow[];
@@ -133,6 +142,9 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
   excessBreakDaysToHalfDayCount: "",
   earlyDepartureRequiresApproval: false,
   incompleteAtLockBehaviour: "TREAT_ABSENT",
+  geofenceMode: "DISABLED",
+  geofenceMaxAccuracyM: "100",
+  geofenceMaxAgeSeconds: "60",
   hourBands: [],
   lateBands: [],
   earlyDepartureBands: [],
@@ -140,6 +152,8 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
 
 export interface AttendancePolicyVersionFormErrors {
   effectiveFrom?: string;
+  geofenceMaxAccuracyM?: string;
+  geofenceMaxAgeSeconds?: string;
   hourBands?: string;
   hourBandRows?: PolicyBandRowErrors[];
   lateBandRows?: PolicyBandRowErrors[];
@@ -200,6 +214,9 @@ export function attendancePolicyVersionToFormValues(
         : String(version.excess_break_days_to_half_day_count),
     earlyDepartureRequiresApproval: version.early_departure_requires_approval,
     incompleteAtLockBehaviour: version.incomplete_at_lock_behaviour,
+    geofenceMode: version.geofence_mode ?? "DISABLED",
+    geofenceMaxAccuracyM: String(version.geofence_max_accuracy_m ?? 100),
+    geofenceMaxAgeSeconds: String(version.geofence_max_age_seconds ?? 60),
     hourBands: version.hour_bands
       .slice()
       .sort((a, b) => a.sort_order - b.sort_order)
@@ -268,6 +285,9 @@ export function buildAttendancePolicyVersionPayload(
     excess_break_days_to_half_day_count: intOrNull(values.excessBreakDaysToHalfDayCount),
     early_departure_requires_approval: values.earlyDepartureRequiresApproval,
     incomplete_at_lock_behaviour: values.incompleteAtLockBehaviour,
+    geofence_mode: values.geofenceMode,
+    geofence_max_accuracy_m: intOrNull(values.geofenceMaxAccuracyM) ?? 100,
+    geofence_max_age_seconds: intOrNull(values.geofenceMaxAgeSeconds) ?? 60,
     hour_bands: bandRowsToPayload(values.hourBands, "result_status", false),
     late_bands: bandRowsToPayload(values.lateBands, "classification", true),
     early_departure_bands: bandRowsToPayload(values.earlyDepartureBands, "classification", true),
@@ -287,6 +307,15 @@ export function validateAttendancePolicyVersionForm(
       if (!row.minMinutes.trim()) rowErrors.minMinutes = "Required.";
       return rowErrors;
     });
+  }
+
+  const accuracy = intOrNull(values.geofenceMaxAccuracyM);
+  if (accuracy === null || accuracy < GEOFENCE_ACCURACY_MIN_M || accuracy > GEOFENCE_ACCURACY_MAX_M) {
+    errors.geofenceMaxAccuracyM = `Enter ${GEOFENCE_ACCURACY_MIN_M}-${GEOFENCE_ACCURACY_MAX_M} metres.`;
+  }
+  const age = intOrNull(values.geofenceMaxAgeSeconds);
+  if (age === null || age < GEOFENCE_AGE_MIN_S || age > GEOFENCE_AGE_MAX_S) {
+    errors.geofenceMaxAgeSeconds = `Enter ${GEOFENCE_AGE_MIN_S}-${GEOFENCE_AGE_MAX_S} seconds.`;
   }
 
   const hourBandRows = checkRows(values.hourBands);
@@ -313,6 +342,8 @@ export function mapAttendancePolicyVersionApiErrors(
   for (const detail of details) {
     if (detail.field === "hour_bands") errors.hourBands = detail.message;
     if (detail.field === "effective_from") errors.effectiveFrom = detail.message;
+    if (detail.field === "geofence_max_accuracy_m") errors.geofenceMaxAccuracyM = detail.message;
+    if (detail.field === "geofence_max_age_seconds") errors.geofenceMaxAgeSeconds = detail.message;
   }
   return errors;
 }

@@ -17,7 +17,7 @@ interface OvertimeStatusBadgeProps {
 export function OvertimeStatusBadge({ status }: OvertimeStatusBadgeProps) {
   const known = status in STATUS_VARIANT ? (status as OvertimeStatus) : null;
   return (
-    <Badge variant={known ? STATUS_VARIANT[known] : "outline"}>
+    <Badge variant={known ? STATUS_VARIANT[known] : "outline"} dot>
       {known ? OVERTIME_STATUS_LABELS[known] : status}
     </Badge>
   );

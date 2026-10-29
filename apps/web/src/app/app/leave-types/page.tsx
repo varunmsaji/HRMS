@@ -1,6 +1,6 @@
 "use client";
 
-import { Tag } from "lucide-react";
+import { Plus, Tag } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { LeaveTypeForm } from "@/components/leave-type/leave-type-form";
@@ -11,7 +11,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +18,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -96,7 +104,11 @@ export default function LeaveTypesPage() {
       toast({ title: "Leave type added", variant: "success" });
       await load();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && err.code === "LEAVE_TYPE_COMP_OFF_ALREADY_EXISTS") {
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.code === "LEAVE_TYPE_COMP_OFF_ALREADY_EXISTS"
+      ) {
         toast({
           title: "Another leave type is already marked as the comp-off type",
           description: "Only one leave type per company may be marked this way.",
@@ -120,7 +132,11 @@ export default function LeaveTypesPage() {
         toast({ title: "You don't have permission to add leave types", variant: "danger" });
         return;
       }
-      toast({ title: "Could not add leave type", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not add leave type",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setCreating(false);
     }
@@ -163,7 +179,11 @@ export default function LeaveTypesPage() {
         });
         return;
       }
-      if (err instanceof ApiError && err.status === 409 && err.code === "LEAVE_TYPE_COMP_OFF_ALREADY_EXISTS") {
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        err.code === "LEAVE_TYPE_COMP_OFF_ALREADY_EXISTS"
+      ) {
         toast({
           title: "Another leave type is already marked as the comp-off type",
           description: "Only one leave type per company may be marked this way.",
@@ -175,7 +195,11 @@ export default function LeaveTypesPage() {
         setEditErrors({ name: getFieldError(err.details, "name") });
         return;
       }
-      toast({ title: "Could not save leave type", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not save leave type",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -194,29 +218,36 @@ export default function LeaveTypesPage() {
       });
       await load();
     } catch (err) {
-      toast({ title: "Could not update leave type", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not update leave type",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     }
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Leave Types"
         description="The kinds of leave employees can apply for — Casual, Earned, Sick, and any LOP-style type that doesn't consume a balance."
         actions={
           canManage && leaveTypes && leaveTypes.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Leave Type
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading leave types…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading leave types…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -225,9 +256,11 @@ export default function LeaveTypesPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && leaveTypes && leaveTypes.length === 0 ? (
+        {!loading && !error && leaveTypes && leaveTypes.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Tag}
               title="No leave types have been configured yet."
@@ -240,49 +273,75 @@ export default function LeaveTypesPage() {
                 ) : undefined
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && leaveTypes && leaveTypes.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && leaveTypes && leaveTypes.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Leave type</TableHead>
+                <TableHead>Configuration</TableHead>
+                <TableHead>Status</TableHead>
+                {canManage ? <TableHead align="right">Actions</TableHead> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {leaveTypes.map((leaveType) => (
-                <li key={leaveType.id} className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0">
-                  <button
-                    type="button"
-                    onClick={() => (canManage ? openEdit(leaveType) : undefined)}
-                    className="flex-1 rounded-md px-2 py-1 -mx-2 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <p className="text-sm font-medium text-foreground">
+                <TableRow key={leaveType.id}>
+                  <TableCell>
+                    <button
+                      type="button"
+                      onClick={() => (canManage ? openEdit(leaveType) : undefined)}
+                      className="text-left font-medium text-foreground hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
                       {leaveType.name}{" "}
-                      <span className="text-foreground-muted">({leaveType.code})</span>
-                    </p>
-                    <p className="mt-0.5 text-xs text-foreground-muted">
-                      {leaveType.is_paid_default ? "Paid" : "Unpaid"} ·{" "}
-                      {leaveType.requires_balance ? "Balance-backed" : "No balance (LOP-style)"}
-                      {leaveType.is_comp_off ? " · Comp-off type" : ""}
-                    </p>
-                  </button>
-                  <div className="flex items-center gap-2">
-                    {leaveType.is_comp_off ? <Badge variant="outline">Comp-off</Badge> : null}
-                    <Badge variant={leaveType.is_active ? "secondary" : "outline"}>
-                      {leaveType.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                    {canManage ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleToggleActive(leaveType)}
-                      >
-                        {leaveType.is_active ? "Deactivate" : "Reactivate"}
-                      </Button>
-                    ) : null}
-                  </div>
-                </li>
+                      <span className="font-mono text-xs text-foreground-muted">
+                        ({leaveType.code})
+                      </span>
+                    </button>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {leaveType.is_paid_default ? "Paid" : "Unpaid"} ·{" "}
+                    {leaveType.requires_balance ? "Balance-backed" : "No balance (LOP-style)"}
+                    {leaveType.is_comp_off ? " · Comp-off type" : ""}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {leaveType.is_comp_off ? <Badge variant="outline">Comp-off</Badge> : null}
+                      <Badge variant={leaveType.is_active ? "secondary" : "outline"}>
+                        {leaveType.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                  </TableCell>
+                  {canManage ? (
+                    <TableCell align="right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          onClick={() => openEdit(leaveType)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="xs"
+                          onClick={() => void handleToggleActive(leaveType)}
+                        >
+                          {leaveType.is_active ? "Deactivate" : "Reactivate"}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!creating ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-lg">
@@ -296,7 +355,12 @@ export default function LeaveTypesPage() {
             idPrefix="create-"
           />
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={creating}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={creating}>
@@ -306,7 +370,10 @@ export default function LeaveTypesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editing !== null} onOpenChange={(open) => (!saving && !open ? setEditing(null) : null)}>
+      <Dialog
+        open={editing !== null}
+        onOpenChange={(open) => (!saving && !open ? setEditing(null) : null)}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit Leave Type</DialogTitle>
@@ -321,7 +388,12 @@ export default function LeaveTypesPage() {
             />
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditing(null)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditing(null)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleSaveEdit()} disabled={saving}>

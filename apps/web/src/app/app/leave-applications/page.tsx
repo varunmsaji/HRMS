@@ -1,9 +1,11 @@
 "use client";
 
-import { CalendarOff } from "lucide-react";
+import { CalendarOff, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -13,9 +15,18 @@ import { PaginationControls } from "@/components/common/pagination-controls";
 import { LeaveApplicationDialog } from "@/components/leave-application/leave-application-dialog";
 import { LeaveApplicationStatusBadge } from "@/components/leave-application/leave-application-status-badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -28,6 +39,7 @@ import {
   type LeaveApplicationStatus,
 } from "@/lib/leave-application/types";
 import type { LeaveType } from "@/lib/leave-type/types";
+import { cn } from "@/lib/utils";
 
 interface EmployeeOption {
   id: string;
@@ -125,8 +137,6 @@ export default function LeaveApplicationsPage() {
     [dateFrom, dateTo, statusFilter, view, employeeFilter, user?.employee_id],
   );
 
-  // A filter change invalidates whatever page we were on — jump back to page 1 rather than
-  // re-requesting a page number that may no longer exist for the new filter set.
   useEffect(() => {
     setPage(1);
   }, [dateFrom, dateTo, statusFilter, view, employeeFilter]);
@@ -144,9 +154,6 @@ export default function LeaveApplicationsPage() {
 
   useEffect(() => {
     if (view !== "TEAM") return;
-    // Reference-data dropdown, not a paginated table — request the server's max page size.
-    // Companies with >100 employees will see a truncated list here (known limitation, not a
-    // correctness issue for the paginated list above).
     void apiClient
       .getList<EmployeeOption>("/employees", { per_page: 100 })
       .then(({ data }) => setEmployees(data))
@@ -167,35 +174,50 @@ export default function LeaveApplicationsPage() {
         actions={
           canCreate ? (
             <Button type="button" onClick={() => setDialogOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Apply for leave
             </Button>
           ) : undefined
         }
       />
 
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant={view === "MINE" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setView("MINE")}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          role="group"
+          aria-label="Application scope"
+          className="inline-flex rounded-md border border-border bg-surface p-0.5"
         >
-          My applications
-        </Button>
-        {canApprove || canSubmitOnBehalf ? (
-          <Button
+          <button
             type="button"
-            variant={view === "TEAM" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("TEAM")}
+            onClick={() => setView("MINE")}
+            className={cn(
+              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+              view === "MINE"
+                ? "bg-primary text-on-primary"
+                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+            )}
           >
-            Team applications
-          </Button>
-        ) : null}
+            My applications
+          </button>
+          {canApprove || canSubmitOnBehalf ? (
+            <button
+              type="button"
+              onClick={() => setView("TEAM")}
+              className={cn(
+                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                view === "TEAM"
+                  ? "bg-primary text-on-primary"
+                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+              )}
+            >
+              Team applications
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <Card>
-        <CardContent className="grid grid-cols-1 gap-4 pt-6 sm:grid-cols-4">
+      <TableContainer>
+        <TableToolbar className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <FormField id="leave-applications-date-from" label="From">
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </FormField>
@@ -217,7 +239,10 @@ export default function LeaveApplicationsPage() {
           </FormField>
           {view === "TEAM" ? (
             <FormField id="leave-applications-employee" label="Employee">
-              <NativeSelect value={employeeFilter} onChange={(e) => setEmployeeFilter(e.target.value)}>
+              <NativeSelect
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+              >
                 <option value="">All employees</option>
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
@@ -227,13 +252,12 @@ export default function LeaveApplicationsPage() {
               </NativeSelect>
             </FormField>
           ) : null}
-        </CardContent>
-      </Card>
+        </TableToolbar>
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading leave applications…" /> : null}
-          {error && !loading ? (
+        {loading ? <LoadingState label="Loading leave applications…" /> : null}
+
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -242,8 +266,11 @@ export default function LeaveApplicationsPage() {
               }
               onRetry={() => void load(page)}
             />
-          ) : null}
-          {!loading && !error && applications && applications.length === 0 ? (
+          </div>
+        ) : null}
+
+        {!loading && !error && applications && applications.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={CalendarOff}
               title="No leave applications in this range."
@@ -258,67 +285,77 @@ export default function LeaveApplicationsPage() {
                 ) : undefined
               }
             />
-          ) : null}
-          {!loading && !error && applications && applications.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Dates</th>
-                    <th className="px-3 py-2 text-left font-medium">Employee</th>
-                    <th className="px-3 py-2 text-left font-medium">Type</th>
-                    <th className="px-3 py-2 text-right font-medium">Days</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-left font-medium">Stage</th>
-                    <th className="px-3 py-2 text-right font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {applications.map((application) => (
-                    <tr key={application.id} className="hover:bg-accent">
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {application.start_date === application.end_date
-                          ? application.start_date
-                          : `${application.start_date} – ${application.end_date}`}
-                      </td>
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {employeeDisplayName(
-                          employeeById.get(application.employee_id),
-                          application.employee_id,
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {leaveTypeById.get(application.leave_type_id)?.name ?? application.leave_type_id}
-                      </td>
-                      <td className="px-3 py-2 text-right text-foreground-secondary">
-                        {application.total_days}
-                      </td>
-                      <td className="px-3 py-2">
-                        <LeaveApplicationStatusBadge status={application.status} />
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {application.approval_stage ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <Link
-                          href={`/app/leave-applications/${application.id}`}
-                          className="text-sm font-medium text-primary hover:underline"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && pagination ? (
-            <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
-          ) : null}
-        </CardContent>
-      </Card>
+        {!loading && !error && applications && applications.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Dates</TableHead>
+                <TableHead>Employee</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead align="right">Days</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Stage</TableHead>
+                <TableHead align="right">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {applications.map((application) => {
+                const emp = employeeById.get(application.employee_id);
+                const empLabel = employeeDisplayName(emp, application.employee_id);
+                return (
+                  <TableRow key={application.id}>
+                    <TableCell className="whitespace-nowrap tabular-nums text-foreground-secondary">
+                      {application.start_date === application.end_date ? (
+                        <CompanyDate value={application.start_date} />
+                      ) : (
+                        <>
+                          <CompanyDate value={application.start_date} /> –{" "}
+                          <CompanyDate value={application.end_date} />
+                        </>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <EmployeeIdentityCell name={empLabel} size="sm" />
+                    </TableCell>
+                    <TableCell className="text-foreground-secondary">
+                      {leaveTypeById.get(application.leave_type_id)?.name ??
+                        application.leave_type_id}
+                    </TableCell>
+                    <TableCell align="right" numeric className="font-medium text-foreground">
+                      {application.total_days}
+                    </TableCell>
+                    <TableCell>
+                      <LeaveApplicationStatusBadge status={application.status} />
+                    </TableCell>
+                    <TableCell className="text-xs text-foreground-secondary">
+                      {application.approval_stage ?? "—"}
+                    </TableCell>
+                    <TableCell align="right">
+                      <Link
+                        href={`/app/leave-applications/${application.id}`}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        View
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        ) : null}
+
+        {!loading && !error && pagination ? (
+          <PaginationControls
+            pagination={pagination}
+            onPageChange={setPage}
+            disabled={loading}
+          />
+        ) : null}
+      </TableContainer>
 
       <LeaveApplicationDialog
         open={dialogOpen}

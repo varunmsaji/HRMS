@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarRange } from "lucide-react";
+import { CalendarRange, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -123,6 +131,8 @@ export default function WorkCalendarsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Work Calendars"
         description="Composes holiday calendars, a weekly-off pattern, and dated exceptions into what kind of day it is."
         actions={
@@ -133,6 +143,7 @@ export default function WorkCalendarsPage() {
               </Button>
               {calendars && calendars.length > 0 ? (
                 <Button type="button" onClick={openCreate}>
+                  <Plus className="h-4 w-4" aria-hidden="true" />
                   Add Work Calendar
                 </Button>
               ) : null}
@@ -141,11 +152,11 @@ export default function WorkCalendarsPage() {
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading work calendars…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading work calendars…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -154,9 +165,11 @@ export default function WorkCalendarsPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && calendars && calendars.length === 0 ? (
+        {!loading && !error && calendars && calendars.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={CalendarRange}
               title="No work calendars have been configured yet."
@@ -169,39 +182,59 @@ export default function WorkCalendarsPage() {
                 ) : undefined
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && calendars && calendars.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && calendars && calendars.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Calendar</TableHead>
+                <TableHead>Configuration</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {calendars.map((calendar) => (
-                <li key={calendar.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/work-calendars/${calendar.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        {calendar.name}
-                        {calendar.code ? (
-                          <span className="text-foreground-muted"> ({calendar.code})</span>
-                        ) : null}
-                      </p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {calendar.holiday_calendar_ids.length} holiday calendar
-                        {calendar.holiday_calendar_ids.length === 1 ? "" : "s"}
-                        {calendar.weekly_off_pattern_id ? " · weekly-off configured" : ""}
-                      </p>
-                    </div>
+                <TableRow key={calendar.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/work-calendars/${calendar.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {calendar.name}
+                      {calendar.code ? (
+                        <span className="ml-1 font-mono text-xs text-foreground-muted">
+                          ({calendar.code})
+                        </span>
+                      ) : null}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {calendar.holiday_calendar_ids.length} holiday calendar
+                    {calendar.holiday_calendar_ids.length === 1 ? "" : "s"}
+                    {calendar.weekly_off_pattern_id ? " · weekly-off configured" : ""}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={calendar.is_active ? "secondary" : "outline"}>
                       {calendar.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/work-calendars/${calendar.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View calendar
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">

@@ -201,6 +201,12 @@ kind = "scope_irrelevant"
 reason = "Self-service route: always acts on the caller's own employee id (user.employee_id), never a client-supplied target."
 
 [[handler]]
+key = "hrms.modules.attendance.geofence_router:get_my_geofence_policy"
+permission = "ATTENDANCE.PUNCH"
+kind = "scope_irrelevant"
+reason = "Self-service route: resolves the policy for the caller's own employee id (user.employee_id) only; no employee id is accepted and no other person's data is returned."
+
+[[handler]]
 key = "hrms.modules.payroll.router:list_my_payslips"
 permission = "PAYROLL.PAYSLIP_VIEW_OWN"
 kind = "scope_irrelevant"

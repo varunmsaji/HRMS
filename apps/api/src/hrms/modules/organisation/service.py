@@ -40,6 +40,7 @@ from hrms.modules.organisation.calendar_resolution import (
 )
 from hrms.modules.organisation.exceptions import (
     BranchDeactivationBlockedError,
+    BranchHasWorkplaceAuthorizationsError,
     CalendarExceptionDateConflictError,
     CompanyLimitReachedError,
     CompanyWriteBlockedError,
@@ -1399,6 +1400,18 @@ class OrganisationService:
         if count > 0:
             raise MasterDataInUseError(kind=kind, active_employee_count=count)
 
+    async def _assert_no_workplace_authorizations(self, company_id: UUID, branch_id: UUID) -> None:
+        """Attendance geofencing: employees authorised to punch at this branch (beyond their own
+        assignment) would be left with no approved workplace if it were deactivated. Lazy import,
+        same cross-module-seam convention as `_assert_master_not_in_use`."""
+        from hrms.modules.attendance.geofence_repository import GeofenceRepository
+
+        counts = await GeofenceRepository().authorization_counts_by_branch(
+            self._session, company_id=company_id
+        )
+        if counts.get(branch_id, 0) > 0:
+            raise BranchHasWorkplaceAuthorizationsError(authorization_count=counts[branch_id])
+
     async def update_branch(
         self,
         company_id: UUID,
@@ -1449,6 +1462,7 @@ class OrganisationService:
             await self._assert_master_not_in_use(
                 company_id, kind="branch", column="branch_id", master_id=branch_id
             )
+            await self._assert_no_workplace_authorizations(company_id, branch_id)
 
         values = build_branch_update_values(patch)
         if not values:

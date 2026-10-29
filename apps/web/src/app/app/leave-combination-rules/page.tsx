@@ -1,6 +1,6 @@
 "use client";
 
-import { GitMerge } from "lucide-react";
+import { GitMerge, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { LeaveCombinationRuleForm } from "@/components/leave-combination-rule/leave-combination-rule-form";
@@ -11,7 +11,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +18,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -160,22 +168,25 @@ export default function LeaveCombinationRulesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Leave Combination Rules"
         description="Whether two leave types may be applied for on overlapping dates — e.g. Casual + Sick not allowed, Annual + Casual allowed. No rule for a pair means allowed."
         actions={
           canManage && rules && rules.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Rule
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading combination rules…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading combination rules…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -184,9 +195,11 @@ export default function LeaveCombinationRulesPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && rules && rules.length === 0 ? (
+        {!loading && !error && rules && rules.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={GitMerge}
               title="No combination rules configured yet."
@@ -199,45 +212,52 @@ export default function LeaveCombinationRulesPage() {
                 ) : undefined
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && rules && rules.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && rules && rules.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Leave type pair</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead>Policy</TableHead>
+                {canManage ? <TableHead align="right">Actions</TableHead> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {rules.map((rule) => (
-                <li
-                  key={rule.id}
-                  className="flex items-center justify-between gap-4 py-4 first:pt-0 last:pb-0"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {leaveTypeLabel(rule.leave_type_id_a)} + {leaveTypeLabel(rule.leave_type_id_b)}
-                    </p>
-                    {rule.reason ? (
-                      <p className="mt-0.5 text-xs text-foreground-muted">{rule.reason}</p>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={rule.allowed ? "secondary" : "outline"}>
+                <TableRow key={rule.id}>
+                  <TableCell className="font-medium text-foreground">
+                    {leaveTypeLabel(rule.leave_type_id_a)} + {leaveTypeLabel(rule.leave_type_id_b)}
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {rule.reason ?? "—"}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={rule.allowed ? "success" : "danger"} dot>
                       {rule.allowed ? "Allowed" : "Not allowed"}
                     </Badge>
-                    {canManage ? (
+                  </TableCell>
+                  {canManage ? (
+                    <TableCell align="right">
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
+                        size="xs"
                         disabled={deletingId === rule.id}
                         onClick={() => void handleDelete(rule)}
                       >
                         {deletingId === rule.id ? "Removing…" : "Remove"}
                       </Button>
-                    ) : null}
-                  </div>
-                </li>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-lg">
@@ -252,7 +272,12 @@ export default function LeaveCombinationRulesPage() {
             idPrefix="create-"
           />
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={saving}>

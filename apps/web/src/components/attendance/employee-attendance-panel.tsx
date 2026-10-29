@@ -7,12 +7,14 @@ import { useCallback, useEffect, useState } from "react";
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
 import { FaceEnrollmentCard } from "@/components/attendance/face-enrollment-card";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { Button } from "@/components/ui/button";
+import { HorizontalScroll } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
@@ -148,7 +150,7 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
       ) : null}
 
       {!loading && !error && days && days.length > 0 ? (
-        <div className="overflow-x-auto rounded-md border border-border">
+        <HorizontalScroll className="rounded-md border border-border">
           <table className="w-full text-sm">
             <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
               <tr>
@@ -167,7 +169,7 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
                 <tr key={day.id} className="hover:bg-accent">
                   <td className="px-3 py-2">
                     <Link href={`/app/attendance/${day.id}`} className="font-medium text-foreground hover:underline">
-                      {day.attendance_date}
+                      <CompanyDate value={day.attendance_date} />
                     </Link>
                   </td>
                   <td className="px-3 py-2">
@@ -201,7 +203,7 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
               ))}
             </tbody>
           </table>
-        </div>
+        </HorizontalScroll>
       ) : null}
 
       <PunchEntryDialog

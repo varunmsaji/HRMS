@@ -16,6 +16,14 @@ from pydantic import (
     model_validator,
 )
 
+from hrms.modules.attendance.geofence import (
+    ACCURACY_LIMIT_MAX_M,
+    ACCURACY_LIMIT_MIN_M,
+    CLIENT_LOCATION_ERRORS,
+    MAX_AGE_MAX_SECONDS,
+    MAX_AGE_MIN_SECONDS,
+)
+
 
 def _reject_non_string_instant(value: Any) -> Any:
     """`ED-5` — the wire contract for any client-supplied attendance instant is *"ISO-8601 string
@@ -364,6 +372,9 @@ _ATTENDANCE_VERSION_FIELDS = (
     "lates_to_half_day_count",
     "early_departure_requires_approval",
     "incomplete_at_lock_behaviour",
+    "geofence_mode",
+    "geofence_max_accuracy_m",
+    "geofence_max_age_seconds",
 )
 
 
@@ -400,6 +411,13 @@ class AttendancePolicyVersionCreate(BaseModel):
     excess_break_count_window: str = "MONTH"
     excess_break_days_to_half_day_count: int | None = Field(default=None, gt=0)
     incomplete_at_lock_behaviour: str = "TREAT_ABSENT"
+    geofence_mode: Literal["DISABLED", "OPTIONAL", "REQUIRED"] = "DISABLED"
+    geofence_max_accuracy_m: int = Field(
+        default=100, ge=ACCURACY_LIMIT_MIN_M, le=ACCURACY_LIMIT_MAX_M
+    )
+    geofence_max_age_seconds: int = Field(
+        default=60, ge=MAX_AGE_MIN_SECONDS, le=MAX_AGE_MAX_SECONDS
+    )
 
     hour_bands: list[AttendancePolicyHourBandInput] = Field(default_factory=list)
     late_bands: list[AttendancePolicyLateBandInput] = Field(default_factory=list)
@@ -478,6 +496,13 @@ class AttendancePolicyVersionUpdate(BaseModel):
     excess_break_count_window: str | None = None
     excess_break_days_to_half_day_count: int | None = Field(default=None, gt=0)
     incomplete_at_lock_behaviour: str | None = None
+    geofence_mode: Literal["DISABLED", "OPTIONAL", "REQUIRED"] | None = None
+    geofence_max_accuracy_m: int | None = Field(
+        default=None, ge=ACCURACY_LIMIT_MIN_M, le=ACCURACY_LIMIT_MAX_M
+    )
+    geofence_max_age_seconds: int | None = Field(
+        default=None, ge=MAX_AGE_MIN_SECONDS, le=MAX_AGE_MAX_SECONDS
+    )
 
     hour_bands: list[AttendancePolicyHourBandInput] | None = None
     late_bands: list[AttendancePolicyLateBandInput] | None = None
@@ -519,6 +544,9 @@ class AttendancePolicyVersionUpdate(BaseModel):
             self.incomplete_at_lock_behaviour,
             _INCOMPLETE_AT_LOCK_BEHAVIOURS,
         )
+        for name in ("geofence_mode", "geofence_max_accuracy_m", "geofence_max_age_seconds"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
         return self
 
 
@@ -566,6 +594,9 @@ class AttendancePolicyVersionRead(BaseModel):
     excess_break_count_window: str
     excess_break_days_to_half_day_count: int | None
     incomplete_at_lock_behaviour: str
+    geofence_mode: str
+    geofence_max_accuracy_m: int
+    geofence_max_age_seconds: int
 
     hour_bands: list[AttendancePolicyHourBandRead]
     late_bands: list[AttendancePolicyLateBandRead]
@@ -620,6 +651,9 @@ def attendance_policy_version_to_read(
         excess_break_count_window=row.excess_break_count_window,
         excess_break_days_to_half_day_count=row.excess_break_days_to_half_day_count,
         incomplete_at_lock_behaviour=row.incomplete_at_lock_behaviour,
+        geofence_mode=row.geofence_mode,
+        geofence_max_accuracy_m=row.geofence_max_accuracy_m,
+        geofence_max_age_seconds=row.geofence_max_age_seconds,
         hour_bands=[hour_band_to_read(b) for b in hour_bands],
         late_bands=[late_band_to_read(b) for b in late_bands],
         early_departure_bands=[early_departure_band_to_read(b) for b in early_departure_bands],
@@ -1269,6 +1303,39 @@ _ATTENDANCE_STATUSES = (
 )
 
 
+class PunchLocation(BaseModel):
+    """Device-reported position for a geofenced self-service punch. Every value is a claim by the
+    client; the server decides what it means (see `geofence.py`). Only the position, its stated
+    horizontal accuracy and the moment the device obtained it are accepted — no company, employee,
+    workplace or threshold fields exist to forge."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    accuracy_m: float = Field(ge=0, le=100_000, allow_inf_nan=False)
+    captured_at: datetime
+
+    @field_validator("captured_at")
+    @classmethod
+    def captured_at_must_be_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("captured_at must include a timezone offset")
+        return value
+
+
+class GeofenceDecisionRead(BaseModel):
+    """What the server decided about the location, safe to show the employee: no coordinates."""
+
+    mode: str
+    outcome: str
+    accepted: bool
+    workplace_name: str | None = None
+    distance_m: float | None = None
+    radius_m: float | None = None
+    accuracy_m: float | None = None
+
+
 class PunchCreateSelf(BaseModel):
     """Body for `POST /attendance/punches/me` — employee self-service (`DEC-TZ-01`, SELECTED).
 
@@ -1287,6 +1354,11 @@ class PunchCreateSelf(BaseModel):
     direction: str
     reference: str | None = Field(default=None, max_length=200)
     idempotency_key: str | None = Field(default=None, max_length=100)
+    #: Honoured only when the employee's resolved attendance policy enables geofencing; ignored
+    #: (and never stored) when it is DISABLED.
+    location: PunchLocation | None = None
+    #: Set by the app instead of `location` when it could not obtain a fix.
+    location_error: str | None = None
 
     @field_validator("direction")
     @classmethod
@@ -1294,6 +1366,19 @@ class PunchCreateSelf(BaseModel):
         if value not in _PUNCH_DIRECTIONS:
             raise ValueError(f"direction must be one of {_PUNCH_DIRECTIONS}")
         return value
+
+    @field_validator("location_error")
+    @classmethod
+    def validate_location_error(cls, value: str | None) -> str | None:
+        if value is not None and value not in CLIENT_LOCATION_ERRORS:
+            raise ValueError(f"location_error must be one of {CLIENT_LOCATION_ERRORS}")
+        return value
+
+    @model_validator(mode="after")
+    def location_xor_error(self) -> "PunchCreateSelf":
+        if self.location is not None and self.location_error is not None:
+            raise ValueError("send either location or location_error, not both")
+        return self
 
 
 class PunchCreateOnBehalf(BaseModel):
@@ -1338,6 +1423,8 @@ class PunchRead(BaseModel):
     recorded_by_user_id: UUID | None
     reference: str | None
     created_at: str
+    #: Present only when the punch was evaluated by a geofence policy (OPTIONAL/REQUIRED).
+    geofence: GeofenceDecisionRead | None = None
 
 
 def punch_to_read(row: "Punch") -> PunchRead:

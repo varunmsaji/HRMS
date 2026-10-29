@@ -5,6 +5,8 @@ import { PolicyBandsEditor } from "@/components/attendance-policy/policy-bands-e
 import {
   CORE_HOURS_BREACH_BEHAVIOURS,
   EARLY_CLASSIFICATIONS,
+  GEOFENCE_MODES,
+  GEOFENCE_MODE_LABELS,
   HOUR_BAND_STATUSES,
   INCOMPLETE_AT_LOCK_BEHAVIOURS,
   LATE_CLASSIFICATIONS,
@@ -249,6 +251,57 @@ export function AttendancePolicyVersionForm({
               onChange={(v) => update("earlyDepartureRequiresApproval", v)}
             />
           </div>
+        </div>
+      </section>
+
+      <section>
+        <h3 className="mb-1 text-sm font-semibold text-foreground">Location check (geofencing)</h3>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Applies to employee self-service punches from the mobile app only. HR corrections and
+          regularizations are never location-checked. Device location can be spoofed, so a pass
+          is evidence, not proof of presence. Start with Optional to see what Required would do.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FormField id="geofence-mode" label="Location check">
+            <NativeSelect
+              value={values.geofenceMode}
+              onChange={(e) => update("geofenceMode", e.target.value)}
+            >
+              {GEOFENCE_MODES.map((o) => (
+                <option key={o} value={o}>
+                  {GEOFENCE_MODE_LABELS[o]}
+                </option>
+              ))}
+            </NativeSelect>
+          </FormField>
+          {values.geofenceMode !== "DISABLED" ? (
+            <>
+              <FormField
+                id="geofence-max-accuracy"
+                label="Worst acceptable GPS accuracy (metres)"
+                description="Readings less precise than this are refused. 5-500."
+                error={errors.geofenceMaxAccuracyM}
+              >
+                <Input
+                  type="number"
+                  value={values.geofenceMaxAccuracyM}
+                  onChange={(e) => update("geofenceMaxAccuracyM", e.target.value)}
+                />
+              </FormField>
+              <FormField
+                id="geofence-max-age"
+                label="Oldest acceptable reading (seconds)"
+                description="Readings older than this are refused. 5-300."
+                error={errors.geofenceMaxAgeSeconds}
+              >
+                <Input
+                  type="number"
+                  value={values.geofenceMaxAgeSeconds}
+                  onChange={(e) => update("geofenceMaxAgeSeconds", e.target.value)}
+                />
+              </FormField>
+            </>
+          ) : null}
         </div>
       </section>
 

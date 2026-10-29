@@ -200,6 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     from hrms.modules.account_invite.public_router import router as account_invite_public_router
     from hrms.modules.account_invite.router import router as account_invite_router
+    from hrms.modules.attendance.geofence_router import router as geofence_router
     from hrms.modules.attendance.router import router as attendance_router
     from hrms.modules.employee.router import router as employee_router
     from hrms.modules.employee_import.router import router as employee_import_router
@@ -220,6 +221,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(employee_router, prefix="/v1")
     app.include_router(employee_import_router, prefix="/v1")
     app.include_router(attendance_router, prefix="/v1")
+    app.include_router(geofence_router, prefix="/v1")
     app.include_router(leave_router, prefix="/v1")
     app.include_router(payroll_router, prefix="/v1")
     app.include_router(onboarding_router, prefix="/v1")

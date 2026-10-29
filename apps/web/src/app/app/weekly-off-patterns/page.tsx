@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarOff } from "lucide-react";
+import { CalendarOff, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -97,10 +105,7 @@ export default function WeeklyOffPatternsPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
         setFormErrors({
-          rules:
-            err.code === "WEEKLY_OFF_RULE_INVALID"
-              ? err.message
-              : formErrors.rules,
+          rules: err.code === "WEEKLY_OFF_RULE_INVALID" ? err.message : formErrors.rules,
         });
         return;
       }
@@ -125,22 +130,25 @@ export default function WeeklyOffPatternsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Weekly-Off Patterns"
         description="Configurable weekly-off rules — every Sunday, alternate Saturday, 2nd & 4th Saturday, and more."
         actions={
           canManage && patterns && patterns.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Weekly-Off Pattern
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading weekly-off patterns…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading weekly-off patterns…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -149,9 +157,11 @@ export default function WeeklyOffPatternsPage() {
               }
               onRetry={() => void loadPatterns()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && patterns && patterns.length === 0 ? (
+        {!loading && !error && patterns && patterns.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={CalendarOff}
               title="No weekly-off patterns have been configured yet."
@@ -164,33 +174,53 @@ export default function WeeklyOffPatternsPage() {
                 ) : undefined
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && patterns && patterns.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && patterns && patterns.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Pattern</TableHead>
+                <TableHead>Schedule</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {patterns.map((pattern) => (
-                <li key={pattern.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/weekly-off-patterns/${pattern.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{pattern.name}</p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {pattern.pattern_kind.replace("_", " ")} ·{" "}
-                        {pattern.rules.map((r) => WEEKDAY_LABELS[r.weekday]).join(", ")}
-                      </p>
-                    </div>
+                <TableRow key={pattern.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/weekly-off-patterns/${pattern.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {pattern.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {pattern.pattern_kind.replace("_", " ")} ·{" "}
+                    {pattern.rules.map((r) => WEEKDAY_LABELS[r.weekday]).join(", ")}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={pattern.is_active ? "secondary" : "outline"}>
                       {pattern.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/weekly-off-patterns/${pattern.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Configure
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-3xl">

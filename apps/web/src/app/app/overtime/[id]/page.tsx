@@ -14,6 +14,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { formatDateTime, formatMinutes } from "@/lib/attendance/format";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import {
@@ -50,6 +52,7 @@ export default function OvertimeDetailPage() {
   const router = useRouter();
   const { user } = useAuth();
   const tz = user?.company_timezone ?? "Asia/Kolkata";
+  const datePattern = useCompanyDatePattern();
   const { can } = usePermissions();
 
   const [record, setRecord] = useState<OvertimeRecord | null>(null);
@@ -88,7 +91,9 @@ export default function OvertimeDetailPage() {
     <div className="space-y-6">
       <PageHeader
         title="Overtime record"
-        description={record ? `${record.attendance_date}` : undefined}
+        description={
+          record ? formatCompanyDate(record.attendance_date, datePattern) : undefined
+        }
         actions={
           <div className="flex items-center gap-2">
             <Button type="button" variant="outline" onClick={() => router.push("/app/overtime")}>
@@ -133,7 +138,10 @@ export default function OvertimeDetailPage() {
             <CardContent className="pt-6">
               <h2 className="mb-4 text-sm font-medium text-foreground">Record</h2>
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="Attendance date" value={record.attendance_date} />
+                <Field
+                  label="Attendance date"
+                  value={formatCompanyDate(record.attendance_date, datePattern)}
+                />
                 <Field
                   label="Day class"
                   value={record.day_class ? OVERTIME_DAY_CLASS_LABELS[record.day_class] : "—"}
@@ -158,7 +166,9 @@ export default function OvertimeDetailPage() {
                     value={
                       <>
                         {formatMinutes(record.comp_off_minutes)}
-                        {record.comp_off_expiry_date ? `, expires ${record.comp_off_expiry_date}` : ""}
+                        {record.comp_off_expiry_date
+                          ? `, expires ${formatCompanyDate(record.comp_off_expiry_date, datePattern)}`
+                          : ""}
                       </>
                     }
                   />

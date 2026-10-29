@@ -71,7 +71,7 @@ describe("ChangeImpactDialog", () => {
     setup();
 
     expect(await screen.findByTestId("impact-summary")).toHaveTextContent(
-      "2 employees affected on 1 date between 2026-09-01 and 2027-02-27.",
+      "2 employees affected on 1 date between 01/09/2026 and 27/02/2027.",
     );
     expect(post).toHaveBeenCalledWith("/work-calendar-changes/preview", {
       change: CHANGE,
@@ -79,7 +79,7 @@ describe("ChangeImpactDialog", () => {
       window_to: "2027-02-27",
     });
     const table = screen.getByRole("table");
-    const row = within(table).getByText(/Wednesday, 9 September 2026/).closest("tr") as HTMLElement;
+    const row = within(table).getByText("09/09/2026").closest("tr") as HTMLElement;
     expect(within(row).getByText("Working day")).toBeInTheDocument();
     expect(within(row).getByText("Holiday — Founders Day")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();

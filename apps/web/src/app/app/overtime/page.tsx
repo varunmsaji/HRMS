@@ -4,16 +4,26 @@ import { AlarmClock } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { OvertimeStatusBadge } from "@/components/overtime/overtime-status-badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { businessToday, formatMinutes } from "@/lib/attendance/format";
@@ -26,6 +36,7 @@ import {
   type OvertimeRecord,
   type OvertimeStatus,
 } from "@/lib/overtime/types";
+import { cn } from "@/lib/utils";
 
 interface EmployeeOption {
   id: string;
@@ -50,9 +61,7 @@ type ViewMode = "MINE" | "TEAM";
 
 /** `/v1/overtime` list/filter (architecture §13/§25). Overtime records are system-detected —
  * there is no create flow here, only viewing and, for approvers, reviewing already-existing
- * records. Every row is already DataScope-filtered server-side — "Mine" and "Team" are just
- * different query filters over the same permission-scoped read, mirroring the Regularizations
- * and Attendance dashboard's own posture. */
+ * records. */
 export default function OvertimePage() {
   const { user } = useAuth();
   const { can } = usePermissions();
@@ -117,29 +126,43 @@ export default function OvertimePage() {
         description="System-detected overtime — reviewed and, where a policy requires it, approved or rejected."
       />
 
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant={view === "MINE" ? "default" : "outline"}
-          size="sm"
-          onClick={() => setView("MINE")}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          role="group"
+          aria-label="Overtime scope"
+          className="inline-flex rounded-md border border-border bg-surface p-0.5"
         >
-          My overtime
-        </Button>
-        {canApprove ? (
-          <Button
+          <button
             type="button"
-            variant={view === "TEAM" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setView("TEAM")}
+            onClick={() => setView("MINE")}
+            className={cn(
+              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+              view === "MINE"
+                ? "bg-primary text-on-primary"
+                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+            )}
           >
-            Team overtime
-          </Button>
-        ) : null}
+            My overtime
+          </button>
+          {canApprove ? (
+            <button
+              type="button"
+              onClick={() => setView("TEAM")}
+              className={cn(
+                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                view === "TEAM"
+                  ? "bg-primary text-on-primary"
+                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+              )}
+            >
+              Team overtime
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <Card>
-        <CardContent className="grid grid-cols-1 gap-4 pt-6 sm:grid-cols-4">
+      <TableContainer>
+        <TableToolbar className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <FormField id="overtime-date-from" label="From">
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </FormField>
@@ -161,7 +184,10 @@ export default function OvertimePage() {
           </FormField>
           {view === "TEAM" ? (
             <FormField id="overtime-employee" label="Employee">
-              <NativeSelect value={employeeFilter} onChange={(e) => setEmployeeFilter(e.target.value)}>
+              <NativeSelect
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+              >
                 <option value="">All employees</option>
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
@@ -171,13 +197,11 @@ export default function OvertimePage() {
               </NativeSelect>
             </FormField>
           ) : null}
-        </CardContent>
-      </Card>
+        </TableToolbar>
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading overtime records…" /> : null}
-          {error && !loading ? (
+        {loading ? <LoadingState label="Loading overtime records…" /> : null}
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -186,67 +210,75 @@ export default function OvertimePage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
-          {!loading && !error && records && records.length === 0 ? (
+          </div>
+        ) : null}
+        {!loading && !error && records && records.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={AlarmClock}
               title="No overtime records in this range."
               description="Overtime records appear here automatically once attendance calculation detects overtime."
             />
-          ) : null}
-          {!loading && !error && records && records.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Date</th>
-                    <th className="px-3 py-2 text-left font-medium">Employee</th>
-                    <th className="px-3 py-2 text-left font-medium">Day class</th>
-                    <th className="px-3 py-2 text-right font-medium">Detected</th>
-                    <th className="px-3 py-2 text-right font-medium">Approved</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-left font-medium">Approval chain</th>
-                    <th className="px-3 py-2 text-right font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {records.map((record) => (
-                    <tr key={record.id} className="hover:bg-accent">
-                      <td className="px-3 py-2 text-foreground-secondary">{record.attendance_date}</td>
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {employeeDisplayName(employeeById.get(record.employee_id), record.employee_id)}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {record.day_class ? OVERTIME_DAY_CLASS_LABELS[record.day_class] : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right text-foreground-secondary">
-                        {formatMinutes(record.minutes_detected)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-foreground-secondary">
-                        {formatMinutes(record.minutes_approved)}
-                      </td>
-                      <td className="px-3 py-2">
-                        <OvertimeStatusBadge status={record.status} />
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {OVERTIME_APPROVAL_CHAIN_LABELS[record.approval_chain]}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <Link
-                          href={`/app/overtime/${record.id}`}
-                          className="text-sm font-medium text-primary hover:underline"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : null}
+        {!loading && !error && records && records.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Date</TableHead>
+                <TableHead>Employee</TableHead>
+                <TableHead>Day class</TableHead>
+                <TableHead align="right">Detected</TableHead>
+                <TableHead align="right">Approved</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Approval chain</TableHead>
+                <TableHead align="right">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {records.map((record) => (
+                <TableRow key={record.id}>
+                  <TableCell className="tabular-nums text-foreground-secondary">
+                    <CompanyDate value={record.attendance_date} />
+                  </TableCell>
+                  <TableCell>
+                    <EmployeeIdentityCell
+                      name={employeeDisplayName(
+                        employeeById.get(record.employee_id),
+                        record.employee_id,
+                      )}
+                      size="sm"
+                    />
+                  </TableCell>
+                  <TableCell className="text-foreground-secondary">
+                    {record.day_class ? OVERTIME_DAY_CLASS_LABELS[record.day_class] : "—"}
+                  </TableCell>
+                  <TableCell align="right" numeric className="text-foreground-secondary">
+                    {formatMinutes(record.minutes_detected)}
+                  </TableCell>
+                  <TableCell align="right" numeric className="font-medium text-foreground">
+                    {formatMinutes(record.minutes_approved)}
+                  </TableCell>
+                  <TableCell>
+                    <OvertimeStatusBadge status={record.status} />
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {OVERTIME_APPROVAL_CHAIN_LABELS[record.approval_chain]}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/overtime/${record.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
     </div>
   );
 }

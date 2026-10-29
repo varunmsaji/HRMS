@@ -13,6 +13,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import {
   ATTENDANCE_PERIOD_BLOCKING_REASON_LABELS,
@@ -39,6 +41,7 @@ export function FinalizePeriodDialog({
   onDone,
 }: FinalizePeriodDialogProps) {
   const { toast } = useToast();
+  const datePattern = useCompanyDatePattern();
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [reasons, setReasons] = useState<AttendancePeriodBlockingReason[] | null>(null);
@@ -95,7 +98,9 @@ export function FinalizePeriodDialog({
         <DialogHeader>
           <DialogTitle>Finalize and lock this period</DialogTitle>
           <DialogDescription>
-            {period ? `${period.period_start} to ${period.period_end}. ` : ""}
+            {period
+              ? `${formatCompanyDate(period.period_start, datePattern)} to ${formatCompanyDate(period.period_end, datePattern)}. `
+              : ""}
             Once finalized, attendance in this range becomes immutable — punches, roster changes,
             regularizations, and overtime approvals for these dates will all be refused until the
             period is reopened.

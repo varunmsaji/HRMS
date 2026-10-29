@@ -13,8 +13,20 @@
     {
       "name": "web",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd apps/web && npm run dev"],
+      "runtimeArgs": [
+        "-c",
+        "cd apps/web && npm run dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "web-ui-design",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd ../HRMS-ui_design/apps/web && npx next dev --port 3001 --webpack"
+      ],
+      "port": 3001
     }
   ]
 }

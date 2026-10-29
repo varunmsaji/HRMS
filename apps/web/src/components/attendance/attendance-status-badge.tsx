@@ -6,11 +6,11 @@ const STATUS_VARIANT: Record<AttendanceStatus, NonNullable<BadgeProps["variant"]
   EXITED: "outline",
   NOT_EXPECTED: "secondary",
   PRESENT: "success",
-  HALF_DAY: "warning",
+  HALF_DAY: "half-day",
   ABSENT: "danger",
   LEAVE: "on-leave",
   ON_DUTY: "info",
-  WFH: "info",
+  WFH: "wfh",
   INCOMPLETE: "warning",
   CONFIG_ERROR: "danger",
 };
@@ -24,7 +24,7 @@ interface AttendanceStatusBadgeProps {
 export function AttendanceStatusBadge({ status }: AttendanceStatusBadgeProps) {
   const known = status in STATUS_VARIANT ? (status as AttendanceStatus) : null;
   return (
-    <Badge variant={known ? STATUS_VARIANT[known] : "outline"}>
+    <Badge variant={known ? STATUS_VARIANT[known] : "outline"} dot>
       {known ? ATTENDANCE_STATUS_LABELS[known] : status}
     </Badge>
   );

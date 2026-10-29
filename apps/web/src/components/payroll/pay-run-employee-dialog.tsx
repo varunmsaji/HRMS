@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { LoadingState } from "@/components/common/loading-state";
 import { Badge } from "@/components/ui/badge";
+import { HorizontalScroll } from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -77,7 +78,7 @@ export function PayRunEmployeeDialog({
             {detail.lines.length === 0 ? (
               <p className="text-sm text-foreground-muted">Not computed yet.</p>
             ) : (
-              <div className="overflow-x-auto rounded-md border border-border">
+              <HorizontalScroll className="rounded-md border border-border">
                 <table className="w-full text-sm">
                   <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                     <tr>
@@ -127,7 +128,7 @@ export function PayRunEmployeeDialog({
                     </tr>
                   </tbody>
                 </table>
-              </div>
+              </HorizontalScroll>
             )}
           </div>
         ) : null}

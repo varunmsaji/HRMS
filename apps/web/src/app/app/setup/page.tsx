@@ -58,11 +58,13 @@ export default function CompanySetupPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Company setup"
         description="Track onboarding progress for your company."
         actions={
           progress ? (
-            <Badge variant={isComplete ? "default" : "secondary"}>
+            <Badge variant={isComplete ? "success" : "secondary"} dot={isComplete}>
               {isComplete ? "Setup complete" : `${completedCount} of ${totalCount} complete`}
             </Badge>
           ) : null

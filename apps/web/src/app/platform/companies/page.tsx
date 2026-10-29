@@ -4,15 +4,22 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader } from "@/components/common/page-header";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { describeApiError } from "@/lib/api/errors";
 import {
-  platformApi,
-  type CompanyListItem,
-} from "@/lib/platform/api";
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
+import { describeApiError } from "@/lib/api/errors";
+import { platformApi, type CompanyListItem } from "@/lib/platform/api";
 import type { PaginationMeta } from "@/lib/api/types";
 
 import { StatusBadge } from "../status-badge";
@@ -52,57 +59,99 @@ function CompaniesList() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Companies</h1>
+      <PageHeader
+        title="Companies"
+        description="Tenant companies registered on the platform, their lifecycle status, and primary admin contacts."
+      />
 
-      <div className="flex flex-wrap gap-3">
-        <NativeSelect className="w-52" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} aria-label="Status filter">
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => (<option key={s} value={s}>{s.replace("_", " ")}</option>))}
-        </NativeSelect>
-        <Input className="w-64" placeholder="Search company or admin email" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} aria-label="Search" />
-      </div>
-
-      {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
-
-      <Card>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead className="border-b border-border text-left text-foreground-muted">
-              <tr>
-                <th className="px-4 py-2 font-medium">Company</th>
-                <th className="px-4 py-2 font-medium">Admin</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium">Registered</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((c) => (
-                <tr key={c.id} className="border-b border-border last:border-0 hover:bg-accent/40">
-                  <td className="px-4 py-2">
-                    <Link href={`/platform/companies/${c.id}`} className="font-medium text-primary hover:underline">{c.name}</Link>
-                  </td>
-                  <td className="px-4 py-2">{c.admin_name ?? "—"}<div className="text-xs text-foreground-muted">{c.admin_email}</div></td>
-                  <td className="px-4 py-2"><StatusBadge status={c.status} /></td>
-                  <td className="px-4 py-2">{new Date(c.created_at).toLocaleDateString()}</td>
-                </tr>
-              ))}
-              {!loading && items.length === 0 ? (
-                <tr><td colSpan={4} className="px-4 py-8 text-center text-foreground-muted">No companies match.</td></tr>
-              ) : null}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
-
-      {pagination && pagination.total_pages > 1 ? (
-        <div className="flex items-center justify-between text-sm">
-          <span>Page {pagination.page} of {pagination.total_pages}</span>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-            <Button variant="outline" size="sm" disabled={page >= pagination.total_pages} onClick={() => setPage(page + 1)}>Next</Button>
-          </div>
-        </div>
+      {error ? (
+        <p role="alert" className="text-sm text-danger">
+          {error}
+        </p>
       ) : null}
+
+      <TableContainer>
+        <TableToolbar>
+          <div className="flex flex-wrap gap-3">
+            <NativeSelect
+              className="w-52"
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              }}
+              aria-label="Status filter"
+            >
+              <option value="">All statuses</option>
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s.replace("_", " ")}
+                </option>
+              ))}
+            </NativeSelect>
+            <Input
+              className="w-64"
+              placeholder="Search company or admin email"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+              aria-label="Search"
+            />
+          </div>
+        </TableToolbar>
+
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>Company</TableHead>
+              <TableHead>Admin</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Registered</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell>
+                  <Link
+                    href={`/platform/companies/${c.id}`}
+                    className="font-medium text-primary hover:underline"
+                  >
+                    {c.name}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <div className="font-medium text-foreground">{c.admin_name ?? "—"}</div>
+                  <div className="text-xs text-foreground-muted">{c.admin_email}</div>
+                </TableCell>
+                <TableCell>
+                  <StatusBadge status={c.status} />
+                </TableCell>
+                <TableCell className="tabular-nums text-foreground-secondary">
+                  {new Date(c.created_at).toLocaleDateString()}
+                </TableCell>
+              </TableRow>
+            ))}
+            {!loading && items.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="py-8 text-center text-foreground-muted">
+                  No companies match.
+                </TableCell>
+              </TableRow>
+            ) : null}
+          </TableBody>
+        </Table>
+
+        {pagination ? (
+          <PaginationControls
+            pagination={pagination}
+            onPageChange={setPage}
+            disabled={loading}
+          />
+        ) : null}
+      </TableContainer>
     </div>
   );
 }

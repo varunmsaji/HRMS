@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
@@ -179,7 +180,8 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
                     ) : null}
                   </span>
                   <span className="text-foreground-secondary">
-                    {row.effective_from} → {row.effective_to ?? "now"}
+                    <CompanyDate value={row.effective_from} /> →{" "}
+                    {row.effective_to ? <CompanyDate value={row.effective_to} /> : "now"}
                   </span>
                 </li>
               ))}

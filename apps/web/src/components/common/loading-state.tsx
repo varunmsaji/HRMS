@@ -12,13 +12,14 @@ export function LoadingState({ label = "Loading…", className, fullPage }: Load
   return (
     <div
       role="status"
+      aria-live="polite"
       className={cn(
-        "flex items-center justify-center gap-2 text-sm text-foreground-muted",
-        fullPage ? "min-h-[50vh]" : "py-8",
+        "flex items-center justify-center gap-2.5 text-sm text-foreground-secondary",
+        fullPage ? "min-h-[50vh]" : "py-10",
         className,
       )}
     >
-      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
       <span>{label}</span>
     </div>
   );

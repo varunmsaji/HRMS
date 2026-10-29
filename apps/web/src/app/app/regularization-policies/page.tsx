@@ -1,6 +1,6 @@
 "use client";
 
-import { FileClock } from "lucide-react";
+import { FileClock, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { RegularizationPolicy } from "@/lib/regularization-policy/types";
@@ -104,7 +112,11 @@ export default function RegularizationPoliciesPage() {
         });
         return;
       }
-      toast({ title: "Could not add policy", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not add policy",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -113,22 +125,25 @@ export default function RegularizationPoliciesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Regularization Policies"
         description="Who may request a correction, windows, caps, allowed exception types, and the approval chain — the contract a future regularization workflow will read."
         actions={
           policies && policies.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Policy
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading regularization policies…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading regularization policies…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -137,9 +152,11 @@ export default function RegularizationPoliciesPage() {
               }
               onRetry={() => void loadPolicies()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && policies && policies.length === 0 ? (
+        {!loading && !error && policies && policies.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={FileClock}
               title="No regularization policies have been configured yet."
@@ -150,34 +167,52 @@ export default function RegularizationPoliciesPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && policies && policies.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && policies && policies.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Policy</TableHead>
+                <TableHead>Code</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {policies.map((policy) => (
-                <li key={policy.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/regularization-policies/${policy.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        {policy.name}
-                        {policy.code ? (
-                          <span className="text-foreground-muted"> ({policy.code})</span>
-                        ) : null}
-                      </p>
-                    </div>
+                <TableRow key={policy.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/regularization-policies/${policy.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {policy.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-foreground-secondary">
+                    {policy.code ?? "—"}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={policy.is_active ? "secondary" : "outline"}>
                       {policy.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/regularization-policies/${policy.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Configure
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">

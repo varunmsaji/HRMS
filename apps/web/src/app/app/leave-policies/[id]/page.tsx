@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
+import { CompanyDate } from "@/components/common/company-date";
 import { ErrorState } from "@/components/common/error-state";
 import { LeavePolicyForm } from "@/components/leave-policy/leave-policy-form";
 import { LeavePolicyVersionForm } from "@/components/leave-policy/leave-policy-version-form";
@@ -14,7 +14,7 @@ import { PolicyVersionPublishDialog } from "@/components/common/policy-version-p
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +23,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -39,6 +49,7 @@ import {
   type LeavePolicyVersionFormErrors,
   type LeavePolicyVersionFormValues,
 } from "@/lib/leave-policy/validate-leave-policy";
+import { cn } from "@/lib/utils";
 
 type TabKey = "overview" | "versions";
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -140,7 +151,11 @@ export default function LeavePolicyDetailPage() {
 
   function startEditing() {
     if (!policy) return;
-    setFormValues({ leaveTypeId: policy.leave_type_id, name: policy.name, code: policy.code ?? "" });
+    setFormValues({
+      leaveTypeId: policy.leave_type_id,
+      name: policy.name,
+      code: policy.code ?? "",
+    });
     setFormErrors({});
     setStaleMessage(null);
     setEditing(true);
@@ -194,7 +209,11 @@ export default function LeavePolicyDetailPage() {
           return;
         }
       }
-      toast({ title: "Could not save policy", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not save policy",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -220,7 +239,10 @@ export default function LeavePolicyDetailPage() {
         { ifMatch: String(policy.version) },
       );
       setPolicy(updated);
-      toast({ title: updated.is_active ? "Policy reactivated" : "Policy deactivated", variant: "success" });
+      toast({
+        title: updated.is_active ? "Policy reactivated" : "Policy deactivated",
+        variant: "success",
+      });
       setConfirmOpen(false);
     } catch (err) {
       toast({
@@ -294,7 +316,11 @@ export default function LeavePolicyDetailPage() {
           return;
         }
       }
-      toast({ title: "Could not save draft", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not save draft",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSavingDraft(false);
     }
@@ -340,15 +366,18 @@ export default function LeavePolicyDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/leave-policies" className="text-sm text-foreground-secondary hover:underline">
-          ← Leave Policies
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/leave-policies"
+        backLabel="Leave Policies"
         title={policy?.name ?? "Leave Policy"}
         description="Identity on the Overview tab; request/approval/accrual rules live on the Versions tab."
+        badge={
+          policy ? (
+            <Badge variant={policy.is_active ? "secondary" : "outline"}>
+              {policy.is_active ? "Active" : "Inactive"}
+            </Badge>
+          ) : undefined
+        }
         actions={
           canManage && policy && !editing && tab === "overview" ? (
             <div className="flex items-center gap-2">
@@ -365,7 +394,7 @@ export default function LeavePolicyDetailPage() {
 
       {loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <LoadingState label="Loading policy…" />
           </CardContent>
         </Card>
@@ -373,7 +402,7 @@ export default function LeavePolicyDetailPage() {
 
       {error && !loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <ErrorState
               message={
                 error.status === 403
@@ -398,11 +427,12 @@ export default function LeavePolicyDetailPage() {
                 role="tab"
                 aria-selected={tab === item.key}
                 onClick={() => setTab(item.key)}
-                className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                className={cn(
+                  "shrink-0 border-b-2 px-3.5 py-2.5 text-sm font-medium transition-colors duration-motion-instant focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   tab === item.key
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-foreground-muted hover:text-foreground"
-                }`}
+                    ? "border-primary text-primary"
+                    : "border-transparent text-foreground-secondary hover:border-border-strong hover:text-foreground",
+                )}
               >
                 {item.label}
               </button>
@@ -411,7 +441,7 @@ export default function LeavePolicyDetailPage() {
 
           {tab === "overview" ? (
             <Card>
-              <CardContent className="pt-6">
+              <CardContent>
                 {staleMessage ? (
                   <ConcurrencyConflictBanner
                     message={staleMessage}
@@ -428,37 +458,43 @@ export default function LeavePolicyDetailPage() {
                       onChange={setFormValues}
                       leaveTypeEditable={false}
                     />
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 border-t border-border pt-4">
                       <Button type="button" onClick={() => void handleSave()} disabled={saving}>
                         {saving ? "Saving…" : "Save changes"}
                       </Button>
-                      <Button type="button" variant="outline" onClick={cancelEditing} disabled={saving}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={cancelEditing}
+                        disabled={saving}
+                      >
                         Cancel
                       </Button>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <Badge variant={policy.is_active ? "secondary" : "outline"}>
-                      {policy.is_active ? "Active" : "Inactive"}
-                    </Badge>
                     <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
-                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-                          Policy name
-                        </dt>
-                        <dd className="mt-0.5 text-sm text-foreground">{policy.name}</dd>
+                        <dt className="text-xs font-medium text-foreground-muted">Policy name</dt>
+                        <dd className="mt-0.5 text-sm font-medium text-foreground">
+                          {policy.name}
+                        </dd>
                       </div>
                       <div>
-                        <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-                          Policy code
-                        </dt>
-                        <dd className="mt-0.5 text-sm text-foreground">{policy.code ?? "—"}</dd>
+                        <dt className="text-xs font-medium text-foreground-muted">Policy code</dt>
+                        <dd className="mt-0.5 font-mono text-sm text-foreground">
+                          {policy.code ?? "—"}
+                        </dd>
                       </div>
                     </dl>
                     <p className="text-xs text-foreground-muted">
                       Configure request/approval/accrual rules on the{" "}
-                      <button type="button" className="underline" onClick={() => setTab("versions")}>
+                      <button
+                        type="button"
+                        className="font-medium text-primary hover:underline"
+                        onClick={() => setTab("versions")}
+                      >
                         Versions tab
                       </button>
                       .
@@ -473,7 +509,7 @@ export default function LeavePolicyDetailPage() {
             <div className="space-y-6">
               {versionsLoading && versions === null ? (
                 <Card>
-                  <CardContent className="pt-6">
+                  <CardContent>
                     <LoadingState label="Loading versions…" />
                   </CardContent>
                 </Card>
@@ -482,31 +518,31 @@ export default function LeavePolicyDetailPage() {
               {versions !== null ? (
                 <>
                   <Card>
-                    <CardContent className="space-y-4 pt-6">
-                      <h3 className="text-sm font-medium text-foreground">Currently published</h3>
+                    <CardHeader>
+                      <CardTitle>Currently published</CardTitle>
+                    </CardHeader>
+                    <CardContent>
                       {currentPublished ? (
                         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                           <div>
-                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                            <dt className="text-xs font-medium text-foreground-muted">
                               Effective from
                             </dt>
-                            <dd className="mt-0.5 text-sm text-foreground">
-                              {currentPublished.effective_from}
+                            <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                              <CompanyDate value={currentPublished.effective_from} />
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+                            <dt className="text-xs font-medium text-foreground-muted">
                               Approval chain
                             </dt>
-                            <dd className="mt-0.5 text-sm text-foreground">
+                            <dd className="mt-0.5 text-sm font-medium text-foreground">
                               {currentPublished.approval_chain}
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-                              Accrual
-                            </dt>
-                            <dd className="mt-0.5 text-sm text-foreground">
+                            <dt className="text-xs font-medium text-foreground-muted">Accrual</dt>
+                            <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
                               {currentPublished.accrual_frequency === "NONE"
                                 ? "None"
                                 : `${currentPublished.accrual_rate_per_cycle ?? "0"} / ${currentPublished.accrual_frequency.toLowerCase()}`}
@@ -523,21 +559,20 @@ export default function LeavePolicyDetailPage() {
                   </Card>
 
                   <Card>
-                    <CardContent className="space-y-4 pt-6">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-medium text-foreground">Draft</h3>
-                        {canManage && !draft ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => void handleCreateDraft()}
-                            disabled={creatingDraft}
-                          >
-                            {creatingDraft ? "Creating…" : "New draft"}
-                          </Button>
-                        ) : null}
-                      </div>
-
+                    <CardHeader className="flex-row items-center justify-between space-y-0">
+                      <CardTitle>Draft</CardTitle>
+                      {canManage && !draft ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void handleCreateDraft()}
+                          disabled={creatingDraft}
+                        >
+                          {creatingDraft ? "Creating…" : "New draft"}
+                        </Button>
+                      ) : null}
+                    </CardHeader>
+                    <CardContent className="space-y-4">
                       {!draft ? (
                         <p className="text-sm text-foreground-muted">
                           No open draft. Start one to change this policy&apos;s rules.
@@ -558,7 +593,7 @@ export default function LeavePolicyDetailPage() {
                             errors={draftErrors}
                             onChange={setDraftValues}
                           />
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
                             {canManage ? (
                               <>
                                 <Button
@@ -592,23 +627,36 @@ export default function LeavePolicyDetailPage() {
                   </Card>
 
                   {historical.length > 0 ? (
-                    <Card>
-                      <CardContent className="pt-6">
-                        <h3 className="text-sm font-medium text-foreground">History</h3>
-                        <ul className="mt-3 divide-y divide-border">
+                    <TableContainer>
+                      <TableToolbar>
+                        <h3 className="text-sm font-semibold text-foreground">History</h3>
+                      </TableToolbar>
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="hover:bg-transparent">
+                            <TableHead>Effective period</TableHead>
+                            <TableHead>Summary</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                           {historical.map((version) => (
-                            <li key={version.id} className="py-3 first:pt-0 last:pb-0">
-                              <p className="text-sm font-medium text-foreground">
+                            <TableRow key={version.id}>
+                              <TableCell className="tabular-nums text-foreground-secondary">
+                                <CompanyDate value={version.effective_from} /> –{" "}
+                                {version.effective_to ? (
+                                  <CompanyDate value={version.effective_to} />
+                                ) : (
+                                  "open"
+                                )}
+                              </TableCell>
+                              <TableCell className="font-medium text-foreground">
                                 {version.approval_chain} — accrual {version.accrual_frequency}
-                              </p>
-                              <p className="mt-0.5 text-xs text-foreground-muted">
-                                {version.effective_from} – {version.effective_to ?? "open"}
-                              </p>
-                            </li>
+                              </TableCell>
+                            </TableRow>
                           ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   ) : null}
                 </>
               ) : null}
@@ -617,10 +665,15 @@ export default function LeavePolicyDetailPage() {
         </>
       ) : null}
 
-      <Dialog open={confirmOpen} onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}>
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{policy?.is_active ? "Deactivate policy?" : "Reactivate policy?"}</DialogTitle>
+            <DialogTitle>
+              {policy?.is_active ? "Deactivate policy?" : "Reactivate policy?"}
+            </DialogTitle>
             <DialogDescription>
               {policy?.is_active
                 ? "This policy will no longer be assignable to a new scope. Existing assignments are unaffected."
@@ -628,7 +681,12 @@ export default function LeavePolicyDetailPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setConfirmOpen(false)} disabled={statusChanging}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={statusChanging}
+            >
               Cancel
             </Button>
             <Button

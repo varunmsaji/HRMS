@@ -44,7 +44,8 @@ const TABS: Array<{ key: TabKey; label: string; permission?: string }> = [
 
 function employeeName(employee: Employee): string {
   return (
-    employee.display_name?.trim() || [employee.first_name, employee.last_name].filter(Boolean).join(" ")
+    employee.display_name?.trim() ||
+    [employee.first_name, employee.last_name].filter(Boolean).join(" ")
   );
 }
 
@@ -104,20 +105,21 @@ export default function MyProfilePage() {
       <PageHeader
         title={employee ? employeeName(employee) || employee.employee_code : "My Profile"}
         description={employee ? `Employee code ${employee.employee_code}` : undefined}
+        badge={
+          employee ? (
+            <>
+              <EmployeeStatusBadge status={employee.status} />
+              <Badge variant={employee.is_active ? "secondary" : "outline"}>
+                {employee.is_active ? "Active" : "Inactive"}
+              </Badge>
+            </>
+          ) : undefined
+        }
       />
-
-      {employee ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <EmployeeStatusBadge status={employee.status} />
-          <Badge variant={employee.is_active ? "secondary" : "outline"}>
-            {employee.is_active ? "Active" : "Inactive"}
-          </Badge>
-        </div>
-      ) : null}
 
       {loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <LoadingState label="Loading your profile…" />
           </CardContent>
         </Card>
@@ -125,15 +127,19 @@ export default function MyProfilePage() {
 
       {error && !loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <ErrorState message={error.message} onRetry={() => void loadEmployee()} />
           </CardContent>
         </Card>
       ) : null}
 
       {!loading && !error && employee ? (
-        <div className="space-y-4">
-          <div className="flex gap-1 overflow-x-auto border-b border-border" role="tablist">
+        <div className="space-y-5">
+          <div
+            className="flex gap-1 overflow-x-auto border-b border-border"
+            role="tablist"
+            aria-label="My profile sections"
+          >
             {visibleTabs.map((item) => (
               <button
                 key={item.key}
@@ -142,10 +148,10 @@ export default function MyProfilePage() {
                 aria-selected={tab === item.key}
                 onClick={() => setTab(item.key)}
                 className={cn(
-                  "shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                  "shrink-0 border-b-2 px-3.5 py-2.5 text-sm font-medium transition-colors duration-motion-instant focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   tab === item.key
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-foreground-muted hover:text-foreground",
+                    ? "border-primary text-primary"
+                    : "border-transparent text-foreground-secondary hover:border-border-strong hover:text-foreground",
                 )}
               >
                 {item.label}
@@ -160,7 +166,10 @@ export default function MyProfilePage() {
           {tab === "statutory" ? <StatutoryPanel employeeId={employee.id} /> : null}
           {tab === "banking" ? <BankingPanel employeeId={employee.id} /> : null}
           {tab === "attendance" ? (
-            <EmployeeAttendancePanel employeeId={employee.id} employeeLabel={employeeName(employee)} />
+            <EmployeeAttendancePanel
+              employeeId={employee.id}
+              employeeLabel={employeeName(employee)}
+            />
           ) : null}
         </div>
       ) : null}

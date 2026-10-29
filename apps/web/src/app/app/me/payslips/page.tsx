@@ -4,11 +4,20 @@ import { FileText } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { describeApiError } from "@/lib/api/errors";
 import { formatInr, formatPayMonth, type PayslipSummary } from "@/lib/payroll/types";
@@ -35,36 +44,58 @@ export default function MyPayslipsPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="My Payslips" description="Your payslips from finalised pay runs." />
-      <Card>
-        <CardContent className="pt-6">
-          {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
-          {!payslips && !error ? <LoadingState label="Loading payslips…" /> : null}
-          {payslips && payslips.length === 0 ? (
-            <EmptyState icon={FileText} title="No payslips yet." />
-          ) : null}
-          {payslips && payslips.length > 0 ? (
-            <ul className="divide-y divide-border rounded-md border border-border">
+      <TableContainer>
+        {error ? (
+          <div className="p-6">
+            <ErrorState message={error} onRetry={() => void load()} />
+          </div>
+        ) : null}
+        {!payslips && !error ? <LoadingState label="Loading payslips…" /> : null}
+        {payslips && payslips.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              icon={FileText}
+              title="No payslips yet."
+              description="Payslips appear here automatically once a monthly pay run is finalised."
+            />
+          </div>
+        ) : null}
+        {payslips && payslips.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Month</TableHead>
+                <TableHead>Paid on</TableHead>
+                <TableHead align="right">Net pay</TableHead>
+                <TableHead align="right">Payslip</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {payslips.map((payslip) => (
-                <li key={payslip.pay_run_id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                  <div>
-                    <div className="font-medium text-foreground">{formatPayMonth(payslip.month)}</div>
-                    <div className="text-xs text-foreground-muted">Paid on {payslip.pay_date}</div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="tabular-nums">{formatInr(payslip.net_minor)}</span>
+                <TableRow key={payslip.pay_run_id}>
+                  <TableCell className="font-medium text-foreground">
+                    {formatPayMonth(payslip.month)}
+                  </TableCell>
+                  <TableCell className="tabular-nums text-foreground-secondary">
+                    Paid on <CompanyDate value={payslip.pay_date} />
+                  </TableCell>
+                  <TableCell align="right" numeric className="font-semibold text-foreground">
+                    {formatInr(payslip.net_minor)}
+                  </TableCell>
+                  <TableCell align="right">
                     <Link
                       href={`/app/me/payslips/${payslip.pay_run_id}`}
-                      className="font-medium text-primary hover:underline"
+                      className="text-xs font-medium text-primary hover:underline"
                     >
                       View
                     </Link>
-                  </div>
-                </li>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
     </div>
   );
 }

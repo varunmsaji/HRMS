@@ -12,7 +12,9 @@ import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_month_card.dart';
 import 'attendance_widgets.dart';
+import '../domain/punch_location.dart';
 import 'face_punch_card.dart';
+import 'punch_location_flow.dart';
 
 /// Mirrors the "My Attendance" portion of the Stitch Mobile Dashboard —
 /// today's punch status plus the last 14 days, for the signed-in employee.
@@ -71,17 +73,41 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
   ({String direction, String key})? _unconfirmedPunch;
 
   Future<void> _punch(String direction) async {
+    if (_punching) return; // one attempt at a time, including the location capture
     setState(() => _punching = true);
+    try {
+      var again = true;
+      while (again && mounted) {
+        again = await _punchOnce(direction);
+      }
+    } finally {
+      if (mounted) setState(() => _punching = false);
+    }
+  }
+
+  /// One attempt. Returns true when the employee chose to try again after a location refusal.
+  Future<bool> _punchOnce(String direction) async {
+    // Only when the employee's policy asks for it, and only now, for this punch: one fresh
+    // foreground fix. Nothing is collected in the background.
+    final plan = await planPunchLocation(context, ref);
+    if (!plan.proceed || !mounted) return false;
+
     final pending = _unconfirmedPunch;
     final key =
         pending != null && pending.direction == direction
             ? pending.key
             : ApiClient.newIdempotencyKey();
     try {
-      await ref.read(attendanceRepositoryProvider).punchMe(direction: direction, idempotencyKey: key);
+      await ref.read(attendanceRepositoryProvider).punchMe(
+            direction: direction,
+            idempotencyKey: key,
+            location: plan.location,
+            locationError: plan.locationError,
+          );
       _unconfirmedPunch = null;
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(direction == 'IN' ? 'Punched in.' : 'Punched out.')));
       _load();
+      return false;
     } catch (error) {
       if (error is ApiError && error.code == 'FACE_VERIFICATION_REQUIRED' && mounted) {
         setState(() => _faceRequired = true);
@@ -91,11 +117,14 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
           error is ApiError && error.status == 0
               ? (direction: direction, key: key)
               : null;
+      if (error is ApiError && isGeofenceError(error) && mounted) {
+        // A refused location is a real answer: nothing was recorded, so retrying is safe.
+        return showGeofenceRejectedDialog(context, error.code, error.message);
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(describeApiError(error))));
       }
-    } finally {
-      if (mounted) setState(() => _punching = false);
+      return false;
     }
   }
 

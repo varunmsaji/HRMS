@@ -63,3 +63,4 @@ face_enrollment_rate_limit = face_request_rate_limit(
 face_review_photo_rate_limit = face_request_rate_limit(
     "face_review_photo", "face_review_photo_requests_per_minute_per_ip"
 )
+punch_rate_limit = face_request_rate_limit("punch", "punch_requests_per_minute_per_ip")

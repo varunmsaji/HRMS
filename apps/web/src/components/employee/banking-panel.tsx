@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BankForm } from "@/components/employee/bank-form";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { EffectiveDateBadge } from "@/components/employee/effective-date-badge";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -253,7 +254,7 @@ export function BankingPanel({ employeeId }: BankingPanelProps) {
                           <EffectiveDateBadge effectiveTo={item.effective_to} />
                         </div>
                         <p className="mt-0.5 text-xs text-foreground-muted">
-                          {item.effective_from} – {item.effective_to} · {item.bank_name ?? "—"}
+                          <CompanyDate value={item.effective_from} /> – <CompanyDate value={item.effective_to} /> · {item.bank_name ?? "—"}
                         </p>
                       </li>
                     ))}

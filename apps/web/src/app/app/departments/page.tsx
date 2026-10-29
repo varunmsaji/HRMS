@@ -1,6 +1,6 @@
 "use client";
 
-import { Network } from "lucide-react";
+import { Network, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { Branch } from "@/lib/branch/types";
@@ -42,7 +50,9 @@ export default function DepartmentsPage() {
   const [error, setError] = useState<ApiError | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [formValues, setFormValues] = useState<DepartmentFormValues>(EMPTY_DEPARTMENT_FORM_VALUES);
+  const [formValues, setFormValues] = useState<DepartmentFormValues>(
+    EMPTY_DEPARTMENT_FORM_VALUES,
+  );
   const [formErrors, setFormErrors] = useState<DepartmentFormErrors>({});
   const [saving, setSaving] = useState(false);
 
@@ -52,9 +62,6 @@ export default function DepartmentsPage() {
     try {
       let employeeData: Employee[] = [];
       try {
-        // Reference-data dropdown (department head picker), not a paginated table — request
-        // the server's max page size. Companies with >100 employees will see a truncated list
-        // here (known limitation, API-01 only paginates the /employees table itself).
         employeeData = (await apiClient.getList<Employee>("/employees", { per_page: 100 })).data;
       } catch {
         employeeData = [];
@@ -89,7 +96,9 @@ export default function DepartmentsPage() {
 
   function parentName(parentId: string | null): string | null {
     if (!parentId) return null;
-    return departments?.find((department) => department.id === parentId)?.name ?? "Unknown department";
+    return (
+      departments?.find((department) => department.id === parentId)?.name ?? "Unknown department"
+    );
   }
 
   function openCreate() {
@@ -148,22 +157,25 @@ export default function DepartmentsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Departments"
         description="Organisational units under your branches — Company → Branch → Department."
         actions={
           departments && departments.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Department
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading departments…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading departments…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -172,9 +184,11 @@ export default function DepartmentsPage() {
               }
               onRetry={() => void loadDepartments()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && departments && departments.length === 0 ? (
+        {!loading && !error && departments && departments.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={Network}
               title="No departments have been configured yet."
@@ -185,34 +199,54 @@ export default function DepartmentsPage() {
                 </Button>
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && departments && departments.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && departments && departments.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Department</TableHead>
+                <TableHead>Branch / Parent</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {departments.map((department) => (
-                <li key={department.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/departments/${department.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{department.name}</p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {[branchName(department.branch_id), parentName(department.parent_id)]
-                          .filter(Boolean)
-                          .join(" · ") || "No branch · Top-level"}
-                      </p>
-                    </div>
+                <TableRow key={department.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/departments/${department.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {department.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {[branchName(department.branch_id), parentName(department.parent_id)]
+                      .filter(Boolean)
+                      .join(" · ") || "No branch · Top-level"}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={department.is_active ? "secondary" : "outline"}>
                       {department.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/departments/${department.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      View
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">
@@ -231,7 +265,12 @@ export default function DepartmentsPage() {
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button type="button" onClick={() => void handleCreate()} disabled={saving}>

@@ -17,7 +17,7 @@ interface RegularizationStatusBadgeProps {
 export function RegularizationStatusBadge({ status }: RegularizationStatusBadgeProps) {
   const known = status in STATUS_VARIANT ? (status as RegularizationStatus) : null;
   return (
-    <Badge variant={known ? STATUS_VARIANT[known] : "outline"}>
+    <Badge variant={known ? STATUS_VARIANT[known] : "outline"} dot>
       {known ? REGULARIZATION_STATUS_LABELS[known] : status}
     </Badge>
   );

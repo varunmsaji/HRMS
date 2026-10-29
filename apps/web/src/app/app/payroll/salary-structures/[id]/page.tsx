@@ -12,7 +12,8 @@ import { useToast } from "@/components/common/toast";
 import { SalaryBreakupTable } from "@/components/payroll/salary-breakup-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -23,9 +24,21 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { formatCompanyDate } from "@/lib/dates/company-date";
+import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
 import {
   APPLIES_WHEN,
   APPLIES_WHEN_LABELS,
@@ -102,7 +115,8 @@ function describeLine(line: SalaryStructureLine, components: SalaryComponent[]):
       text = "Balance of gross";
   }
   if (line.max_monthly_minor !== null) text += `, at most ${formatInr(line.max_monthly_minor)}`;
-  if (line.applies_when !== "ALWAYS") text += ` (${APPLIES_WHEN_LABELS[line.applies_when].toLowerCase()})`;
+  if (line.applies_when !== "ALWAYS")
+    text += ` (${APPLIES_WHEN_LABELS[line.applies_when].toLowerCase()})`;
   return text;
 }
 
@@ -112,6 +126,7 @@ export default function SalaryStructureDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const datePattern = useCompanyDatePattern();
   const canManage = can("PAYROLL.SETUP_MANAGE");
 
   const [structure, setStructure] = useState<SalaryStructure | null>(null);
@@ -166,9 +181,7 @@ export default function SalaryStructureDetailPage() {
     structure?.versions.find((v) => v.id === selectedId) ?? null;
   const draft = structure ? draftVersion(structure) : null;
   const editing = canManage && selected?.status === "DRAFT";
-  const usable = components.filter(
-    (c) => c.is_active && c.component_type !== "DEDUCTION",
-  );
+  const usable = components.filter((c) => c.is_active && c.component_type !== "DEDUCTION");
   const earnings = usable.filter((c) => c.component_type === "EARNING");
 
   const runPreview = useCallback(async () => {
@@ -195,7 +208,6 @@ export default function SalaryStructureDetailPage() {
   useEffect(() => {
     if (selected && selected.lines.length > 0) void runPreview();
     else setPreview(null);
-    // Re-run when the selected version or its saved lines change, not on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id, selected?.version]);
 
@@ -204,8 +216,6 @@ export default function SalaryStructureDetailPage() {
     return JSON.stringify(draft.lines.map(toRow)) !== JSON.stringify(rows);
   }, [draft, rows]);
 
-  /** `keepSelection=false` re-selects the draft (or current version) — after creating or
-   * discarding a draft, the previously selected version is no longer the one to show. */
   async function run(
     action: () => Promise<SalaryStructure>,
     success: string,
@@ -242,6 +252,8 @@ export default function SalaryStructureDetailPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/payroll/salary-structures"
+        backLabel="Salary Structures"
         title={structure.name}
         description={structure.description ?? structure.code}
         actions={
@@ -282,242 +294,258 @@ export default function SalaryStructureDetailPage() {
             v{version.version_number} ·{" "}
             {version.status === "DRAFT"
               ? "Draft"
-              : `${version.effective_from} → ${version.effective_to ?? "now"}`}
+              : `${formatCompanyDate(version.effective_from, datePattern)} → ${version.effective_to ? formatCompanyDate(version.effective_to, datePattern) : "now"}`}
           </Button>
         ))}
       </div>
 
       {selected ? (
-        <Card>
-          <CardContent className="space-y-4 pt-6">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-medium text-foreground">
-                Components{" "}
-                <Badge variant={selected.status === "DRAFT" ? "warning" : "success"}>
-                  {selected.status === "DRAFT" ? "Draft" : "Published"}
+        editing ? (
+          <Card>
+            <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+              <div className="flex items-center gap-2">
+                <CardTitle>Components</CardTitle>
+                <Badge variant="warning" dot>
+                  Draft
                 </Badge>
-              </h2>
-              {editing ? (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={saving}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          apiClient.delete<SalaryStructure>(
-                            `/payroll/salary-structures/${structure.id}/versions/${selected.id}`,
-                          ),
-                        "Draft discarded",
-                        false,
-                      )
-                    }
-                  >
-                    Discard draft
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={saving || !dirty}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          apiClient.put<SalaryStructure>(
-                            `/payroll/salary-structures/${structure.id}/versions/${selected.id}/lines`,
-                            { lines: rows.map(toInput) },
-                            { ifMatch: String(selected.version) },
-                          ),
-                        "Draft saved",
-                      )
-                    }
-                  >
-                    Save draft
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={saving || dirty || selected.lines.length === 0}
-                    onClick={() => setPublishOpen(true)}
-                  >
-                    Publish
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-
-            {editing ? (
-              <div className="space-y-3">
-                {rows.map((row, index) => {
-                  const component = usable.find((c) => c.id === row.componentId);
-                  return (
-                    <div
-                      key={index}
-                      className="grid grid-cols-1 gap-2 rounded-md border border-border p-3 md:grid-cols-6"
-                    >
-                      <NativeSelect
-                        aria-label="Component"
-                        value={row.componentId}
-                        onChange={(e) => updateRow(index, { componentId: e.target.value })}
-                      >
-                        <option value="">Component…</option>
-                        {usable.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </NativeSelect>
-                      <NativeSelect
-                        aria-label="Calculation"
-                        value={row.calculationType}
-                        onChange={(e) =>
-                          updateRow(index, { calculationType: e.target.value as CalculationType })
-                        }
-                      >
-                        {CALCULATION_TYPES.filter(
-                          (t) =>
-                            component?.component_type !== "EMPLOYER_CONTRIBUTION" ||
-                            (t !== "BALANCING" && t !== "PERCENTAGE_OF_GROSS"),
-                        ).map((t) => (
-                          <option key={t} value={t}>
-                            {CALCULATION_TYPE_LABELS[t]}
-                          </option>
-                        ))}
-                      </NativeSelect>
-                      {row.calculationType === "FIXED" ? (
-                        <Input
-                          aria-label="Monthly amount (₹)"
-                          placeholder="₹ a month"
-                          value={row.amount}
-                          onChange={(e) => updateRow(index, { amount: e.target.value })}
-                        />
-                      ) : row.calculationType === "BALANCING" ? (
-                        <div className="self-center text-xs text-foreground-muted">
-                          Takes whatever remains of gross
-                        </div>
-                      ) : (
-                        <Input
-                          aria-label="Percentage"
-                          placeholder="%"
-                          value={row.percentage}
-                          onChange={(e) => updateRow(index, { percentage: e.target.value })}
-                        />
-                      )}
-                      {row.calculationType === "PERCENTAGE_OF_COMPONENT" ? (
-                        <NativeSelect
-                          aria-label="Of component"
-                          value={row.baseId}
-                          onChange={(e) => updateRow(index, { baseId: e.target.value })}
-                        >
-                          <option value="">Of…</option>
-                          {earnings
-                            .filter((c) => c.id !== row.componentId)
-                            .map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                        </NativeSelect>
-                      ) : (
-                        <div />
-                      )}
-                      <Input
-                        aria-label="Monthly cap (₹)"
-                        placeholder="Cap ₹ (optional)"
-                        value={row.cap}
-                        disabled={row.calculationType === "BALANCING"}
-                        onChange={(e) => updateRow(index, { cap: e.target.value })}
-                      />
-                      <div className="flex gap-2">
-                        <NativeSelect
-                          aria-label="Applies"
-                          value={row.appliesWhen}
-                          onChange={(e) =>
-                            updateRow(index, { appliesWhen: e.target.value as AppliesWhen })
-                          }
-                        >
-                          {APPLIES_WHEN.map((a) => (
-                            <option key={a} value={a}>
-                              {APPLIES_WHEN_LABELS[a]}
-                            </option>
-                          ))}
-                        </NativeSelect>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Remove line"
-                          onClick={() => setRows(rows.filter((_, i) => i !== index))}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
+              </div>
+              <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
+                  disabled={saving}
                   onClick={() =>
-                    setRows([
-                      ...rows,
-                      {
-                        componentId: "",
-                        calculationType: "FIXED",
-                        percentage: "",
-                        amount: "",
-                        baseId: "",
-                        cap: "",
-                        appliesWhen: "ALWAYS",
-                      },
-                    ])
+                    void run(
+                      () =>
+                        apiClient.delete<SalaryStructure>(
+                          `/payroll/salary-structures/${structure.id}/versions/${selected.id}`,
+                        ),
+                      "Draft discarded",
+                      false,
+                    )
                   }
                 >
-                  <Plus /> Add component
+                  Discard draft
                 </Button>
-                <p className="text-xs text-foreground-muted">
-                  Exactly one earning must be &quot;Balance of gross&quot;. Employer contributions
-                  are part of CTC, so gross = CTC − employer contributions. Save the draft to
-                  preview it.
-                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={saving || !dirty}
+                  onClick={() =>
+                    void run(
+                      () =>
+                        apiClient.put<SalaryStructure>(
+                          `/payroll/salary-structures/${structure.id}/versions/${selected.id}/lines`,
+                          { lines: rows.map(toInput) },
+                          { ifMatch: String(selected.version) },
+                        ),
+                      "Draft saved",
+                    )
+                  }
+                >
+                  Save draft
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={saving || dirty || selected.lines.length === 0}
+                  onClick={() => setPublishOpen(true)}
+                >
+                  Publish
+                </Button>
               </div>
-            ) : (
-              <ul className="divide-y divide-border rounded-md border border-border text-sm">
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {rows.map((row, index) => {
+                const component = usable.find((c) => c.id === row.componentId);
+                return (
+                  <div
+                    key={index}
+                    className="grid grid-cols-1 gap-2 rounded-md border border-border bg-surface-secondary/30 p-3 md:grid-cols-6"
+                  >
+                    <NativeSelect
+                      aria-label="Component"
+                      value={row.componentId}
+                      onChange={(e) => updateRow(index, { componentId: e.target.value })}
+                    >
+                      <option value="">Component…</option>
+                      {usable.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                    <NativeSelect
+                      aria-label="Calculation"
+                      value={row.calculationType}
+                      onChange={(e) =>
+                        updateRow(index, { calculationType: e.target.value as CalculationType })
+                      }
+                    >
+                      {CALCULATION_TYPES.filter(
+                        (t) =>
+                          component?.component_type !== "EMPLOYER_CONTRIBUTION" ||
+                          (t !== "BALANCING" && t !== "PERCENTAGE_OF_GROSS"),
+                      ).map((t) => (
+                        <option key={t} value={t}>
+                          {CALCULATION_TYPE_LABELS[t]}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                    {row.calculationType === "FIXED" ? (
+                      <Input
+                        aria-label="Monthly amount (₹)"
+                        placeholder="₹ a month"
+                        value={row.amount}
+                        onChange={(e) => updateRow(index, { amount: e.target.value })}
+                      />
+                    ) : row.calculationType === "BALANCING" ? (
+                      <div className="self-center text-xs text-foreground-muted">
+                        Takes whatever remains of gross
+                      </div>
+                    ) : (
+                      <Input
+                        aria-label="Percentage"
+                        placeholder="%"
+                        value={row.percentage}
+                        onChange={(e) => updateRow(index, { percentage: e.target.value })}
+                      />
+                    )}
+                    {row.calculationType === "PERCENTAGE_OF_COMPONENT" ? (
+                      <NativeSelect
+                        aria-label="Of component"
+                        value={row.baseId}
+                        onChange={(e) => updateRow(index, { baseId: e.target.value })}
+                      >
+                        <option value="">Of…</option>
+                        {earnings
+                          .filter((c) => c.id !== row.componentId)
+                          .map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                      </NativeSelect>
+                    ) : (
+                      <div />
+                    )}
+                    <Input
+                      aria-label="Monthly cap (₹)"
+                      placeholder="Cap ₹ (optional)"
+                      value={row.cap}
+                      disabled={row.calculationType === "BALANCING"}
+                      onChange={(e) => updateRow(index, { cap: e.target.value })}
+                    />
+                    <div className="flex gap-2">
+                      <NativeSelect
+                        aria-label="Applies"
+                        value={row.appliesWhen}
+                        onChange={(e) =>
+                          updateRow(index, { appliesWhen: e.target.value as AppliesWhen })
+                        }
+                      >
+                        {APPLIES_WHEN.map((a) => (
+                          <option key={a} value={a}>
+                            {APPLIES_WHEN_LABELS[a]}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Remove line"
+                        onClick={() => setRows(rows.filter((_, i) => i !== index))}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setRows([
+                    ...rows,
+                    {
+                      componentId: "",
+                      calculationType: "FIXED",
+                      percentage: "",
+                      amount: "",
+                      baseId: "",
+                      cap: "",
+                      appliesWhen: "ALWAYS",
+                    },
+                  ])
+                }
+              >
+                <Plus /> Add component
+              </Button>
+              <p className="text-xs text-foreground-muted">
+                Exactly one earning must be &quot;Balance of gross&quot;. Employer contributions
+                are part of CTC, so gross = CTC − employer contributions. Save the draft to
+                preview it.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <TableContainer>
+            <TableToolbar>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-foreground">Components</h2>
+                <Badge variant="success" dot>
+                  Published
+                </Badge>
+              </div>
+            </TableToolbar>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Component</TableHead>
+                  <TableHead align="right">Formula / Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {selected.lines.map((line) => (
-                  <li key={line.id} className="flex justify-between gap-4 px-3 py-2">
-                    <span className="text-foreground">{line.component_name}</span>
-                    <span className="text-right text-foreground-secondary">
+                  <TableRow key={line.id}>
+                    <TableCell className="font-medium text-foreground">
+                      {line.component_name}
+                    </TableCell>
+                    <TableCell align="right" numeric className="text-foreground-secondary">
                       {describeLine(line, components)}
-                    </span>
-                  </li>
+                    </TableCell>
+                  </TableRow>
                 ))}
                 {selected.lines.length === 0 ? (
-                  <li className="px-3 py-2 text-foreground-muted">No components yet.</li>
+                  <TableRow>
+                    <TableCell colSpan={2} className="text-center text-foreground-muted">
+                      No components yet.
+                    </TableCell>
+                  </TableRow>
                 ) : null}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )
       ) : null}
 
       {selected && selected.lines.length > 0 ? (
         <Card>
-          <CardContent className="space-y-4 pt-6">
-            <h2 className="text-sm font-medium text-foreground">Preview a CTC</h2>
+          <CardHeader>
+            <CardTitle>Preview a CTC</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <div className="flex flex-wrap items-end gap-3">
               <FormField id="preview-ctc" label="Annual CTC (₹)" className="w-48">
                 <Input value={ctc} onChange={(e) => setCtc(e.target.value)} />
               </FormField>
               <label className="flex items-center gap-2 pb-2 text-sm text-foreground">
-                <input
-                  type="checkbox"
-                  className="rounded border-border"
-                  checked={pf}
-                  onChange={(e) => setPf(e.target.checked)}
-                />
+                <Checkbox checked={pf} onChange={(e) => setPf(e.target.checked)} />
                 PF applies
               </label>
               <Button type="button" variant="outline" onClick={() => void runPreview()}>
@@ -544,10 +572,19 @@ export default function SalaryStructureDetailPage() {
             </DialogDescription>
           </DialogHeader>
           <FormField id="publish-date" label="Effective from" required>
-            <Input type="date" value={publishDate} onChange={(e) => setPublishDate(e.target.value)} />
+            <Input
+              type="date"
+              value={publishDate}
+              onChange={(e) => setPublishDate(e.target.value)}
+            />
           </FormField>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPublishOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPublishOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button

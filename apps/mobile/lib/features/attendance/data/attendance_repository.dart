@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
+import '../domain/punch_location.dart';
 
 class Shift {
   Shift({required this.id, required this.name, this.code, required this.isActive, required this.version});
@@ -361,14 +362,34 @@ class AttendanceRepository {
   /// [idempotencyKey]: pass the same key when retrying after a failure with no response
   /// (timeout, network) — the server then replays the original punch instead of recording a
   /// second one. Use a new key for a new punch.
-  Future<void> punchMe({required String direction, String? reference, String? idempotencyKey}) => _client.post(
+  ///
+  /// [location] / [locationError] are sent only when the employee's policy asks for a location
+  /// check; the server ignores them (and stores nothing) when geofencing is off, and decides for
+  /// itself whether the position is acceptable.
+  Future<void> punchMe({
+    required String direction,
+    String? reference,
+    String? idempotencyKey,
+    PunchLocation? location,
+    LocationFailure? locationError,
+  }) =>
+      _client.post(
         '/attendance/punches/me',
         body: {
           'direction': direction,
           if (reference != null) 'reference': reference,
           'idempotency_key': idempotencyKey ?? ApiClient.newIdempotencyKey(),
+          if (location != null) 'location': location.toJson(),
+          if (location == null && locationError?.serverCode != null) 'location_error': locationError!.serverCode,
         },
         parse: (_) {},
+      );
+
+  /// `GET /attendance/geofence-policy/me` — whether the caller's attendance policy asks for a
+  /// location on self-service punches, and the accuracy/age limits to expect.
+  Future<GeofencePolicyMe> getMyGeofencePolicy() => _client.get(
+        '/attendance/geofence-policy/me',
+        parse: (d) => GeofencePolicyMe.fromJson(d as Map<String, dynamic>),
       );
 
   /// Step 1 of a face punch: a fresh server-issued liveness challenge. Request one per attempt,
@@ -392,6 +413,8 @@ class AttendanceRepository {
     required String livenessSessionId,
     required List<List<int>> frames,
     required String idempotencyKey,
+    PunchLocation? location,
+    LocationFailure? locationError,
   }) =>
       _client.postMultipart(
         '/attendance/face-punches/me',
@@ -400,6 +423,13 @@ class AttendanceRepository {
             MapEntry('direction', direction),
             MapEntry('liveness_session_id', livenessSessionId),
             MapEntry('idempotency_key', idempotencyKey),
+            if (location != null) ...[
+              MapEntry('location_latitude', '${location.latitude}'),
+              MapEntry('location_longitude', '${location.longitude}'),
+              MapEntry('location_accuracy_m', '${location.accuracyM}'),
+              MapEntry('location_captured_at', location.capturedAt.toUtc().toIso8601String()),
+            ] else if (locationError?.serverCode != null)
+              MapEntry('location_error', locationError!.serverCode!),
           ])
           ..files.addAll([
             for (var i = 0; i < frames.length; i++)

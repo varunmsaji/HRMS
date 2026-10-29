@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Mail, Phone } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,6 +12,7 @@ import { CompensationPanel } from "@/components/employee/compensation-panel";
 import { DocumentPanel } from "@/components/employee/document-panel";
 import { SalaryPanel } from "@/components/payroll/salary-panel";
 import { EmployeeForm } from "@/components/employee/employee-form";
+import { EmployeeAvatar } from "@/components/employee/employee-identity";
 import { EmployeeOverview } from "@/components/employee/employee-overview";
 import { EmployeeStatusBadge } from "@/components/employee/employee-status-badge";
 import { EmploymentPanel } from "@/components/employee/employment-panel";
@@ -68,7 +69,10 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 ];
 
 function employeeName(employee: Employee): string {
-  return employee.display_name?.trim() || [employee.first_name, employee.last_name].filter(Boolean).join(" ");
+  return (
+    employee.display_name?.trim() ||
+    [employee.first_name, employee.last_name].filter(Boolean).join(" ")
+  );
 }
 
 export default function EmployeeDetailPage() {
@@ -181,7 +185,11 @@ export default function EmployeeDetailPage() {
           return;
         }
       }
-      toast({ title: "Could not save employee", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not save employee",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -307,7 +315,11 @@ export default function EmployeeDetailPage() {
         });
         return;
       }
-      toast({ title: "Could not send invite", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not send invite",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setInviting(false);
     }
@@ -320,25 +332,61 @@ export default function EmployeeDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/employees" className="text-sm text-foreground-secondary hover:underline">
-          ← Employees
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/employees"
+        backLabel="Employees"
         title={employee ? employeeName(employee) || employee.employee_code : "Employee"}
         description={employee ? `Employee code ${employee.employee_code}` : undefined}
+        badge={
+          employee ? (
+            <>
+              <EmployeeStatusBadge status={employee.status} />
+              <Badge variant={employee.is_active ? "secondary" : "outline"}>
+                {employee.is_active ? "Active" : "Inactive"}
+              </Badge>
+            </>
+          ) : undefined
+        }
+        meta={
+          employee && (employee.personal_email || employee.personal_mobile) ? (
+            <>
+              {employee.personal_email ? (
+                <span className="inline-flex items-center gap-1">
+                  <Mail className="h-3.5 w-3.5 text-foreground-muted" aria-hidden="true" />
+                  {employee.personal_email}
+                </span>
+              ) : null}
+              {employee.personal_email && employee.personal_mobile ? (
+                <span aria-hidden="true">·</span>
+              ) : null}
+              {employee.personal_mobile ? (
+                <span className="inline-flex items-center gap-1 tabular-nums">
+                  <Phone className="h-3.5 w-3.5 text-foreground-muted" aria-hidden="true" />
+                  {employee.personal_mobile}
+                </span>
+              ) : null}
+            </>
+          ) : undefined
+        }
         actions={
           employee && !editing ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {canConfirm && employee.status === "PROBATION" ? (
-                <Button type="button" variant="outline" onClick={() => setConfirmProbationOpen(true)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setConfirmProbationOpen(true)}
+                >
                   Confirm
                 </Button>
               ) : null}
               {canInvite ? (
-                <Button type="button" variant="outline" onClick={() => void handleInvite()} disabled={inviting}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void handleInvite()}
+                  disabled={inviting}
+                >
                   {inviting ? "Inviting…" : "Invite"}
                 </Button>
               ) : null}
@@ -357,18 +405,9 @@ export default function EmployeeDetailPage() {
         }
       />
 
-      {employee ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <EmployeeStatusBadge status={employee.status} />
-          <Badge variant={employee.is_active ? "secondary" : "outline"}>
-            {employee.is_active ? "Active" : "Inactive"}
-          </Badge>
-        </div>
-      ) : null}
-
       {loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <LoadingState label="Loading employee…" />
           </CardContent>
         </Card>
@@ -376,7 +415,7 @@ export default function EmployeeDetailPage() {
 
       {error && !loading ? (
         <Card>
-          <CardContent className="pt-6">
+          <CardContent>
             <ErrorState
               message={
                 error.status === 403
@@ -392,14 +431,22 @@ export default function EmployeeDetailPage() {
       ) : null}
 
       {staleMessage ? (
-        <ConcurrencyConflictBanner message={staleMessage} onReload={() => void reloadLatest()} onCancel={cancelEditing} />
+        <ConcurrencyConflictBanner
+          message={staleMessage}
+          onReload={() => void reloadLatest()}
+          onCancel={cancelEditing}
+        />
       ) : null}
 
       {!loading && !error && employee && editing && formValues ? (
         <Card>
-          <CardContent className="space-y-6 pt-6">
-            <EmployeeForm values={formValues} errors={formErrors} onChange={setFormValues} />
-            <div className="flex flex-wrap gap-2">
+          <CardContent className="space-y-6">
+            <EmployeeForm
+              values={formValues}
+              errors={formErrors}
+              onChange={setFormValues}
+            />
+            <div className="flex flex-wrap gap-2 border-t border-border pt-4">
               <Button type="button" onClick={() => void handleSave()} disabled={saving}>
                 {saving ? "Saving…" : "Save changes"}
               </Button>
@@ -412,8 +459,12 @@ export default function EmployeeDetailPage() {
       ) : null}
 
       {!loading && !error && employee && !editing ? (
-        <div className="space-y-4">
-          <div className="flex gap-1 overflow-x-auto border-b border-border" role="tablist">
+        <div className="space-y-5">
+          <div
+            className="flex gap-1 overflow-x-auto border-b border-border"
+            role="tablist"
+            aria-label="Employee profile sections"
+          >
             {TABS.map((item) => (
               <button
                 key={item.key}
@@ -422,10 +473,10 @@ export default function EmployeeDetailPage() {
                 aria-selected={tab === item.key}
                 onClick={() => setTab(item.key)}
                 className={cn(
-                  "shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+                  "shrink-0 border-b-2 px-3.5 py-2.5 text-sm font-medium transition-colors duration-motion-instant focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   tab === item.key
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-foreground-muted hover:text-foreground",
+                    ? "border-primary text-primary"
+                    : "border-transparent text-foreground-secondary hover:border-border-strong hover:text-foreground",
                 )}
               >
                 {item.label}
@@ -442,15 +493,23 @@ export default function EmployeeDetailPage() {
           {tab === "banking" ? <BankingPanel employeeId={employee.id} /> : null}
           {tab === "documents" ? <DocumentPanel employeeId={employee.id} /> : null}
           {tab === "attendance" ? (
-            <EmployeeAttendancePanel employeeId={employee.id} employeeLabel={employeeName(employee)} />
+            <EmployeeAttendancePanel
+              employeeId={employee.id}
+              employeeLabel={employeeName(employee)}
+            />
           ) : null}
         </div>
       ) : null}
 
-      <Dialog open={confirmOpen} onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}>
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => (!statusChanging ? setConfirmOpen(open) : null)}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{employee?.is_active ? "Deactivate employee?" : "Reactivate employee?"}</DialogTitle>
+            <DialogTitle>
+              {employee?.is_active ? "Deactivate employee?" : "Reactivate employee?"}
+            </DialogTitle>
             <DialogDescription>
               {employee?.is_active
                 ? "This employee will no longer be active in the system. You can reactivate them later."
@@ -458,7 +517,12 @@ export default function EmployeeDetailPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setConfirmOpen(false)} disabled={statusChanging}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={statusChanging}
+            >
               Cancel
             </Button>
             <Button
@@ -467,7 +531,11 @@ export default function EmployeeDetailPage() {
               onClick={() => void handleToggleStatus()}
               disabled={statusChanging}
             >
-              {statusChanging ? "Saving…" : employee?.is_active ? "Deactivate" : "Reactivate"}
+              {statusChanging
+                ? "Saving…"
+                : employee?.is_active
+                  ? "Deactivate"
+                  : "Reactivate"}
             </Button>
           </DialogFooter>
         </DialogContent>

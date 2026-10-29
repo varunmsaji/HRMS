@@ -11,5 +11,9 @@ const VARIANTS: Record<PayRunStatus, "outline" | "info" | "warning" | "success" 
 };
 
 export function PayRunStatusBadge({ status }: { status: PayRunStatus }) {
-  return <Badge variant={VARIANTS[status]}>{PAY_RUN_STATUS_LABELS[status]}</Badge>;
+  return (
+    <Badge variant={VARIANTS[status]} dot>
+      {PAY_RUN_STATUS_LABELS[status]}
+    </Badge>
+  );
 }

@@ -1,10 +1,12 @@
 "use client";
 
-import { CalendarCheck } from "lucide-react";
+import { CalendarCheck, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { RosterEntryDialog } from "@/components/shift-roster/roster-entry-dialog";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -13,9 +15,18 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableToolbar,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
@@ -183,9 +194,13 @@ export default function RostersPage() {
           canManage ? (
             <div className="flex gap-2">
               <Button type="button" variant="outline" asChild>
+                <Link href="/app/rosters/grid">Team grid</Link>
+              </Button>
+              <Button type="button" variant="outline" asChild>
                 <Link href="/app/rosters/calendar">Calendar view</Link>
               </Button>
               <Button type="button" onClick={openCreate}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
                 Add roster entry
               </Button>
             </div>
@@ -197,8 +212,8 @@ export default function RostersPage() {
         }
       />
 
-      <Card>
-        <CardContent className="grid grid-cols-1 gap-4 pt-6 sm:grid-cols-4">
+      <TableContainer>
+        <TableToolbar className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <FormField id="rosters-date-from" label="From">
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </FormField>
@@ -206,7 +221,10 @@ export default function RostersPage() {
             <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </FormField>
           <FormField id="rosters-employee" label="Employee">
-            <NativeSelect value={employeeFilter} onChange={(e) => setEmployeeFilter(e.target.value)}>
+            <NativeSelect
+              value={employeeFilter}
+              onChange={(e) => setEmployeeFilter(e.target.value)}
+            >
               <option value="">All employees</option>
               {employees.map((emp) => (
                 <option key={emp.id} value={emp.id}>
@@ -228,13 +246,11 @@ export default function RostersPage() {
               ))}
             </NativeSelect>
           </FormField>
-        </CardContent>
-      </Card>
+        </TableToolbar>
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading roster entries…" /> : null}
-          {error && !loading ? (
+        {loading ? <LoadingState label="Loading roster entries…" /> : null}
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -243,8 +259,10 @@ export default function RostersPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
-          {!loading && !error && rosters && rosters.length === 0 ? (
+          </div>
+        ) : null}
+        {!loading && !error && rosters && rosters.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={CalendarCheck}
               title="No roster entries in this range."
@@ -257,76 +275,82 @@ export default function RostersPage() {
                 ) : undefined
               }
             />
-          ) : null}
-          {!loading && !error && rosters && rosters.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Date</th>
-                    <th className="px-3 py-2 text-left font-medium">Employee</th>
-                    <th className="px-3 py-2 text-left font-medium">Day</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-right font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {rosters.map((roster) => (
-                    <tr key={roster.id} className="hover:bg-accent">
-                      <td className="px-3 py-2 text-foreground-secondary">{roster.roster_date}</td>
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {employeeDisplayName(employeeById.get(roster.employee_id), roster.employee_id)}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {dayLabel(roster, shiftById)}
-                      </td>
-                      <td className="px-3 py-2">
-                        <Badge variant={roster.status === "PUBLISHED" ? "success" : "outline"}>
-                          {roster.status}
-                        </Badge>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex justify-end gap-2">
-                          {canManage && roster.status === "DRAFT" ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void handlePublish(roster)}
-                            >
-                              Publish
-                            </Button>
-                          ) : null}
-                          {canManage ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openEdit(roster)}
-                            >
-                              Edit
-                            </Button>
-                          ) : null}
-                          {canManage ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void handleDelete(roster)}
-                            >
-                              Remove
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : null}
+        {!loading && !error && rosters && rosters.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Date</TableHead>
+                <TableHead>Employee</TableHead>
+                <TableHead>Day</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rosters.map((roster) => {
+                const emp = employeeById.get(roster.employee_id);
+                return (
+                  <TableRow key={roster.id}>
+                    <TableCell className="tabular-nums text-foreground-secondary">
+                      <CompanyDate value={roster.roster_date} />
+                    </TableCell>
+                    <TableCell>
+                      <EmployeeIdentityCell
+                        name={employeeDisplayName(emp, roster.employee_id)}
+                        size="sm"
+                      />
+                    </TableCell>
+                    <TableCell className="text-foreground-secondary">
+                      {dayLabel(roster, shiftById)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={roster.status === "PUBLISHED" ? "success" : "outline"} dot>
+                        {roster.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell align="right">
+                      <div className="flex justify-end gap-2">
+                        {canManage && roster.status === "DRAFT" ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            onClick={() => void handlePublish(roster)}
+                          >
+                            Publish
+                          </Button>
+                        ) : null}
+                        {canManage ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            onClick={() => openEdit(roster)}
+                          >
+                            Edit
+                          </Button>
+                        ) : null}
+                        {canManage ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="xs"
+                            onClick={() => void handleDelete(roster)}
+                          >
+                            Remove
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <RosterEntryDialog
         open={dialogOpen}

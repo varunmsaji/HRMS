@@ -20,7 +20,7 @@ interface LeaveApplicationStatusBadgeProps {
 export function LeaveApplicationStatusBadge({ status }: LeaveApplicationStatusBadgeProps) {
   const known = status in STATUS_VARIANT ? (status as LeaveApplicationStatus) : null;
   return (
-    <Badge variant={known ? STATUS_VARIANT[known] : "outline"}>
+    <Badge variant={known ? STATUS_VARIANT[known] : "outline"} dot>
       {known ? LEAVE_APPLICATION_STATUS_LABELS[known] : status}
     </Badge>
   );

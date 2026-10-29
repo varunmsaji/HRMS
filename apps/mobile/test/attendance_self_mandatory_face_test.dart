@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
+import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_self_screen.dart';
 
 import 'support/fake_auth.dart';
@@ -20,7 +21,7 @@ class _Repo implements AttendanceRepository {
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async => [];
 
   @override
-  Future<void> punchMe({required String direction, String? reference, String? idempotencyKey}) async {
+  Future<void> punchMe({required String direction, String? reference, String? idempotencyKey, PunchLocation? location, LocationFailure? locationError}) async {
     plainPunches.add(direction);
     if (punchError != null) throw punchError!;
   }

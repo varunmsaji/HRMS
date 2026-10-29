@@ -126,6 +126,31 @@ class BranchDeactivationBlockedError(ConflictError):
         )
 
 
+class BranchHasWorkplaceAuthorizationsError(ConflictError):
+    """Attendance geofencing: employees are authorised to punch at this branch in addition to
+    their own. Deactivating it would silently leave them with no approved workplace, so the
+    authorisations must be removed (an audited, deliberate step) first."""
+
+    code = "BRANCH_HAS_WORKPLACE_AUTHORIZATIONS"
+
+    def __init__(self, *, authorization_count: int) -> None:
+        message = (
+            "This branch cannot be deactivated while employees are authorised to punch at it. "
+            "Remove those workplace authorisations first."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "is_active",
+                    "code": "BRANCH_HAS_WORKPLACE_AUTHORIZATIONS",
+                    "message": message,
+                    "context": {"authorization_count": authorization_count},
+                }
+            ],
+        )
+
+
 class MasterDataInUseError(ConflictError):
     """Deactivating a branch, department, designation, grade or shift is refused while active
     employees are still assigned to it — they must be reassigned first. Nothing is reassigned

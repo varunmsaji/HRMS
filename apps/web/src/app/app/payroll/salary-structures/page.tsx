@@ -1,10 +1,11 @@
 "use client";
 
-import { LayoutList } from "lucide-react";
+import { LayoutList, Plus } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
@@ -13,7 +14,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +24,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
@@ -98,11 +107,17 @@ export default function SalaryStructuresPage() {
     } catch (err) {
       if (err instanceof ApiError && (err.status === 409 || err.status === 422)) {
         setCodeError(
-          getFieldError(err.details, "code") ?? getFieldError(err.details, "body.code") ?? err.message,
+          getFieldError(err.details, "code") ??
+            getFieldError(err.details, "body.code") ??
+            err.message,
         );
         return;
       }
-      toast({ title: "Could not create structure", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not create structure",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -117,7 +132,11 @@ export default function SalaryStructuresPage() {
       );
       setBulkResult(result);
     } catch (err) {
-      toast({ title: "Could not assign structure", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not assign structure",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -128,6 +147,8 @@ export default function SalaryStructuresPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Salary Structures"
         description="How an employee's CTC splits into salary components."
         actions={
@@ -146,6 +167,7 @@ export default function SalaryStructuresPage() {
                 Assign to employees
               </Button>
               <Button type="button" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
                 New structure
               </Button>
             </div>
@@ -153,10 +175,10 @@ export default function SalaryStructuresPage() {
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading salary structures…" /> : null}
-          {error && !loading ? (
+      <TableContainer>
+        {loading ? <LoadingState label="Loading salary structures…" /> : null}
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -165,63 +187,74 @@ export default function SalaryStructuresPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
-          {!loading && !error && structures && structures.length === 0 ? (
+          </div>
+        ) : null}
+        {!loading && !error && structures && structures.length === 0 ? (
+          <div className="p-6">
             <EmptyState icon={LayoutList} title="No salary structures yet." />
-          ) : null}
-          {!loading && !error && structures && structures.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Structure</th>
-                    <th className="px-3 py-2 text-left font-medium">In effect since</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-right font-medium">Detail</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {structures.map((structure) => {
-                    const current = currentVersion(structure);
-                    const draft = draftVersion(structure);
-                    return (
-                      <tr key={structure.id} className="hover:bg-accent">
-                        <td className="px-3 py-2">
-                          <div className="font-medium text-foreground">{structure.name}</div>
-                          <div className="text-xs text-foreground-muted">
-                            {structure.code}
-                            {structure.description ? ` · ${structure.description}` : ""}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-foreground-secondary">
-                          {current?.effective_from ?? "Not published"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1">
-                            {!structure.is_active ? <Badge variant="outline">Inactive</Badge> : null}
-                            {draft ? <Badge variant="warning">Draft pending</Badge> : null}
-                            {structure.is_active && current && !draft ? (
-                              <Badge variant="success">Published</Badge>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <Link
-                            href={`/app/payroll/salary-structures/${structure.id}`}
-                            className="text-sm font-medium text-primary hover:underline"
-                          >
-                            View
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : null}
+        {!loading && !error && structures && structures.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Structure</TableHead>
+                <TableHead>In effect since</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {structures.map((structure) => {
+                const current = currentVersion(structure);
+                const draft = draftVersion(structure);
+                return (
+                  <TableRow key={structure.id}>
+                    <TableCell>
+                      <Link
+                        href={`/app/payroll/salary-structures/${structure.id}`}
+                        className="font-medium text-foreground hover:text-primary hover:underline"
+                      >
+                        {structure.name}
+                      </Link>
+                      <div className="text-xs text-foreground-muted">
+                        <span className="font-mono">{structure.code}</span>
+                        {structure.description ? ` · ${structure.description}` : ""}
+                      </div>
+                    </TableCell>
+                    <TableCell className="tabular-nums text-foreground-secondary">
+                      {current?.effective_from ? (
+                        <CompanyDate value={current.effective_from} />
+                      ) : (
+                        "Not published"
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {!structure.is_active ? <Badge variant="outline">Inactive</Badge> : null}
+                        {draft ? <Badge variant="warning">Draft pending</Badge> : null}
+                        {structure.is_active && current && !draft ? (
+                          <Badge variant="success" dot>
+                            Published
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell align="right">
+                      <Link
+                        href={`/app/payroll/salary-structures/${structure.id}`}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        View
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(next) => !saving && setCreateOpen(next)}>
         <DialogContent className="max-w-md">
@@ -232,8 +265,13 @@ export default function SalaryStructuresPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <FormField id="structure-code" label="Code" required error={codeError}
-              description="Capital letters, digits and underscores, e.g. SALES.">
+            <FormField
+              id="structure-code"
+              label="Code"
+              required
+              error={codeError}
+              description="Capital letters, digits and underscores, e.g. SALES."
+            >
               <Input value={code} maxLength={30} onChange={(e) => setCode(e.target.value)} />
             </FormField>
             <FormField id="structure-name" label="Name" required>
@@ -241,7 +279,12 @@ export default function SalaryStructuresPage() {
             </FormField>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button
@@ -301,7 +344,11 @@ export default function SalaryStructuresPage() {
                 </NativeSelect>
               </FormField>
               <FormField id="bulk-date" label="Effective from">
-                <Input type="date" value={bulkDate} onChange={(e) => setBulkDate(e.target.value)} />
+                <Input
+                  type="date"
+                  value={bulkDate}
+                  onChange={(e) => setBulkDate(e.target.value)}
+                />
               </FormField>
             </div>
           )}
@@ -312,7 +359,12 @@ export default function SalaryStructuresPage() {
               </Button>
             ) : (
               <>
-                <Button type="button" variant="outline" onClick={() => setBulkOpen(false)} disabled={saving}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setBulkOpen(false)}
+                  disabled={saving}
+                >
                   Cancel
                 </Button>
                 <Button

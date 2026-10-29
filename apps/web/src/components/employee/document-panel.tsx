@@ -9,6 +9,7 @@ import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { DocumentRejectDialog } from "@/components/employee/document-reject-dialog";
 import { Badge } from "@/components/ui/badge";
+import { HorizontalScroll } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -183,7 +184,7 @@ export function DocumentPanel({ employeeId }: DocumentPanelProps) {
                 description="Documents collected during onboarding appear here automatically once the case is activated. HR can also add documents directly at any time."
               />
             ) : (
-              <div className="overflow-x-auto">
+              <HorizontalScroll>
                 <table className="w-full min-w-[560px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wide text-foreground-muted">
@@ -258,7 +259,7 @@ export function DocumentPanel({ employeeId }: DocumentPanelProps) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </HorizontalScroll>
             )}
 
             {canManage ? (

@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, type ReactElement } from "react";
+import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -39,7 +39,7 @@ export function FormField({
 
   return (
     <div className={cn("space-y-1.5", className)}>
-      <Label htmlFor={id}>
+      <Label htmlFor={id} className="block">
         {label}
         {required ? (
           <span className="text-danger" aria-hidden="true">
@@ -50,15 +50,37 @@ export function FormField({
       </Label>
       {field}
       {description && !error ? (
-        <p id={descriptionId} className="text-xs text-foreground-muted">
+        <p id={descriptionId} className="text-xs leading-relaxed text-foreground-muted">
           {description}
         </p>
       ) : null}
       {error ? (
-        <p id={errorId} role="alert" className="text-xs text-danger">
+        <p id={errorId} role="alert" className="text-xs font-medium text-danger">
           {error}
         </p>
       ) : null}
     </div>
+  );
+}
+
+interface FormSectionProps {
+  title: string;
+  description?: string;
+  children: ReactNode;
+  className?: string;
+}
+
+/** Structured grouping for related fields inside forms and settings screens. */
+export function FormSection({ title, description, children, className }: FormSectionProps) {
+  return (
+    <fieldset className={cn("space-y-4 border-t border-border pt-5 first:border-0 first:pt-0", className)}>
+      <div>
+        <legend className="text-sm font-semibold text-foreground">{title}</legend>
+        {description ? (
+          <p className="mt-0.5 text-xs text-foreground-secondary">{description}</p>
+        ) : null}
+      </div>
+      {children}
+    </fieldset>
   );
 }

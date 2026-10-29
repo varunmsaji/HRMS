@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { DayGrid, DayGridLegend } from "@/components/work-calendar/day-grid";
 import { WorkCalendarForm } from "@/components/work-calendar/work-calendar-form";
+import { CompanyDate } from "@/components/common/company-date";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
@@ -31,6 +32,8 @@ import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
+import { formatDateTime } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { HolidayCalendar } from "@/lib/holiday-calendar/types";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
@@ -67,6 +70,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 export default function WorkCalendarDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
+  const { user } = useAuth();
   const { can } = usePermissions();
   const [impact, setImpact] = useState<{
     change: ProposedChange;
@@ -563,7 +567,11 @@ export default function WorkCalendarDetailPage() {
                         <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                           Last updated
                         </dt>
-                        <dd className="mt-0.5 text-sm text-foreground">{calendar.updated_at}</dd>
+                        <dd className="mt-0.5 text-sm text-foreground">
+                          {user?.company_timezone
+                            ? formatDateTime(calendar.updated_at, user.company_timezone)
+                            : calendar.updated_at}
+                        </dd>
                       </div>
                     </dl>
                   </div>
@@ -680,7 +688,7 @@ export default function WorkCalendarDetailPage() {
                         >
                           <div>
                             <p className="text-sm font-medium text-foreground">
-                              {exception.exception_date}
+                              <CompanyDate value={exception.exception_date} />
                               <span className="ml-2 text-xs text-foreground-muted">
                                 {exception.exception_type.replace("_", " ")}
                               </span>

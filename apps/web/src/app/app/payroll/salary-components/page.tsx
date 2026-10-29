@@ -1,6 +1,6 @@
 "use client";
 
-import { Coins } from "lucide-react";
+import { Coins, Plus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { EmptyState } from "@/components/common/empty-state";
@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -123,7 +132,11 @@ export default function SalaryComponentsPage() {
         });
         if (err.status === 409) return;
       }
-      toast({ title: "Could not create component", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not create component",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     } finally {
       setSaving(false);
     }
@@ -138,28 +151,35 @@ export default function SalaryComponentsPage() {
       );
       await load();
     } catch (err) {
-      toast({ title: "Could not update component", description: describeApiError(err), variant: "danger" });
+      toast({
+        title: "Could not update component",
+        description: describeApiError(err),
+        variant: "danger",
+      });
     }
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Salary Components"
         description="The earnings and employer contributions a salary structure is built from."
         actions={
           canManage ? (
             <Button type="button" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               New component
             </Button>
           ) : undefined
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading salary components…" /> : null}
-          {error && !loading ? (
+      <TableContainer>
+        {loading ? <LoadingState label="Loading salary components…" /> : null}
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -168,65 +188,69 @@ export default function SalaryComponentsPage() {
               }
               onRetry={() => void load()}
             />
-          ) : null}
-          {!loading && !error && components && components.length === 0 ? (
+          </div>
+        ) : null}
+        {!loading && !error && components && components.length === 0 ? (
+          <div className="p-6">
             <EmptyState icon={Coins} title="No salary components yet." />
-          ) : null}
-          {!loading && !error && components && components.length > 0 ? (
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Component</th>
-                    <th className="px-3 py-2 text-left font-medium">Type</th>
-                    <th className="px-3 py-2 text-left font-medium">Treatment</th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    {canManage ? <th className="px-3 py-2 text-right font-medium">Action</th> : null}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {components.map((component) => (
-                    <tr key={component.id}>
-                      <td className="px-3 py-2">
-                        <div className="font-medium text-foreground">{component.name}</div>
-                        <div className="text-xs text-foreground-muted">
-                          {component.code}
-                          {component.is_system ? " · system" : ""}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {COMPONENT_TYPE_LABELS[component.component_type]}
-                      </td>
-                      <td className="px-3 py-2 text-foreground-secondary">
-                        {FLAG_LABELS.filter(([key]) => component[key])
-                          .map(([, label]) => label)
-                          .join(", ") || "—"}
-                      </td>
-                      <td className="px-3 py-2">
-                        <Badge variant={component.is_active ? "success" : "outline"}>
-                          {component.is_active ? "Active" : "Inactive"}
-                        </Badge>
-                      </td>
-                      {canManage ? (
-                        <td className="px-3 py-2 text-right">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void toggleActive(component)}
-                          >
-                            {component.is_active ? "Deactivate" : "Activate"}
-                          </Button>
-                        </td>
-                      ) : null}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+          </div>
+        ) : null}
+        {!loading && !error && components && components.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Component</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Treatment</TableHead>
+                <TableHead>Status</TableHead>
+                {canManage ? <TableHead align="right">Action</TableHead> : null}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {components.map((component) => (
+                <TableRow key={component.id}>
+                  <TableCell>
+                    <div className="font-medium text-foreground">{component.name}</div>
+                    <div className="font-mono text-xs text-foreground-muted">
+                      {component.code}
+                      {component.is_system ? (
+                        <span className="font-sans"> · system</span>
+                      ) : (
+                        ""
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-foreground-secondary">
+                    {COMPONENT_TYPE_LABELS[component.component_type]}
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {FLAG_LABELS.filter(([key]) => component[key])
+                      .map(([, label]) => label)
+                      .join(", ") || "—"}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={component.is_active ? "success" : "outline"} dot>
+                      {component.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                  </TableCell>
+                  {canManage ? (
+                    <TableCell align="right">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        onClick={() => void toggleActive(component)}
+                      >
+                        {component.is_active ? "Deactivate" : "Activate"}
+                      </Button>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(next) => !saving && setCreateOpen(next)}>
         <DialogContent className="max-w-md">
@@ -237,8 +261,13 @@ export default function SalaryComponentsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <FormField id="component-code" label="Code" required error={fieldErrors.code}
-              description="Capital letters, digits and underscores, e.g. CONVEYANCE.">
+            <FormField
+              id="component-code"
+              label="Code"
+              required
+              error={fieldErrors.code}
+              description="Capital letters, digits and underscores, e.g. CONVEYANCE."
+            >
               <Input
                 value={values.code}
                 maxLength={30}
@@ -269,9 +298,7 @@ export default function SalaryComponentsPage() {
             <div className="space-y-2">
               {FLAG_LABELS.map(([key, label]) => (
                 <label key={key} className="flex items-center gap-2 text-sm text-foreground">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border"
+                  <Checkbox
                     checked={Boolean(values[key as keyof ComponentFormValues])}
                     onChange={(e) => setValues({ ...values, [key]: e.target.checked })}
                   />
@@ -288,7 +315,12 @@ export default function SalaryComponentsPage() {
             </FormField>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button

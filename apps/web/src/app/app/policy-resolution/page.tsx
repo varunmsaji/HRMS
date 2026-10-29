@@ -72,6 +72,8 @@ export default function PolicyResolutionPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Policy Resolution Preview"
         description="Debug which policy applies to an employee on a given date, and which precedence level resolved it — the same WD-09 walk the future attendance engine uses."
       />

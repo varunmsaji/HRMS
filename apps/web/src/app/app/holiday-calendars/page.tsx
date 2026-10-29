@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
@@ -12,7 +12,6 @@ import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,6 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -117,22 +125,25 @@ export default function HolidayCalendarsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backHref="/app/settings"
+        backLabel="Settings"
         title="Holiday Calendars"
         description="Reusable holiday date collections — e.g. India National, Kerala Office, Company FY26."
         actions={
           canManage && calendars && calendars.length > 0 ? (
             <Button type="button" onClick={openCreate}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
               Add Holiday Calendar
             </Button>
           ) : null
         }
       />
 
-      <Card>
-        <CardContent className="pt-6">
-          {loading ? <LoadingState label="Loading holiday calendars…" /> : null}
+      <TableContainer>
+        {loading ? <LoadingState label="Loading holiday calendars…" /> : null}
 
-          {error && !loading ? (
+        {error && !loading ? (
+          <div className="p-6">
             <ErrorState
               message={
                 error.status === 403
@@ -141,9 +152,11 @@ export default function HolidayCalendarsPage() {
               }
               onRetry={() => void loadCalendars()}
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && calendars && calendars.length === 0 ? (
+        {!loading && !error && calendars && calendars.length === 0 ? (
+          <div className="p-6">
             <EmptyState
               icon={CalendarDays}
               title="No holiday calendars have been configured yet."
@@ -156,38 +169,58 @@ export default function HolidayCalendarsPage() {
                 ) : undefined
               }
             />
-          ) : null}
+          </div>
+        ) : null}
 
-          {!loading && !error && calendars && calendars.length > 0 ? (
-            <ul className="divide-y divide-border">
+        {!loading && !error && calendars && calendars.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Calendar</TableHead>
+                <TableHead>Scope / State</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {calendars.map((calendar) => (
-                <li key={calendar.id} className="py-4 first:pt-0 last:pb-0">
-                  <Link
-                    href={`/app/holiday-calendars/${calendar.id}`}
-                    className="flex items-center justify-between gap-4 rounded-md px-2 py-1 -mx-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        {calendar.name}
-                        {calendar.code ? (
-                          <span className="text-foreground-muted"> ({calendar.code})</span>
-                        ) : null}
-                      </p>
-                      <p className="mt-0.5 text-xs text-foreground-muted">
-                        {calendar.kind}
-                        {calendar.state_code ? ` · ${calendar.state_code}` : ""}
-                      </p>
-                    </div>
+                <TableRow key={calendar.id}>
+                  <TableCell>
+                    <Link
+                      href={`/app/holiday-calendars/${calendar.id}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {calendar.name}
+                      {calendar.code ? (
+                        <span className="ml-1 font-mono text-xs text-foreground-muted">
+                          ({calendar.code})
+                        </span>
+                      ) : null}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-xs text-foreground-secondary">
+                    {calendar.kind}
+                    {calendar.state_code ? ` · ${calendar.state_code}` : ""}
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={calendar.is_active ? "secondary" : "outline"}>
                       {calendar.is_active ? "Active" : "Inactive"}
                     </Badge>
-                  </Link>
-                </li>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Link
+                      href={`/app/holiday-calendars/${calendar.id}`}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Manage holidays
+                    </Link>
+                  </TableCell>
+                </TableRow>
               ))}
-            </ul>
-          ) : null}
-        </CardContent>
-      </Card>
+            </TableBody>
+          </Table>
+        ) : null}
+      </TableContainer>
 
       <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
         <DialogContent className="max-w-2xl">
