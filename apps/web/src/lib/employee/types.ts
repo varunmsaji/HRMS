@@ -132,6 +132,21 @@ export interface Assignment {
   updated_at: string;
 }
 
+/** `GET /employees/{id}/manager-change-impact` - pending requests that stay with their current
+ * approver if the reporting manager changes. `impact_token` identifies exactly this set and is
+ * sent back with `confirm_pending_request_impact`. */
+export interface ManagerChangeImpact {
+  has_pending_requests: boolean;
+  total_pending_requests: number;
+  requests: {
+    leave: number;
+    attendance_regularization: number;
+    overtime: number;
+  };
+  requires_confirmation: boolean;
+  impact_token: string;
+}
+
 // --- Employee Compensation (E-06) -----------------------------------------------------------
 
 export const REVISION_TYPE_VALUES = ["JOINING", "ANNUAL", "PROMOTION", "CORRECTION", "MARKET"] as const;

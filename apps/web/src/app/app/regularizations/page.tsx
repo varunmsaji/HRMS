@@ -9,7 +9,8 @@ import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { PageHeader } from "@/components/common/page-header";
 import { RegularizationRequestDialog } from "@/components/regularization/regularization-request-dialog";
 import { RegularizationStatusBadge } from "@/components/regularization/regularization-status-badge";
@@ -26,11 +27,18 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
+import { initialQueryValue } from "@/lib/dashboard/overview";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
+import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import {
   REGULARIZATION_STATUSES,
   REGULARIZATION_TYPES,
@@ -40,19 +48,6 @@ import {
   type RegularizationType,
 } from "@/lib/regularization/types";
 import { cn } from "@/lib/utils";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeDisplayName(employee: EmployeeOption | undefined, employeeId: string): string {
-  if (!employee) return employeeId;
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
-}
 
 function addDays(iso: string, days: number): string {
   const date = new Date(`${iso}T00:00:00Z`);
@@ -76,58 +71,64 @@ export default function RegularizationsPage() {
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [dateFrom, setDateFrom] = useState(addDays(today, -30));
   const [dateTo, setDateTo] = useState(today);
-  const [statusFilter, setStatusFilter] = useState<RegularizationStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<RegularizationStatus | "">(() =>
+    initialQueryValue("status", REGULARIZATION_STATUSES),
+  );
   const [typeFilter, setTypeFilter] = useState<RegularizationType | "">("");
   const [employeeFilter, setEmployeeFilter] = useState("");
 
   const [requests, setRequests] = useState<RegularizationRequest[] | null>(null);
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const employeeById = useMemo(() => {
-    const map = new Map<string, EmployeeOption>();
-    for (const emp of employees) map.set(emp.id, emp);
-    return map;
-  }, [employees]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const beginRequest = useLatestRequest();
+  const directory = useEmployeeDirectory({ enabled: view === "TEAM" });
+  const rowEmployeeIds = useMemo(() => (requests ?? []).map((r) => r.employee_id), [requests]);
+  const employeeName = useEmployeeNames(rowEmployeeIds, directory.employees);
 
   const load = useCallback(async () => {
+    const request = beginRequest();
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
-      if (statusFilter) params.set("request_status", statusFilter);
-      if (typeFilter) params.set("request_type", typeFilter);
-      if (view === "MINE" && user?.employee_id) params.set("employee_id", user.employee_id);
-      if (view === "TEAM" && employeeFilter) params.set("employee_id", employeeFilter);
-      const data = await apiClient.get<RegularizationRequest[]>(
-        `/regularizations?${params.toString()}`,
+      const query: Record<string, string | undefined> = { date_from: dateFrom, date_to: dateTo };
+      if (statusFilter) query.request_status = statusFilter;
+      if (typeFilter) query.request_type = typeFilter;
+      if (view === "MINE" && user?.employee_id) query.employee_id = user.employee_id;
+      if (view === "TEAM" && employeeFilter) query.employee_id = employeeFilter;
+      const { data, pagination: meta } = await apiClient.getList<RegularizationRequest>(
+        "/regularizations",
+        { ...query, page, per_page: 100 },
+        { signal: request.signal },
       );
+      if (!request.isCurrent()) return;
       setRequests(data);
+      setPagination(meta);
     } catch (err) {
+      if (isAbortError(err) || !request.isCurrent()) return;
       setRequests(null);
+      setPagination(null);
       setError(
         err instanceof ApiError
           ? err
           : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
       );
     } finally {
-      setLoading(false);
+      if (request.isCurrent()) setLoading(false);
     }
-  }, [dateFrom, dateTo, statusFilter, typeFilter, view, employeeFilter, user?.employee_id]);
+  }, [beginRequest, page, dateFrom, dateTo, statusFilter, typeFilter, view, employeeFilter, user?.employee_id]);
+
+  // Any filter change goes back to the first page (the in-flight request is cancelled).
+  useEffect(() => {
+    setPage(1);
+  }, [dateFrom, dateTo, statusFilter, typeFilter, view, employeeFilter]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (view !== "TEAM") return;
-    void apiClient
-      .getList<EmployeeOption>("/employees", { per_page: 100 })
-      .then(({ data }) => setEmployees(data))
-      .catch(() => setEmployees([]));
-  }, [view]);
 
   function onCreated(_request: RegularizationRequest) {
     void load();
@@ -225,22 +226,22 @@ export default function RegularizationsPage() {
               label="Employee"
               className="sm:col-span-2"
             >
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={employeeFilter}
-                onChange={(e) => setEmployeeFilter(e.target.value)}
-              >
-                <option value="">All employees</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeDisplayName(emp, emp.id)}
-                  </option>
-                ))}
-              </NativeSelect>
+                emptyLabel="All employees"
+                onChange={setEmployeeFilter}
+              />
             </FormField>
           ) : null}
         </TableToolbar>
 
-        {loading ? <LoadingState label="Loading regularization requests…" /> : null}
+        {loading && requests === null ? (
+          <div role="status" aria-label="Loading regularization requests">
+            <TableSkeleton rows={8} columns={6} />
+            <span className="sr-only">Loading regularization requests…</span>
+          </div>
+        ) : null}
         {error && !loading ? (
           <div className="p-6">
             <ErrorState
@@ -253,7 +254,7 @@ export default function RegularizationsPage() {
             />
           </div>
         ) : null}
-        {!loading && !error && requests && requests.length === 0 ? (
+        {!error && requests && requests.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={FileClock}
@@ -273,8 +274,9 @@ export default function RegularizationsPage() {
             />
           </div>
         ) : null}
-        {!loading && !error && requests && requests.length > 0 ? (
-          <Table>
+        {!error && requests && requests.length > 0 ? (
+          <BusyRegion busy={loading} label="Refreshing…">
+<Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Date</TableHead>
@@ -293,10 +295,7 @@ export default function RegularizationsPage() {
                   </TableCell>
                   <TableCell>
                     <EmployeeIdentityCell
-                      name={employeeDisplayName(
-                        employeeById.get(request.employee_id),
-                        request.employee_id,
-                      )}
+                      name={employeeName(request.employee_id)}
                       size="sm"
                     />
                   </TableCell>
@@ -321,6 +320,10 @@ export default function RegularizationsPage() {
               ))}
             </TableBody>
           </Table>
+</BusyRegion>
+        ) : null}
+      {!error && pagination ? (
+          <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
         ) : null}
       </TableContainer>
 
@@ -331,7 +334,7 @@ export default function RegularizationsPage() {
         employeeId={view === "TEAM" ? employeeFilter || undefined : undefined}
         employeeLabel={
           view === "TEAM" && employeeFilter
-            ? employeeDisplayName(employeeById.get(employeeFilter), employeeFilter)
+            ? employeeName(employeeFilter)
             : undefined
         }
         onCreated={onCreated}

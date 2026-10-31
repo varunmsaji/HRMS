@@ -4,7 +4,9 @@ import { NativeSelect } from "@/components/ui/native-select";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import type { Designation } from "@/lib/designation/types";
-import type { Employee, AssignmentChangeType, WorkLocationType } from "@/lib/employee/types";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import type { AssignmentChangeType, WorkLocationType } from "@/lib/employee/types";
+import type { EmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { ASSIGNMENT_CHANGE_TYPE_VALUES, WORK_LOCATION_TYPE_VALUES } from "@/lib/employee/types";
 import {
   CHANGE_TYPE_LABELS,
@@ -24,17 +26,11 @@ interface AssignmentFormProps {
   designations: Designation[];
   grades: Grade[];
   shifts: Shift[];
-  employees: Employee[];
-  employeesLoadFailed: boolean;
+  /** Paginated employee directory for the manager pickers — see `EmployeeSelect`. */
+  directory: EmployeeDirectory;
   currentEmployeeId: string;
   allowedChangeTypes: AssignmentChangeType[];
   idPrefix?: string;
-}
-
-function employeeLabel(employee: Employee): string {
-  const name =
-    employee.display_name?.trim() || [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return `${name || "Unnamed"} (${employee.employee_code})`;
 }
 
 export function AssignmentForm({
@@ -46,8 +42,7 @@ export function AssignmentForm({
   designations,
   grades,
   shifts,
-  employees,
-  employeesLoadFailed,
+  directory,
   currentEmployeeId,
   allowedChangeTypes,
   idPrefix = "",
@@ -57,7 +52,6 @@ export function AssignmentForm({
   }
 
   const id = (name: string) => `${idPrefix}${name}`;
-  const managerCandidates = employees.filter((employee) => employee.id !== currentEmployeeId);
 
   return (
     <div className="space-y-6">
@@ -172,38 +166,27 @@ export function AssignmentForm({
             id={id("reportingManagerId")}
             label="Reporting manager"
             error={errors.reportingManagerId}
-            description={employeesLoadFailed ? "Could not load the employee directory to pick a manager." : undefined}
           >
-            <NativeSelect
+            <EmployeeSelect
+              directory={directory}
               value={values.reportingManagerId}
-              onChange={(e) => update("reportingManagerId", e.target.value)}
-              disabled={employeesLoadFailed}
-            >
-              <option value="">No change</option>
-              {managerCandidates.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {employeeLabel(employee)}
-                </option>
-              ))}
-            </NativeSelect>
+              emptyLabel="No change"
+              excludeId={currentEmployeeId}
+              onChange={(employeeId) => update("reportingManagerId", employeeId)}
+            />
           </FormField>
           <FormField
             id={id("dottedLineManagerId")}
             label="Dotted-line manager"
             error={errors.dottedLineManagerId}
           >
-            <NativeSelect
+            <EmployeeSelect
+              directory={directory}
               value={values.dottedLineManagerId}
-              onChange={(e) => update("dottedLineManagerId", e.target.value)}
-              disabled={employeesLoadFailed}
-            >
-              <option value="">No change</option>
-              {managerCandidates.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {employeeLabel(employee)}
-                </option>
-              ))}
-            </NativeSelect>
+              emptyLabel="No change"
+              excludeId={currentEmployeeId}
+              onChange={(employeeId) => update("dottedLineManagerId", employeeId)}
+            />
           </FormField>
         </div>
       </section>

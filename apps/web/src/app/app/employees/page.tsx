@@ -10,7 +10,7 @@ import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { EmployeeStatusBadge } from "@/components/employee/employee-status-badge";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
@@ -35,6 +35,8 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -74,17 +76,25 @@ export default function EmployeesPage() {
   const [formErrors, setFormErrors] = useState<EmployeeFormErrors>({});
   const [saving, setSaving] = useState(false);
 
+  const beginRequest = useLatestRequest();
+
   const loadEmployees = useCallback(async (targetPage: number) => {
+    const request = beginRequest();
     setLoading(true);
     setError(null);
     try {
       // GET /v1/employees is paginated (API-01) — data-scope-filtered, then paged server-side.
-      const { data, pagination: meta } = await apiClient.getList<Employee>("/employees", {
-        page: targetPage,
-      });
+      const { data, pagination: meta } = await apiClient.getList<Employee>(
+        "/employees",
+        { page: targetPage },
+        { signal: request.signal },
+      );
+      if (!request.isCurrent()) return;
       setEmployees(data);
       setPagination(meta);
     } catch (err) {
+      // Superseded by a newer request (or unmounted): that one owns the state now.
+      if (isAbortError(err) || !request.isCurrent()) return;
       setEmployees(null);
       setPagination(null);
       setError(
@@ -93,9 +103,9 @@ export default function EmployeesPage() {
           : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
       );
     } finally {
-      setLoading(false);
+      if (request.isCurrent()) setLoading(false);
     }
-  }, []);
+  }, [beginRequest]);
 
   useEffect(() => {
     void loadEmployees(page);
@@ -198,7 +208,7 @@ export default function EmployeesPage() {
         title="Employees"
         description="Everyone in your organisation, from pre-joining through exit."
         badge={
-          !loading && !error && employees ? (
+          !error && employees ? (
             <Badge variant="secondary" className="tabular-nums">
               {totalCount} {totalCount === 1 ? "record" : "records"}
             </Badge>
@@ -215,7 +225,7 @@ export default function EmployeesPage() {
       />
 
       <TableContainer>
-        {!loading && !error && employees && employees.length > 0 ? (
+        {!error && employees && employees.length > 0 ? (
           <TableToolbar>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               <div className="relative w-full sm:w-64">
@@ -277,7 +287,12 @@ export default function EmployeesPage() {
           </TableToolbar>
         ) : null}
 
-        {loading ? <LoadingState label="Loading employees…" /> : null}
+        {loading && employees === null ? (
+          <div role="status" aria-label="Loading employees">
+            <TableSkeleton rows={8} columns={5} />
+            <span className="sr-only">Loading employees…</span>
+          </div>
+        ) : null}
 
         {error && !loading ? (
           <div className="p-6">
@@ -292,7 +307,7 @@ export default function EmployeesPage() {
           </div>
         ) : null}
 
-        {!loading && !error && employees && employees.length === 0 ? (
+        {!error && employees && employees.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={Users}
@@ -309,7 +324,7 @@ export default function EmployeesPage() {
           </div>
         ) : null}
 
-        {!loading && !error && employees && employees.length > 0 && filteredEmployees ? (
+        {!error && employees && employees.length > 0 && filteredEmployees ? (
           filteredEmployees.length === 0 ? (
             <div className="p-6">
               <EmptyState
@@ -324,6 +339,7 @@ export default function EmployeesPage() {
               />
             </div>
           ) : (
+            <BusyRegion busy={loading} label="Refreshing employees…">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -380,10 +396,11 @@ export default function EmployeesPage() {
                 ))}
               </TableBody>
             </Table>
+            </BusyRegion>
           )
         ) : null}
 
-        {!loading && !error && pagination ? (
+        {!error && pagination ? (
           <PaginationControls
             pagination={pagination}
             onPageChange={setPage}

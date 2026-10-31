@@ -9,7 +9,8 @@ import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { PageHeader } from "@/components/common/page-header";
 import { OvertimeStatusBadge } from "@/components/overtime/overtime-status-badge";
 import { Input } from "@/components/ui/input";
@@ -24,11 +25,18 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
+import { initialQueryValue } from "@/lib/dashboard/overview";
 import { businessToday, formatMinutes } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
+import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import {
   OVERTIME_APPROVAL_CHAIN_LABELS,
   OVERTIME_DAY_CLASS_LABELS,
@@ -37,19 +45,6 @@ import {
   type OvertimeStatus,
 } from "@/lib/overtime/types";
 import { cn } from "@/lib/utils";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeDisplayName(employee: EmployeeOption | undefined, employeeId: string): string {
-  if (!employee) return employeeId;
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
-}
 
 function addDays(iso: string, days: number): string {
   const date = new Date(`${iso}T00:00:00Z`);
@@ -71,53 +66,61 @@ export default function OvertimePage() {
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [dateFrom, setDateFrom] = useState(addDays(today, -30));
   const [dateTo, setDateTo] = useState(today);
-  const [statusFilter, setStatusFilter] = useState<OvertimeStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<OvertimeStatus | "">(() =>
+    initialQueryValue("status", OVERTIME_STATUSES),
+  );
   const [employeeFilter, setEmployeeFilter] = useState("");
 
   const [records, setRecords] = useState<OvertimeRecord[] | null>(null);
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
-  const employeeById = useMemo(() => {
-    const map = new Map<string, EmployeeOption>();
-    for (const emp of employees) map.set(emp.id, emp);
-    return map;
-  }, [employees]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const beginRequest = useLatestRequest();
+  const directory = useEmployeeDirectory({ enabled: view === "TEAM" });
+  const rowEmployeeIds = useMemo(() => (records ?? []).map((r) => r.employee_id), [records]);
+  const employeeName = useEmployeeNames(rowEmployeeIds, directory.employees);
 
   const load = useCallback(async () => {
+    const request = beginRequest();
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
-      if (statusFilter) params.set("record_status", statusFilter);
-      if (view === "MINE" && user?.employee_id) params.set("employee_id", user.employee_id);
-      if (view === "TEAM" && employeeFilter) params.set("employee_id", employeeFilter);
-      const data = await apiClient.get<OvertimeRecord[]>(`/overtime?${params.toString()}`);
+      const query: Record<string, string | undefined> = { date_from: dateFrom, date_to: dateTo };
+      if (statusFilter) query.record_status = statusFilter;
+      if (view === "MINE" && user?.employee_id) query.employee_id = user.employee_id;
+      if (view === "TEAM" && employeeFilter) query.employee_id = employeeFilter;
+      const { data, pagination: meta } = await apiClient.getList<OvertimeRecord>(
+        "/overtime",
+        { ...query, page, per_page: 100 },
+        { signal: request.signal },
+      );
+      if (!request.isCurrent()) return;
       setRecords(data);
+      setPagination(meta);
     } catch (err) {
+      if (isAbortError(err) || !request.isCurrent()) return;
       setRecords(null);
+      setPagination(null);
       setError(
         err instanceof ApiError
           ? err
           : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
       );
     } finally {
-      setLoading(false);
+      if (request.isCurrent()) setLoading(false);
     }
-  }, [dateFrom, dateTo, statusFilter, view, employeeFilter, user?.employee_id]);
+  }, [beginRequest, page, dateFrom, dateTo, statusFilter, view, employeeFilter, user?.employee_id]);
+
+  // Any filter change goes back to the first page (the in-flight request is cancelled).
+  useEffect(() => {
+    setPage(1);
+  }, [dateFrom, dateTo, statusFilter, view, employeeFilter]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (view !== "TEAM") return;
-    void apiClient
-      .getList<EmployeeOption>("/employees", { per_page: 100 })
-      .then(({ data }) => setEmployees(data))
-      .catch(() => setEmployees([]));
-  }, [view]);
 
   return (
     <div className="space-y-6">
@@ -184,22 +187,22 @@ export default function OvertimePage() {
           </FormField>
           {view === "TEAM" ? (
             <FormField id="overtime-employee" label="Employee">
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={employeeFilter}
-                onChange={(e) => setEmployeeFilter(e.target.value)}
-              >
-                <option value="">All employees</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeDisplayName(emp, emp.id)}
-                  </option>
-                ))}
-              </NativeSelect>
+                emptyLabel="All employees"
+                onChange={setEmployeeFilter}
+              />
             </FormField>
           ) : null}
         </TableToolbar>
 
-        {loading ? <LoadingState label="Loading overtime records…" /> : null}
+        {loading && records === null ? (
+          <div role="status" aria-label="Loading overtime records">
+            <TableSkeleton rows={8} columns={6} />
+            <span className="sr-only">Loading overtime records…</span>
+          </div>
+        ) : null}
         {error && !loading ? (
           <div className="p-6">
             <ErrorState
@@ -212,7 +215,7 @@ export default function OvertimePage() {
             />
           </div>
         ) : null}
-        {!loading && !error && records && records.length === 0 ? (
+        {!error && records && records.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={AlarmClock}
@@ -221,8 +224,9 @@ export default function OvertimePage() {
             />
           </div>
         ) : null}
-        {!loading && !error && records && records.length > 0 ? (
-          <Table>
+        {!error && records && records.length > 0 ? (
+          <BusyRegion busy={loading} label="Refreshing…">
+<Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Date</TableHead>
@@ -243,10 +247,7 @@ export default function OvertimePage() {
                   </TableCell>
                   <TableCell>
                     <EmployeeIdentityCell
-                      name={employeeDisplayName(
-                        employeeById.get(record.employee_id),
-                        record.employee_id,
-                      )}
+                      name={employeeName(record.employee_id)}
                       size="sm"
                     />
                   </TableCell>
@@ -277,6 +278,10 @@ export default function OvertimePage() {
               ))}
             </TableBody>
           </Table>
+</BusyRegion>
+        ) : null}
+      {!error && pagination ? (
+          <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
         ) : null}
       </TableContainer>
     </div>

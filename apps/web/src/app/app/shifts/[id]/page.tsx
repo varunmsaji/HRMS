@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
+import { ShiftDeleteDialog } from "@/components/shift/shift-delete-dialog";
 import { ShiftForm } from "@/components/shift/shift-form";
 import { ShiftPublishDialog } from "@/components/shift/shift-publish-dialog";
 import { ShiftVersionForm } from "@/components/shift/shift-version-form";
@@ -26,7 +27,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
-import { ApiError, describeApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
+import {
+  ApiError,
+  describeApiError,
+  describeLifecycleError,
+  getFieldError,
+} from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Shift, ShiftVersion } from "@/lib/shift/types";
@@ -89,21 +95,32 @@ export default function ShiftDetailPage() {
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const router = useRouter();
   const [statusChanging, setStatusChanging] = useState(false);
 
   // --- Versions tab state ---
   const [versions, setVersions] = useState<ShiftVersion[] | null>(null);
-  const [latestVersions, setLatestVersions] = useState<ShiftVersion[] | null>(null);
-  const [versionsPagination, setVersionsPagination] = useState<PaginationMeta | null>(null);
+  const [latestVersions, setLatestVersions] = useState<ShiftVersion[] | null>(
+    null,
+  );
+  const [versionsPagination, setVersionsPagination] =
+    useState<PaginationMeta | null>(null);
   const [versionsPage, setVersionsPage] = useState(1);
-  const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<WeeklyOffPattern[]>([]);
+  const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<
+    WeeklyOffPattern[]
+  >([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
 
-  const [draftValues, setDraftValues] = useState<ShiftVersionFormValues | null>(null);
+  const [draftValues, setDraftValues] = useState<ShiftVersionFormValues | null>(
+    null,
+  );
   const [draftErrors, setDraftErrors] = useState<ShiftVersionFormErrors>({});
   const [savingDraft, setSavingDraft] = useState(false);
-  const [draftStaleMessage, setDraftStaleMessage] = useState<string | null>(null);
+  const [draftStaleMessage, setDraftStaleMessage] = useState<string | null>(
+    null,
+  );
 
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [discarding, setDiscarding] = useState(false);
@@ -117,11 +134,15 @@ export default function ShiftDetailPage() {
   // can't make the draft/current-published sections flicker or disappear.
   const draft = latestVersions?.find((v) => v.status === "DRAFT") ?? null;
   const currentPublished =
-    latestVersions?.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
+    latestVersions?.find(
+      (v) => v.status === "PUBLISHED" && v.effective_to === null,
+    ) ?? null;
   const historical =
     versions
       ?.filter((v) => v.id !== draft?.id && v.id !== currentPublished?.id)
-      .sort((a, b) => (b.effective_from ?? "").localeCompare(a.effective_from ?? "")) ?? [];
+      .sort((a, b) =>
+        (b.effective_from ?? "").localeCompare(a.effective_from ?? ""),
+      ) ?? [];
 
   const loadShift = useCallback(async () => {
     setLoading(true);
@@ -135,7 +156,11 @@ export default function ShiftDetailPage() {
       setError(
         err instanceof ApiError
           ? err
-          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
+          : new ApiError({
+              status: 0,
+              code: "UNKNOWN_ERROR",
+              message: "Something went wrong.",
+            }),
       );
       return null;
     } finally {
@@ -148,7 +173,9 @@ export default function ShiftDetailPage() {
       setVersionsLoading(true);
       try {
         const [versionResult, patternData] = await Promise.all([
-          apiClient.getList<ShiftVersion>(`/shifts/${params.id}/versions`, { page: targetPage }),
+          apiClient.getList<ShiftVersion>(`/shifts/${params.id}/versions`, {
+            page: targetPage,
+          }),
           apiClient.get<WeeklyOffPattern[]>("/weekly-off-patterns"),
         ]);
         setVersions(versionResult.data);
@@ -223,9 +250,13 @@ export default function ShiftDetailPage() {
     setFormErrors({});
     setStaleMessage(null);
     try {
-      const updated = await apiClient.patch<Shift>(`/shifts/${shift.id}`, patch, {
-        ifMatch: String(shift.version),
-      });
+      const updated = await apiClient.patch<Shift>(
+        `/shifts/${shift.id}`,
+        patch,
+        {
+          ifMatch: String(shift.version),
+        },
+      );
       setShift(updated);
       setEditing(false);
       setFormValues(null);
@@ -348,7 +379,9 @@ export default function ShiftDetailPage() {
         patch,
         { ifMatch: String(draft.version) },
       );
-      setVersions((prev) => (prev ? prev.map((v) => (v.id === updated.id ? updated : v)) : prev));
+      setVersions((prev) =>
+        prev ? prev.map((v) => (v.id === updated.id ? updated : v)) : prev,
+      );
       setLatestVersions((prev) =>
         prev ? prev.map((v) => (v.id === updated.id ? updated : v)) : prev,
       );
@@ -381,7 +414,9 @@ export default function ShiftDetailPage() {
     if (latest) {
       setDraftStaleMessage(null);
       const latestDraft = latest.find((v) => v.status === "DRAFT") ?? null;
-      setDraftValues(latestDraft ? shiftVersionToFormValues(latestDraft) : null);
+      setDraftValues(
+        latestDraft ? shiftVersionToFormValues(latestDraft) : null,
+      );
       toast({ title: "Reloaded", variant: "success" });
     }
   }
@@ -422,7 +457,10 @@ export default function ShiftDetailPage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/app/shifts" className="text-sm text-foreground-secondary hover:underline">
+        <Link
+          href="/app/shifts"
+          className="text-sm text-foreground-secondary hover:underline"
+        >
           ← Shifts
         </Link>
       </div>
@@ -433,8 +471,19 @@ export default function ShiftDetailPage() {
         actions={
           canManage && shift && !editing && tab === "overview" ? (
             <div className="flex items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setConfirmOpen(true)}
+              >
                 {shift.is_active ? "Deactivate" : "Reactivate"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDeleteOpen(true)}
+              >
+                Delete
               </Button>
               <Button type="button" onClick={startEditing}>
                 Edit
@@ -463,7 +512,9 @@ export default function ShiftDetailPage() {
                     ? "This shift could not be found."
                     : error.message
               }
-              onRetry={error.status === 404 ? undefined : () => void loadShift()}
+              onRetry={
+                error.status === 404 ? undefined : () => void loadShift()
+              }
             />
           </CardContent>
         </Card>
@@ -471,7 +522,10 @@ export default function ShiftDetailPage() {
 
       {!loading && !error && shift ? (
         <>
-          <div className="flex gap-1 overflow-x-auto border-b border-border" role="tablist">
+          <div
+            className="flex gap-1 overflow-x-auto border-b border-border"
+            role="tablist"
+          >
             {TABS.map((item) => (
               <button
                 key={item.key}
@@ -503,9 +557,17 @@ export default function ShiftDetailPage() {
 
                 {editing && formValues ? (
                   <div className="space-y-6">
-                    <ShiftForm values={formValues} errors={formErrors} onChange={setFormValues} />
+                    <ShiftForm
+                      values={formValues}
+                      errors={formErrors}
+                      onChange={setFormValues}
+                    />
                     <div className="flex flex-wrap gap-2">
-                      <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                      <Button
+                        type="button"
+                        onClick={() => void handleSave()}
+                        disabled={saving}
+                      >
                         {saving ? "Saving…" : "Save changes"}
                       </Button>
                       <Button
@@ -528,13 +590,17 @@ export default function ShiftDetailPage() {
                         <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                           Shift name
                         </dt>
-                        <dd className="mt-0.5 text-sm text-foreground">{shift.name}</dd>
+                        <dd className="mt-0.5 text-sm text-foreground">
+                          {shift.name}
+                        </dd>
                       </div>
                       <div>
                         <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
                           Shift code
                         </dt>
-                        <dd className="mt-0.5 text-sm text-foreground">{shift.code ?? "—"}</dd>
+                        <dd className="mt-0.5 text-sm text-foreground">
+                          {shift.code ?? "—"}
+                        </dd>
                       </div>
                       <div>
                         <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
@@ -544,7 +610,9 @@ export default function ShiftDetailPage() {
                           {shift.current_version_id ? (
                             <Badge variant="secondary">Published</Badge>
                           ) : (
-                            <span className="text-foreground-muted">Not published yet</span>
+                            <span className="text-foreground-muted">
+                              Not published yet
+                            </span>
                           )}
                         </dd>
                       </div>
@@ -620,14 +688,16 @@ export default function ShiftDetailPage() {
                               Effective from
                             </dt>
                             <dd className="mt-0.5 text-sm text-foreground">
-                              <CompanyDate value={currentPublished.effective_from} />
+                              <CompanyDate
+                                value={currentPublished.effective_from}
+                              />
                             </dd>
                           </div>
                         </dl>
                       ) : (
                         <p className="text-sm text-foreground-muted">
-                          No published schedule yet — this shift cannot be assigned to employees
-                          until a draft is published.
+                          No published schedule yet — this shift cannot be
+                          assigned to employees until a draft is published.
                         </p>
                       )}
                     </CardContent>
@@ -636,7 +706,9 @@ export default function ShiftDetailPage() {
                   <Card>
                     <CardContent className="space-y-4 pt-6">
                       <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-medium text-foreground">Draft</h3>
+                        <h3 className="text-sm font-medium text-foreground">
+                          Draft
+                        </h3>
                         {canManage && !draft ? (
                           <Button
                             type="button"
@@ -651,7 +723,8 @@ export default function ShiftDetailPage() {
 
                       {!draft ? (
                         <p className="text-sm text-foreground-muted">
-                          No open draft. Start one to change this shift&apos;s schedule.
+                          No open draft. Start one to change this shift&apos;s
+                          schedule.
                         </p>
                       ) : null}
 
@@ -706,12 +779,18 @@ export default function ShiftDetailPage() {
                   {historical.length > 0 ? (
                     <Card>
                       <CardContent className="pt-6">
-                        <h3 className="text-sm font-medium text-foreground">History</h3>
+                        <h3 className="text-sm font-medium text-foreground">
+                          History
+                        </h3>
                         <ul className="mt-3 divide-y divide-border">
                           {historical.map((version) => (
-                            <li key={version.id} className="py-3 first:pt-0 last:pb-0">
+                            <li
+                              key={version.id}
+                              className="py-3 first:pt-0 last:pb-0"
+                            >
                               <p className="text-sm font-medium text-foreground">
-                                {version.shift_type} — {formatVersionTiming(version)}
+                                {version.shift_type} —{" "}
+                                {formatVersionTiming(version)}
                               </p>
                               <p className="mt-0.5 text-xs text-foreground-muted">
                                 <CompanyDate value={version.effective_from} /> –{" "}
@@ -747,7 +826,9 @@ export default function ShiftDetailPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{shift?.is_active ? "Deactivate shift?" : "Reactivate shift?"}</DialogTitle>
+            <DialogTitle>
+              {shift?.is_active ? "Deactivate shift?" : "Reactivate shift?"}
+            </DialogTitle>
             <DialogDescription>
               {shift?.is_active
                 ? "This shift will no longer be available for new activity. You can reactivate it later."
@@ -769,7 +850,11 @@ export default function ShiftDetailPage() {
               onClick={() => void handleToggleStatus()}
               disabled={statusChanging}
             >
-              {statusChanging ? "Saving…" : shift?.is_active ? "Deactivate" : "Reactivate"}
+              {statusChanging
+                ? "Saving…"
+                : shift?.is_active
+                  ? "Deactivate"
+                  : "Reactivate"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -777,14 +862,16 @@ export default function ShiftDetailPage() {
 
       <Dialog
         open={discardConfirmOpen}
-        onOpenChange={(open) => (!discarding ? setDiscardConfirmOpen(open) : null)}
+        onOpenChange={(open) =>
+          !discarding ? setDiscardConfirmOpen(open) : null
+        }
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Discard this draft?</DialogTitle>
             <DialogDescription>
-              This removes the unpublished changes. The currently published schedule (if any) is
-              unaffected.
+              This removes the unpublished changes. The currently published
+              schedule (if any) is unaffected.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -807,6 +894,22 @@ export default function ShiftDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {shift ? (
+        <ShiftDeleteDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          shift={shift}
+          onDeleted={() => {
+            toast({ title: "Shift deleted", variant: "success" });
+            router.push("/app/shifts");
+          }}
+          onStale={() => {
+            setStaleMessage("This shift was changed by someone else.");
+            void loadShift();
+          }}
+        />
+      ) : null}
 
       {draft ? (
         <ShiftPublishDialog

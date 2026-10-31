@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
@@ -32,18 +34,6 @@ interface ShiftOption {
   id: string;
   name: string;
   code: string | null;
-}
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeLabel(employee: EmployeeOption): string {
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
 }
 
 function shiftLabel(shift: ShiftOption): string {
@@ -79,7 +69,7 @@ export function RosterEntryDialog({
   const { toast } = useToast();
   const isEdit = Boolean(roster);
 
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const directory = useEmployeeDirectory({ enabled: open && !employeeId && !roster });
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
   const [values, setValues] = useState<RosterFormValues>(() => emptyRosterFormValues());
   const [errors, setErrors] = useState<RosterFormErrors>({});
@@ -96,12 +86,6 @@ export function RosterEntryDialog({
     );
     setErrors({});
     setFormError(null);
-    if (!employeeId && !roster) {
-      void apiClient
-        .getList<EmployeeOption>("/employees", { per_page: 100 })
-        .then(({ data }) => setEmployees(data))
-        .catch(() => setEmployees([]));
-    }
     void apiClient
       .get<ShiftOption[]>("/shifts")
       .then(setShifts)
@@ -184,17 +168,11 @@ export function RosterEntryDialog({
             </FormField>
           ) : (
             <FormField id="roster-employee" label="Employee" required error={errors.employeeId}>
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={values.employeeId}
-                onChange={(e) => setValues((c) => ({ ...c, employeeId: e.target.value }))}
-              >
-                <option value="">Choose…</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeLabel(emp)}
-                  </option>
-                ))}
-              </NativeSelect>
+                onChange={(id) => setValues((c) => ({ ...c, employeeId: id }))}
+              />
             </FormField>
           )}
 

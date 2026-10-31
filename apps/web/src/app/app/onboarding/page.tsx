@@ -9,7 +9,7 @@ import { CompanyDate } from "@/components/common/company-date";
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
@@ -36,9 +36,12 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
+import { initialQueryValue } from "@/lib/dashboard/overview";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -68,6 +71,13 @@ function candidateName(onboardingCase: OnboardingCase): string {
     .join(" ");
 }
 
+/** Reference lists (branches, departments…) are best-effort: a failure leaves them empty, but a
+ * cancellation must still propagate so an obsolete load is dropped, not half-applied. */
+function swallowExceptAbort(error: unknown): never[] {
+  if (isAbortError(error)) throw error;
+  return [];
+}
+
 export default function OnboardingPage() {
   const { toast } = useToast();
   const { can } = usePermissions();
@@ -80,7 +90,9 @@ export default function OnboardingPage() {
   const [error, setError] = useState<ApiError | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<OnboardingCaseStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<OnboardingCaseStatus | "">(() =>
+    initialQueryValue("status", ONBOARDING_CASE_STATUS_VALUES),
+  );
 
   const [createOpen, setCreateOpen] = useState(false);
   const [formValues, setFormValues] = useState<OnboardingCaseFormValues>(
@@ -89,27 +101,33 @@ export default function OnboardingPage() {
   const [formErrors, setFormErrors] = useState<OnboardingCaseFormErrors>({});
   const [saving, setSaving] = useState(false);
 
+  const beginRequest = useLatestRequest();
+
   const load = useCallback(
     async (targetPage: number, targetStatus: OnboardingCaseStatus | "") => {
+      const request = beginRequest();
       setLoading(true);
       setError(null);
       try {
         // GET /v1/onboarding-cases supports server-side `status` filtering and bounded pagination.
         const [{ data, pagination: meta }, branches, departments, designations] = await Promise.all(
           [
-            apiClient.getList<OnboardingCase>("/onboarding-cases", {
-              page: targetPage,
-              status: targetStatus || undefined,
-            }),
-            apiClient.get<Branch[]>("/branches").catch(() => []),
-            apiClient.get<Department[]>("/departments").catch(() => []),
-            apiClient.get<Designation[]>("/designations").catch(() => []),
+            apiClient.getList<OnboardingCase>(
+              "/onboarding-cases",
+              { page: targetPage, status: targetStatus || undefined },
+              { signal: request.signal },
+            ),
+            apiClient.get<Branch[]>("/branches", { signal: request.signal }).catch(swallowExceptAbort),
+            apiClient.get<Department[]>("/departments", { signal: request.signal }).catch(swallowExceptAbort),
+            apiClient.get<Designation[]>("/designations", { signal: request.signal }).catch(swallowExceptAbort),
           ],
         );
+        if (!request.isCurrent()) return;
         setCases(data);
         setPagination(meta);
         setRefs({ branches, departments, designations });
       } catch (err) {
+        if (isAbortError(err) || !request.isCurrent()) return;
         setCases(null);
         setPagination(null);
         setError(
@@ -122,10 +140,10 @@ export default function OnboardingPage() {
               }),
         );
       } finally {
-        setLoading(false);
+        if (request.isCurrent()) setLoading(false);
       }
     },
-    [],
+    [beginRequest],
   );
 
   useEffect(() => {
@@ -210,7 +228,7 @@ export default function OnboardingPage() {
   const canCreate = can("ONBOARDING.CREATE");
   const totalCount = pagination?.total ?? cases?.length ?? 0;
   const showToolbar = Boolean(
-    !loading && !error && cases && (cases.length > 0 || statusFilter !== ""),
+    !error && cases && (cases.length > 0 || statusFilter !== ""),
   );
 
   return (
@@ -219,7 +237,7 @@ export default function OnboardingPage() {
         title="Onboarding"
         description="Start onboarding for a known new hire; they fill in their own details, you review and activate."
         badge={
-          !loading && !error && cases ? (
+          !error && cases ? (
             <Badge variant="secondary" className="tabular-nums">
               {totalCount} {totalCount === 1 ? "case" : "cases"}
             </Badge>
@@ -290,7 +308,12 @@ export default function OnboardingPage() {
           </TableToolbar>
         ) : null}
 
-        {loading ? <LoadingState label="Loading onboarding cases…" /> : null}
+        {loading && cases === null ? (
+          <div role="status" aria-label="Loading onboarding cases">
+            <TableSkeleton rows={8} columns={6} />
+            <span className="sr-only">Loading onboarding cases…</span>
+          </div>
+        ) : null}
 
         {error && !loading ? (
           <div className="p-6">
@@ -305,7 +328,7 @@ export default function OnboardingPage() {
           </div>
         ) : null}
 
-        {!loading && !error && cases && cases.length === 0 && !statusFilter ? (
+        {!error && cases && cases.length === 0 && !statusFilter ? (
           <div className="p-6">
             <EmptyState
               icon={UserPlus}
@@ -322,7 +345,7 @@ export default function OnboardingPage() {
           </div>
         ) : null}
 
-        {!loading && !error && cases && cases.length === 0 && statusFilter ? (
+        {!error && cases && cases.length === 0 && statusFilter ? (
           <div className="p-6">
             <EmptyState
               icon={Search}
@@ -345,7 +368,7 @@ export default function OnboardingPage() {
           </div>
         ) : null}
 
-        {!loading && !error && cases && cases.length > 0 && filteredCases ? (
+        {!error && cases && cases.length > 0 && filteredCases ? (
           filteredCases.length === 0 ? (
             <div className="p-6">
               <EmptyState
@@ -355,7 +378,8 @@ export default function OnboardingPage() {
               />
             </div>
           ) : (
-            <Table className="min-w-[640px]">
+            <BusyRegion busy={loading} label="Refreshing onboarding cases…">
+<Table className="min-w-[640px]">
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead>Candidate</TableHead>
@@ -395,6 +419,7 @@ export default function OnboardingPage() {
                 ))}
               </TableBody>
             </Table>
+</BusyRegion>
           )
         ) : null}
 

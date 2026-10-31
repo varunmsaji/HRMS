@@ -9,7 +9,7 @@ import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { LeaveApplicationDialog } from "@/components/leave-application/leave-application-dialog";
@@ -27,9 +27,15 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
+import { EmployeeSelect } from "@/components/employee/employee-select";
 import { apiClient } from "@/lib/api/client";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
+import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import { ApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
+import { initialQueryValue } from "@/lib/dashboard/overview";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -40,19 +46,6 @@ import {
 } from "@/lib/leave-application/types";
 import type { LeaveType } from "@/lib/leave-type/types";
 import { cn } from "@/lib/utils";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeDisplayName(employee: EmployeeOption | undefined, employeeId: string): string {
-  if (!employee) return employeeId;
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
-}
 
 function addDays(iso: string, days: number): string {
   const date = new Date(`${iso}T00:00:00Z`);
@@ -76,23 +69,25 @@ export default function LeaveApplicationsPage() {
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [dateFrom, setDateFrom] = useState(addDays(today, -30));
   const [dateTo, setDateTo] = useState(addDays(today, 90));
-  const [statusFilter, setStatusFilter] = useState<LeaveApplicationStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<LeaveApplicationStatus | "">(() =>
+    initialQueryValue("status", LEAVE_APPLICATION_STATUSES),
+  );
   const [employeeFilter, setEmployeeFilter] = useState("");
 
   const [applications, setApplications] = useState<LeaveApplication[] | null>(null);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const employeeById = useMemo(() => {
-    const map = new Map<string, EmployeeOption>();
-    for (const emp of employees) map.set(emp.id, emp);
-    return map;
-  }, [employees]);
+  const directory = useEmployeeDirectory({ enabled: view === "TEAM" });
+  const rowEmployeeIds = useMemo(
+    () => (applications ?? []).map((a) => a.employee_id),
+    [applications],
+  );
+  const employeeName = useEmployeeNames(rowEmployeeIds, directory.employees);
 
   const leaveTypeById = useMemo(() => {
     const map = new Map<string, LeaveType>();
@@ -100,8 +95,11 @@ export default function LeaveApplicationsPage() {
     return map;
   }, [leaveTypes]);
 
+  const beginRequest = useLatestRequest();
+
   const load = useCallback(
     async (targetPage: number) => {
+      const request = beginRequest();
       setLoading(true);
       setError(null);
       try {
@@ -119,10 +117,13 @@ export default function LeaveApplicationsPage() {
                   ? employeeFilter || undefined
                   : undefined,
           },
+          { signal: request.signal },
         );
+        if (!request.isCurrent()) return;
         setApplications(data);
         setPagination(meta);
       } catch (err) {
+        if (isAbortError(err) || !request.isCurrent()) return;
         setApplications(null);
         setPagination(null);
         setError(
@@ -131,10 +132,10 @@ export default function LeaveApplicationsPage() {
             : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
         );
       } finally {
-        setLoading(false);
+        if (request.isCurrent()) setLoading(false);
       }
     },
-    [dateFrom, dateTo, statusFilter, view, employeeFilter, user?.employee_id],
+    [beginRequest, dateFrom, dateTo, statusFilter, view, employeeFilter, user?.employee_id],
   );
 
   useEffect(() => {
@@ -151,14 +152,6 @@ export default function LeaveApplicationsPage() {
       .then(setLeaveTypes)
       .catch(() => setLeaveTypes([]));
   }, []);
-
-  useEffect(() => {
-    if (view !== "TEAM") return;
-    void apiClient
-      .getList<EmployeeOption>("/employees", { per_page: 100 })
-      .then(({ data }) => setEmployees(data))
-      .catch(() => setEmployees([]));
-  }, [view]);
 
   function onCreated(_application: LeaveApplication) {
     void load(page);
@@ -239,22 +232,22 @@ export default function LeaveApplicationsPage() {
           </FormField>
           {view === "TEAM" ? (
             <FormField id="leave-applications-employee" label="Employee">
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={employeeFilter}
-                onChange={(e) => setEmployeeFilter(e.target.value)}
-              >
-                <option value="">All employees</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeDisplayName(emp, emp.id)}
-                  </option>
-                ))}
-              </NativeSelect>
+                emptyLabel="All employees"
+                onChange={setEmployeeFilter}
+              />
             </FormField>
           ) : null}
         </TableToolbar>
 
-        {loading ? <LoadingState label="Loading leave applications…" /> : null}
+        {loading && applications === null ? (
+          <div role="status" aria-label="Loading leave applications">
+            <TableSkeleton rows={8} columns={6} />
+            <span className="sr-only">Loading leave applications…</span>
+          </div>
+        ) : null}
 
         {error && !loading ? (
           <div className="p-6">
@@ -269,7 +262,7 @@ export default function LeaveApplicationsPage() {
           </div>
         ) : null}
 
-        {!loading && !error && applications && applications.length === 0 ? (
+        {!error && applications && applications.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={CalendarOff}
@@ -288,8 +281,9 @@ export default function LeaveApplicationsPage() {
           </div>
         ) : null}
 
-        {!loading && !error && applications && applications.length > 0 ? (
-          <Table>
+        {!error && applications && applications.length > 0 ? (
+          <BusyRegion busy={loading} label="Refreshing…">
+<Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Dates</TableHead>
@@ -303,8 +297,7 @@ export default function LeaveApplicationsPage() {
             </TableHeader>
             <TableBody>
               {applications.map((application) => {
-                const emp = employeeById.get(application.employee_id);
-                const empLabel = employeeDisplayName(emp, application.employee_id);
+                const empLabel = employeeName(application.employee_id);
                 return (
                   <TableRow key={application.id}>
                     <TableCell className="whitespace-nowrap tabular-nums text-foreground-secondary">
@@ -346,9 +339,10 @@ export default function LeaveApplicationsPage() {
               })}
             </TableBody>
           </Table>
+</BusyRegion>
         ) : null}
 
-        {!loading && !error && pagination ? (
+        {!error && pagination ? (
           <PaginationControls
             pagination={pagination}
             onPageChange={setPage}
@@ -364,7 +358,7 @@ export default function LeaveApplicationsPage() {
         employeeId={view === "TEAM" ? employeeFilter || undefined : undefined}
         employeeLabel={
           view === "TEAM" && employeeFilter
-            ? employeeDisplayName(employeeById.get(employeeFilter), employeeFilter)
+            ? employeeName(employeeFilter)
             : undefined
         }
         onCreated={onCreated}

@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
+import { EmployeeSelect } from "@/components/employee/employee-select";
 import { RosterEntryDialog } from "@/components/shift-roster/roster-entry-dialog";
 import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
+import { PaginationControls } from "@/components/common/pagination-controls";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
@@ -27,30 +29,22 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import type { PaginationMeta } from "@/lib/api/types";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
+import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import { ROSTER_STATUSES, type RosterStatus, type ShiftRoster } from "@/lib/shift-roster/types";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
 
 interface ShiftOption {
   id: string;
   name: string;
   code: string | null;
-}
-
-function employeeDisplayName(employee: EmployeeOption | undefined, employeeId: string): string {
-  if (!employee) return employeeId;
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
 }
 
 function shiftDisplayName(shift: ShiftOption | undefined, shiftId: string): string {
@@ -89,7 +83,10 @@ export default function RostersPage() {
   const [statusFilter, setStatusFilter] = useState<RosterStatus | "">("");
 
   const [rosters, setRosters] = useState<ShiftRoster[] | null>(null);
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const directory = useEmployeeDirectory();
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const beginRequest = useLatestRequest();
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -97,11 +94,8 @@ export default function RostersPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ShiftRoster | null>(null);
 
-  const employeeById = useMemo(() => {
-    const map = new Map<string, EmployeeOption>();
-    for (const emp of employees) map.set(emp.id, emp);
-    return map;
-  }, [employees]);
+  const rosterEmployeeIds = useMemo(() => (rosters ?? []).map((r) => r.employee_id), [rosters]);
+  const employeeName = useEmployeeNames(rosterEmployeeIds, directory.employees);
 
   const shiftById = useMemo(() => {
     const map = new Map<string, ShiftOption>();
@@ -110,35 +104,44 @@ export default function RostersPage() {
   }, [shifts]);
 
   const load = useCallback(async () => {
+    const request = beginRequest();
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
-      if (employeeFilter) params.set("employee_id", employeeFilter);
-      if (statusFilter) params.set("status", statusFilter);
-      const data = await apiClient.get<ShiftRoster[]>(`/rosters?${params.toString()}`);
+      const { data, pagination: meta } = await apiClient.getList<ShiftRoster>(
+        "/rosters",
+        {
+          page,
+          per_page: 100,
+          date_from: dateFrom,
+          date_to: dateTo,
+          employee_id: employeeFilter || undefined,
+          status: statusFilter || undefined,
+        },
+        { signal: request.signal },
+      );
+      if (!request.isCurrent()) return;
       setRosters(data);
+      setPagination(meta);
     } catch (err) {
+      if (isAbortError(err) || !request.isCurrent()) return;
       setRosters(null);
+      setPagination(null);
       setError(
         err instanceof ApiError
           ? err
           : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
       );
     } finally {
-      setLoading(false);
+      if (request.isCurrent()) setLoading(false);
     }
-  }, [dateFrom, dateTo, employeeFilter, statusFilter]);
+  }, [beginRequest, page, dateFrom, dateTo, employeeFilter, statusFilter]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
-    void apiClient
-      .getList<EmployeeOption>("/employees", { per_page: 100 })
-      .then(({ data }) => setEmployees(data))
-      .catch(() => setEmployees([]));
     void apiClient
       .get<ShiftOption[]>("/shifts")
       .then(setShifts)
@@ -215,28 +218,44 @@ export default function RostersPage() {
       <TableContainer>
         <TableToolbar className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <FormField id="rosters-date-from" label="From">
-            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setPage(1);
+              }}
+            />
           </FormField>
           <FormField id="rosters-date-to" label="To">
-            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setPage(1);
+              }}
+            />
           </FormField>
           <FormField id="rosters-employee" label="Employee">
-            <NativeSelect
+            <EmployeeSelect
+              id="rosters-employee-select"
+              directory={directory}
               value={employeeFilter}
-              onChange={(e) => setEmployeeFilter(e.target.value)}
-            >
-              <option value="">All employees</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {employeeDisplayName(emp, emp.id)}
-                </option>
-              ))}
-            </NativeSelect>
+              emptyLabel="All employees"
+              onChange={(id) => {
+                setEmployeeFilter(id);
+                setPage(1);
+              }}
+            />
           </FormField>
           <FormField id="rosters-status" label="Status">
             <NativeSelect
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as RosterStatus | "")}
+              onChange={(e) => {
+                setStatusFilter(e.target.value as RosterStatus | "");
+                setPage(1);
+              }}
             >
               <option value="">All statuses</option>
               {ROSTER_STATUSES.map((status) => (
@@ -248,7 +267,12 @@ export default function RostersPage() {
           </FormField>
         </TableToolbar>
 
-        {loading ? <LoadingState label="Loading roster entries…" /> : null}
+        {loading && rosters === null ? (
+          <div role="status" aria-label="Loading roster entries">
+            <TableSkeleton rows={8} columns={5} />
+            <span className="sr-only">Loading roster entries…</span>
+          </div>
+        ) : null}
         {error && !loading ? (
           <div className="p-6">
             <ErrorState
@@ -261,7 +285,7 @@ export default function RostersPage() {
             />
           </div>
         ) : null}
-        {!loading && !error && rosters && rosters.length === 0 ? (
+        {!error && rosters && rosters.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={CalendarCheck}
@@ -277,7 +301,8 @@ export default function RostersPage() {
             />
           </div>
         ) : null}
-        {!loading && !error && rosters && rosters.length > 0 ? (
+        {!error && rosters && rosters.length > 0 ? (
+          <BusyRegion busy={loading} label="Refreshing roster entries…">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -290,7 +315,6 @@ export default function RostersPage() {
             </TableHeader>
             <TableBody>
               {rosters.map((roster) => {
-                const emp = employeeById.get(roster.employee_id);
                 return (
                   <TableRow key={roster.id}>
                     <TableCell className="tabular-nums text-foreground-secondary">
@@ -298,7 +322,7 @@ export default function RostersPage() {
                     </TableCell>
                     <TableCell>
                       <EmployeeIdentityCell
-                        name={employeeDisplayName(emp, roster.employee_id)}
+                        name={employeeName(roster.employee_id)}
                         size="sm"
                       />
                     </TableCell>
@@ -349,6 +373,10 @@ export default function RostersPage() {
               })}
             </TableBody>
           </Table>
+          </BusyRegion>
+        ) : null}
+        {!error && pagination ? (
+          <PaginationControls pagination={pagination} onPageChange={setPage} disabled={loading} />
         ) : null}
       </TableContainer>
 

@@ -35,6 +35,10 @@ interface RequestOptions {
   /** Abort after this many milliseconds (default {@link DEFAULT_TIMEOUT_MS}, or
    * {@link TRANSFER_TIMEOUT_MS} for uploads and file downloads). */
   timeoutMs?: number;
+  /** Lets the caller cancel the request (superseded search, page change, unmount). A cancelled
+   * request rejects with an `AbortError` `DOMException`, never an `ApiError` — check it with
+   * `isAbortError` and ignore it rather than showing an error. */
+  signal?: AbortSignal;
 }
 
 /** A file returned by `apiClient.download` — the filename comes from `Content-Disposition`. */
@@ -105,6 +109,12 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     (isFormData || options.responseType === "file" ? TRANSFER_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   let timedOut = false;
+  const external = options.signal;
+  const onExternalAbort = () => controller?.abort();
+  if (external) {
+    if (external.aborted) controller?.abort();
+    else external.addEventListener("abort", onExternalAbort, { once: true });
+  }
   const timer = controller
     ? setTimeout(() => {
         timedOut = true;
@@ -132,6 +142,7 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
             : JSON.stringify(options.body),
     });
   } catch {
+    if (external?.aborted) throw new DOMException("The request was cancelled", "AbortError");
     if (timedOut) throw timeoutError(sentRequestId, method !== "GET");
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       throw offlineError(sentRequestId);
@@ -139,6 +150,7 @@ async function rawRequest<T>(path: string, options: RequestOptions): Promise<T> 
     throw new NetworkError({ requestId: sentRequestId });
   } finally {
     if (timer) clearTimeout(timer);
+    external?.removeEventListener("abort", onExternalAbort);
   }
 
   if (options.responseType === "file" && response.ok) {

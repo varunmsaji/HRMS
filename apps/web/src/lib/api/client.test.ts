@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { isAbortError } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { loadSession, saveSession, SESSION_EXPIRED_EVENT, type StoredSession } from "@/lib/auth/token-storage";
@@ -124,6 +125,26 @@ describe("apiClient", () => {
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init.credentials).toBe("include");
+  });
+
+  it("rejects with an AbortError (not an ApiError) when the caller cancels", async () => {
+    saveSession(SAMPLE_SESSION);
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new TypeError("aborted")));
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    const pending = apiClient.get("/some/path", { signal: controller.signal }).catch((e: unknown) => e);
+    controller.abort();
+
+    const error = await pending;
+    expect(isAbortError(error)).toBe(true);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the request id it sent on a network failure, so support can find the attempt", async () => {

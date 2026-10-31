@@ -5,7 +5,8 @@ import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import { descendantIds } from "@/lib/department/validate-department";
 import type { DepartmentFormErrors, DepartmentFormValues } from "@/lib/department/validate-department";
-import type { Employee } from "@/lib/employee/types";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import type { EmployeeDirectory } from "@/lib/employee/use-employee-directory";
 
 interface DepartmentFormProps {
   values: DepartmentFormValues;
@@ -13,17 +14,11 @@ interface DepartmentFormProps {
   onChange: (values: DepartmentFormValues) => void;
   branches: Branch[];
   departments: Department[];
-  employees: Employee[];
+  /** Paginated employee directory for the head picker — see `EmployeeSelect`. */
+  directory: EmployeeDirectory;
   /** The department being edited, if any — excluded (with its descendants) from the parent picker. */
   excludeDepartmentId?: string;
   idPrefix?: string;
-}
-
-function employeeLabel(employee: Employee): string {
-  const name =
-    employee.display_name?.trim() ||
-    [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return `${name || "Unnamed"} (${employee.employee_code})`;
 }
 
 export function DepartmentForm({
@@ -32,7 +27,7 @@ export function DepartmentForm({
   onChange,
   branches,
   departments,
-  employees,
+  directory,
   excludeDepartmentId,
   idPrefix = "",
 }: DepartmentFormProps) {
@@ -103,17 +98,12 @@ export function DepartmentForm({
             label="Department head"
             error={errors.headEmployeeId}
           >
-            <NativeSelect
+            <EmployeeSelect
+              directory={directory}
               value={values.headEmployeeId}
-              onChange={(e) => update("headEmployeeId", e.target.value)}
-            >
-              <option value="">No department head</option>
-              {employees.map((employee) => (
-                <option key={employee.id} value={employee.id}>
-                  {employeeLabel(employee)}
-                </option>
-              ))}
-            </NativeSelect>
+              emptyLabel="No department head"
+              onChange={(employeeId) => update("headEmployeeId", employeeId)}
+            />
           </FormField>
         </div>
       </section>

@@ -10,19 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { EmployeeSelect } from "@/components/employee/employee-select";
 import { apiClient } from "@/lib/api/client";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import type { PolicyResolution } from "@/lib/attendance-policy/types";
 import { useAuth } from "@/lib/auth/auth-context";
 import { POLICY_KIND_LABELS } from "@/lib/policy-assignment/types";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
 
 const RESOLUTION_KINDS = ["ATTENDANCE_POLICY", "OVERTIME_POLICY", "REGULARIZATION_POLICY"] as const;
 
@@ -31,7 +26,7 @@ const RESOLUTION_KINDS = ["ATTENDANCE_POLICY", "OVERTIME_POLICY", "REGULARIZATIO
  * applies, and which precedence level (EMPLOYEE/SHIFT/.../COMPANY) matched. */
 export default function PolicyResolutionPage() {
   const { user } = useAuth();
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const directory = useEmployeeDirectory();
   const [employeeId, setEmployeeId] = useState("");
   const [date, setDate] = useState(businessToday(user?.company_timezone ?? "Asia/Kolkata"));
   const [policyKind, setPolicyKind] = useState<(typeof RESOLUTION_KINDS)[number]>(
@@ -41,13 +36,6 @@ export default function PolicyResolutionPage() {
   const [result, setResult] = useState<PolicyResolution | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void apiClient
-      .getList<EmployeeOption>("/employees", { per_page: 100 })
-      .then(({ data }) => setEmployees(data))
-      .catch(() => setEmployees([]));
-  }, []);
 
   async function handleResolve() {
     if (!employeeId || !date) {
@@ -82,15 +70,7 @@ export default function PolicyResolutionPage() {
         <CardContent className="space-y-4 pt-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FormField id="resolution-employee" label="Employee" required>
-              <NativeSelect value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-                <option value="">Choose…</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.first_name} {emp.last_name ?? ""}
-                    {emp.employee_code ? ` (${emp.employee_code})` : ""}
-                  </option>
-                ))}
-              </NativeSelect>
+              <EmployeeSelect directory={directory} value={employeeId} onChange={setEmployeeId} />
             </FormField>
             <FormField id="resolution-date" label="Date" required>
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />

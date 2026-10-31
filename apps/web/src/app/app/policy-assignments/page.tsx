@@ -7,7 +7,7 @@ import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
@@ -34,6 +34,8 @@ import {
 } from "@/components/ui/table";
 import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dialog";
 import type { ProposedChange } from "@/lib/work-calendar/change-impact";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -115,17 +117,23 @@ export default function PolicyAssignmentsPage() {
     ? policyOptions.filter((option) => option.leave_type_id === form.leaveTypeId)
     : policyOptions;
 
+  const beginRequest = useLatestRequest();
+
   const loadAssignments = useCallback(async (kind: PolicyKind | "", targetPage: number) => {
+    const request = beginRequest();
     setLoading(true);
     setError(null);
     try {
       const { data, pagination: meta } = await apiClient.getList<PolicyAssignment>(
         "/policy-assignments",
         { page: targetPage, policy_kind: kind || undefined },
+        { signal: request.signal },
       );
+      if (!request.isCurrent()) return;
       setAssignments(data);
       setPagination(meta);
     } catch (err) {
+      if (isAbortError(err) || !request.isCurrent()) return;
       setAssignments(null);
       setPagination(null);
       setError(
@@ -134,9 +142,9 @@ export default function PolicyAssignmentsPage() {
           : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
       );
     } finally {
-      setLoading(false);
+      if (request.isCurrent()) setLoading(false);
     }
-  }, []);
+  }, [beginRequest]);
 
   useEffect(() => {
     setPage(1);
@@ -295,7 +303,12 @@ export default function PolicyAssignmentsPage() {
           </div>
         </TableToolbar>
 
-        {loading ? <LoadingState label="Loading assignments…" /> : null}
+        {loading && assignments === null ? (
+          <div role="status" aria-label="Loading assignments">
+            <TableSkeleton rows={8} columns={5} />
+            <span className="sr-only">Loading assignments…</span>
+          </div>
+        ) : null}
 
         {error && !loading ? (
           <div className="p-6">
@@ -310,7 +323,7 @@ export default function PolicyAssignmentsPage() {
           </div>
         ) : null}
 
-        {!loading && !error && assignments && assignments.length === 0 ? (
+        {!error && assignments && assignments.length === 0 ? (
           <div className="p-6">
             <EmptyState
               icon={Link2}
@@ -325,8 +338,9 @@ export default function PolicyAssignmentsPage() {
           </div>
         ) : null}
 
-        {!loading && !error && assignments && assignments.length > 0 ? (
-          <Table>
+        {!error && assignments && assignments.length > 0 ? (
+          <BusyRegion busy={loading} label="Refreshing…">
+<Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Policy &amp; Scope</TableHead>
@@ -367,9 +381,10 @@ export default function PolicyAssignmentsPage() {
               ))}
             </TableBody>
           </Table>
+</BusyRegion>
         ) : null}
 
-        {!loading && !error && pagination ? (
+        {!error && pagination ? (
           <PaginationControls
             pagination={pagination}
             onPageChange={setPage}

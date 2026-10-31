@@ -67,11 +67,17 @@ const sampleRequest: RegularizationRequest = {
 
 function mockLoad(requests: RegularizationRequest[]) {
   mockedGet.mockImplementation((path: string) => {
-    if (path.startsWith("/regularizations?")) return Promise.resolve(requests);
     if (path === "/shifts") return Promise.resolve([]);
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
   mockedGetList.mockImplementation((path: string) => {
+    if (path === "/regularizations") {
+      return Promise.resolve({
+        data: requests,
+        pagination: { page: 1, per_page: 100, total: requests.length, total_pages: 1 },
+        meta: { request_id: "r0" },
+      });
+    }
     if (path === "/employees") {
       return Promise.resolve({
         data: [{ id: "emp-1", first_name: "Asha", last_name: null, employee_code: "EMP-001" }],
@@ -113,16 +119,14 @@ describe("RegularizationsPage", () => {
   });
 
   it("shows the permission-denied message on a 403", async () => {
-    mockedGet.mockImplementation((path: string) => {
-      if (path.startsWith("/regularizations?")) {
-        return Promise.reject(new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "nope" }));
-      }
-      return Promise.resolve([]);
-    });
-    mockedGetList.mockResolvedValue({
-      data: [],
-      pagination: { page: 1, per_page: 100, total: 0, total_pages: 0 },
-      meta: { request_id: "r1" },
+    mockedGet.mockResolvedValue([]);
+    mockedGetList.mockImplementation((path: string) => {
+      if (path === "/regularizations") return Promise.reject(new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "nope" }));
+      return Promise.resolve({
+        data: [],
+        pagination: { page: 1, per_page: 100, total: 0, total_pages: 0 },
+        meta: { request_id: "r1" },
+      });
     });
     render(<RegularizationsPage />);
 
@@ -155,6 +159,10 @@ describe("RegularizationsPage", () => {
     await screen.findByText("Missing punch");
 
     await user.click(screen.getByRole("button", { name: /team requests/i }));
-    expect(mockedGetList).toHaveBeenCalledWith("/employees", { per_page: 100 });
+    expect(mockedGetList).toHaveBeenCalledWith(
+      "/employees",
+      { page: 1, per_page: 100 },
+      expect.anything(),
+    );
   });
 });

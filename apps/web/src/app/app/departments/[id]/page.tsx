@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DepartmentForm } from "@/components/department/department-form";
 import { ErrorState } from "@/components/common/error-state";
@@ -21,6 +21,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
+import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import { ApiError, describeApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -52,11 +54,16 @@ export default function DepartmentDetailPage() {
   const [department, setDepartment] = useState<Department | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
   const [editing, setEditing] = useState(false);
+  const directory = useEmployeeDirectory({ enabled: editing });
+  const headIds = useMemo(
+    () => (department?.head_employee_id ? [department.head_employee_id] : []),
+    [department?.head_employee_id],
+  );
+  const employeeName = useEmployeeNames(headIds, directory.employees);
   const [formValues, setFormValues] = useState<DepartmentFormValues | null>(null);
   const [formErrors, setFormErrors] = useState<DepartmentFormErrors>({});
   const [saving, setSaving] = useState(false);
@@ -69,20 +76,14 @@ export default function DepartmentDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [data, branchData, departmentData, employeeResult] = await Promise.all([
+      const [data, branchData, departmentData] = await Promise.all([
         apiClient.get<Department>(`/departments/${params.id}`),
         apiClient.get<Branch[]>("/branches"),
         apiClient.get<Department[]>("/departments"),
-        // Reference-data dropdown (department head picker), not a paginated table — request
-        // the server's max page size (known limitation for >100-employee companies).
-        apiClient
-          .getList<Employee>("/employees", { per_page: 100 })
-          .catch(() => null),
       ]);
       setDepartment(data);
       setBranches(branchData);
       setDepartments(departmentData);
-      setEmployees(employeeResult?.data ?? []);
       return data;
     } catch (err) {
       setDepartment(null);
@@ -113,12 +114,7 @@ export default function DepartmentDetailPage() {
 
   function headEmployeeName(employeeId: string | null): string | null {
     if (!employeeId) return null;
-    const employee = employees.find((e) => e.id === employeeId);
-    if (!employee) return "Unknown employee";
-    const name =
-      employee.display_name?.trim() ||
-      [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-    return `${name || "Unnamed"} (${employee.employee_code})`;
+    return employeeName(employeeId);
   }
 
   function startEditing() {
@@ -309,7 +305,7 @@ export default function DepartmentDetailPage() {
                 onChange={setFormValues}
                 branches={branches}
                 departments={departments}
-                employees={employees}
+                directory={directory}
                 excludeDepartmentId={department.id}
               />
               <div className="flex flex-wrap gap-2">

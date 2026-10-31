@@ -38,8 +38,12 @@ export function emptyAssignmentFormValues(defaultChangeType: AssignmentChangeTyp
  * `null` — identical on the wire to omitting the key, since every optional field in
  * `AssignmentCreate` defaults to `None`; when a current assignment row exists, `null` is what
  * tells the server to carry the prior value forward. */
-export function buildAssignmentCreatePayload(values: AssignmentFormValues): Record<string, unknown> {
+export function buildAssignmentCreatePayload(
+  values: AssignmentFormValues,
+  impactToken?: string,
+): Record<string, unknown> {
   return {
+    ...(impactToken ? { confirm_pending_request_impact: true, pending_impact_token: impactToken } : {}),
     effective_from: values.effectiveFrom,
     change_type: values.changeType,
     change_reason: values.changeReason.trim() || null,

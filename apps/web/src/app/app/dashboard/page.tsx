@@ -1,32 +1,30 @@
 "use client";
 
 import {
-  ArrowRight,
-  Banknote,
   Building2,
-  CalendarClock,
-  CalendarRange,
   CheckCircle2,
   CreditCard,
   Layers3,
   ListChecks,
-  Palmtree,
-  UserPlus,
   Users,
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, type ComponentType, type ReactNode } from "react";
 
+import { PendingApprovals } from "@/components/dashboard/pending-approvals";
+import { QuickActions } from "@/components/dashboard/quick-actions";
+import { WorkforceSection } from "@/components/dashboard/workforce-overview";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
-import { PageHeader } from "@/components/common/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { useApiResource } from "@/hooks/use-api-resource";
 import { useAuth } from "@/lib/auth/auth-context";
+import { usePermissions } from "@/lib/auth/use-permissions";
+import { businessToday } from "@/lib/attendance/format";
 import { formatCompanyDateInZone } from "@/lib/dates/company-date";
 import { rememberCompanyDateFormat } from "@/lib/dates/use-company-date";
 import { cn } from "@/lib/utils";
@@ -36,41 +34,47 @@ import type {
   SubscriptionSummary,
 } from "@/lib/company/types";
 
+type Tone = "primary" | "neutral";
+
+const TONE_CLASSES: Record<Tone, string> = {
+  primary: "bg-primary-subtle text-primary border-primary-border",
+  neutral: "bg-surface-secondary text-foreground-secondary border-border",
+};
+
 function SummaryMetric({
   label,
   value,
   hint,
   icon: Icon,
-  emphasis = false,
+  tone = "neutral",
+  children,
 }: {
   label: string;
   value: string;
   hint?: string;
   icon: ComponentType<{ className?: string }>;
-  emphasis?: boolean;
+  tone?: Tone;
+  children?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col justify-between p-4">
+    <div className="flex flex-col justify-between rounded-lg border border-border bg-surface p-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-2xs font-semibold uppercase tracking-wider text-foreground-muted">
-          {label}
-        </p>
+        <p className="text-xs font-medium text-foreground-secondary">{label}</p>
         <span
           className={cn(
-            "flex h-6 w-6 shrink-0 items-center justify-center rounded-sm",
-            emphasis
-              ? "bg-primary-subtle text-primary"
-              : "bg-muted text-foreground-secondary",
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border",
+            TONE_CLASSES[tone],
           )}
         >
-          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+          <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
       </div>
-      <div className="mt-2">
-        <p className="text-xl font-semibold tracking-tight tabular-nums text-foreground">
+      <div className="mt-3">
+        <p className="text-2xl font-semibold tracking-tight tabular-nums text-foreground">
           {value}
         </p>
-        {hint ? <p className="mt-0.5 text-xs text-foreground-muted">{hint}</p> : null}
+        {hint ? <p className="mt-1 text-xs text-foreground-muted">{hint}</p> : null}
+        {children}
       </div>
     </div>
   );
@@ -105,47 +109,61 @@ function formatTrial(
   return formatCompanyDateInZone(endsAt, tz, pattern);
 }
 
-const WORKFLOW_ACTIONS = [
-  {
-    href: "/app/employees",
-    label: "Employee Directory",
-    description: "Manage employee records, assignments, and compensation.",
-    icon: Users,
-  },
-  {
-    href: "/app/attendance",
-    label: "Attendance Command",
-    description: "Review daily check-ins, exceptions, and overtime.",
-    icon: CalendarClock,
-  },
-  {
-    href: "/app/leave-applications",
-    label: "Leave Requests",
-    description: "Review and approve pending employee leave applications.",
-    icon: Palmtree,
-  },
-  {
-    href: "/app/payroll/pay-runs",
-    label: "Payroll Runs",
-    description: "Lock attendance inputs, compute salary, and finalise pay runs.",
-    icon: Banknote,
-  },
-  {
-    href: "/app/onboarding",
-    label: "Onboarding Cases",
-    description: "Invite new hires and verify pre-joining documentation.",
-    icon: UserPlus,
-  },
-  {
-    href: "/app/work-calendars",
-    label: "Work Calendars",
-    description: "Configure working weeks, holidays, and dated exceptions.",
-    icon: CalendarRange,
-  },
-];
+function describeCountry(code: string | null | undefined): string | null {
+  if (!code) return null;
+  try {
+    return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function monthName(month: number | undefined): string | null {
+  if (!month || month < 1 || month > 12) return null;
+  return new Intl.DateTimeFormat("en-GB", { month: "long", timeZone: "UTC" }).format(
+    new Date(Date.UTC(2000, month - 1, 1)),
+  );
+}
+
+function localTime(timeZone: string | null | undefined): string | null {
+  if (!timeZone) return null;
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone,
+    }).format(new Date());
+  } catch {
+    return null;
+  }
+}
+
+function greeting(timeZone: string | null | undefined): string {
+  let hour = new Date().getHours();
+  try {
+    if (timeZone) {
+      hour = Number(
+        new Intl.DateTimeFormat("en-GB", { hour: "numeric", hourCycle: "h23", timeZone }).format(
+          new Date(),
+        ),
+      );
+    }
+  } catch {
+    // Unknown timezone string: fall back to the browser's local hour.
+  }
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
 
 export default function CompanyDashboardPage() {
-  const { session } = useAuth();
+  const { session, user } = useAuth();
+  const { can } = usePermissions();
+  const timezone = user?.company_timezone ?? "Asia/Kolkata";
+  const canSeeAttendance = can("ATTENDANCE.VIEW");
+  const canSeePending = can("LEAVE.APPLICATION_APPROVE") || can("ATTENDANCE.REGULARIZATION_APPROVE") ||
+    can("ATTENDANCE.OVERTIME_APPROVE") || can("ONBOARDING.REVIEW");
   const {
     data: dashboard,
     loading: dashboardLoading,
@@ -178,6 +196,33 @@ export default function CompanyDashboardPage() {
   const setupHref =
     dashboard?.setup_progress.status === "COMPLETE" ? "/app/company" : "/app/setup";
 
+  const todayLabel = new Intl.DateTimeFormat("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    ...(profile?.timezone ? { timeZone: profile.timezone } : {}),
+  }).format(new Date());
+
+  const hours = profile?.business_hours;
+  const localeRows: Array<{ label: string; value: string; note?: string }> = [
+    {
+      label: "Country",
+      value: profile?.country_code ?? "—",
+      note: describeCountry(profile?.country_code) ?? undefined,
+    },
+    { label: "Currency", value: profile?.currency ?? "—" },
+    {
+      label: "Timezone",
+      value: profile?.timezone ?? "—",
+      note: localTime(profile?.timezone) ?? undefined,
+    },
+    { label: "Date format", value: profile?.locale?.date_format ?? "—" },
+    ...(monthName(profile?.fiscal_year?.start_month)
+      ? [{ label: "Fiscal year starts", value: monthName(profile?.fiscal_year?.start_month) as string }]
+      : []),
+    ...(hours ? [{ label: "Business hours", value: `${hours.start_time} – ${hours.end_time}` }] : []),
+  ];
+
   const companyName =
     profile?.name ??
     session?.companies.find((c) => c.id === session.companyId)?.name ??
@@ -185,17 +230,32 @@ export default function CompanyDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Dashboard"
-        description="Operational overview of your organisation, workforce capacity, and platform readiness."
-        actions={
-          <Button asChild variant="outline" size="sm">
-            <Link href={setupHref}>
-              {setupIncomplete ? "Continue setup" : "Company profile"}
-            </Link>
-          </Button>
-        }
-      />
+      <section aria-label="Welcome" className="border-b border-border pb-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs text-foreground-muted">{todayLabel}</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
+              {greeting(profile?.timezone)}
+            </h1>
+            <p className="mt-1.5 max-w-xl text-sm text-foreground-secondary">
+              {companyName} — workforce, plan capacity and the workspaces you use most.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button asChild size="sm">
+              <Link href="/app/employees">
+                <Users className="h-4 w-4" aria-hidden="true" />
+                Employees
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="bg-surface">
+              <Link href={setupHref}>
+                {setupIncomplete ? "Continue setup" : "Company profile"}
+              </Link>
+            </Button>
+          </div>
+        </div>
+      </section>
 
       {loading ? <LoadingState label="Loading dashboard…" /> : null}
 
@@ -217,7 +277,7 @@ export default function CompanyDashboardPage() {
       {!loading && !error && dashboard ? (
         <>
           {setupIncomplete ? (
-            <div className="flex flex-col gap-4 rounded-lg border border-primary-border bg-primary-subtle/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-4 rounded-xl border border-primary-border bg-primary-subtle/50 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary-border bg-surface text-primary">
                   <ListChecks className="h-4 w-4" aria-hidden="true" />
@@ -254,75 +314,58 @@ export default function CompanyDashboardPage() {
             </div>
           )}
 
+          {canSeeAttendance ? (
+            <WorkforceSection today={businessToday(timezone)} timezone={timezone} />
+          ) : null}
+
+          {canSeePending ? <PendingApprovals /> : null}
+
           <section aria-label="Organisation metrics">
-            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3 lg:grid-cols-5 [&>*]:bg-surface">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <SummaryMetric
                 label="Employees"
                 value={formatCount(dashboard.employee_count)}
                 icon={Users}
-                emphasis
-              />
+                tone="primary"
+                hint={
+                  subscription?.seat_limit != null && dashboard.employee_count !== null
+                    ? `of ${subscription.seat_limit.toLocaleString()} seats used`
+                    : subscription?.seat_limit === null
+                      ? "Unlimited seats"
+                      : undefined
+                }
+              >
+                {subscription?.seat_limit != null && dashboard.employee_count !== null ? (
+                  <Progress
+                    value={Math.min(dashboard.employee_count, subscription.seat_limit)}
+                    max={subscription.seat_limit}
+                    className="mt-2.5 w-full"
+                  />
+                ) : null}
+              </SummaryMetric>
               <SummaryMetric
                 label="Branches"
                 value={formatCount(dashboard.branch_count)}
                 icon={Building2}
+                tone="neutral"
               />
               <SummaryMetric
                 label="Departments"
                 value={formatCount(dashboard.department_count)}
                 icon={Layers3}
+                tone="neutral"
               />
               <SummaryMetric
-                label="Seat limit"
-                value={formatSeatLimit(subscription?.seat_limit)}
-                icon={Users}
+                label="Plan"
+                value={dashboard.subscription?.plan_code ?? "—"}
+                hint={dashboard.subscription?.status ?? "No live subscription"}
+                icon={CreditCard}
+                tone="neutral"
               />
-              <div className="col-span-2 sm:col-span-1">
-                <SummaryMetric
-                  label="Plan"
-                  value={dashboard.subscription?.plan_code ?? "—"}
-                  hint={dashboard.subscription?.status ?? "No live subscription"}
-                  icon={CreditCard}
-                />
-              </div>
             </div>
           </section>
 
-          <section aria-label="Operational workspaces">
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-foreground-muted">
-              Operational Workspaces
-            </h2>
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3 [&>*]:min-w-0">
-              {WORKFLOW_ACTIONS.map((action) => {
-                const Icon = action.icon;
-                return (
-                  <Link
-                    key={action.href}
-                    href={action.href}
-                    className="group flex items-start justify-between gap-3 rounded-lg border border-border bg-surface p-4 transition-colors duration-motion-instant hover:border-border-strong hover:bg-surface-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <div className="flex items-start gap-3 min-w-0">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-surface-secondary text-foreground-secondary group-hover:border-primary-border group-hover:bg-primary-subtle group-hover:text-primary">
-                        <Icon className="h-4 w-4" aria-hidden="true" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground group-hover:text-primary">
-                          {action.label}
-                        </p>
-                        <p className="mt-0.5 text-xs leading-relaxed text-foreground-secondary">
-                          {action.description}
-                        </p>
-                      </div>
-                    </div>
-                    <ArrowRight
-                      className="mt-1 h-4 w-4 shrink-0 text-foreground-disabled transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
-                      aria-hidden="true"
-                    />
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
+          <QuickActions />
 
           <div className="grid min-w-0 gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <Card>
@@ -401,39 +444,51 @@ export default function CompanyDashboardPage() {
             </Card>
 
             <Card>
-              <CardHeader>
-                <CardTitle>Company Identity &amp; Locale</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm">
-                <div className="flex items-center gap-3 pb-4">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-primary-border bg-primary-subtle text-sm font-semibold uppercase text-primary">
+              <CardHeader className="flex-row items-center gap-3 space-y-0">
+                {profile?.branding?.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={profile.branding.logo_url}
+                    alt=""
+                    className="h-10 w-10 shrink-0 rounded-md border border-border bg-surface object-contain p-0.5"
+                  />
+                ) : (
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-foreground text-sm font-semibold uppercase text-surface">
                     {companyName.slice(0, 2)}
                   </span>
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-foreground">{companyName}</p>
-                    <p className="truncate font-mono text-xs text-foreground-muted">
-                      {profile?.id ?? session?.companyId ?? "—"}
-                    </p>
-                  </div>
-                  <Badge variant="secondary" className="ml-auto shrink-0 uppercase">
-                    {profile?.status ?? "—"}
-                  </Badge>
+                )}
+                <div className="min-w-0 flex-1">
+                  <CardTitle className="truncate">{companyName}</CardTitle>
+                  <p className="truncate text-xs text-foreground-muted">
+                    {profile?.legal_name && profile.legal_name !== companyName
+                      ? profile.legal_name
+                      : "Company profile"}
+                  </p>
                 </div>
-                <div className="divide-y divide-border border-t border-border">
-                  <DetailRow label="Country">{profile?.country_code ?? "—"}</DetailRow>
-                  <DetailRow label="Currency">{profile?.currency ?? "—"}</DetailRow>
-                  <DetailRow label="Timezone">{profile?.timezone ?? "—"}</DetailRow>
-                  <DetailRow label="Date format">
-                    {profile?.locale?.date_format ?? "—"}
-                  </DetailRow>
+                <Badge variant="secondary" className="shrink-0 uppercase">
+                  {profile?.status ?? "—"}
+                </Badge>
+              </CardHeader>
+              <CardContent className="text-sm">
+                <div className="divide-y divide-border border-y border-border">
+                  {localeRows.map((row) => (
+                    <DetailRow key={row.label} label={row.label}>
+                      {row.value}
+                      {row.note ? (
+                        <span className="ml-2 font-normal text-foreground-muted">{row.note}</span>
+                      ) : null}
+                    </DetailRow>
+                  ))}
                 </div>
-                <div className="mt-4 flex flex-col items-start gap-2 border-t border-border pt-3 text-xs text-foreground-muted sm:flex-row sm:items-center sm:justify-between">
-                  <span className="min-w-0">Manage registration, address, and fiscal year settings.</span>
+                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-foreground-muted">
+                  <span className="min-w-0 truncate font-mono">
+                    {profile?.id ?? session?.companyId ?? "—"}
+                  </span>
                   <Link
                     href="/app/company"
                     className="shrink-0 font-medium text-primary hover:underline"
                   >
-                    Edit profile →
+                    Edit profile
                   </Link>
                 </div>
               </CardContent>

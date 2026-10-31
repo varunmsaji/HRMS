@@ -74,10 +74,16 @@ const sampleRecord: OvertimeRecord = {
 
 function mockLoad(records: OvertimeRecord[]) {
   mockedGet.mockImplementation((path: string) => {
-    if (path.startsWith("/overtime?")) return Promise.resolve(records);
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
   mockedGetList.mockImplementation((path: string) => {
+    if (path === "/overtime") {
+      return Promise.resolve({
+        data: records,
+        pagination: { page: 1, per_page: 100, total: records.length, total_pages: 1 },
+        meta: { request_id: "r0" },
+      });
+    }
     if (path === "/employees") {
       return Promise.resolve({
         data: [{ id: "emp-1", first_name: "Asha", last_name: null, employee_code: "EMP-001" }],
@@ -128,16 +134,14 @@ describe("OvertimePage", () => {
   });
 
   it("shows the permission-denied message on a 403", async () => {
-    mockedGet.mockImplementation((path: string) => {
-      if (path.startsWith("/overtime?")) {
-        return Promise.reject(new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "nope" }));
-      }
-      return Promise.resolve([]);
-    });
-    mockedGetList.mockResolvedValue({
-      data: [],
-      pagination: { page: 1, per_page: 100, total: 0, total_pages: 0 },
-      meta: { request_id: "r1" },
+    mockedGet.mockResolvedValue([]);
+    mockedGetList.mockImplementation((path: string) => {
+      if (path === "/overtime") return Promise.reject(new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "nope" }));
+      return Promise.resolve({
+        data: [],
+        pagination: { page: 1, per_page: 100, total: 0, total_pages: 0 },
+        meta: { request_id: "r1" },
+      });
     });
     render(<OvertimePage />);
 
@@ -153,6 +157,10 @@ describe("OvertimePage", () => {
     await screen.findByText("10/08/2026");
 
     await user.click(screen.getByRole("button", { name: /my overtime/i }));
-    expect(mockedGet).toHaveBeenCalledWith(expect.stringContaining("employee_id=emp-1"));
+    expect(mockedGetList).toHaveBeenCalledWith(
+      "/overtime",
+      expect.objectContaining({ employee_id: "emp-1" }),
+      expect.anything(),
+    );
   });
 });

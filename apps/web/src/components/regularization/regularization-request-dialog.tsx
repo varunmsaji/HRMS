@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import {
@@ -36,20 +38,8 @@ interface ShiftOption {
   code: string | null;
 }
 
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
 function shiftLabel(shift: ShiftOption): string {
   return shift.code ? `${shift.name} (${shift.code})` : shift.name;
-}
-
-function employeeLabelFor(employee: EmployeeOption): string {
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
 }
 
 interface RegularizationRequestDialogProps {
@@ -84,7 +74,6 @@ export function RegularizationRequestDialog({
   const { toast } = useToast();
 
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(employeeId ?? "");
   const [values, setValues] = useState<RegularizationFormValues>(() =>
     emptyRegularizationFormValues(),
@@ -94,6 +83,7 @@ export function RegularizationRequestDialog({
   const [saving, setSaving] = useState(false);
 
   const needsEmployeePicker = mode === "ON_BEHALF" && !employeeId;
+  const directory = useEmployeeDirectory({ enabled: open && needsEmployeePicker });
 
   useEffect(() => {
     if (!open) return;
@@ -105,12 +95,6 @@ export function RegularizationRequestDialog({
       .get<ShiftOption[]>("/shifts")
       .then(setShifts)
       .catch(() => setShifts([]));
-    if (mode === "ON_BEHALF" && !employeeId) {
-      void apiClient
-        .getList<EmployeeOption>("/employees", { per_page: 100 })
-        .then(({ data }) => setEmployees(data))
-        .catch(() => setEmployees([]));
-    }
   }, [open, attendanceDate, mode, employeeId]);
 
   function updateCorrectionKind(correctionKind: RegularizationCorrectionKind) {
@@ -179,17 +163,11 @@ export function RegularizationRequestDialog({
           ) : null}
           {needsEmployeePicker ? (
             <FormField id="regularization-employee" label="Employee" required error={errors.employeeId}>
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              >
-                <option value="">Choose…</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeLabelFor(emp)}
-                  </option>
-                ))}
-              </NativeSelect>
+                onChange={(id) => setSelectedEmployeeId(id)}
+              />
             </FormField>
           ) : null}
 

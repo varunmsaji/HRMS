@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { EmployeeSelect } from "@/components/employee/employee-select";
 import { RosterEntryDialog } from "@/components/shift-roster/roster-entry-dialog";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -15,28 +16,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { NativeSelect } from "@/components/ui/native-select";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { employeeOptionName, useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
 import { cn } from "@/lib/utils";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
 
 interface ShiftOption {
   id: string;
   name: string;
   code: string | null;
-}
-
-function employeeLabel(employee: EmployeeOption): string {
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
 }
 
 function shiftLabel(shift: ShiftOption | undefined): string {
@@ -93,7 +84,8 @@ export default function RosterCalendarPage() {
   const [monthIndex, setMonthIndex] = useState(today.getUTCMonth());
   const [employeeId, setEmployeeId] = useState("");
 
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const directory = useEmployeeDirectory();
+  const beginRequest = useLatestRequest();
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
   const [rosters, setRosters] = useState<ShiftRoster[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -128,9 +120,11 @@ export default function RosterCalendarPage() {
 
   const load = useCallback(async () => {
     if (!employeeId) {
+      beginRequest();
       setRosters(null);
       return;
     }
+    const request = beginRequest();
     setLoading(true);
     setError(null);
     try {
@@ -141,9 +135,15 @@ export default function RosterCalendarPage() {
         date_from: monthStart,
         date_to: monthEnd,
       });
-      const data = await apiClient.get<ShiftRoster[]>(`/rosters?${params.toString()}`);
+      // One employee has at most one roster entry per date, so a 6-week window is at most 42
+      // rows — always a single, complete page of the (500-row) bounded endpoint.
+      const data = await apiClient.get<ShiftRoster[]>(`/rosters?${params.toString()}`, {
+        signal: request.signal,
+      });
+      if (!request.isCurrent()) return;
       setRosters(data);
     } catch (err) {
+      if (isAbortError(err) || !request.isCurrent()) return;
       setRosters(null);
       setError(
         err instanceof ApiError
@@ -151,19 +151,15 @@ export default function RosterCalendarPage() {
           : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
       );
     } finally {
-      setLoading(false);
+      if (request.isCurrent()) setLoading(false);
     }
-  }, [employeeId, year, monthIndex, weeks]);
+  }, [beginRequest, employeeId, year, monthIndex, weeks]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
-    void apiClient
-      .getList<EmployeeOption>("/employees", { per_page: 100 })
-      .then(({ data }) => setEmployees(data))
-      .catch(() => setEmployees([]));
     void apiClient
       .get<ShiftOption[]>("/shifts")
       .then(setShifts)
@@ -213,7 +209,7 @@ export default function RosterCalendarPage() {
   }
 
   const draftCount = (rosters ?? []).filter((r) => r.status === "DRAFT").length;
-  const selectedEmployee = employees.find((e) => e.id === employeeId);
+  const selectedEmployee = directory.employees.find((e) => e.id === employeeId);
 
   return (
     <div className="space-y-6">
@@ -230,14 +226,13 @@ export default function RosterCalendarPage() {
       <Card>
         <CardContent className="flex flex-col gap-4 pt-6 sm:flex-row sm:items-end sm:justify-between">
           <FormField id="roster-calendar-employee" label="Employee" className="sm:max-w-xs">
-            <NativeSelect value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-              <option value="">Choose an employee…</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {employeeLabel(emp)}
-                </option>
-              ))}
-            </NativeSelect>
+            <EmployeeSelect
+              id="roster-calendar-employee-select"
+              directory={directory}
+              value={employeeId}
+              emptyLabel="Choose an employee…"
+              onChange={setEmployeeId}
+            />
           </FormField>
 
           <div className="flex items-center gap-3">
@@ -346,7 +341,7 @@ export default function RosterCalendarPage() {
         onOpenChange={setDialogOpen}
         roster={dialogRoster}
         employeeId={employeeId}
-        employeeLabel={selectedEmployee ? employeeLabel(selectedEmployee) : undefined}
+        employeeLabel={selectedEmployee ? employeeOptionName(selectedEmployee) : undefined}
         rosterDate={dialogDate ?? undefined}
         onSaved={onSaved}
       />

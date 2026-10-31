@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssignmentForm } from "@/components/employee/assignment-form";
+import { ManagerChangeImpactDialog } from "@/components/employee/manager-change-impact-dialog";
 import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { EffectiveDateBadge } from "@/components/employee/effective-date-badge";
 import { CompanyDate } from "@/components/common/company-date";
@@ -20,12 +21,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
+import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import { ApiError, describeLifecycleError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
 import type { Designation } from "@/lib/designation/types";
-import type { Assignment, AssignmentChangeType, Employee } from "@/lib/employee/types";
+import type {
+  Assignment,
+  AssignmentChangeType,
+  Employee,
+  ManagerChangeImpact,
+} from "@/lib/employee/types";
 import {
   buildAssignmentCreatePayload,
   emptyAssignmentFormValues,
@@ -47,8 +55,6 @@ interface ReferenceData {
   designations: Designation[];
   grades: Grade[];
   shifts: Shift[];
-  employees: Employee[];
-  employeesLoadFailed: boolean;
 }
 
 export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
@@ -61,10 +67,13 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
   const [error, setError] = useState<ApiError | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const directory = useEmployeeDirectory({ enabled: createOpen });
   const [values, setValues] = useState<AssignmentFormValues>(emptyAssignmentFormValues());
   const [errors, setErrors] = useState<AssignmentFormErrors>({});
   const [saving, setSaving] = useState(false);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
+  const [impactReview, setImpactReview] = useState<{ impact: ManagerChangeImpact; stale: boolean } | null>(null);
+  const submittingRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,20 +88,8 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
         apiClient.get<Shift[]>("/shifts").catch(() => []),
       ]);
 
-      let employees: Employee[] = [];
-      let employeesLoadFailed = false;
-      try {
-        // Reference-data dropdown (manager picker), not a paginated table — request the
-        // server's max page size. Companies with >100 employees will see a truncated list here
-        // (known limitation, API-01 only paginates the /employees table itself).
-        const result = await apiClient.getList<Employee>("/employees", { per_page: 100 });
-        employees = result.data;
-      } catch {
-        employeesLoadFailed = true;
-      }
-
       setAssignments(assignmentData);
-      setRefs({ branches, departments, designations, grades, shifts, employees, employeesLoadFailed });
+      setRefs({ branches, departments, designations, grades, shifts });
     } catch (err) {
       setAssignments(null);
       setError(
@@ -121,11 +118,14 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
     return item?.name ?? item?.title ?? "Unknown";
   }
 
+  const managerIds = (assignments ?? [])
+    .map((item) => item.reporting_manager_id)
+    .filter((id): id is string => Boolean(id));
+  const employeeName = useEmployeeNames(managerIds, directory.employees);
+
   function managerName(id: string | null): string {
     if (!id) return "—";
-    const employee = refs?.employees.find((item) => item.id === id);
-    if (!employee) return "Unknown";
-    return employee.display_name?.trim() || [employee.first_name, employee.last_name].filter(Boolean).join(" ");
+    return employeeName(id);
   }
 
   const canTransfer = can("EMPLOYEE.TRANSFER");
@@ -142,32 +142,92 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
     setCreateOpen(true);
   }
 
+  /** Save button: when a reporting-manager change is really being attempted, preview its impact
+   * first and only post straight away when nothing pending is affected. */
   async function handleCreate() {
+    if (submittingRef.current) return;
     const clientErrors = validateAssignmentForm(values, Boolean(current));
     if (Object.keys(clientErrors).length > 0) {
       setErrors(clientErrors);
       return;
     }
 
+    const changingManager =
+      current !== null && values.reportingManagerId !== "" && values.reportingManagerId !== current.reporting_manager_id;
+    if (!changingManager) {
+      await submitChange();
+      return;
+    }
+
+    submittingRef.current = true;
+    setSaving(true);
+    setErrors({});
+    setStaleMessage(null);
+    try {
+      const query = new URLSearchParams({
+        reporting_manager_id: values.reportingManagerId,
+        effective_from: values.effectiveFrom,
+      });
+      const impact = await apiClient.get<ManagerChangeImpact>(
+        `/employees/${employeeId}/manager-change-impact?${query.toString()}`,
+      );
+      if (impact.requires_confirmation) {
+        setImpactReview({ impact, stale: false });
+        return;
+      }
+    } catch (err) {
+      toast({ title: "Could not check pending requests", description: describeLifecycleError(err), variant: "danger" });
+      return;
+    } finally {
+      submittingRef.current = false;
+      setSaving(false);
+    }
+    await submitChange();
+  }
+
+  async function confirmManagerChange() {
+    if (!impactReview) return;
+    await submitChange(impactReview.impact.impact_token);
+  }
+
+  async function submitChange(impactToken?: string) {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSaving(true);
     setErrors({});
     setStaleMessage(null);
     try {
       await apiClient.post<Assignment>(
         `/employees/${employeeId}/assignments`,
-        buildAssignmentCreatePayload(values),
+        buildAssignmentCreatePayload(values, impactToken),
         current ? { ifMatch: String(current.version) } : undefined,
       );
+      setImpactReview(null);
       setCreateOpen(false);
       toast({ title: "Assignment change saved", variant: "success" });
       await load();
     } catch (err) {
       if (err instanceof ApiError) {
+        if (err.status === 409 && err.code === "MANAGER_CHANGE_REQUIRES_CONFIRMATION") {
+          // Pending requests appeared or changed since the user last saw the figures. Show the
+          // new ones and make them confirm again - the old token is never reused.
+          const context = err.details.find((d) => d.code === "MANAGER_CHANGE_REQUIRES_CONFIRMATION")
+            ?.context as { impact?: Omit<ManagerChangeImpact, "requires_confirmation" | "impact_token">; impact_token?: string } | undefined;
+          if (context?.impact && context.impact_token) {
+            setImpactReview({
+              impact: { ...context.impact, requires_confirmation: true, impact_token: context.impact_token },
+              stale: impactToken !== undefined,
+            });
+            return;
+          }
+        }
         if (err.status === 409 && err.code === "STALE_RESOURCE") {
+          setImpactReview(null);
           setStaleMessage("The current assignment was changed by someone else since you opened this form.");
           return;
         }
         if (err.status === 409 && err.code === "NO_ACTIVE_EMPLOYMENT") {
+          setImpactReview(null);
           toast({
             title: "Could not save assignment",
             description: "This employee has no active employment episode covering this date.",
@@ -176,6 +236,7 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
           return;
         }
         if (err.status === 409 && err.code === "ASSIGNMENT_DATES_OVERLAP") {
+          setImpactReview(null);
           toast({
             title: "Could not save assignment",
             description: "This effective date overlaps an existing assignment row.",
@@ -184,6 +245,7 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
           return;
         }
         if (err.status === 422) {
+          setImpactReview(null);
           setErrors({
             effectiveFrom: getFieldError(err.details, "effective_from"),
             changeType: getFieldError(err.details, "change_type"),
@@ -198,13 +260,16 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
           return;
         }
         if (err.status === 403) {
+          setImpactReview(null);
           setCreateOpen(false);
           toast({ title: "You don't have permission to do that", variant: "danger" });
           return;
         }
       }
+      setImpactReview(null);
       toast({ title: "Could not save assignment", description: describeLifecycleError(err), variant: "danger" });
     } finally {
+      submittingRef.current = false;
       setSaving(false);
     }
   }
@@ -355,8 +420,7 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
               designations={refs?.designations ?? []}
               grades={refs?.grades ?? []}
               shifts={refs?.shifts ?? []}
-              employees={refs?.employees ?? []}
-              employeesLoadFailed={refs?.employeesLoadFailed ?? false}
+              directory={directory}
               currentEmployeeId={employeeId}
               allowedChangeTypes={allowedChangeTypes}
               idPrefix="assignment-"
@@ -372,6 +436,15 @@ export function AssignmentPanel({ employeeId }: AssignmentPanelProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ManagerChangeImpactDialog
+        open={impactReview !== null}
+        impact={impactReview?.impact ?? null}
+        stale={impactReview?.stale ?? false}
+        submitting={saving}
+        onCancel={() => setImpactReview(null)}
+        onConfirm={() => void confirmManagerChange()}
+      />
     </div>
   );
 }

@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { LEAVE_HALF_DAY_VALUES, type LeaveApplication } from "@/lib/leave-application/types";
@@ -25,18 +27,6 @@ import {
   type LeaveApplicationFormValues,
 } from "@/lib/leave-application/validate-leave-application";
 import type { LeaveType } from "@/lib/leave-type/types";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeLabelFor(employee: EmployeeOption): string {
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
-}
 
 const HALF_DAY_LABELS: Record<string, string> = {
   FIRST_HALF: "First half",
@@ -70,7 +60,7 @@ export function LeaveApplicationDialog({
   const { toast } = useToast();
 
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const directory = useEmployeeDirectory({ enabled: open && mode === "ON_BEHALF" && !employeeId });
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(employeeId ?? "");
   const [values, setValues] = useState<LeaveApplicationFormValues>(() =>
     emptyLeaveApplicationFormValues(),
@@ -94,12 +84,6 @@ export function LeaveApplicationDialog({
       .get<LeaveType[]>("/leave-types")
       .then(setLeaveTypes)
       .catch(() => setLeaveTypes([]));
-    if (mode === "ON_BEHALF" && !employeeId) {
-      void apiClient
-        .getList<EmployeeOption>("/employees", { per_page: 100 })
-        .then(({ data }) => setEmployees(data))
-        .catch(() => setEmployees([]));
-    }
   }, [open, mode, employeeId]);
 
   async function handleSubmit() {
@@ -175,17 +159,11 @@ export function LeaveApplicationDialog({
               required
               error={errors.employeeId}
             >
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              >
-                <option value="">Choose…</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeLabelFor(emp)}
-                  </option>
-                ))}
-              </NativeSelect>
+                onChange={(id) => setSelectedEmployeeId(id)}
+              />
             </FormField>
           ) : null}
 

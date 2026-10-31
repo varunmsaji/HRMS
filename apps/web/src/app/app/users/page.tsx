@@ -7,7 +7,7 @@ import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
@@ -32,6 +32,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -81,16 +83,23 @@ export default function UsersPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
 
+  const beginRequest = useLatestRequest();
+
   const load = useCallback(async (targetPage: number) => {
+    const request = beginRequest();
     setLoading(true);
     setError(null);
     try {
-      const { data, pagination: meta } = await apiClient.getList<UserSummary>("/users", {
-        page: targetPage,
-      });
+      const { data, pagination: meta } = await apiClient.getList<UserSummary>(
+        "/users",
+        { page: targetPage },
+        { signal: request.signal },
+      );
+      if (!request.isCurrent()) return;
       setUsers(data);
       setPagination(meta);
     } catch (err) {
+      if (isAbortError(err) || !request.isCurrent()) return;
       setUsers(null);
       setPagination(null);
       setError(
@@ -99,9 +108,9 @@ export default function UsersPage() {
           : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
       );
     } finally {
-      setLoading(false);
+      if (request.isCurrent()) setLoading(false);
     }
-  }, []);
+  }, [beginRequest]);
 
   useEffect(() => {
     void load(page);
@@ -195,7 +204,12 @@ export default function UsersPage() {
       />
 
       <TableContainer>
-        {loading ? <LoadingState label="Loading users…" /> : null}
+        {loading && users === null ? (
+          <div role="status" aria-label="Loading users">
+            <TableSkeleton rows={8} columns={5} />
+            <span className="sr-only">Loading users…</span>
+          </div>
+        ) : null}
 
         {error && !loading ? (
           <div className="p-6">
@@ -203,14 +217,15 @@ export default function UsersPage() {
           </div>
         ) : null}
 
-        {!loading && !error && users && users.length === 0 ? (
+        {!error && users && users.length === 0 ? (
           <div className="p-6">
             <EmptyState title="No users yet" description="Invite someone to get started." />
           </div>
         ) : null}
 
-        {!loading && !error && users && users.length > 0 ? (
-          <Table>
+        {!error && users && users.length > 0 ? (
+          <BusyRegion busy={loading} label="Refreshing…">
+<Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>User</TableHead>
@@ -258,6 +273,7 @@ export default function UsersPage() {
               ))}
             </TableBody>
           </Table>
+</BusyRegion>
         ) : null}
 
         {pagination ? (

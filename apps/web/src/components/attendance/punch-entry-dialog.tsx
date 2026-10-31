@@ -14,23 +14,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { nowInZoneForDatetimeLocal, wallTimeToUtcIso, zoneLabel } from "@/lib/attendance/format";
 import type { Punch, PunchDirection } from "@/lib/attendance/types";
 import { useAuth } from "@/lib/auth/auth-context";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeLabel(employee: EmployeeOption): string {
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
-}
 
 interface PunchEntryDialogProps {
   open: boolean;
@@ -74,7 +64,7 @@ export function PunchEntryDialog({
   // other `user?.company_timezone ?? "Asia/Kolkata"` call site in this module (e.g.
   // `employee-attendance-panel.tsx`).
   const punchTz = user?.company_timezone ?? "Asia/Kolkata";
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const directory = useEmployeeDirectory({ enabled: open && !employeeId });
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(employeeId ?? "");
   const [direction, setDirection] = useState<PunchDirection>("IN");
   const [punchTime, setPunchTime] = useState(() => nowInZoneForDatetimeLocal(punchTz));
@@ -92,12 +82,6 @@ export function PunchEntryDialog({
     setPunchTime(nowInZoneForDatetimeLocal(punchTz));
     setReference("");
     setError(null);
-    if (!employeeId) {
-      void apiClient
-        .getList<EmployeeOption>("/employees", { per_page: 100 })
-        .then(({ data }) => setEmployees(data))
-        .catch(() => setEmployees([]));
-    }
   }, [open, employeeId, punchTz]);
 
   async function handleSubmit() {
@@ -153,17 +137,11 @@ export function PunchEntryDialog({
             </FormField>
           ) : (
             <FormField id="punch-employee" label="Employee" required>
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              >
-                <option value="">Choose…</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeLabel(emp)}
-                  </option>
-                ))}
-              </NativeSelect>
+                onChange={(id) => setSelectedEmployeeId(id)}
+              />
             </FormField>
           )}
           <FormField id="punch-direction" label="Direction" required>

@@ -120,3 +120,17 @@ export interface ShiftVersion {
   breaks: ShiftBreak[];
   duty_blocks: ShiftDutyBlock[];
 }
+
+export interface ShiftDeletionBlocker {
+  code: string;
+  message: string;
+  count: number;
+}
+
+/** `GET /shifts/{id}/deletion-check` — why (not) the shift can be deleted. */
+export interface ShiftDeletionCheck {
+  can_delete: boolean;
+  blockers: ShiftDeletionBlocker[];
+  published_version_count: number;
+  draft_version_count: number;
+}

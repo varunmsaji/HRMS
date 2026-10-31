@@ -21,7 +21,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { EmployeeSelect } from "@/components/employee/employee-select";
 import { apiClient } from "@/lib/api/client";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
+import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import {
@@ -33,20 +36,6 @@ import {
   type GeofenceWorkplace,
   type WorkplaceAuthorization,
 } from "@/lib/geofence/types";
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeName(map: Map<string, EmployeeOption>, id: string): string {
-  const emp = map.get(id);
-  if (!emp) return id;
-  const name = [emp.first_name, emp.last_name].filter(Boolean).join(" ");
-  return emp.employee_code ? `${name} (${emp.employee_code})` : name;
-}
 
 /** Workplace geofences for attendance. A workplace is a Branch with coordinates and a radius
  * (edited on the branch screen); this page shows where each is used, manages the extra workplaces
@@ -60,18 +49,27 @@ export default function AttendanceGeofencesPage() {
   const [workplaces, setWorkplaces] = useState<GeofenceWorkplace[] | null>(null);
   const [authorizations, setAuthorizations] = useState<WorkplaceAuthorization[]>([]);
   const [attempts, setAttempts] = useState<GeofenceAttempt[] | null>(null);
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [authorizationTotal, setAuthorizationTotal] = useState(0);
+  const directory = useEmployeeDirectory({ enabled: canConfigure });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [attemptsError, setAttemptsError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [onlyRejected, setOnlyRejected] = useState(true);
 
+  const nameIds = useMemo(
+    () => [
+      ...authorizations.map((a) => a.employee_id),
+      ...(attempts ?? []).map((a) => a.employee_id),
+    ],
+    [authorizations, attempts],
+  );
+  const employeeName = useEmployeeNames(nameIds, directory.employees);
+
   const [newEmployee, setNewEmployee] = useState("");
   const [newBranch, setNewBranch] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const employeeById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
   const branchById = useMemo(
     () => new Map((workplaces ?? []).map((w) => [w.branch_id, w])),
     [workplaces],
@@ -85,16 +83,15 @@ export default function AttendanceGeofencesPage() {
     setLoading(true);
     setError(null);
     try {
-      const [{ data: places }, { data: auths }, { data: emps }] = await Promise.all([
+      const [{ data: places }, { data: auths, pagination: authMeta }] = await Promise.all([
         apiClient.getList<GeofenceWorkplace>("/attendance/geofences"),
         apiClient.getList<WorkplaceAuthorization>("/attendance/workplace-authorizations", {
           per_page: 100,
         }),
-        apiClient.getList<EmployeeOption>("/employees", { per_page: 100 }),
       ]);
       setWorkplaces(places);
       setAuthorizations(auths);
-      setEmployees(emps);
+      setAuthorizationTotal(authMeta?.total ?? auths.length);
     } catch (err) {
       setError(err instanceof ApiError ? describeApiError(err) : "Could not load workplaces.");
     } finally {
@@ -282,17 +279,7 @@ export default function AttendanceGeofencesPage() {
               <CardContent className="space-y-4 pt-6">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <FormField id="auth-employee" label="Employee">
-                    <NativeSelect
-                      value={newEmployee}
-                      onChange={(e) => setNewEmployee(e.target.value)}
-                    >
-                      <option value="">Choose…</option>
-                      {employees.map((e) => (
-                        <option key={e.id} value={e.id}>
-                          {employeeName(employeeById, e.id)}
-                        </option>
-                      ))}
-                    </NativeSelect>
+                    <EmployeeSelect directory={directory} value={newEmployee} onChange={setNewEmployee} />
                   </FormField>
                   <FormField
                     id="auth-branch"
@@ -331,7 +318,7 @@ export default function AttendanceGeofencesPage() {
                     <TableBody>
                       {authorizations.map((a) => (
                         <TableRow key={a.id}>
-                          <TableCell>{employeeName(employeeById, a.employee_id)}</TableCell>
+                          <TableCell>{employeeName(a.employee_id)}</TableCell>
                           <TableCell>{branchById.get(a.branch_id)?.name ?? a.branch_id}</TableCell>
                           <TableCell className="text-right">
                             <Button
@@ -349,6 +336,12 @@ export default function AttendanceGeofencesPage() {
                     </TableBody>
                   </Table>
                 )}
+                {authorizationTotal > authorizations.length ? (
+                  <p role="alert" className="text-sm text-warning">
+                    Showing the first {authorizations.length} of {authorizationTotal} authorisations —
+                    the rest are not listed on this page.
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           </section>
@@ -404,7 +397,7 @@ export default function AttendanceGeofencesPage() {
                     {attempts.map((a) => (
                       <TableRow key={a.id}>
                         <TableCell>{new Date(a.created_at).toLocaleString()}</TableCell>
-                        <TableCell>{employeeName(employeeById, a.employee_id)}</TableCell>
+                        <TableCell>{employeeName(a.employee_id)}</TableCell>
                         <TableCell>{a.direction}</TableCell>
                         <TableCell>
                           <Badge variant={a.accepted ? "success" : "danger"}>

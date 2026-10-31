@@ -1,12 +1,12 @@
 "use client";
 
 import { Wallet } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
-import { LoadingState } from "@/components/common/loading-state";
+import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
@@ -31,6 +31,9 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
+import { EmployeeSelect } from "@/components/employee/employee-select";
+import { TableSkeleton } from "@/components/ui/skeleton";
+import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
@@ -38,6 +41,7 @@ import { CompanyDate } from "@/components/common/company-date";
 import { formatDateTime } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import type { LeaveBalance, LeaveLedgerEntry } from "@/lib/leave-ledger/types";
 import { cn } from "@/lib/utils";
 
@@ -49,18 +53,6 @@ interface EncashmentFormValues {
 
 function emptyEncashmentFormValues(): EncashmentFormValues {
   return { days: "", effectiveDate: new Date().toISOString().slice(0, 10), reason: "" };
-}
-
-interface EmployeeOption {
-  id: string;
-  first_name: string;
-  last_name: string | null;
-  employee_code: string | null;
-}
-
-function employeeLabelFor(employee: EmployeeOption): string {
-  const name = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.employee_code ? `${name} (${employee.employee_code})` : name;
 }
 
 type ViewMode = "MINE" | "TEAM";
@@ -77,7 +69,8 @@ export default function LeaveBalancesPage() {
   const canAdjust = can("LEAVE.BALANCE_ADJUST");
 
   const [view, setView] = useState<ViewMode>(canViewAll ? "TEAM" : "MINE");
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const directory = useEmployeeDirectory({ enabled: view === "TEAM" });
+  const beginRequest = useLatestRequest();
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
 
   const [balances, setBalances] = useState<LeaveBalance[] | null>(null);
@@ -97,26 +90,19 @@ export default function LeaveBalancesPage() {
 
   const targetEmployeeId = view === "MINE" ? (user?.employee_id ?? "") : selectedEmployeeId;
 
-  useMemo(() => {
-    const map = new Map<string, EmployeeOption>();
-    for (const emp of employees) map.set(emp.id, emp);
-    return map;
-  }, [employees]);
-
-  useEffect(() => {
-    if (view !== "TEAM") return;
-    void apiClient
-      .getList<EmployeeOption>("/employees", { per_page: 100 })
-      .then(({ data }) => setEmployees(data))
-      .catch(() => setEmployees([]));
-  }, [view]);
-
+  // A different employee is a different person's data: drop it immediately (skeleton, not the
+  // previous employee's balances dimmed under the new selection) and go back to page 1.
   useEffect(() => {
     setLedgerPage(1);
+    setBalances(null);
+    setLedger(null);
+    setLedgerPagination(null);
+    setError(null);
   }, [targetEmployeeId]);
 
   const load = useCallback(
     async (targetLedgerPage: number) => {
+      const request = beginRequest();
       if (!targetEmployeeId) {
         setBalances(null);
         setLedger(null);
@@ -127,16 +113,21 @@ export default function LeaveBalancesPage() {
       setError(null);
       try {
         const [balanceData, ledgerResult] = await Promise.all([
-          apiClient.get<LeaveBalance[]>(`/leave-balances?employee_id=${targetEmployeeId}`),
-          apiClient.getList<LeaveLedgerEntry>("/leave-ledger", {
-            employee_id: targetEmployeeId,
-            page: targetLedgerPage,
+          apiClient.get<LeaveBalance[]>(`/leave-balances?employee_id=${targetEmployeeId}`, {
+            signal: request.signal,
           }),
+          apiClient.getList<LeaveLedgerEntry>(
+            "/leave-ledger",
+            { employee_id: targetEmployeeId, page: targetLedgerPage },
+            { signal: request.signal },
+          ),
         ]);
+        if (!request.isCurrent()) return;
         setBalances(balanceData);
         setLedger(ledgerResult.data);
         setLedgerPagination(ledgerResult.pagination);
       } catch (err) {
+        if (isAbortError(err) || !request.isCurrent()) return;
         setBalances(null);
         setLedger(null);
         setLedgerPagination(null);
@@ -146,10 +137,10 @@ export default function LeaveBalancesPage() {
             : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
         );
       } finally {
-        setLoading(false);
+        if (request.isCurrent()) setLoading(false);
       }
     },
-    [targetEmployeeId],
+    [beginRequest, targetEmployeeId],
   );
 
   useEffect(() => {
@@ -241,17 +232,12 @@ export default function LeaveBalancesPage() {
         {view === "TEAM" ? (
           <div className="w-full max-w-sm">
             <FormField id="leave-balances-employee" label="Employee">
-              <NativeSelect
+              <EmployeeSelect
+                directory={directory}
                 value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              >
-                <option value="">Choose an employee…</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {employeeLabelFor(emp)}
-                  </option>
-                ))}
-              </NativeSelect>
+                emptyLabel="Choose an employee…"
+                onChange={setSelectedEmployeeId}
+              />
             </FormField>
           </div>
         ) : null}
@@ -272,7 +258,12 @@ export default function LeaveBalancesPage() {
               <h2 className="text-sm font-semibold text-foreground">Available Leave Balances</h2>
             </TableToolbar>
 
-            {loading ? <LoadingState label="Loading balances…" /> : null}
+            {loading && balances === null ? (
+              <div role="status" aria-label="Loading balances">
+                <TableSkeleton rows={5} columns={5} />
+                <span className="sr-only">Loading balances…</span>
+              </div>
+            ) : null}
             {error && !loading ? (
               <div className="p-6">
                 <ErrorState
@@ -285,7 +276,7 @@ export default function LeaveBalancesPage() {
                 />
               </div>
             ) : null}
-            {!loading && !error && balances && balances.length === 0 ? (
+            {!error && balances && balances.length === 0 ? (
               <div className="p-6">
                 <EmptyState
                   icon={Wallet}
@@ -294,7 +285,8 @@ export default function LeaveBalancesPage() {
                 />
               </div>
             ) : null}
-            {!loading && !error && balances && balances.length > 0 ? (
+            {!error && balances && balances.length > 0 ? (
+              <BusyRegion busy={loading} label="Refreshing balances…">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -335,6 +327,7 @@ export default function LeaveBalancesPage() {
                   ))}
                 </TableBody>
               </Table>
+              </BusyRegion>
             ) : null}
           </TableContainer>
 
@@ -348,12 +341,13 @@ export default function LeaveBalancesPage() {
               </h2>
             </TableToolbar>
 
-            {!loading && !error && ledger && ledger.length === 0 ? (
+            {!error && ledger && ledger.length === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-foreground-muted">
                 No ledger activity yet.
               </p>
             ) : null}
-            {!loading && !error && ledger && ledger.length > 0 ? (
+            {!error && ledger && ledger.length > 0 ? (
+              <BusyRegion busy={loading} label="Refreshing ledger…">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -388,9 +382,10 @@ export default function LeaveBalancesPage() {
                   ))}
                 </TableBody>
               </Table>
+              </BusyRegion>
             ) : null}
 
-            {!loading && !error && ledgerPagination ? (
+            {!error && ledgerPagination ? (
               <PaginationControls
                 pagination={ledgerPagination}
                 onPageChange={setLedgerPage}

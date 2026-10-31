@@ -7,7 +7,9 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/auth/auth-context", () => ({
-  useAuth: () => ({ session: { companyId: "company-1", accessToken: "token" } }),
+  useAuth: () => ({
+    session: { companyId: "company-1", accessToken: "token" },
+  }),
 }));
 
 const toastMock = vi.fn();
@@ -16,7 +18,7 @@ vi.mock("@/components/common/toast", () => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
-  apiClient: { get: vi.fn(), post: vi.fn() },
+  apiClient: { get: vi.fn(), post: vi.fn(), patch: vi.fn() },
 }));
 
 import ShiftsPage from "@/app/app/shifts/page";
@@ -26,6 +28,7 @@ import type { Shift } from "@/lib/shift/types";
 
 const mockedGet = vi.mocked(apiClient.get);
 const mockedPost = vi.mocked(apiClient.post);
+const mockedPatch = vi.mocked(apiClient.patch);
 
 const sampleShift: Shift = {
   id: "shift-1",
@@ -54,6 +57,7 @@ const sampleShift: Shift = {
 function mockLoad(shifts: Shift[]) {
   mockedGet.mockImplementation((path: string) => {
     if (path === "/shifts") return Promise.resolve(shifts);
+    if (path === "/weekly-off-patterns") return Promise.resolve([]);
     return Promise.reject(new Error(`Unexpected path ${path}`));
   });
 }
@@ -62,6 +66,7 @@ describe("ShiftsPage", () => {
   afterEach(() => {
     mockedGet.mockReset();
     mockedPost.mockReset();
+    mockedPatch.mockReset();
     toastMock.mockReset();
   });
 
@@ -75,7 +80,9 @@ describe("ShiftsPage", () => {
     mockLoad([]);
     render(<ShiftsPage />);
 
-    expect(await screen.findByText(/no shifts have been configured yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no shifts have been configured yet/i),
+    ).toBeInTheDocument();
   });
 
   it("renders the list of shifts with schedule status", async () => {
@@ -88,43 +95,89 @@ describe("ShiftsPage", () => {
   });
 
   it("shows a draft-in-progress marker when a shift has an open draft", async () => {
-    mockLoad([{ ...sampleShift, current_version_id: null, draft_version_id: "version-2" }]);
+    mockLoad([
+      {
+        ...sampleShift,
+        current_version_id: null,
+        draft_version_id: "version-2",
+      },
+    ]);
     render(<ShiftsPage />);
 
-    expect(await screen.findByText(/no published schedule/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no published schedule/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/draft in progress/i)).toBeInTheDocument();
   });
 
   it("shows an error state when loading fails with forbidden", async () => {
     mockedGet.mockRejectedValueOnce(
-      new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "Forbidden" }),
+      new ApiError({
+        status: 403,
+        code: "PERMISSION_DENIED",
+        message: "Forbidden",
+      }),
     );
     render(<ShiftsPage />);
 
-    expect(await screen.findByText(/do not have permission to view shifts/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/do not have permission to view shifts/i),
+    ).toBeInTheDocument();
   });
 
   it("creates a shift from the empty state and refreshes the list", async () => {
     let shifts: Shift[] = [];
     mockedGet.mockImplementation((path: string) => {
       if (path === "/shifts") return Promise.resolve(shifts);
+      if (path === "/weekly-off-patterns") return Promise.resolve([]);
       return Promise.reject(new Error(`Unexpected path ${path}`));
     });
     mockedPost.mockImplementationOnce(async () => {
       shifts = [sampleShift];
-      return sampleShift;
+      return { ...sampleShift, code: "SHF-001", draft_version_id: "ver-1" };
     });
+    mockedPatch.mockResolvedValueOnce({ id: "ver-1", version: 2 });
+    mockedPost.mockResolvedValueOnce({ id: "ver-1", version: 3 });
     const user = userEvent.setup();
     render(<ShiftsPage />);
 
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText(/shift name/i), "General Shift");
-    await user.click(within(dialog).getByRole("button", { name: /^add shift$/i }));
+    await user.type(
+      within(dialog).getByLabelText(/shift name/i),
+      "General Shift",
+    );
+    await user.selectOptions(within(dialog).getByLabelText(/^type/i), "FIXED");
+    await user.type(within(dialog).getByLabelText(/start time/i), "09:00");
+    await user.type(within(dialog).getByLabelText(/end time/i), "18:00");
+    await user.click(
+      within(dialog).getByRole("button", { name: /^add & publish$/i }),
+    );
 
-    await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
-    expect(mockedPost).toHaveBeenCalledWith("/shifts", { name: "General Shift", code: null });
-    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
+    await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(2));
+    expect(mockedPost).toHaveBeenNthCalledWith(1, "/shifts", {
+      name: "General Shift",
+      code: null,
+    });
+    expect(mockedPatch).toHaveBeenCalledWith(
+      "/shifts/shift-1/versions/ver-1",
+      expect.objectContaining({
+        shift_type: "FIXED",
+        start_time: "09:00",
+        end_time: "18:00",
+      }),
+      { ifMatch: "1" },
+    );
+    expect(mockedPost).toHaveBeenNthCalledWith(
+      2,
+      "/shifts/shift-1/versions/ver-1/publish",
+      { publish_reason: null },
+      { ifMatch: "2" },
+    );
+    expect(screen.queryByLabelText(/shift code/i)).not.toBeInTheDocument();
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: "success" }),
+    );
   });
 
   it("shows a validation error when name is missing", async () => {
@@ -134,28 +187,47 @@ describe("ShiftsPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: /^add shift$/i }));
+    await user.click(
+      within(dialog).getByRole("button", { name: /^add & publish$/i }),
+    );
 
-    expect(await within(dialog).findByText(/shift name is required/i)).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText(/shift name is required/i),
+    ).toBeInTheDocument();
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
   it("surfaces an API error toast when creation fails", async () => {
     mockLoad([]);
     mockedPost.mockRejectedValueOnce(
-      new ApiError({ status: 500, code: "INTERNAL_ERROR", message: "Something broke" }),
+      new ApiError({
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "Something broke",
+      }),
     );
     const user = userEvent.setup();
     render(<ShiftsPage />);
 
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText(/shift name/i), "General Shift");
-    await user.click(within(dialog).getByRole("button", { name: /^add shift$/i }));
+    await user.type(
+      within(dialog).getByLabelText(/shift name/i),
+      "General Shift",
+    );
+    await user.selectOptions(within(dialog).getByLabelText(/^type/i), "FIXED");
+    await user.type(within(dialog).getByLabelText(/start time/i), "09:00");
+    await user.type(within(dialog).getByLabelText(/end time/i), "18:00");
+    await user.click(
+      within(dialog).getByRole("button", { name: /^add & publish$/i }),
+    );
 
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({ title: "Could not add shift", variant: "danger" }),
+        expect.objectContaining({
+          title: "Could not add shift",
+          variant: "danger",
+        }),
       ),
     );
   });

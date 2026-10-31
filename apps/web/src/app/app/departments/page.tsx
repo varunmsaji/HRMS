@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
+import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -45,11 +46,11 @@ export default function DepartmentsPage() {
   const { toast } = useToast();
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const directory = useEmployeeDirectory({ enabled: createOpen });
   const [formValues, setFormValues] = useState<DepartmentFormValues>(
     EMPTY_DEPARTMENT_FORM_VALUES,
   );
@@ -60,19 +61,12 @@ export default function DepartmentsPage() {
     setLoading(true);
     setError(null);
     try {
-      let employeeData: Employee[] = [];
-      try {
-        employeeData = (await apiClient.getList<Employee>("/employees", { per_page: 100 })).data;
-      } catch {
-        employeeData = [];
-      }
       const [departmentData, branchData] = await Promise.all([
         apiClient.get<Department[]>("/departments"),
         apiClient.get<Branch[]>("/branches"),
       ]);
       setDepartments(departmentData);
       setBranches(branchData);
-      setEmployees(employeeData);
     } catch (err) {
       setDepartments(null);
       setError(
@@ -260,7 +254,7 @@ export default function DepartmentsPage() {
               onChange={setFormValues}
               branches={branches}
               departments={departments ?? []}
-              employees={employees}
+              directory={directory}
               idPrefix="create-"
             />
           </div>

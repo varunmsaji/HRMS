@@ -6,9 +6,12 @@ import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { SHIFT_VERSION_TYPES } from "@/lib/shift/types";
-import type { ShiftVersionFormErrors, ShiftVersionFormValues } from "@/lib/shift/validate-shift-version";
+import type {
+  ShiftVersionFormErrors,
+  ShiftVersionFormValues,
+} from "@/lib/shift/validate-shift-version";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
-import { listTimezones } from "@/lib/timezones";
+import { DEFAULT_TIMEZONE, listTimezones } from "@/lib/timezones";
 
 interface ShiftVersionFormProps {
   values: ShiftVersionFormValues;
@@ -49,11 +52,19 @@ export function ShiftVersionForm({
       <section>
         <h3 className="text-sm font-medium text-foreground">Schedule type</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="shift-type" label="Type" required error={errors.shiftType}>
+          <FormField
+            id="shift-type"
+            label="Type"
+            required
+            error={errors.shiftType}
+          >
             <NativeSelect
               value={values.shiftType}
               onChange={(e) =>
-                update("shiftType", e.target.value as ShiftVersionFormValues["shiftType"])
+                update(
+                  "shiftType",
+                  e.target.value as ShiftVersionFormValues["shiftType"],
+                )
               }
             >
               <option value="">Select a schedule type…</option>
@@ -64,7 +75,12 @@ export function ShiftVersionForm({
               ))}
             </NativeSelect>
           </FormField>
-          <FormField id="effective-from" label="Effective from" required error={errors.effectiveFrom}>
+          <FormField
+            id="effective-from"
+            label="Effective from"
+            required
+            error={errors.effectiveFrom}
+          >
             <Input
               type="date"
               value={values.effectiveFrom}
@@ -76,13 +92,21 @@ export function ShiftVersionForm({
             label="Timezone"
             description="Leave unset to inherit the branch's (or company's) timezone."
           >
-            <NativeSelect value={values.timezone} onChange={(e) => update("timezone", e.target.value)}>
+            <NativeSelect
+              value={values.timezone}
+              onChange={(e) => update("timezone", e.target.value)}
+            >
+              <option value={DEFAULT_TIMEZONE}>
+                Asia/Kolkata (Indian Standard Time, IST)
+              </option>
               <option value="">Inherit from branch/company</option>
-              {timezones.map((tz) => (
-                <option key={tz} value={tz}>
-                  {tz}
-                </option>
-              ))}
+              {timezones
+                .filter((tz) => tz !== DEFAULT_TIMEZONE)
+                .map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
             </NativeSelect>
           </FormField>
         </div>
@@ -92,18 +116,28 @@ export function ShiftVersionForm({
         <section>
           <h3 className="text-sm font-medium text-foreground">Timings</h3>
           <p className="mt-1 text-xs text-foreground-muted">
-            A shift that crosses midnight (end time earlier than start time) is detected
-            automatically — there is nothing extra to flag.
+            A shift that crosses midnight (end time earlier than start time) is
+            detected automatically — there is nothing extra to flag.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <FormField id="start-time" label="Start time (HH:mm)" required error={errors.startTime}>
+            <FormField
+              id="start-time"
+              label="Start time (HH:mm)"
+              required
+              error={errors.startTime}
+            >
               <Input
                 placeholder="09:00"
                 value={values.startTime}
                 onChange={(e) => update("startTime", e.target.value)}
               />
             </FormField>
-            <FormField id="end-time" label="End time (HH:mm)" required error={errors.endTime}>
+            <FormField
+              id="end-time"
+              label="End time (HH:mm)"
+              required
+              error={errors.endTime}
+            >
               <Input
                 placeholder="18:00"
                 value={values.endTime}
@@ -116,10 +150,13 @@ export function ShiftVersionForm({
 
       {values.shiftType === "FLEXIBLE" ? (
         <section>
-          <h3 className="text-sm font-medium text-foreground">Flexible window</h3>
+          <h3 className="text-sm font-medium text-foreground">
+            Flexible window
+          </h3>
           <p className="mt-1 text-xs text-foreground-muted">
-            The window is the earliest/latest allowed start time — not the whole working span.
-            Core hours (if any) are a separate, independently-positioned block.
+            The window is the earliest/latest allowed start time — not the whole
+            working span. Core hours (if any) are a separate,
+            independently-positioned block.
           </p>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField
@@ -134,7 +171,12 @@ export function ShiftVersionForm({
                 onChange={(e) => update("windowStart", e.target.value)}
               />
             </FormField>
-            <FormField id="window-end" label="Window end (HH:mm)" required error={errors.windowEnd}>
+            <FormField
+              id="window-end"
+              label="Window end (HH:mm)"
+              required
+              error={errors.windowEnd}
+            >
               <Input
                 placeholder="10:00"
                 value={values.windowEnd}
@@ -153,14 +195,22 @@ export function ShiftVersionForm({
                 onChange={(e) => update("requiredMinutes", e.target.value)}
               />
             </FormField>
-            <FormField id="core-start" label="Core hours start (HH:mm)" error={errors.coreStart}>
+            <FormField
+              id="core-start"
+              label="Core hours start (HH:mm)"
+              error={errors.coreStart}
+            >
               <Input
                 placeholder="10:00"
                 value={values.coreStart}
                 onChange={(e) => update("coreStart", e.target.value)}
               />
             </FormField>
-            <FormField id="core-end" label="Core hours end (HH:mm)" error={errors.coreEnd}>
+            <FormField
+              id="core-end"
+              label="Core hours end (HH:mm)"
+              error={errors.coreEnd}
+            >
               <Input
                 placeholder="16:00"
                 value={values.coreEnd}
@@ -183,8 +233,12 @@ export function ShiftVersionForm({
 
       {values.shiftType ? (
         <section>
-          <h3 className="text-sm font-medium text-foreground">Scheduled duration</h3>
-          <p className="mt-1 text-xs text-foreground-muted">Informational only — not enforced.</p>
+          <h3 className="text-sm font-medium text-foreground">
+            Scheduled duration
+          </h3>
+          <p className="mt-1 text-xs text-foreground-muted">
+            Informational only — not enforced.
+          </p>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FormField id="scheduled-minutes" label="Scheduled minutes">
               <Input
@@ -256,7 +310,10 @@ export function ShiftVersionForm({
       <section>
         <h3 className="text-sm font-medium text-foreground">Weekly off</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="weekly-off-pattern" label="Shift-specific weekly-off pattern">
+          <FormField
+            id="weekly-off-pattern"
+            label="Shift-specific weekly-off pattern"
+          >
             <NativeSelect
               value={values.weeklyOffPatternId}
               onChange={(e) => update("weeklyOffPatternId", e.target.value)}
