@@ -13,9 +13,18 @@ unset CONDA_PREFIX CONDA_DEFAULT_ENV VIRTUAL_ENV
 PIDS=()
 trap 'echo; echo "Stopping..."; adb emu kill >/dev/null 2>&1 || true; for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done; wait 2>/dev/null || true' EXIT INT TERM
 
+if docker compose version >/dev/null 2>&1; then
+  DOCKER=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  DOCKER=(docker-compose)
+else
+  echo "Docker Compose is required" >&2
+  exit 1
+fi
+
 echo "Starting Docker services..."
-docker compose -f "$ROOT/docker-compose.yml" up -d
-until docker compose -f "$ROOT/docker-compose.yml" exec -T postgres pg_isready -U hrms -d hrms_dev >/dev/null 2>&1; do sleep 1; done
+"${DOCKER[@]}" -f "$ROOT/docker-compose.yml" up -d
+until "${DOCKER[@]}" -f "$ROOT/docker-compose.yml" exec -T postgres pg_isready -U hrms -d hrms_dev >/dev/null 2>&1; do sleep 1; done
 
 cd "$ROOT/apps/api"
 [[ -f .env ]] || cp .env.example .env

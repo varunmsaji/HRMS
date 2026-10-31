@@ -1,0 +1,396 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 45aed23..cecc9f0 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -130,6 +130,22 @@ jobs:
+                END IF;
+              END \$\$;"
+ 
++      # Fail-fast proof that the two-role harness (apps/api/tests/rls_support.py) works: the
++      # application-under-test role is NOSUPERUSER/NOBYPASSRLS/no-DDL, differs from the admin role
++      # used for fixtures, and RLS filters/blocks as expected. It also runs again inside the full
++      # integration/security step below; this copy exists so a broken harness is reported on its
++      # own, before ~300 files of tests that would otherwise pass vacuously. Additive: the role
++      # check above and the isolation guard in tests/conftest.py are unchanged.
++      - name: RLS test-harness guard (runtime role is unprivileged and RLS is enforced)
++        env:
++          ENVIRONMENT: development
++          DATABASE_URL: postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev
++          HRMS_APP_DATABASE_URL: postgresql://hrms_app:hrms_app_dev_password@localhost:5433/hrms_dev
++          REDIS_URL: redis://localhost:6380/0
++          JWT_ACCESS_SECRET: ci-test-access-secret-min-16
++          JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
++        run: uv run pytest tests/unit/test_rls_support.py tests/security/test_rls_harness.py --junitxml=test-results/backend-rls-harness.xml
++
+       # Split from the integration/security run so each step name matches what it actually
+       # executes (execution gate §18.4 checklist item 9). `pyproject.toml`'s testpaths=["tests"]
+       # means a bare `pytest` collects everything, which is why the previous single step named
+diff --git a/apps/api/src/hrms/core/auth/dependencies.py b/apps/api/src/hrms/core/auth/dependencies.py
+index dcb45ab..81c4f6a 100644
+--- a/apps/api/src/hrms/core/auth/dependencies.py
++++ b/apps/api/src/hrms/core/auth/dependencies.py
+@@ -9,7 +9,7 @@ from hrms.core.auth.company_access import assert_request_allowed
+ from hrms.core.auth.jwt import decode_access_token
+ from hrms.core.auth.types import AuthenticatedUser
+ from hrms.core.db.repositories.identity import IdentityRepository
+-from hrms.core.db.session import get_session
++from hrms.core.db.session import get_session, set_rls_company_id
+ from hrms.core.errors.auth import InvalidTokenError, UnauthorizedError
+ from hrms.core.observability.security_events import security_event
+ 
+@@ -37,6 +37,13 @@ async def get_current_user(
+         security_event("access_token.rejected", level="warning", reason="malformed_claims")
+         raise InvalidTokenError("Access token is invalid or expired") from exc
+ 
++    # The tenant comes from the *signed* token claim, never from a request header. Set the RLS
++    # variable before the first tenant-scoped read: `user_company` (the membership check below) is
++    # FORCE-RLS, so under the `hrms_app` runtime role it is invisible until `app.company_id` is
++    # set. The claim is still only a claim about membership - it is verified against the
++    # membership row and the company status below, exactly as before.
++    await set_rls_company_id(session, str(company_id))
++
+     repo = IdentityRepository()
+     user = await repo.get_user_by_id(session, user_id)
+     # LOG-07 — a validly signed, unexpired token refused because of server-side state. An
+diff --git a/apps/api/src/hrms/core/tenancy/dependencies.py b/apps/api/src/hrms/core/tenancy/dependencies.py
+index 6c7eb3e..39ebb38 100644
+--- a/apps/api/src/hrms/core/tenancy/dependencies.py
++++ b/apps/api/src/hrms/core/tenancy/dependencies.py
+@@ -1,4 +1,5 @@
+ from typing import Annotated
++from uuid import UUID
+ 
+ from fastapi import Depends, Header
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -12,14 +13,25 @@ from hrms.core.observability.security_events import security_event
+ from hrms.core.tenancy.context import TenantContext, set_tenant
+ 
+ 
++def _parse_company_header(value: str) -> UUID | None:
++    """The header as a UUID, or `None` when it is not one. Compared as UUID values, so the same
++    company written in another case (or without hyphens) is the same company; anything that does
++    not parse can never match a token's company and is rejected like a mismatch."""
++    try:
++        return UUID(value)
++    except ValueError:
++        return None
++
++
+ async def get_tenant_context(
+     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+     x_company_id: Annotated[str | None, Header(alias="X-Company-Id")] = None,
+ ) -> TenantContext:
+-    if x_company_id is not None and x_company_id != str(user.company_id):
++    if x_company_id is not None and _parse_company_header(x_company_id) != user.company_id:
+         # LOG-07 — an authenticated caller naming a company other than the one its token is
+-        # bound to. The requested value is attacker-controlled, so it is not logged.
++        # bound to (or sending something that is not a UUID at all). The requested value is
++        # attacker-controlled, so it is not logged.
+         security_event(
+             "tenant.rejected",
+             level="warning",
+@@ -45,11 +57,9 @@ async def get_tenant_context(
+ 
+     ctx = TenantContext(company_id=user.company_id, user_id=user.user_id)
+     set_tenant(ctx)
+-    # `get_session()` (this function's own `session` dependency) already tried to set the RLS GUC,
+-    # but it read the tenant ContextVar *before* membership was verified above — from whatever
+-    # TenancyMiddleware set from the raw header (or nothing, if the header was omitted). Set it
+-    # again here, explicitly, from the now-verified company id, so every query issued after this
+-    # dependency resolves — which is every route in the app — is guaranteed correct regardless of
+-    # what the GUC held a moment ago.
++    # `get_current_user` already set the RLS GUC from the signed token claim; set it again here
++    # from the now fully verified company id (the header, if any, matched it above), because the
++    # session may have committed since, and the tenant ContextVar is only populated from this
++    # point on.
+     await set_rls_company_id(session, str(ctx.company_id))
+     return ctx
+diff --git a/apps/api/src/hrms/core/tenancy/middleware.py b/apps/api/src/hrms/core/tenancy/middleware.py
+index 039fd49..5924d8d 100644
+--- a/apps/api/src/hrms/core/tenancy/middleware.py
++++ b/apps/api/src/hrms/core/tenancy/middleware.py
+@@ -1,32 +1,28 @@
+-import uuid
+-
+ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+ from starlette.requests import Request
+ from starlette.responses import Response
+ 
+-from hrms.core.tenancy.context import TenantContext, clear_tenant, set_tenant
++from hrms.core.tenancy.context import clear_tenant
+ 
+ 
+ class TenancyMiddleware(BaseHTTPMiddleware):
+-    """Resolves the optional X-Company-Id header into the tenant contextvar (Document 07 §5).
++    """Resets the tenant contextvar around each request.
++
++    It deliberately does NOT read `X-Company-Id`. That header is untrusted input: it used to be
++    copied here into the tenant contextvar, which `get_session` then turned into the
++    `app.company_id` RLS variable before the caller was authenticated, and which `email_log`
++    attribution read as if it were verified. The tenant is now established only from the signed
++    token (`get_current_user`) and confirmed against the membership row and the header
++    (`get_tenant_context`, which also rejects a header naming a different company).
+ 
+-    The request id (`X-Request-Id`) used to be resolved here too. It moved to the outermost
+-    `RequestContextMiddleware` (LOG-01): this layer cleared it in its `finally`, before Starlette's
+-    outermost error handler ran, so every unhandled 500 was logged and returned with request id
+-    `"unknown"` and no `X-Request-Id` header. This layer now clears only the tenant it set."""
++    The request id (`X-Request-Id`) is resolved by the outermost `RequestContextMiddleware`
++    (LOG-01); this layer only clears the tenant that a dependency may set for the request."""
+ 
+     async def dispatch(
+         self,
+         request: Request,
+         call_next: RequestResponseEndpoint,
+     ) -> Response:
+-        company_header = request.headers.get("X-Company-Id")
+-        if company_header:
+-            try:
+-                set_tenant(TenantContext(company_id=uuid.UUID(company_header)))
+-            except ValueError:
+-                pass
+-
+         try:
+             return await call_next(request)
+         finally:
+diff --git a/apps/api/src/hrms/modules/attendance/service.py b/apps/api/src/hrms/modules/attendance/service.py
+index df56624..d79cbfa 100644
+--- a/apps/api/src/hrms/modules/attendance/service.py
++++ b/apps/api/src/hrms/modules/attendance/service.py
+@@ -2108,6 +2108,27 @@ async def _ensure_date_open(
+         raise AttendancePeriodClosedError()
+ 
+ 
++async def _ensure_shift_in_company(
++    session: AsyncSession, company_id: UUID, shift_id: UUID | None
++) -> None:
++    """A client-supplied `shift_id` is only stored once a company-scoped lookup has found it. The
++    foreign keys that point at `shift` are not tenant-composite and a foreign-key check ignores RLS,
++    so without this a shift of another company is accepted. A foreign and a non-existent id both
++    raise the same `NotFoundError`, so the response does not reveal which tenant owns an id."""
++    if shift_id is None:
++        return
++    from hrms.modules.organisation.service import OrganisationService
++
++    await OrganisationService(session).get_shift(company_id, shift_id)
++
++
++def _is_unique_violation(exc: IntegrityError) -> bool:
++    """Only a unique-constraint violation (SQLSTATE 23505) is a date conflict; any other integrity
++    error (a foreign key, a check) must surface as what it is."""
++    cause = getattr(exc.orig, "__cause__", None) or exc.orig
++    return str(getattr(cause, "sqlstate", None) or "") == "23505"
++
++
+ async def _ensure_not_after_last_working_day(
+     session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
+ ) -> None:
+@@ -2280,6 +2301,7 @@ class ShiftRosterService:
+         user_agent: str | None,
+     ) -> ShiftRosterRead:
+         await _ensure_date_open(self._session, company_id, roster_date, employee_id=employee_id)
++        await _ensure_shift_in_company(self._session, company_id, shift_id)
+         now = datetime.now(UTC)
+         roster_id = uuid4()
+         data = {
+@@ -2300,6 +2322,8 @@ class ShiftRosterService:
+         try:
+             row = await self._repo.insert(self._session, data=data)
+         except IntegrityError as exc:
++            if not _is_unique_violation(exc):
++                raise
+             raise ShiftRosterDateConflictError() from exc
+ 
+         read = shift_roster_to_read(row)
+@@ -2343,6 +2367,7 @@ class ShiftRosterService:
+         values = build_shift_roster_update_values(patch)
+         if not values:
+             return before_read
++        await _ensure_shift_in_company(self._session, company_id, values.get("shift_id"))
+ 
+         now = datetime.now(UTC)
+         try:
+@@ -2355,6 +2380,8 @@ class ShiftRosterService:
+                 now=now,
+             )
+         except IntegrityError as exc:
++            if not _is_unique_violation(exc):
++                raise
+             raise ShiftRosterDateConflictError() from exc
+         if updated is None:
+             updated = await self._repo.get(
+@@ -4555,6 +4582,7 @@ class RegularizationRequestService:
+             # APPROVER_UNRESOLVED. Never auto-approve on failure."
+             approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
+ 
++        await _ensure_shift_in_company(self._session, company_id, body.requested_shift_id)
+         request_id = uuid4()
+         data = {
+             "id": request_id,
+diff --git a/apps/api/src/hrms/modules/employee_import/service.py b/apps/api/src/hrms/modules/employee_import/service.py
+index 71d84a9..1881fec 100644
+--- a/apps/api/src/hrms/modules/employee_import/service.py
++++ b/apps/api/src/hrms/modules/employee_import/service.py
+@@ -173,8 +173,9 @@ class EmployeeImportService:
+         # Explicit commit before enqueueing: the Celery task opens its own session/connection
+         # and can start running before this request's own `get_session` dependency commits at
+         # the end of the request — without this, the task could query a batch row that isn't
+-        # visible yet on its connection.
+-        await self._session.commit()
++        # visible yet on its connection. The commit clears the transaction-local RLS variable, so it
++        # is restored for the `FAILED` update below should the publish fail.
++        await self._commit_and_restore_rls(company_id)
+ 
+         from hrms.modules.employee_import.tasks import process_batch
+ 
+diff --git a/apps/api/tests/conftest.py b/apps/api/tests/conftest.py
+index f9680b6..49b158f 100644
+--- a/apps/api/tests/conftest.py
++++ b/apps/api/tests/conftest.py
+@@ -56,6 +56,7 @@ except RuntimeError as _isolation_error:  # pragma: no cover - exercised by the
+     raise pytest.UsageError(str(_isolation_error)) from None
+ 
+ from entrypoints.api import app
++from tests import rls_support
+ 
+ from hrms.core.config.settings import get_settings
+ from hrms.core.db.session import dispose_engine
+@@ -132,3 +133,33 @@ async def client() -> AsyncClient:
+     transport = ASGITransport(app=app)
+     async with _AutoIdempotencyClient(transport=transport, base_url="http://test") as ac:
+         yield ac
++
++
++# --- Two-role harness (tests/rls_support.py) -----------------------------------------------------
++# Opt-in: nothing here changes the suite's default role. A test that needs privileged setup or
++# teardown asks for `admin_engine`; the application under test is `runtime_engine` (raw) or
++# `app_as_runtime_role` (the app's own engine repointed at `hrms_app`).
++
++
++@pytest.fixture
++async def admin_engine():  # type: ignore[no-untyped-def]
++    engine = rls_support.make_engine(rls_support.admin_async_url())
++    try:
++        yield engine
++    finally:
++        await engine.dispose()
++
++
++@pytest.fixture
++async def runtime_engine():  # type: ignore[no-untyped-def]
++    engine = rls_support.make_engine(rls_support.runtime_async_url())
++    try:
++        yield engine
++    finally:
++        await engine.dispose()
++
++
++@pytest.fixture
++def app_as_runtime_role(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
++    """`async with app_as_runtime_role():` runs the block with the app connected as `hrms_app`."""
++    return lambda: rls_support.app_as_runtime_role(monkeypatch)
+diff --git a/apps/api/tests/integration/modules/attendance/test_attendance_day.py b/apps/api/tests/integration/modules/attendance/test_attendance_day.py
+index 3e57e61..1fa5138 100644
+--- a/apps/api/tests/integration/modules/attendance/test_attendance_day.py
++++ b/apps/api/tests/integration/modules/attendance/test_attendance_day.py
+@@ -3,8 +3,11 @@
+ Builds the full graph the calculation pipeline reads (architecture §19.1): employee + employment
+ + assignment (with `shift_id`) + a published FIXED `ShiftVersion` + a COMPANY-scoped
+ `WORK_CALENDAR` assignment + a published `AttendancePolicy` with an hour band, COMPANY-assigned —
+-then submits real punches through the HTTP API and asserts the computed `AttendanceDay`. Real
+-Postgres, real RLS, real `hrms_app` role via the app's normal session (not the migration role).
++then submits real punches through the HTTP API and asserts the computed `AttendanceDay`.
++Real Postgres through the app's normal session. NOTE: this file runs as the suite's default
++role (the schema owner `hrms`, SUPERUSER + BYPASSRLS), so RLS is NOT enforced here; it does not
++prove behaviour under the `hrms_app` runtime role. Runtime-role coverage lives in
++`tests/security/` (see `tests/rls_support.py` for the two-role harness).
+ """
+ 
+ from datetime import UTC, datetime
+diff --git a/apps/api/tests/integration/modules/leave/test_leave_application_pagination.py b/apps/api/tests/integration/modules/leave/test_leave_application_pagination.py
+index 9c8b2c2..369f3e5 100644
+--- a/apps/api/tests/integration/modules/leave/test_leave_application_pagination.py
++++ b/apps/api/tests/integration/modules/leave/test_leave_application_pagination.py
+@@ -24,6 +24,7 @@ from tests.integration.modules.leave.test_leave_application import (
+     _submit,
+     _teardown,
+ )
++from tests.integration.modules.organisation.test_registration_flow import _cleanup
+ 
+ from hrms.core.db.session import get_engine, get_session_factory
+ from hrms.modules.organisation.models import Subscription
+@@ -52,6 +53,15 @@ class QueryCounter:
+         event.remove(self._sync_engine, "before_cursor_execute", self._on_execute)
+ 
+ 
++async def _dispose(*, company_id: UUID, user_id: UUID | None) -> None:
++    """`_teardown` only clears the tenant-owned tables; `_cleanup` removes the company itself
++    (audit rows, membership, user). Run both, and the second even if the first raises."""
++    try:
++        await _teardown(company_id=company_id)
++    finally:
++        await _cleanup(company_id=company_id, user_id=user_id)
++
++
+ async def _raise_seat_limit(*, company_id: UUID, limit: int = 500) -> None:
+     factory = get_session_factory()
+     async with factory() as session:
+@@ -139,7 +149,7 @@ async def test_default_page_and_filters_preserved(
+         assert single_body["pagination"]["total"] == 1
+         assert single_body["data"][0]["id"] == applications[0]["id"]
+     finally:
+-        await _teardown(company_id=company_id)
++        await _dispose(company_id=company_id, user_id=admin_id)
+ 
+ 
+ async def test_page_two_and_boundary(client: AsyncClient, seeded_plan_catalogue: None) -> None:
+@@ -170,7 +180,7 @@ async def test_page_two_and_boundary(client: AsyncClient, seeded_plan_catalogue:
+         assert beyond.json()["data"] == []
+         assert beyond.json()["pagination"]["total"] == 7
+     finally:
+-        await _teardown(company_id=company_id)
++        await _dispose(company_id=company_id, user_id=admin_id)
+ 
+ 
+ @pytest.mark.parametrize("query", ["page=0", "per_page=0", "per_page=101"])
+@@ -182,7 +192,7 @@ async def test_invalid_pagination_params_rejected(
+         response = await client.get(f"/v1/leave-applications?{query}", headers=headers)
+         assert response.status_code == 422
+     finally:
+-        await _teardown(company_id=company_id)
++        await _dispose(company_id=company_id, user_id=admin_id)
+ 
+ 
+ async def test_day_and_action_data_correct_under_pagination(
+@@ -212,7 +222,7 @@ async def test_day_and_action_data_correct_under_pagination(
+             assert row["days"][0]["calendar_date"] == "2026-09-08"
+             assert any(a["action"] == "SUBMITTED" for a in row["actions"])
+     finally:
+-        await _teardown(company_id=company_id)
++        await _dispose(company_id=company_id, user_id=admin_id)
+ 
+ 
+ async def test_n_plus_one_removed_query_count_bounded(
+@@ -249,4 +259,4 @@ async def test_n_plus_one_removed_query_count_bounded(
+         # instead of staying flat.
+         assert large_page.count == small_page.count
+     finally:
+-        await _teardown(company_id=company_id)
++        await _dispose(company_id=company_id, user_id=admin_id)
+diff --git a/apps/api/tests/unit/core/scope_guard_exceptions.toml b/apps/api/tests/unit/core/scope_guard_exceptions.toml
+index ef96bb5..412325e 100644
+--- a/apps/api/tests/unit/core/scope_guard_exceptions.toml
++++ b/apps/api/tests/unit/core/scope_guard_exceptions.toml
+@@ -155,6 +155,11 @@ code = "ONBOARDING.ACTIVATE"
+ kind = "company_level"
+ reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
+ 
++[[permission]]
++code = "ONBOARDING.CANCEL"
++kind = "company_level"
++reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (seeded in organisation/service.py via onboarding_permission_rows with DataScopeLevel.COMPANY)."
++
+ [[permission]]
+ code = "ONBOARDING.CREATE"
+ kind = "company_level"
