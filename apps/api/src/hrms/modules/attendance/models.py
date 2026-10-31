@@ -598,6 +598,72 @@ class FaceEmbedding(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class FaceShadowEnrollment(Base):
+    """A consenting test participant's enrollment with the SHADOW provider only, kept apart from
+    `employee_face_profile` so the production enrollment flow (one profile per employee) is
+    untouched. Holds the shadow provider's person id and consent time; no image or embedding.
+    Read only by the comparison runner; nothing in the punch decision consults it."""
+
+    __tablename__ = "face_shadow_enrollment"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    provider: Mapped[str] = mapped_column(String(20))
+    provider_person_id: Mapped[str] = mapped_column(String(100))
+    consent_recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    enrolled_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class FaceVerificationComparison(Base):
+    """Observation of the shadow provider beside the official (primary) result of one face punch
+    attempt. Pure test telemetry: nothing reads it to decide a punch. Stores decisions, scores,
+    thresholds, latencies and error CODES only - never an image, embedding, provider body or
+    credential. Scores of different providers are on different scales and are never compared;
+    `results_agree` compares the binary matched/not-matched outcome. `liveness_session_id` joins
+    to `face_verification_attempt` (plain column: the comparison is written in its own
+    transaction, before the request's own rows commit). `ground_truth` is set by an admin after
+    the fact, for FAR/FRR."""
+
+    __tablename__ = "face_verification_comparison"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("employee.id"))
+    liveness_session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    primary_provider: Mapped[str] = mapped_column(String(20))
+    shadow_provider: Mapped[str] = mapped_column(String(20))
+    primary_result: Mapped[str] = mapped_column(String(30))
+    shadow_result: Mapped[str] = mapped_column(String(30))
+    primary_matched: Mapped[bool] = mapped_column(Boolean)
+    shadow_matched: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    primary_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    shadow_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    primary_threshold: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    shadow_threshold: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    primary_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    shadow_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    results_agree: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    primary_error: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    shadow_error: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    shadow_timed_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    frames_compared: Mapped[int] = mapped_column(SmallInteger)
+    liveness_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    ground_truth: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class FaceEnrollmentAttempt(Base):
     """One rejected self-enrollment submission. Insert-only and minimal on purpose: the decision,
     the capture angle that failed and who/when — never an image, score or provider body.

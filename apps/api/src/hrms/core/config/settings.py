@@ -246,6 +246,15 @@ class Settings(BaseSettings):
     # face punch/enrollment as unavailable — there is deliberately no fake always-match provider,
     # since one leaking into a real deployment would let anyone punch as anyone.
     face_verification_provider: Literal["disabled", "facepp", "opensource"] = "disabled"
+    # Shadow comparison (`attendance/face_comparison.py`). The provider above is the ONLY one that
+    # decides a punch. When `face_provider_comparison_enabled` is true the shadow provider is run
+    # on the same frames purely for observation (timeout-bounded, errors swallowed) and its result
+    # goes to `face_verification_comparison`, never to the punch, the attempt log or the
+    # failed-attempt limit. Off (the default) = no shadow code path executes at all.
+    face_verification_shadow_provider: Literal["disabled", "facepp", "opensource"] = "disabled"
+    face_provider_comparison_enabled: bool = False
+    # Wall-clock ceiling for the shadow provider's work on one punch (all frames together).
+    face_provider_shadow_timeout_seconds: float = Field(default=8.0, gt=0.0, le=60.0)
     facepp_api_key: str = ""
     facepp_api_secret: str = ""
     facepp_api_base_url: str = "https://api-us.faceplusplus.com"
@@ -573,6 +582,36 @@ class Settings(BaseSettings):
                     "face_os_model_dir must be set explicitly when "
                     "face_verification_provider='opensource' - refusing to boot without the "
                     "verified model assets."
+                )
+        if self.face_provider_comparison_enabled:
+            if self.face_verification_provider == "disabled":
+                raise ValueError(
+                    "face_provider_comparison_enabled needs a primary face_verification_provider "
+                    "- there is no official decision to compare against."
+                )
+            if self.face_verification_shadow_provider == "disabled":
+                raise ValueError(
+                    "face_provider_comparison_enabled is true but "
+                    "face_verification_shadow_provider is 'disabled'."
+                )
+            if self.face_verification_shadow_provider == self.face_verification_provider:
+                raise ValueError(
+                    "face_verification_shadow_provider must differ from "
+                    "face_verification_provider - comparing a provider with itself is meaningless."
+                )
+            if self.face_verification_shadow_provider == "facepp" and not (
+                self.facepp_api_key and self.facepp_api_secret
+            ):
+                raise ValueError(
+                    "facepp_api_key and facepp_api_secret must be set when "
+                    "face_verification_shadow_provider='facepp'."
+                )
+            if self.face_verification_shadow_provider == "opensource" and not (
+                self.face_os_enabled and self.face_os_model_dir
+            ):
+                raise ValueError(
+                    "face_verification_shadow_provider='opensource' requires face_os_enabled=true "
+                    "and face_os_model_dir."
                 )
         if self.face_liveness_engine != "disabled" and not self.face_liveness_model_dir:
             raise ValueError(

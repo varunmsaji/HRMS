@@ -65,6 +65,12 @@ from hrms.modules.attendance.exceptions import (
     FaceSpoofSuspectedError,
     FaceVerificationUnavailableError,
 )
+from hrms.modules.attendance.face_comparison import (
+    ProviderObservation,
+    finish_comparison,
+    match_threshold,
+    start_shadow,
+)
 from hrms.modules.attendance.face_verification import (
     FaceProviderError,
     FaceProviderMultipleFacesError,
@@ -1262,11 +1268,14 @@ class FacePunchService:
         provider: FaceVerificationProvider | None,
         settings: Settings,
         liveness: LivenessEngine | None = None,
+        shadow_provider: FaceVerificationProvider | None = None,
     ) -> None:
         self._session = session
         self._provider = provider
         self._settings = settings
         self._liveness = liveness
+        # Observation only (`face_comparison.py`): never consulted for a decision.
+        self._shadow_provider = shadow_provider
         self._profiles = FaceProfileRepository()
         self._attempts = FaceAttemptRepository()
         self._punches = PunchRepository()
@@ -1508,6 +1517,39 @@ class FacePunchService:
         primary = assessment.best_frame_index()
         order = [primary] + [i for i in range(len(frames)) if i != primary]
         checked: list[FrameIdentity] = []
+        # Shadow comparison (off by default -> None, nothing runs): the shadow provider sees the
+        # same frames concurrently and is only ever observed; see `face_comparison.py`.
+        shadow_task = start_shadow(
+            self._shadow_provider,
+            self._settings,
+            company_id=company_id,
+            employee_id=employee_id,
+            frames=frames,
+            content_types=content_types,
+        )
+        primary_ms = 0
+
+        async def observe_shadow(
+            result: str, matched: bool, score: Decimal | None, error_code: str | None = None
+        ) -> None:
+            await finish_comparison(
+                shadow_task,
+                self._settings,
+                ProviderObservation(
+                    provider.provider_name,
+                    result,
+                    matched,
+                    score,
+                    match_threshold(provider, self._settings),
+                    primary_ms,
+                    error_code,
+                ),
+                company_id=company_id,
+                employee_id=employee_id,
+                session_id=session_id,
+                liveness_score=assessment.live_score,
+                frames=len(frames),
+            )
 
         def evidence() -> dict[str, Any]:
             return {
@@ -1516,6 +1558,7 @@ class FacePunchService:
             }
 
         for index in order:
+            verify_started = time.perf_counter()
             try:
                 match = await provider.verify(
                     person_id=person_id,
@@ -1523,6 +1566,7 @@ class FacePunchService:
                     content_type=content_types[index],
                 )
             except FaceProviderError as exc:
+                primary_ms += int((time.perf_counter() - verify_started) * 1000)
                 await self._record_rejection(
                     company_id,
                     employee_id,
@@ -1532,7 +1576,9 @@ class FacePunchService:
                     session_id=session_id,
                     response=evidence(),
                 )
+                await observe_shadow("PROVIDER_ERROR", False, None, "PROVIDER_ERROR")
                 raise FaceProviderFailedError() from exc
+            primary_ms += int((time.perf_counter() - verify_started) * 1000)
             checked.append(
                 FrameIdentity(index, match.decision, match.similarity, match.provider_request_id)
             )
@@ -1559,6 +1605,7 @@ class FacePunchService:
                 session_id=session_id,
                 response=evidence(),
             )
+            await observe_shadow(decision, False, match.similarity)
             raise error
 
         # Invariant, checked rather than assumed: a punch needs one MATCHED verdict per frame.
@@ -1575,9 +1622,13 @@ class FacePunchService:
                 session_id=session_id,
                 response=evidence(),
             )
+            await observe_shadow("NO_MATCH", False, None)
             raise FaceNotMatchedError()
         similarity = min(matched)
         response = evidence()
+        # The official outcome is fixed here; the shadow can no longer affect it. Awaited before
+        # the request transaction resumes so no DB connection is held while it finishes.
+        await observe_shadow("MATCHED", True, similarity)
 
         await _resume_request_transaction(self._session, company_id)
         if stored_key is not None:

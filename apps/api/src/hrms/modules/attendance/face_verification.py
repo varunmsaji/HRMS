@@ -345,9 +345,22 @@ def get_face_verification_provider(settings: Settings) -> FaceVerificationProvid
     configuration, closed by `close_face_verification_providers` at shutdown. One-off callers
     (Celery tasks, each on its own event loop) build `FaceppFaceVerificationProvider` directly
     and `aclose()` it themselves."""
-    if settings.face_verification_provider == "opensource":
+    return _provider_by_selection(settings, settings.face_verification_provider)
+
+
+def get_shadow_face_verification_provider(settings: Settings) -> FaceVerificationProvider | None:
+    """The comparison-only provider, or None unless shadow comparison is enabled and configured
+    (settings validation already guarantees it differs from the primary and is runnable). Shares
+    the primary's per-configuration instances, so no second model load or connection pool."""
+    if not settings.face_provider_comparison_enabled:
+        return None
+    return _provider_by_selection(settings, settings.face_verification_shadow_provider)
+
+
+def _provider_by_selection(settings: Settings, selection: str) -> FaceVerificationProvider | None:
+    if selection == "opensource":
         return _shared_opensource_provider(settings)
-    if settings.face_verification_provider != "facepp":
+    if selection != "facepp":
         return None
     key = (
         settings.facepp_api_base_url,

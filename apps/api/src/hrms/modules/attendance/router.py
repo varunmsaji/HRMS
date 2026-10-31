@@ -54,6 +54,7 @@ from hrms.modules.attendance.dependencies import (
     get_shift_roster_service,
 )
 from hrms.modules.attendance.exceptions import FaceImageInvalidError
+from hrms.modules.attendance.face_comparison_router import router as face_comparison_router
 from hrms.modules.attendance.face_rate_limit import (
     face_enrollment_rate_limit,
     face_punch_rate_limit,
@@ -161,6 +162,7 @@ from hrms.shared.pagination import (
 )
 
 router = APIRouter(tags=["attendance"])
+router.include_router(face_comparison_router)
 
 
 # ---------------------------------------------------------------------------

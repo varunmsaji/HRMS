@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
 from hrms.core.storage import DocumentStorageService
+from hrms.modules.attendance.face_comparison_admin import FaceComparisonAdminService
 from hrms.modules.attendance.face_service import (
     FaceEnrollmentService,
     FacePhotoStorage,
@@ -16,6 +17,7 @@ from hrms.modules.attendance.face_service import (
 from hrms.modules.attendance.face_verification import (
     FaceVerificationProvider,
     get_face_verification_provider,
+    get_shadow_face_verification_provider,
 )
 from hrms.modules.attendance.liveness import LivenessEngine, get_liveness_engine
 from hrms.modules.attendance.service import (
@@ -82,6 +84,10 @@ def get_face_provider() -> FaceVerificationProvider | None:
     return get_face_verification_provider(get_settings())
 
 
+def get_shadow_face_provider() -> FaceVerificationProvider | None:
+    return get_shadow_face_verification_provider(get_settings())
+
+
 def get_face_liveness_engine() -> LivenessEngine | None:
     return get_liveness_engine(get_settings())
 
@@ -103,5 +109,13 @@ def get_face_punch_service(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
     liveness: Annotated[LivenessEngine | None, Depends(get_face_liveness_engine)],
+    shadow: Annotated[FaceVerificationProvider | None, Depends(get_shadow_face_provider)],
 ) -> FacePunchService:
-    return FacePunchService(session, provider, get_settings(), liveness)
+    return FacePunchService(session, provider, get_settings(), liveness, shadow_provider=shadow)
+
+
+def get_face_comparison_admin_service(
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    shadow: Annotated[FaceVerificationProvider | None, Depends(get_shadow_face_provider)],
+) -> FaceComparisonAdminService:
+    return FaceComparisonAdminService(session, shadow, get_settings())
