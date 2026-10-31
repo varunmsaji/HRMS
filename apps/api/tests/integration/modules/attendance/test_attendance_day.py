@@ -3,8 +3,11 @@
 Builds the full graph the calculation pipeline reads (architecture §19.1): employee + employment
 + assignment (with `shift_id`) + a published FIXED `ShiftVersion` + a COMPANY-scoped
 `WORK_CALENDAR` assignment + a published `AttendancePolicy` with an hour band, COMPANY-assigned —
-then submits real punches through the HTTP API and asserts the computed `AttendanceDay`. Real
-Postgres, real RLS, real `hrms_app` role via the app's normal session (not the migration role).
+then submits real punches through the HTTP API and asserts the computed `AttendanceDay`.
+Real Postgres through the app's normal session. NOTE: this file runs as the suite's default
+role (the schema owner `hrms`, SUPERUSER + BYPASSRLS), so RLS is NOT enforced here; it does not
+prove behaviour under the `hrms_app` runtime role. Runtime-role coverage lives in
+`tests/security/` (see `tests/rls_support.py` for the two-role harness).
 """
 
 from datetime import UTC, datetime

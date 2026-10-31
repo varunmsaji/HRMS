@@ -173,8 +173,9 @@ class EmployeeImportService:
         # Explicit commit before enqueueing: the Celery task opens its own session/connection
         # and can start running before this request's own `get_session` dependency commits at
         # the end of the request — without this, the task could query a batch row that isn't
-        # visible yet on its connection.
-        await self._session.commit()
+        # visible yet on its connection. The commit clears the transaction-local RLS variable, so it
+        # is restored for the `FAILED` update below should the publish fail.
+        await self._commit_and_restore_rls(company_id)
 
         from hrms.modules.employee_import.tasks import process_batch
 

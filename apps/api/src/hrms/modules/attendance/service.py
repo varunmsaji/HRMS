@@ -2108,6 +2108,27 @@ async def _ensure_date_open(
         raise AttendancePeriodClosedError()
 
 
+async def _ensure_shift_in_company(
+    session: AsyncSession, company_id: UUID, shift_id: UUID | None
+) -> None:
+    """A client-supplied `shift_id` is only stored once a company-scoped lookup has found it. The
+    foreign keys that point at `shift` are not tenant-composite and a foreign-key check ignores RLS,
+    so without this a shift of another company is accepted. A foreign and a non-existent id both
+    raise the same `NotFoundError`, so the response does not reveal which tenant owns an id."""
+    if shift_id is None:
+        return
+    from hrms.modules.organisation.service import OrganisationService
+
+    await OrganisationService(session).get_shift(company_id, shift_id)
+
+
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """Only a unique-constraint violation (SQLSTATE 23505) is a date conflict; any other integrity
+    error (a foreign key, a check) must surface as what it is."""
+    cause = getattr(exc.orig, "__cause__", None) or exc.orig
+    return str(getattr(cause, "sqlstate", None) or "") == "23505"
+
+
 async def _ensure_not_after_last_working_day(
     session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
 ) -> None:
@@ -2280,6 +2301,7 @@ class ShiftRosterService:
         user_agent: str | None,
     ) -> ShiftRosterRead:
         await _ensure_date_open(self._session, company_id, roster_date, employee_id=employee_id)
+        await _ensure_shift_in_company(self._session, company_id, shift_id)
         now = datetime.now(UTC)
         roster_id = uuid4()
         data = {
@@ -2300,6 +2322,8 @@ class ShiftRosterService:
         try:
             row = await self._repo.insert(self._session, data=data)
         except IntegrityError as exc:
+            if not _is_unique_violation(exc):
+                raise
             raise ShiftRosterDateConflictError() from exc
 
         read = shift_roster_to_read(row)
@@ -2343,6 +2367,7 @@ class ShiftRosterService:
         values = build_shift_roster_update_values(patch)
         if not values:
             return before_read
+        await _ensure_shift_in_company(self._session, company_id, values.get("shift_id"))
 
         now = datetime.now(UTC)
         try:
@@ -2355,6 +2380,8 @@ class ShiftRosterService:
                 now=now,
             )
         except IntegrityError as exc:
+            if not _is_unique_violation(exc):
+                raise
             raise ShiftRosterDateConflictError() from exc
         if updated is None:
             updated = await self._repo.get(
@@ -4103,11 +4130,23 @@ class AttendanceDayService:
                 # (mirrors `RegularizationRequestService.submit`'s identical resolution).
                 from hrms.modules.employee.service import EmployeeAssignmentService
 
-                assignment_service = EmployeeAssignmentService(self._session)
-                assignment = await assignment_service.get_assignment_as_of(
-                    company_id, employee_id, target_date
-                )
-                resolved_manager_id = assignment.reporting_manager_id if assignment else None
+                if (
+                    existing_ot_record is not None
+                    and existing_ot_record.approval_chain == approval_chain
+                ):
+                    # A still-PENDING record keeps the approver it was created for. Every
+                    # recompute of the day lands here, and re-resolving would silently hand the
+                    # record to whoever manages the employee *now* whenever a manager change is
+                    # dated on or before the overtime day — unlike Leave and Regularization,
+                    # whose snapshot is written once. A policy switch to a different chain is a
+                    # new decision and resolves afresh.
+                    resolved_manager_id = existing_ot_record.resolved_approver_manager_id
+                else:
+                    assignment_service = EmployeeAssignmentService(self._session)
+                    assignment = await assignment_service.get_assignment_as_of(
+                        company_id, employee_id, target_date
+                    )
+                    resolved_manager_id = assignment.reporting_manager_id if assignment else None
                 approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
                 approver_unresolved = resolved_manager_id is None
 
@@ -4555,6 +4594,7 @@ class RegularizationRequestService:
             # APPROVER_UNRESOLVED. Never auto-approve on failure."
             approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
 
+        await _ensure_shift_in_company(self._session, company_id, body.requested_shift_id)
         request_id = uuid4()
         data = {
             "id": request_id,

@@ -56,6 +56,7 @@ except RuntimeError as _isolation_error:  # pragma: no cover - exercised by the 
     raise pytest.UsageError(str(_isolation_error)) from None
 
 from entrypoints.api import app
+from tests import rls_support
 
 from hrms.core.config.settings import get_settings
 from hrms.core.db.session import dispose_engine
@@ -132,3 +133,33 @@ async def client() -> AsyncClient:
     transport = ASGITransport(app=app)
     async with _AutoIdempotencyClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+# --- Two-role harness (tests/rls_support.py) -----------------------------------------------------
+# Opt-in: nothing here changes the suite's default role. A test that needs privileged setup or
+# teardown asks for `admin_engine`; the application under test is `runtime_engine` (raw) or
+# `app_as_runtime_role` (the app's own engine repointed at `hrms_app`).
+
+
+@pytest.fixture
+async def admin_engine():  # type: ignore[no-untyped-def]
+    engine = rls_support.make_engine(rls_support.admin_async_url())
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def runtime_engine():  # type: ignore[no-untyped-def]
+    engine = rls_support.make_engine(rls_support.runtime_async_url())
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+def app_as_runtime_role(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+    """`async with app_as_runtime_role():` runs the block with the app connected as `hrms_app`."""
+    return lambda: rls_support.app_as_runtime_role(monkeypatch)

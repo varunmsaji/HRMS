@@ -130,6 +130,22 @@ jobs:
                END IF;
              END \$\$;"
 
+      # Fail-fast proof that the two-role harness (apps/api/tests/rls_support.py) works: the
+      # application-under-test role is NOSUPERUSER/NOBYPASSRLS/no-DDL, differs from the admin role
+      # used for fixtures, and RLS filters/blocks as expected. It also runs again inside the full
+      # integration/security step below; this copy exists so a broken harness is reported on its
+      # own, before ~300 files of tests that would otherwise pass vacuously. Additive: the role
+      # check above and the isolation guard in tests/conftest.py are unchanged.
+      - name: RLS test-harness guard (runtime role is unprivileged and RLS is enforced)
+        env:
+          ENVIRONMENT: development
+          DATABASE_URL: postgresql://hrms:hrms_dev_password@localhost:5433/hrms_dev
+          HRMS_APP_DATABASE_URL: postgresql://hrms_app:hrms_app_dev_password@localhost:5433/hrms_dev
+          REDIS_URL: redis://localhost:6380/0
+          JWT_ACCESS_SECRET: ci-test-access-secret-min-16
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-min-16
+        run: uv run pytest tests/unit/test_rls_support.py tests/security/test_rls_harness.py --junitxml=test-results/backend-rls-harness.xml
+
       # Split from the integration/security run so each step name matches what it actually
       # executes (execution gate §18.4 checklist item 9). `pyproject.toml`'s testpaths=["tests"]
       # means a bare `pytest` collects everything, which is why the previous single step named

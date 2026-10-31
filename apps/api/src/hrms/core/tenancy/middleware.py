@@ -1,32 +1,28 @@
-import uuid
-
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
-from hrms.core.tenancy.context import TenantContext, clear_tenant, set_tenant
+from hrms.core.tenancy.context import clear_tenant
 
 
 class TenancyMiddleware(BaseHTTPMiddleware):
-    """Resolves the optional X-Company-Id header into the tenant contextvar (Document 07 §5).
+    """Resets the tenant contextvar around each request.
 
-    The request id (`X-Request-Id`) used to be resolved here too. It moved to the outermost
-    `RequestContextMiddleware` (LOG-01): this layer cleared it in its `finally`, before Starlette's
-    outermost error handler ran, so every unhandled 500 was logged and returned with request id
-    `"unknown"` and no `X-Request-Id` header. This layer now clears only the tenant it set."""
+    It deliberately does NOT read `X-Company-Id`. That header is untrusted input: it used to be
+    copied here into the tenant contextvar, which `get_session` then turned into the
+    `app.company_id` RLS variable before the caller was authenticated, and which `email_log`
+    attribution read as if it were verified. The tenant is now established only from the signed
+    token (`get_current_user`) and confirmed against the membership row and the header
+    (`get_tenant_context`, which also rejects a header naming a different company).
+
+    The request id (`X-Request-Id`) is resolved by the outermost `RequestContextMiddleware`
+    (LOG-01); this layer only clears the tenant that a dependency may set for the request."""
 
     async def dispatch(
         self,
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        company_header = request.headers.get("X-Company-Id")
-        if company_header:
-            try:
-                set_tenant(TenantContext(company_id=uuid.UUID(company_header)))
-            except ValueError:
-                pass
-
         try:
             return await call_next(request)
         finally:

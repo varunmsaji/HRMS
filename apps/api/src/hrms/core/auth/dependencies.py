@@ -9,7 +9,7 @@ from hrms.core.auth.company_access import assert_request_allowed
 from hrms.core.auth.jwt import decode_access_token
 from hrms.core.auth.types import AuthenticatedUser
 from hrms.core.db.repositories.identity import IdentityRepository
-from hrms.core.db.session import get_session
+from hrms.core.db.session import get_session, set_rls_company_id
 from hrms.core.errors.auth import InvalidTokenError, UnauthorizedError
 from hrms.core.observability.security_events import security_event
 
@@ -36,6 +36,13 @@ async def get_current_user(
         # A *correctly signed* token with bad claims: foreign issuer or a leaked secret.
         security_event("access_token.rejected", level="warning", reason="malformed_claims")
         raise InvalidTokenError("Access token is invalid or expired") from exc
+
+    # The tenant comes from the *signed* token claim, never from a request header. Set the RLS
+    # variable before the first tenant-scoped read: `user_company` (the membership check below) is
+    # FORCE-RLS, so under the `hrms_app` runtime role it is invisible until `app.company_id` is
+    # set. The claim is still only a claim about membership - it is verified against the
+    # membership row and the company status below, exactly as before.
+    await set_rls_company_id(session, str(company_id))
 
     repo = IdentityRepository()
     user = await repo.get_user_by_id(session, user_id)
