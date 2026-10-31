@@ -14,6 +14,7 @@ import '../../features/shell/more_action.dart';
 import 'request_config.dart';
 import '../widgets/ui.dart' hide DetailSection;
 import '../widgets/ui.dart' as ui show DetailSection;
+import '../theme/employee_theme_scope.dart';
 
 Color _statusColor(BuildContext context, String status) => switch (status) {
       'APPROVED' || 'AUTO_APPROVED' => Colors.green,
@@ -41,6 +42,10 @@ class RequestStatusChip extends StatelessWidget {
 /// A "Mine / Team" list with date, status and extra filters — mirrors the web list pages
 /// (`regularizations/page.tsx`, `overtime/page.tsx`). Both views are the same permission-scoped
 /// read; the server only returns what the caller may see. Defaults to the last 30 business days.
+/// Choice sources the API has refused (403) for this user in this session, so a form does not ask a
+/// forbidden endpoint again. Keyed by user id: the next user starts clean.
+final deniedChoiceSourcesProvider = StateProvider.family<Set<String>, String>((ref, userId) => const {});
+
 class RequestListScreen extends ConsumerStatefulWidget {
   const RequestListScreen({super.key, required this.config});
   final RequestConfig config;
@@ -116,12 +121,23 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     final onBehalf = _team;
     final client = ref.read(apiClientProvider);
     final zone = _zone;
-    final keys = [if (onBehalf) 'employees', ..._c.createChoiceKeys];
+    final required = [if (onBehalf) 'employees', ..._c.createChoiceKeys];
+    final optional = _c.optionalChoiceKeys;
+    final userId = ref.read(authControllerProvider).user?.id ?? '';
+    final denied = ref.read(deniedChoiceSourcesProvider(userId).notifier);
     final saved = await openSpecForm(
       context,
       title: onBehalf ? '${_c.singular} on behalf' : _c.singular,
       spec: _c.createSpec!(onBehalf),
-      loadChoices: keys.isEmpty ? null : () => loadChoices(client, keys),
+      loadChoiceSet: (required.isEmpty && optional.isEmpty)
+          ? null
+          : () async {
+              final set = await loadChoicesTolerant(client, required: required, optional: optional, knownDenied: denied.state);
+              // A 403 is remembered for the session so the refused endpoint is not asked again.
+              final newlyDenied = {for (final e in set.unavailable.entries) if (e.value == ChoiceUnavailable.denied) e.key};
+              if (newlyDenied.difference(denied.state).isNotEmpty) denied.state = {...denied.state, ...newlyDenied};
+              return set;
+            },
       onSubmit: (payload, _) async => client.post<Object?>(_c.path, body: _c.buildCreateBody!(payload, zone), parse: (_) => null),
     );
     if (saved && mounted) {
@@ -232,7 +248,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
                                 subtitle: _c.rowSubtitle?.call(r),
                                 trailing: RequestStatusChip(status: r['status'] as String, labels: _c.statusLabels),
                                 onTap: () async {
-                                  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => RequestDetailScreen(config: _c, requestId: r['id'] as String, initial: r)));
+                                  await pushKeepingTheme<void>(context, (_) => RequestDetailScreen(config: _c, requestId: r['id'] as String, initial: r));
                                   _load();
                                 },
                               ),

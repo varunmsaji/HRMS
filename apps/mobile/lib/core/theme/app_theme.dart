@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'app_colors.dart';
+import 'employee_tokens.dart';
 
 /// Corner radii from the Stitch "Staff Spectrum HRMS" design system (`ROUND_FOUR`
 /// token set: `sm` 2px … `xl` 12px), applied to buttons/inputs/cards below.
@@ -297,6 +298,219 @@ class AppTheme {
     );
   }
 
-  static ThemeData get light => _build(_lightScheme);
-  static ThemeData get dark => _build(_darkScheme);
+
+  // ---------------------------------------------------------------------------------------
+  // Employee experience (docs/design/employee-mobile, design system §8).
+  //
+  // Layered on top of the unchanged administrator build: `_build(_lightScheme)` and
+  // `_build(_darkScheme)` are not touched, so `AppTheme.light` / `AppTheme.dark` are identical to
+  // before (proved by test/theme_isolation_test.dart). The employee theme starts from the same
+  // builder with an employee scheme, then replaces only the component themes below.
+  // ---------------------------------------------------------------------------------------
+
+  static final _employeeScheme = _lightScheme.copyWith(
+    surface: const Color(0xFFFFFFFF),
+    onSurface: EmployeeTokens.standard.ink,
+    onSurfaceVariant: EmployeeTokens.standard.inkSecondary,
+    surfaceContainerLowest: EmployeeTokens.standard.sheet,
+    surfaceContainerLow: EmployeeTokens.standard.canvas,
+    surfaceContainer: EmployeeTokens.standard.inset,
+    surfaceContainerHigh: const Color(0xFFECEFF3),
+    outline: EmployeeTokens.standard.lineStrong,
+    outlineVariant: EmployeeTokens.standard.line,
+    error: EmployeeTokens.standard.dangerText,
+    errorContainer: const Color(0xFFFEE2E2),
+    onErrorContainer: const Color(0xFF7F1D1D),
+    // Read only by the company read-only banner: recolours it without touching its code.
+    tertiaryContainer: const Color(0xFFFFFBEB),
+    onTertiaryContainer: EmployeeTokens.standard.ink,
+  );
+
+  static TextTheme _employeeTextTheme(ColorScheme scheme) {
+    final base = GoogleFonts.interTextTheme();
+    TextStyle style(double size, double height, FontWeight weight, double tracking, [Color? color]) => base.bodyMedium!.copyWith(
+          fontSize: size,
+          height: height / size,
+          fontWeight: weight,
+          letterSpacing: tracking,
+          color: color ?? scheme.onSurface,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        );
+    return TextTheme(
+      headlineLarge: style(28, 34, FontWeight.w600, -0.2),
+      headlineMedium: style(22, 28, FontWeight.w600, -0.2),
+      headlineSmall: style(18, 24, FontWeight.w600, -0.2),
+      titleLarge: style(18, 24, FontWeight.w600, -0.2),
+      titleMedium: style(16, 22, FontWeight.w600, 0),
+      titleSmall: style(14, 20, FontWeight.w600, 0),
+      bodyLarge: style(16, 22, FontWeight.w400, 0),
+      bodyMedium: style(14, 20, FontWeight.w400, 0),
+      bodySmall: style(13, 18, FontWeight.w400, 0, scheme.onSurfaceVariant),
+      labelLarge: style(14, 20, FontWeight.w600, 0),
+      labelMedium: style(13, 18, FontWeight.w600, 0.4),
+      labelSmall: style(12, 16, FontWeight.w500, 0),
+    );
+  }
+
+  static ThemeData _employeeTheme() {
+    const t = EmployeeTokens.standard;
+    final scheme = _employeeScheme;
+    final base = _build(scheme);
+    final text = _employeeTextTheme(scheme);
+    final control = BorderRadius.circular(EmployeeTokens.radiusControl);
+    OutlineInputBorder border(Color color, [double width = 1]) =>
+        OutlineInputBorder(borderRadius: control, borderSide: BorderSide(color: color, width: width));
+    final buttonShape = RoundedRectangleBorder(borderRadius: control);
+    final buttonText = text.bodyLarge!.copyWith(fontWeight: FontWeight.w600);
+    return base.copyWith(
+      scaffoldBackgroundColor: t.canvas,
+      textTheme: text,
+      primaryTextTheme: text,
+      extensions: [AppStatusColors.light, t],
+      appBarTheme: AppBarTheme(
+        backgroundColor: t.sheet,
+        foregroundColor: t.ink,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        centerTitle: false,
+        titleSpacing: 16,
+        titleTextStyle: text.headlineSmall,
+      ),
+      cardTheme: CardThemeData(
+        color: t.sheet,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(EmployeeTokens.radiusSurface),
+          side: BorderSide(color: t.line),
+        ),
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: t.inkSecondary,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        minVerticalPadding: 8,
+        titleTextStyle: text.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+        subtitleTextStyle: text.bodySmall,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: t.sheet,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        border: border(t.lineStrong),
+        enabledBorder: border(t.lineStrong),
+        focusedBorder: border(t.action, 1.5),
+        errorBorder: border(t.danger, 1.5),
+        focusedErrorBorder: border(t.danger, 1.5),
+        disabledBorder: border(t.line),
+        labelStyle: text.bodyLarge?.copyWith(color: t.inkSecondary),
+        hintStyle: text.bodyLarge?.copyWith(color: t.inkTertiary),
+        errorStyle: text.bodySmall?.copyWith(color: t.dangerText),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: t.action,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: t.action.withValues(alpha: 0.4),
+          elevation: 0,
+          minimumSize: const Size.fromHeight(EmployeeTokens.minTarget),
+          shape: buttonShape,
+          textStyle: buttonText,
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: t.action,
+          foregroundColor: Colors.white,
+          minimumSize: const Size(64, EmployeeTokens.minTarget),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          shape: buttonShape,
+          textStyle: buttonText,
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: t.ink,
+          minimumSize: const Size(64, EmployeeTokens.minTarget),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          side: BorderSide(color: t.lineStrong),
+          shape: buttonShape,
+          textStyle: buttonText,
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: t.action,
+          minimumSize: const Size(64, EmployeeTokens.minTarget),
+          shape: buttonShape,
+          textStyle: buttonText,
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        height: 64,
+        elevation: 0,
+        backgroundColor: t.sheet,
+        surfaceTintColor: Colors.transparent,
+        indicatorColor: t.actionSubtle,
+        indicatorShape: const StadiumBorder(),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return text.labelSmall?.copyWith(
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+            color: selected ? t.action : t.inkSecondary,
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(size: 24, color: selected ? t.action : t.inkSecondary);
+        }),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: t.sheet,
+        selectedColor: t.actionSubtle,
+        side: BorderSide(color: t.lineStrong),
+        shape: const StadiumBorder(),
+        labelStyle: text.labelSmall?.copyWith(fontWeight: FontWeight.w500),
+        showCheckmark: false,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: t.sheet,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EmployeeTokens.radiusSheet)),
+        titleTextStyle: text.headlineSmall,
+        contentTextStyle: text.bodyMedium,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: t.sheet,
+        surfaceTintColor: Colors.transparent,
+        showDragHandle: true,
+        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(EmployeeTokens.radiusSheet))),
+      ),
+      tabBarTheme: TabBarThemeData(
+        dividerColor: Colors.transparent,
+        labelColor: t.action,
+        unselectedLabelColor: t.inkSecondary,
+        indicatorColor: t.action,
+        labelStyle: text.labelMedium?.copyWith(letterSpacing: 0),
+        unselectedLabelStyle: text.labelMedium?.copyWith(letterSpacing: 0, fontWeight: FontWeight.w500),
+        indicatorSize: TabBarIndicatorSize.label,
+      ),
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: t.action,
+        linearTrackColor: t.line,
+        linearMinHeight: 4,
+        borderRadius: BorderRadius.circular(EmployeeTokens.radiusPill),
+      ),
+      dividerTheme: DividerThemeData(color: t.line, space: 1, thickness: 1),
+    );
+  }
+
+  /// The employee-surface theme (light only). Built once; `usesEmployeeSurface` selects it.
+  static final ThemeData employee = _employeeTheme();
+
+  // Built once (the values are identical to the former per-call getters; `theme_isolation_test`
+  // compares them with a pre-change baseline).
+  static final ThemeData light = _build(_lightScheme);
+  static final ThemeData dark = _build(_darkScheme);
 }

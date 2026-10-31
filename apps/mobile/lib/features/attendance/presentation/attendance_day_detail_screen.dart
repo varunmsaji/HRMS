@@ -7,7 +7,11 @@ import '../../../core/time.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
-import 'attendance_widgets.dart';
+import '../../../core/widgets/employee/attendance_history.dart';
+import '../../../core/widgets/employee/employee_status_chip.dart';
+import '../../../core/widgets/employee/layout.dart';
+import '../../../core/widgets/employee/status_map.dart';
+import 'attendance_summary.dart';
 import '../../../core/widgets/ui.dart';
 
 /// Mirrors `apps/web/src/app/app/attendance/[id]/page.tsx` — one computed attendance day:
@@ -135,21 +139,26 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     }
   }
 
-  Widget _section(String title, List<Widget> children, {IconData? icon}) => DetailSection(title: title, icon: icon, children: children);
+  /// Rows with no value are left out, and a section with none is not drawn at all.
+  List<Widget> _facts(String title, List<(String, String)> rows, {String? footnote}) {
+    final shown = [for (final r in rows) if (r.$2.isNotEmpty && r.$2 != '—') r];
+    if (shown.isEmpty) return const [];
+    return [
+      EmployeeSectionHeader(title),
+      EmployeeListGroup(children: [for (final r in shown) EmployeeFactRow(label: r.$1, value: r.$2)]),
+      if (footnote != null) Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Text(footnote, style: Theme.of(context).textTheme.bodySmall)),
+    ];
+  }
 
-  Widget _kv(String k, String v) => KeyValueRow(k, v == '—' ? null : v);
-
-  Widget _heroStat(String label, String value) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11)),
-        Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-      ]);
+  static String _nonZero(String minutes) => (minutes == '0h 0m') ? '—' : minutes;
+  static String _fraction(String v) => (num.tryParse(v) == 0) ? '—' : v;
+  static String _pretty(String v) => v == '—' ? v : humanize(v);
 
   @override
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canRecompute = permissions.contains(attendanceRecompute);
     final day = _day;
-    final scheme = Theme.of(context).colorScheme;
 
     Widget body;
     if (day == null && _loading) {
@@ -162,106 +171,118 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       bool flag(String k) => r[k] == true;
       String s(String k) => (r[k] ?? '—').toString();
       String mins(String k) => formatMinutes(r[k] as int?);
-      final badges = <(String, Tone)>[
-        if (flag('is_late')) ('Late', Tone.warning),
-        if (flag('is_early_out')) ('Early departure', Tone.warning),
-        if (flag('is_overtime')) ('Overtime', Tone.info),
-        if (flag('is_regularized')) ('Regularized', Tone.neutral),
-        if (flag('is_pending_approval')) ('Pending approval', Tone.warning),
-        if (flag('worked_on_holiday')) ('Worked on holiday', Tone.info),
-        if (flag('worked_on_weekly_off')) ('Worked on weekly off', Tone.info),
-        if (flag('missing_punch')) ('Missing punch', Tone.danger),
-        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == null) ('Worked on leave — needs HR decision', Tone.warning),
-        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == 'KEEP_LEAVE') ('Leave kept by HR', Tone.neutral),
-        if (flag('is_core_hours_breach')) ('Core hours breach', Tone.warning),
-        if (flag('on_duty')) ('On duty', Tone.info),
-        if (day.isLocked) ('Locked', Tone.neutral),
+      final flags = <(String, StatusKind)>[
+        if (flag('is_late')) ('Late', StatusKind.warning),
+        if (flag('is_early_out')) ('Early departure', StatusKind.warning),
+        if (flag('is_overtime')) ('Overtime', StatusKind.info),
+        if (flag('is_regularized')) ('Regularized', StatusKind.neutral),
+        if (flag('is_pending_approval')) ('Pending approval', StatusKind.warning),
+        if (flag('worked_on_holiday')) ('Worked on holiday', StatusKind.info),
+        if (flag('worked_on_weekly_off')) ('Worked on weekly off', StatusKind.info),
+        if (flag('missing_punch')) ('Missing punch', StatusKind.danger),
+        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == null) ('Worked on leave — needs HR decision', StatusKind.warning),
+        if (flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == 'KEEP_LEAVE') ('Leave kept by HR', StatusKind.neutral),
+        if (flag('is_core_hours_breach')) ('Core hours breach', StatusKind.warning),
+        if (flag('on_duty')) ('On duty', StatusKind.info),
+        if (day.isLocked) ('Locked', StatusKind.neutral),
       ];
       final breaks = ((r['breaks'] as List?) ?? const []).cast<Map<String, dynamic>>();
       final canKeepLeave = canRecompute && flag('work_on_leave_flagged') && r['work_on_leave_resolution'] == null && !day.isLocked;
+      final today = businessToday(tz);
+      final label = historyStatusLabel(day, today: today);
+      final provisional = day.attendanceDate == today && isNotCheckedIn(day) && !day.isLocked;
+      final bucketStatus = statusForAttendanceBucket(attendanceBucketOf(day));
+      // Today's ABSENT/INCOMPLETE row is the 09:30 sweep's placeholder, not a verdict.
+      final headerStatus = provisional ? (kind: StatusKind.warning, label: label, glyph: glyphFor(StatusKind.warning)) : bucketStatus;
+      // A worked-time figure only for a closed work period; an open or empty day says what is missing.
+      final closed = day.actualFirstIn != null && day.actualLastOut != null && (day.workedMinutes ?? 0) > 0;
+      final punchLine = [
+        if (day.actualFirstIn != null) 'First in ${formatClockTime(day.actualFirstIn, tz)}',
+        if (day.actualLastOut != null) 'Last out ${formatClockTime(day.actualLastOut, tz)}',
+      ].join(' · ');
+      final headerCaption = closed
+          ? 'Worked · $punchLine'
+          : (day.actualFirstIn != null ? '$punchLine · no punch-out recorded' : (provisional ? null : 'No punches recorded'));
+      final overlay = [
+        for (final p in _projections)
+          ('Leave ${p.fraction}${p.half != null ? ' · ${p.half}' : ''}', '${p.isPaid ? 'Paid' : 'Unpaid'} · ${p.status}'),
+      ];
       body = RefreshIndicator(
         onRefresh: _load,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(vertical: 16),
           children: [
-            HeroCard(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  const Icon(Icons.event_rounded, size: 18, color: Colors.white70),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text('${day.attendanceDate} — $tz (${zoneLabel(tz)})', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14))),
-                  const SizedBox(width: 8),
-                  AttendanceStatusBadge(status: day.attendanceStatus),
-                ]),
-                const SizedBox(height: 14),
-                Row(children: [
-                  _heroStat('First in', formatClockTime(day.actualFirstIn, tz)),
-                  const SizedBox(width: 28),
-                  _heroStat('Last out', formatClockTime(day.actualLastOut, tz)),
-                ]),
-              ]),
+            EmployeeStatusHeader(
+              status: headerStatus,
+              title: day.attendanceDate,
+              subtitle: '$tz (${zoneLabel(tz)})',
+              figure: closed ? formatMinutes(day.workedMinutes) : null,
+              figureCaption: headerCaption,
             ),
-            if (badges.isNotEmpty)
+            if (flags.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Wrap(spacing: 6, runSpacing: 6, children: [for (final (label, tone) in badges) StatusChip(label: label, tone: tone, dot: false)]),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: Wrap(spacing: 8, runSpacing: 6, children: [
+                  for (final (text, kind) in flags) EmployeeStatusChip(status: (kind: kind, label: text, glyph: glyphFor(kind))),
+                ]),
               ),
             if (canRecompute)
               Padding(
-                padding: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Wrap(spacing: 8, runSpacing: 8, children: [
                   OutlinedButton(onPressed: (_busy || day.isLocked) ? null : _recompute, child: const Text('Recompute')),
                   if (canKeepLeave) OutlinedButton(onPressed: _busy ? null : _keepLeave, child: const Text('Keep leave')),
                 ]),
               ),
-            _section('Schedule', [
-              _kv('Calendar day type', s('calendar_day_type')),
-              _kv('Holiday', s('holiday_name')),
-              _kv('Scheduled', r['scheduled_start'] == null ? '—' : '${formatClockTime(r['scheduled_start'] as String?, tz)} – ${formatClockTime(r['scheduled_end'] as String?, tz)}'),
-              _kv('Scheduled minutes', mins('scheduled_minutes')),
+            ..._facts('Schedule', [
+              ('Day type', _pretty(s('calendar_day_type'))),
+              ('Holiday', s('holiday_name')),
+              ('Scheduled', r['scheduled_start'] == null ? '—' : '${formatClockTime(r['scheduled_start'] as String?, tz)} – ${formatClockTime(r['scheduled_end'] as String?, tz)}'),
+              ('Scheduled time', _nonZero(mins('scheduled_minutes'))),
             ]),
-            _section('Actual', [
-              _kv('First in', formatDateTime(day.actualFirstIn, tz)),
-              _kv('Last out', formatDateTime(day.actualLastOut, tz)),
-              _kv('Worked', mins('worked_minutes')),
-              _kv('Unpaid break', mins('unpaid_break_minutes')),
-              _kv('Paid break', mins('paid_break_minutes')),
-              _kv('Excess break', mins('excess_break_minutes')),
-              _kv('Late', mins('late_minutes')),
-              _kv('Early departure', mins('early_departure_minutes')),
-              _kv('Late classification', s('late_classification')),
-              _kv('Early-departure classification', s('early_departure_classification')),
+            ..._facts('Actual', [
+              ('First in', formatDateTime(day.actualFirstIn, tz)),
+              ('Last out', formatDateTime(day.actualLastOut, tz)),
+              ('Worked', closed ? mins('worked_minutes') : '—'),
+              ('Late', _nonZero(mins('late_minutes'))),
+              ('Early departure', _nonZero(mins('early_departure_minutes'))),
+              ('Late classification', _pretty(s('late_classification'))),
+              ('Early-departure classification', _pretty(s('early_departure_classification'))),
+              ('Unpaid break', _nonZero(mins('unpaid_break_minutes'))),
+              ('Paid break', _nonZero(mins('paid_break_minutes'))),
+              ('Excess break', _nonZero(mins('excess_break_minutes'))),
               for (final b in breaks)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text('Break ${formatClockTime(b['break_start'] as String?, tz)} – ${formatClockTime(b['break_end'] as String?, tz)} · ${formatMinutes(b['minutes'] as int?)}${b['is_paid'] == true ? ' · paid' : ''}${b['is_excess'] == true ? ' · excess' : ''}', style: TextStyle(color: scheme.onSurfaceVariant)),
+                (
+                  'Break',
+                  '${formatClockTime(b['break_start'] as String?, tz)} – ${formatClockTime(b['break_end'] as String?, tz)} · ${formatMinutes(b['minutes'] as int?)}${b['is_paid'] == true ? ' · paid' : ''}${b['is_excess'] == true ? ' · excess' : ''}',
                 ),
             ]),
-            _section('Overtime & pay facts', [
-              _kv('OT detected', mins('ot_minutes_detected')),
-              _kv('OT approved', mins('ot_minutes_approved')),
-              _kv('OT classification', s('ot_classification')),
-              _kv('Comp-off earned', mins('comp_off_minutes_earned')),
-              _kv('Paid day fraction', s('paid_day_fraction')),
-              _kv('Leave fraction', s('leave_fraction')),
-              _kv('Weekly-off fraction', s('weekly_off_fraction')),
-              _kv('Unpaid off fraction', s('unpaid_off_fraction')),
-              _kv('LOP fraction', s('lop_fraction')),
-              if (flag('work_on_leave_flagged')) _kv('Work-on-leave decision', s('work_on_leave_resolution')),
+            ..._facts('Overtime and pay', [
+              ('Overtime detected', _nonZero(mins('ot_minutes_detected'))),
+              ('Overtime approved', _nonZero(mins('ot_minutes_approved'))),
+              ('Overtime class', _pretty(s('ot_classification'))),
+              ('Comp-off earned', _nonZero(mins('comp_off_minutes_earned'))),
+              ('Paid day fraction', _fraction(s('paid_day_fraction'))),
+              ('Leave fraction', _fraction(s('leave_fraction'))),
+              ('Weekly-off fraction', _fraction(s('weekly_off_fraction'))),
+              ('Unpaid off fraction', _fraction(s('unpaid_off_fraction'))),
+              ('Loss-of-pay fraction', _fraction(s('lop_fraction'))),
+              if (flag('work_on_leave_flagged')) ('Work-on-leave decision', _pretty(s('work_on_leave_resolution'))),
             ]),
-            if (_projections.isNotEmpty)
-              _section('Leave overlay (approved leave for this date)', [
-                for (final p in _projections) _kv('Leave application ${p.leaveApplicationId.substring(0, 8)}', '${p.fraction}${p.half != null ? ' · ${p.half}' : ''} · ${p.isPaid ? 'paid' : 'unpaid'} · ${p.status}'),
-                Text('Provenance only — Leave owns entitlement, balance and approval.', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-              ]),
-            _section('Calculation & audit', [
-              _kv('Calculation version', s('calculation_version')),
-              _kv('Calculated at', formatDateTime(r['calculated_at'] as String?, tz)),
-              _kv('Attendance policy version', s('attendance_policy_version_id')),
-              _kv('Overtime policy version', s('overtime_policy_version_id')),
-              _kv('Regularization policy version', s('regularization_policy_version_id')),
-              _kv('Locked at', day.isLocked ? formatDateTime(r['locked_at'] as String?, tz) : '—'),
-            ]),
+            if (overlay.isNotEmpty) ..._facts('Approved leave on this date', overlay, footnote: 'Shown for reference; Leave owns the balance and approval.'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
+              child: EmployeeCalculationDetails(
+                rows: [
+                  ('Calculation version', s('calculation_version')),
+                  ('Calculated at', formatDateTime(r['calculated_at'] as String?, tz)),
+                  ('Attendance policy version', s('attendance_policy_version_id')),
+                  ('Overtime policy version', s('overtime_policy_version_id')),
+                  ('Regularization policy version', s('regularization_policy_version_id')),
+                  ('Locked at', day.isLocked ? formatDateTime(r['locked_at'] as String?, tz) : '—'),
+                ],
+              ),
+            ),
           ],
         ),
       );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/employee_tokens.dart';
 import '../data/attendance_repository.dart';
 import '../data/location_provider.dart';
 import '../domain/punch_location.dart';
@@ -59,18 +60,96 @@ Future<PunchLocationPlan> captureForPolicy(BuildContext context, WidgetRef ref, 
   }
 }
 
+/// The dialog frame for the punch dialogs (spec S15): radius 16, a `heading` title, a secondary
+/// body, at most 400 wide, 24 from the screen edges, scrollable so it never overflows at large text.
+class _PunchDialog extends StatelessWidget {
+  const _PunchDialog({required this.title, required this.body, required this.actions});
+
+  final String title;
+  final Widget body;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = EmployeeTokens.of(context);
+    final theme = Theme.of(context);
+    return AlertDialog(
+      backgroundColor: t.sheet,
+      insetPadding: const EdgeInsets.all(24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(EmployeeTokens.radiusSheet)),
+      title: Text(title, style: theme.textTheme.headlineSmall),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: SingleChildScrollView(child: DefaultTextStyle.merge(style: theme.textTheme.bodyMedium?.copyWith(color: t.inkSecondary, height: 1.4), child: body)),
+      ),
+      actionsOverflowDirection: VerticalDirection.down,
+      actionsOverflowButtonSpacing: 4,
+      actions: actions,
+    );
+  }
+}
+
+/// The "Location needed" body. When the app returns to the foreground after the employee was sent
+/// to Settings, it says to try again; it never retries by itself (a retry takes a fresh fix, which
+/// the employee should choose to do).
+class _LocationProblemBody extends StatefulWidget {
+  const _LocationProblemBody({required this.failure, required this.settingsOpened});
+
+  final LocationFailure failure;
+  final ValueNotifier<bool> settingsOpened;
+
+  @override
+  State<_LocationProblemBody> createState() => _LocationProblemBodyState();
+}
+
+class _LocationProblemBodyState extends State<_LocationProblemBody> with WidgetsBindingObserver {
+  bool _back = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && widget.settingsOpened.value && !_back) setState(() => _back = true);
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.failure.instructions),
+          if (_back) ...[
+            const SizedBox(height: 12),
+            Semantics(liveRegion: true, child: const Text('Back from Settings? Tap Try again.', style: TextStyle(fontWeight: FontWeight.w600))),
+          ],
+        ],
+      );
+}
+
 /// Explains why a location could not be used and how to fix it. Returns true to try again.
 Future<bool> showLocationProblemDialog(BuildContext context, LocationFailure failure, LocationCapture capture) async {
+  final settingsOpened = ValueNotifier<bool>(false);
   final retry = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('Location needed'),
-      content: Text(failure.instructions),
+    builder: (dialogContext) => _PunchDialog(
+      title: 'Location needed',
+      body: _LocationProblemBody(failure: failure, settingsOpened: settingsOpened),
       actions: [
         TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
         if (failure.needsSettings)
           TextButton(
             onPressed: () async {
+              settingsOpened.value = true;
               if (failure == LocationFailure.servicesDisabled) {
                 await capture.openLocationSettings();
               } else {
@@ -83,6 +162,7 @@ Future<bool> showLocationProblemDialog(BuildContext context, LocationFailure fai
       ],
     ),
   );
+  settingsOpened.dispose();
   return retry ?? false;
 }
 
@@ -92,9 +172,9 @@ Future<bool> showGeofenceRejectedDialog(BuildContext context, String code, Strin
   final canRetry = geofenceErrorIsRetryable(code);
   final retry = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text('Punch not recorded'),
-      content: Text(
+    builder: (dialogContext) => _PunchDialog(
+      title: 'Punch not recorded',
+      body: Text(
         canRetry
             ? '$message\n\nIf you are at your workplace and this keeps happening, ask HR to correct your attendance.'
             : message,

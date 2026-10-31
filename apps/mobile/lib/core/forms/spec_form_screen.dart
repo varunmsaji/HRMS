@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../api/api_error.dart';
+import 'choice_sources.dart';
 import '../../features/auth/presentation/widgets/auth_form_field.dart' show InlineAlert;
 import 'form_spec.dart';
 import 'spec_form.dart';
 import '../widgets/ui.dart';
+import '../theme/employee_theme_scope.dart';
 
 /// A full-screen create/edit form driven by a [FormSpec]. Pops `true` after [onSubmit] succeeds so
 /// the caller can reload.
@@ -20,6 +22,7 @@ class SpecFormScreen extends StatefulWidget {
     required this.onSubmit,
     this.initial,
     this.loadChoices,
+    this.loadChoiceSet,
     this.submitLabel,
     this.intro,
     this.defaults = const {},
@@ -30,6 +33,9 @@ class SpecFormScreen extends StatefulWidget {
   final Map<String, dynamic>? initial;
   final Map<String, dynamic> defaults;
   final Future<Map<String, List<Choice>>> Function()? loadChoices;
+
+  /// Like [loadChoices] but tolerant of optional sources ([loadChoicesTolerant]); wins if both are set.
+  final Future<ChoiceLoad> Function()? loadChoiceSet;
   final Future<void> Function(Map<String, dynamic> payload, Map<String, dynamic> changed) onSubmit;
   final String? submitLabel;
   final String? intro;
@@ -42,6 +48,7 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
   late final Map<String, dynamic> _values;
   Map<String, String> _errors = {};
   Map<String, List<Choice>> _choices = const {};
+  Map<String, ChoiceUnavailable> _unavailable = const {};
   bool _loading = true;
   bool _saving = false;
   String? _banner;
@@ -57,6 +64,16 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
 
   Future<void> _loadChoices() async {
     try {
+      if (widget.loadChoiceSet != null) {
+        final set = await widget.loadChoiceSet!();
+        if (mounted) {
+          setState(() {
+            _choices = set.choices;
+            _unavailable = set.unavailable;
+          });
+        }
+        return;
+      }
       final loaded = await widget.loadChoices?.call();
       if (mounted && loaded != null) setState(() => _choices = loaded);
     } catch (e) {
@@ -128,6 +145,7 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
                   values: _values,
                   errors: _errors,
                   choices: _choices,
+                  unavailable: _unavailable,
                   editing: _editing,
                   readOnly: _saving,
                   onChanged: () => setState(() {}),
@@ -152,20 +170,23 @@ Future<bool> openSpecForm(
   Map<String, dynamic>? initial,
   Map<String, dynamic> defaults = const {},
   Future<Map<String, List<Choice>>> Function()? loadChoices,
+  Future<ChoiceLoad> Function()? loadChoiceSet,
   String? submitLabel,
   String? intro,
 }) async {
-  final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(
-    builder: (_) => SpecFormScreen(
+  final saved = await pushKeepingTheme<bool>(
+    context,
+    (_) => SpecFormScreen(
       title: title,
       spec: spec,
       onSubmit: onSubmit,
       initial: initial,
       defaults: defaults,
       loadChoices: loadChoices,
+      loadChoiceSet: loadChoiceSet,
       submitLabel: submitLabel,
       intro: intro,
     ),
-  ));
+  );
   return saved == true;
 }

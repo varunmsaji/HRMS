@@ -1,4 +1,5 @@
 import '../api/api_client.dart';
+import '../api/api_error.dart';
 import 'form_spec.dart';
 
 /// Where the options for a `FieldKind.choice` field come from: a list endpoint plus how to label a
@@ -61,4 +62,48 @@ Future<Map<String, List<Choice>>> loadChoices(ApiClient client, Iterable<String>
     out[key] = choices;
   }
   return out;
+}
+
+/// Why an optional choice source could not be used.
+enum ChoiceUnavailable {
+  /// The API refused it (403): the user lacks the permission. Remembered, never retried.
+  denied,
+
+  /// Any other failure (network, 5xx). Not remembered; the next form open tries once more.
+  failed,
+}
+
+/// Result of [loadChoicesTolerant].
+class ChoiceLoad {
+  const ChoiceLoad(this.choices, this.unavailable);
+  final Map<String, List<Choice>> choices;
+  final Map<String, ChoiceUnavailable> unavailable;
+}
+
+/// Loads [required] sources strictly (a failure throws, as [loadChoices] does) and [optional] ones
+/// independently: one failing or refused optional source costs only the fields that need it.
+/// A source in [knownDenied] is not requested at all, so an endpoint that already answered 403 is
+/// not asked again. Opt-in per form; every existing caller of [loadChoices] is unchanged.
+Future<ChoiceLoad> loadChoicesTolerant(
+  ApiClient client, {
+  Iterable<String> required = const [],
+  Iterable<String> optional = const [],
+  Set<String> knownDenied = const {},
+}) async {
+  final out = <String, List<Choice>>{...await loadChoices(client, required)};
+  final unavailable = <String, ChoiceUnavailable>{};
+  for (final key in optional.toSet()) {
+    if (knownDenied.contains(key)) {
+      unavailable[key] = ChoiceUnavailable.denied;
+      continue;
+    }
+    try {
+      out.addAll(await loadChoices(client, [key]));
+    } on ApiError catch (e) {
+      unavailable[key] = e.status == 403 ? ChoiceUnavailable.denied : ChoiceUnavailable.failed;
+    } catch (_) {
+      unavailable[key] = ChoiceUnavailable.failed;
+    }
+  }
+  return ChoiceLoad(out, unavailable);
 }

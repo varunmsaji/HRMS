@@ -456,9 +456,22 @@ class AttendanceRepository {
   /// not sent; the server defaults it (a client-computed date would use the device's zone).
   Future<void> calculateToday(String employeeId) => _client.post('/attendance/days/calculate?employee_id=$employeeId', parse: (_) {});
 
-  Future<List<Punch>> listPunches({required String employeeId, required String dateFrom, required String dateTo}) => _client
-      .getList('/attendance/punches', filters: {'employee_id': employeeId, 'date_from': dateFrom, 'date_to': dateTo}, parseItem: (d) => Punch.fromJson(d as Map<String, dynamic>))
-      .then((e) => e.data);
+  /// Newest first. The API returns up to 500 rows a page; this follows `hasNext` anyway (capped at
+  /// 5 pages) so a long window can never be silently cut short.
+  Future<List<Punch>> listPunches({required String employeeId, required String dateFrom, required String dateTo}) async {
+    final all = <Punch>[];
+    for (var page = 1; page <= 5; page++) {
+      final env = await _client.getList(
+        '/attendance/punches',
+        query: PageQuery(page: page),
+        filters: {'employee_id': employeeId, 'date_from': dateFrom, 'date_to': dateTo},
+        parseItem: (d) => Punch.fromJson(d as Map<String, dynamic>),
+      );
+      all.addAll(env.data);
+      if (env.pagination == null || !env.pagination!.hasNext) break;
+    }
+    return all;
+  }
 
   /// `POST /attendance/punches` (`ATTENDANCE.PUNCH_ON_BEHALF`) — [punchTimeUtcIso] is the UTC instant.
   Future<Punch> createPunchOnBehalf({required String employeeId, required String direction, required String punchTimeUtcIso, required String reference}) => _client.post(

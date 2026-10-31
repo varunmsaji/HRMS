@@ -1,98 +1,60 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/auth/surface.dart';
+import '../../core/nav/nav_entries.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/ui.dart';
+import '../auth/state/auth_controller.dart';
 
-class _HubItem {
-  const _HubItem(this.label, this.icon, this.route);
-  final String label;
-  final IconData icon;
-  final String route;
-}
-
-class _HubGroup {
-  const _HubGroup(this.label, this.items);
-  final String label;
-  final List<_HubItem> items;
-}
-
-/// Mirrors `apps/web/src/components/layout/nav-items.ts`'s `NAV_ITEMS` (the
-/// items not already in the bottom nav) plus `SETTINGS_NAV_GROUPS` in full —
-/// the single navigation hub for everything that doesn't fit the 4-tab
-/// bottom nav. Reached via the "More" action on each tab's app bar.
-const _quickLinks = _HubGroup('Quick links', [
-  _HubItem('Employees', Icons.people_outline, '/app/employees'),
-  _HubItem('Onboarding', Icons.person_add_alt, '/app/onboarding'),
-  _HubItem('Team Attendance', Icons.groups_outlined, '/app/team-attendance'),
-  _HubItem('Attendance Insights', Icons.insights_outlined, '/app/attendance-insights'),
-  _HubItem('Shift Rosters', Icons.event_available, '/app/rosters'),
-  _HubItem('Regularizations', Icons.edit_note, '/app/regularizations'),
-  _HubItem('Overtime', Icons.alarm_on_outlined, '/app/overtime'),
-  _HubItem('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances'),
-  _HubItem('Payroll', Icons.payments_outlined, '/app/payroll/pay-runs'),
-  _HubItem('My Payslips', Icons.description_outlined, '/app/me/payslips'),
-]);
-
-const _settingsGroups = [
-  _HubGroup('Organisation', [
-    _HubItem('Company', Icons.apartment_outlined, '/app/company'),
-    _HubItem('Branches', Icons.business_outlined, '/app/branches'),
-    _HubItem('Departments', Icons.account_tree_outlined, '/app/departments'),
-    _HubItem('Designations', Icons.work_outline, '/app/designations'),
-    _HubItem('Grades', Icons.layers_outlined, '/app/grades'),
-    _HubItem('Legal Entities', Icons.gavel_outlined, '/app/legal-entities'),
-  ]),
-  _HubGroup('Attendance & Time', [
-    _HubItem('Shifts', Icons.schedule_outlined, '/app/shifts'),
-    _HubItem('Attendance Periods', Icons.lock_clock_outlined, '/app/attendance-periods'),
-    _HubItem('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar'),
-    _HubItem('Work Calendars', Icons.date_range_outlined, '/app/work-calendars'),
-    _HubItem('Holiday Calendars', Icons.calendar_month_outlined, '/app/holiday-calendars'),
-    _HubItem('Weekly-Off Patterns', Icons.event_busy_outlined, '/app/weekly-off-patterns'),
-    _HubItem('Attendance Policies', Icons.assignment_outlined, '/app/attendance-policies'),
-    _HubItem('Overtime Policies', Icons.timer_outlined, '/app/overtime-policies'),
-    _HubItem('Regularization Policies', Icons.history_edu_outlined, '/app/regularization-policies'),
-  ]),
-  _HubGroup('Leave', [
-    _HubItem('Leave Types', Icons.sell_outlined, '/app/leave-types'),
-    _HubItem('Leave Policies', Icons.assignment_turned_in_outlined, '/app/leave-policies'),
-    _HubItem('Leave Combination Rules', Icons.merge_type_outlined, '/app/leave-combination-rules'),
-    _HubItem('Leave Year', Icons.event_repeat_outlined, '/app/leave-year-setting'),
-    _HubItem('Statutory Minimums', Icons.balance_outlined, '/app/statutory-leave-minimums'),
-  ]),
-  _HubGroup('Payroll', [
-    _HubItem('Salary Components', Icons.attach_money_outlined, '/app/payroll/salary-components'),
-    _HubItem('Salary Structures', Icons.view_list_outlined, '/app/payroll/salary-structures'),
-    _HubItem('Statutory Rates', Icons.account_balance_outlined, '/app/payroll/statutory-rates'),
-  ]),
-  _HubGroup('Policies', [
-    _HubItem('Policy Assignments', Icons.link_outlined, '/app/policy-assignments'),
-    _HubItem('Policy Resolution', Icons.search_outlined, '/app/policy-resolution'),
-  ]),
-  _HubGroup('Administration', [
-    _HubItem('Setup', Icons.checklist_outlined, '/app/setup'),
-    _HubItem('Users', Icons.manage_accounts_outlined, '/app/users'),
-  ]),
-];
-
-class SettingsHubScreen extends StatefulWidget {
+class SettingsHubScreen extends ConsumerStatefulWidget {
   const SettingsHubScreen({super.key});
 
   @override
-  State<SettingsHubScreen> createState() => _SettingsHubScreenState();
+  ConsumerState<SettingsHubScreen> createState() => _SettingsHubScreenState();
 }
 
-class _SettingsHubScreenState extends State<SettingsHubScreen> {
+class _SettingsHubScreenState extends ConsumerState<SettingsHubScreen> {
   String _query = '';
+
+  Future<void> _confirmSignOut() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text('You will need to sign in again to use the app.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Sign out')),
+        ],
+      ),
+    );
+    if (ok == true) await ref.read(authControllerProvider.notifier).logout();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final query = _query.trim().toLowerCase();
     final searching = query.isNotEmpty;
+    // What this user may open (core/nav/nav_entries.dart). An employee gets one short list in
+    // employee wording; everyone else gets the existing structure minus what they cannot use.
+    final user = ref.watch(authControllerProvider).user;
+    final permissions = user?.permissions ?? const <String>[];
+    final employeeMenu = usesEmployeeSurface(user);
+    // An employee-surface user may also hold manager permissions (Employees, Team attendance, ...):
+    // those entries follow the employee ones, using the same structure administrators see.
+    final groups = employeeMenu
+        ? [
+            NavGroup('Your work', [for (final e in visibleEmployeeEntries(permissions)) NavEntry(e.employeeLabel ?? e.label, e.icon, e.route)]),
+            for (final g in visibleNavGroups(permissions))
+              if (g.items.any((e) => e.guarded)) NavGroup(g.label, [for (final e in g.items) if (e.guarded) e]),
+          ]
+        : visibleNavGroups(permissions);
+
     final matches = [
-      for (final g in [_quickLinks, ..._settingsGroups])
+      for (final g in groups)
         for (final item in g.items)
           if (item.label.toLowerCase().contains(query) || g.label.toLowerCase().contains(query)) (g.label, item),
     ];
@@ -113,27 +75,49 @@ class _SettingsHubScreenState extends State<SettingsHubScreen> {
             else
               _GroupCard(items: [for (final m in matches) m.$2], subtitles: [for (final m in matches) m.$1]),
           ] else ...[
-            const SectionHeader('Quick links'),
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 10,
-              crossAxisSpacing: 10,
-              childAspectRatio: 2.5,
-              children: [for (final item in _quickLinks.items) _QuickTile(item: item)],
-            ),
-            for (final group in _settingsGroups) ...[
-              const SizedBox(height: 20),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                child: Text(
-                  group.label.toUpperCase(),
-                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, letterSpacing: 0.8),
+            for (final group in groups)
+              if (employeeMenu && group == groups.first) ...[
+                if (group.items.isNotEmpty) ...[
+                  const SectionHeader('Your work'),
+                  _GroupCard(items: group.items),
+                ],
+              ] else if (group.label == navQuickLinks.label) ...[
+                  const SectionHeader('Quick links'),
+                  GridView.count(
+                    crossAxisCount: 2,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: 2.5,
+                    children: [for (final item in group.items) _QuickTile(item: item)],
+                  ),
+                ] else ...[
+                  const SizedBox(height: 20),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                    child: Text(
+                      group.label.toUpperCase(),
+                      style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, letterSpacing: 0.8),
+                    ),
+                  ),
+                  _GroupCard(items: group.items),
+                ],
+            const SizedBox(height: 24),
+            AppCard(
+              padding: EdgeInsets.zero,
+              onTap: _confirmSignOut,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                child: Row(
+                  children: [
+                    Icon(Icons.logout_rounded, color: theme.colorScheme.error),
+                    const SizedBox(width: 14),
+                    Text('Sign out', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600, color: theme.colorScheme.error)),
+                  ],
                 ),
               ),
-              _GroupCard(items: group.items),
-            ],
+            ),
           ],
         ],
       ),
@@ -144,7 +128,7 @@ class _SettingsHubScreenState extends State<SettingsHubScreen> {
 class _QuickTile extends StatelessWidget {
   const _QuickTile({required this.item});
 
-  final _HubItem item;
+  final NavEntry item;
 
   @override
   Widget build(BuildContext context) {
@@ -172,7 +156,7 @@ class _QuickTile extends StatelessWidget {
 class _GroupCard extends StatelessWidget {
   const _GroupCard({required this.items, this.subtitles});
 
-  final List<_HubItem> items;
+  final List<NavEntry> items;
   final List<String>? subtitles;
 
   @override

@@ -18,10 +18,9 @@ void main() {
     expect(visibleShellBranches(user), [0, 1, 2, 3]);
   });
 
-  test('an employee without the dashboard permission does not get a Home tab', () {
+  test('an employee without the dashboard permission also gets the Home tab (the employee Home)', () {
     final user = _user(employeeId: 'e-1');
-    expect(showHomeTab(user), isFalse);
-    expect(visibleShellBranches(user), [1, 2, 3]);
+    expect(visibleShellBranches(user), [0, 1, 2, 3]);
   });
 
   test('a user with neither the permission nor an employee record keeps Home (it explains why)', () {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../features/auth/presentation/widgets/auth_form_field.dart';
+import 'choice_sources.dart';
 import 'form_spec.dart';
 
 /// Renders a [FormSpec] (or one row of a repeatable one), reading from and writing into the shared
@@ -16,6 +17,7 @@ class SpecForm extends StatefulWidget {
     this.readOnly = false,
     this.editing = false,
     this.choices = const {},
+    this.unavailable = const {},
   });
 
   final FormSpec spec;
@@ -25,6 +27,10 @@ class SpecForm extends StatefulWidget {
   final bool readOnly;
   final bool editing;
   final Map<String, List<Choice>> choices;
+
+  /// Optional choice sources that could not be loaded. A toggle that only reveals a field needing
+  /// one of them is switched off and disabled, with a reason.
+  final Map<String, ChoiceUnavailable> unavailable;
 
   @override
   State<SpecForm> createState() => _SpecFormState();
@@ -53,6 +59,17 @@ class _SpecFormState extends State<SpecForm> {
       if (f.dependsOn == key) widget.values[f.key] = '';
     }
     widget.onChanged();
+  }
+
+  /// Set when this toggle only reveals a choice field whose source is unavailable.
+  ChoiceUnavailable? _blockedBy(FieldSpec toggle) {
+    for (final g in widget.spec.fields) {
+      if (g.showWhen == toggle.key && g.kind == FieldKind.choice && g.choiceKey != null) {
+        final why = widget.unavailable[g.choiceKey];
+        if (why != null) return why;
+      }
+    }
+    return null;
   }
 
   bool _disabled(FieldSpec f) => widget.readOnly || (widget.editing && f.readOnlyOnEdit);
@@ -134,11 +151,18 @@ class _SpecFormState extends State<SpecForm> {
     final error = widget.errors[f.key];
     switch (f.kind) {
       case FieldKind.toggle:
+        final blocked = _blockedBy(f);
+        if (blocked != null && widget.values[f.key] == true) widget.values[f.key] = false;
         return SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(f.label),
+          subtitle: blocked == null
+              ? null
+              : Text(blocked == ChoiceUnavailable.denied
+                  ? 'Not available with your access. Ask HR to change this for you.'
+                  : 'Couldn\'t load the options for this. Try again later.'),
           value: widget.values[f.key] == true,
-          onChanged: _disabled(f) ? null : (v) => _set(f.key, v),
+          onChanged: (_disabled(f) || blocked != null) ? null : (v) => _set(f.key, v),
         );
       case FieldKind.select:
         return _dropdown(f, [for (final o in f.options) (value: o, label: f.optionLabels[o] ?? prettyEnum(o))], error);
@@ -172,6 +196,7 @@ class _SpecFormState extends State<SpecForm> {
                         if (e.key.startsWith('${f.key}.$i.')) e.key.substring('${f.key}.$i.'.length): e.value,
                     },
                     choices: widget.choices,
+                    unavailable: widget.unavailable,
                     editing: widget.editing,
                     readOnly: _disabled(f),
                     onChanged: widget.onChanged,

@@ -6,7 +6,9 @@ import 'core/api/api_client.dart';
 import 'core/diagnostics/app_diagnostics.dart';
 import 'core/providers.dart';
 import 'core/router/app_router.dart';
-import 'core/theme/app_theme.dart';
+import 'core/theme/theme_selection.dart';
+import 'features/auth/state/auth_controller.dart';
+import 'core/auth/surface.dart';
 import 'core/time.dart';
 
 Future<void> main() async {
@@ -28,11 +30,16 @@ class HrmsApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
+    // Only the employee/administrator split matters here, so rebuild on that, not on every
+    // profile refresh. Administrators and signed-out screens keep the system-themed app.
+    final employee = ref.watch(authControllerProvider.select((s) => usesEmployeeSurface(s.user)));
+    final selection = themeSelectionFor(employee ? ref.read(authControllerProvider).user : null);
     return MaterialApp.router(
       title: 'Krewoxa',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
+      theme: selection.theme,
+      darkTheme: selection.darkTheme,
+      themeMode: selection.themeMode,
       routerConfig: router,
     );
   }

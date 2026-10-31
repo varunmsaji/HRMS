@@ -14,20 +14,29 @@ const employeeViewExperience = 'EMPLOYEE.VIEW_EXPERIENCE';
 const employeeViewNominee = 'EMPLOYEE.VIEW_NOMINEE';
 
 // Onboarding (mirrors `apps/api/src/hrms/modules/onboarding/permissions.py`).
+const onboardingView = 'ONBOARDING.VIEW';
 const onboardingCreate = 'ONBOARDING.CREATE';
 const onboardingReview = 'ONBOARDING.REVIEW';
 const onboardingActivate = 'ONBOARDING.ACTIVATE';
 
 // Leave (mirrors `apps/api/src/hrms/modules/leave/permissions.py`).
+const leaveBalanceView = 'LEAVE.BALANCE_VIEW';
 const leaveBalanceViewAll = 'LEAVE.BALANCE_VIEW_ALL';
 const leaveBalanceAdjust = 'LEAVE.BALANCE_ADJUST';
 
 // Payroll (mirrors `apps/api/src/hrms/modules/payroll/permissions.py`).
+const payrollPayslipViewOwn = 'PAYROLL.PAYSLIP_VIEW_OWN';
+const payrollRunView = 'PAYROLL.RUN_VIEW';
 const payrollRunProcess = 'PAYROLL.RUN_PROCESS';
 const payrollRunApprove = 'PAYROLL.RUN_APPROVE';
 const payrollBankAdviceDownload = 'PAYROLL.BANK_ADVICE_DOWNLOAD';
 const payrollSetupManage = 'PAYROLL.SETUP_MANAGE';
 const payrollStatutoryManage = 'PAYROLL.STATUTORY_MANAGE';
+
+// Employee reads (mirrors `apps/api/src/hrms/modules/employee/permissions.py`).
+const employeeView = 'EMPLOYEE.VIEW';
+const employeeViewAll = 'EMPLOYEE.VIEW_ALL';
+const employeeViewDocuments = 'EMPLOYEE.VIEW_DOCUMENTS';
 
 // Employee writes (mirrors `apps/api/src/hrms/modules/employee/permissions.py`).
 const employeeCreate = 'EMPLOYEE.CREATE';
@@ -72,6 +81,9 @@ const orgHolidayManage = 'ORG.HOLIDAY.MANAGE';
 // Leave (policy / type management).
 const leaveTypeManage = 'LEAVE.TYPE_MANAGE';
 const leavePolicyManage = 'LEAVE.POLICY_MANAGE';
+const leaveCombinationRuleManage = 'LEAVE.COMBINATION_RULE_MANAGE';
+const leaveYearSettingManage = 'LEAVE.YEAR_SETTING_MANAGE';
+const leaveStatutoryMinimumManage = 'LEAVE.STATUTORY_MINIMUM_MANAGE';
 const leaveApplicationApprove = 'LEAVE.APPLICATION_APPROVE';
 const leaveApplicationSubmit = 'LEAVE.APPLICATION_SUBMIT';
 const leaveApplicationSubmitOnBehalf = 'LEAVE.APPLICATION_SUBMIT_ON_BEHALF';

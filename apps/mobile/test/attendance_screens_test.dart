@@ -94,9 +94,11 @@ void main() {
     await _pumpDetail(tester, _dayJson(), const []);
     expect(find.text('Oct 1, 2026, 9:00 am IST'), findsOneWidget); // first in
     expect(find.text('Oct 1, 2026, 6:15 pm IST'), findsOneWidget); // last out
-    expect(find.text('9h 15m'), findsOneWidget); // worked minutes
+    expect(find.text('9h 15m'), findsNWidgets(2)); // worked minutes: the status header figure and the Actual row
     expect(find.textContaining('03:30'), findsNothing);
-    expect(find.text('2026-10-01 — Asia/Kolkata (IST)'), findsOneWidget);
+    // S12: the status header carries the date and the zone the day was computed in.
+    expect(find.text('2026-10-01'), findsOneWidget);
+    expect(find.text('Asia/Kolkata (IST)'), findsOneWidget);
   });
 
   testWidgets('flags show as badges', (tester) async {

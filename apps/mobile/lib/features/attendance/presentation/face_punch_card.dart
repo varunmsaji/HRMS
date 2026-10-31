@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
-import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../data/attendance_repository.dart';
 import '../domain/face_liveness_capture.dart';
-import '../data/location_provider.dart';
-import '../domain/punch_location.dart';
 import 'face_enrollment_screen.dart';
 import 'face_liveness_capture_screen.dart';
-import 'punch_location_flow.dart';
+import '../state/punch_controller.dart';
+import 'context_punch_ui.dart';
+import '../../../core/theme/employee_theme_scope.dart';
+import '../../../core/theme/employee_tokens.dart';
 
 /// Captures the frames for one server-issued liveness challenge.
 typedef FaceLivenessCapture = Future<FaceCaptureOutcome> Function(BuildContext context, FaceLivenessSession session);
@@ -24,15 +23,13 @@ final faceLivenessCaptureProvider = Provider<FaceLivenessCapture>((ref) {
   };
 });
 
-enum _Phase { idle, locating, challenge, capturing, verifying }
-
 /// Face attendance for the signed-in employee. Shows whichever applies: set up (when HR has
 /// opened enrollment), waiting for HR approval, rejected, not set up — or, once enrolled,
 /// face punch in/out: server challenge -> guided capture -> server liveness on every frame +
 /// face match -> server-timed punch. The app never decides liveness and offers no way to
 /// override a failed check. Server messages are shown as-is.
 class FacePunchCard extends ConsumerStatefulWidget {
-  const FacePunchCard({super.key, this.onPunched, this.onStatus});
+  const FacePunchCard({super.key, this.onPunched, this.onStatus, this.onResolved, this.showButtons = true});
 
   /// Called after a successful punch so the parent can refresh its attendance list.
   final VoidCallback? onPunched;
@@ -40,6 +37,14 @@ class FacePunchCard extends ConsumerStatefulWidget {
   /// Reports the loaded enrollment status so the parent can hide the plain punch controls while
   /// [FaceEnrollmentStatus.faceVerificationRequired] is true.
   final ValueChanged<FaceEnrollmentStatus>? onStatus;
+
+  /// Called once the status read has finished, whether it worked or not, so a screen that owns
+  /// the punch buttons knows when it may offer them.
+  final VoidCallback? onResolved;
+
+  /// False when the screen's own sticky punch control takes over the face buttons; the card then
+  /// keeps only the status sentences and progress.
+  final bool showButtons;
 
   @override
   ConsumerState<FacePunchCard> createState() => _FacePunchCardState();
@@ -49,7 +54,6 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
   FaceEnrollmentStatus? _status;
   String? _loadError;
   bool _loading = true;
-  _Phase _phase = _Phase.idle;
 
   @override
   void initState() {
@@ -66,19 +70,21 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
       final status = await ref.read(attendanceRepositoryProvider).getMyFaceEnrollment();
       if (mounted) {
         setState(() => _status = status);
+        ref.read(punchControllerProvider.notifier).setFaceRequired(status.faceVerificationRequired);
         widget.onStatus?.call(status);
       }
     } catch (error) {
       if (mounted) setState(() => _loadError = describeApiError(error));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        widget.onResolved?.call();
+      }
     }
   }
 
   Future<void> _openEnrollment() async {
-    final submitted = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => const FaceEnrollmentScreen()),
-    );
+    final submitted = await pushKeepingTheme<bool>(context, (_) => const FaceEnrollmentScreen());
     if (submitted == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Face submitted. HR will review it before face punching is switched on.'),
@@ -87,117 +93,10 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
     await _load();
   }
 
-  /// The key of a face punch whose outcome is unknown ([facePunchOutcomeUnknown]). The next
-  /// attempt in the same direction reuses it — with a fresh challenge and capture — so a punch
-  /// the server did record is returned, not recorded twice.
-  ({String direction, String key})? _unconfirmedPunch;
-
-  void _show(String message) {
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _punch(String direction) async {
-    if (_phase != _Phase.idle) return; // one attempt at a time
-    final repository = ref.read(attendanceRepositoryProvider);
-    setState(() => _phase = _Phase.locating);
-    List<List<int>>? frames;
-    var retryAfter = false;
-    try {
-      // Location policy first (cheap): if a REQUIRED location cannot be had at all (services
-      // off, permission refused) say so before the employee does the slow face capture.
-      var policy = GeofencePolicyMe.disabled;
-      try {
-        policy = await repository.getMyGeofencePolicy();
-      } catch (_) {
-        // Offline / unknown: attempt the punch; the server enforces and will say if it needed one.
-      }
-      if (!policy.isDisabled) {
-        final location = ref.read(locationCaptureProvider);
-        var blocked = await location.preflight();
-        while (blocked != null && policy.isRequired) {
-          if (!mounted) return;
-          final retry = await showLocationProblemDialog(context, blocked, location);
-          if (!retry || !mounted) return;
-          blocked = await location.preflight();
-        }
-      }
-      if (!mounted) return;
-      setState(() => _phase = _Phase.challenge);
-      final FaceLivenessSession session;
-      try {
-        session = await repository.startFaceLivenessSession(direction);
-      } catch (error) {
-        _show(describeApiError(error));
-        if (error is ApiError && error.code == 'FACE_NOT_ENROLLED') _load();
-        return;
-      }
-      if (!mounted) return;
-
-      setState(() => _phase = _Phase.capturing);
-      final outcome = await ref.read(faceLivenessCaptureProvider)(context, session);
-      switch (outcome) {
-        case FaceCaptureFrames(frames: final captured):
-          frames = captured;
-        case FaceCaptureCancelled():
-          return;
-        case FaceCapturePermissionDenied():
-          _show('Camera access is off. Allow camera access for this app in your phone settings, then try again.');
-          return;
-        case FaceCaptureExpired():
-          _show('That took too long. Please try again.');
-          return;
-        case FaceCaptureFailed(message: final message):
-          _show(message);
-          return;
-      }
-      if (!mounted) return;
-
-      // The fix is taken now, right before submitting, so it is fresh when the server judges it
-      // (the face capture above can take a while). Never reused from earlier.
-      var plan = const PunchLocationPlan.skip();
-      if (!policy.isDisabled) {
-        setState(() => _phase = _Phase.locating);
-        plan = await captureForPolicy(context, ref, policy);
-        if (!plan.proceed || !mounted) return;
-      }
-
-      setState(() => _phase = _Phase.verifying);
-      final pending = _unconfirmedPunch;
-      final key = pending != null && pending.direction == direction ? pending.key : ApiClient.newIdempotencyKey();
-      try {
-        final result = await repository.facePunchMe(
-          direction: direction,
-          livenessSessionId: session.sessionId,
-          frames: frames,
-          idempotencyKey: key,
-          location: plan.location,
-          locationError: plan.locationError,
-        );
-        _unconfirmedPunch = null;
-        final label = result.direction == 'IN' ? 'Punched in' : 'Punched out';
-        _show('$label · face verified (${(result.similarity * 100).round()}% match)');
-        widget.onPunched?.call();
-      } catch (error) {
-        if (error is ApiError && isGeofenceError(error)) {
-          // Refused on location: nothing was recorded. A retry needs a new face challenge, so
-          // the whole punch starts again once this attempt has been cleaned up.
-          _unconfirmedPunch = null;
-          if (mounted) retryAfter = await showGeofenceRejectedDialog(context, error.code, error.message);
-        } else {
-          final unknown = facePunchOutcomeUnknown(error);
-          // Unknown outcome: keep the key for the retry. Any real answer settles this attempt.
-          _unconfirmedPunch = unknown ? (direction: direction, key: key) : null;
-          _show(unknown
-              ? 'No response from the server — your punch may have been recorded. Trying again is safe: it will not be recorded twice.'
-              : describeApiError(error));
-          if (error is ApiError && error.code == 'FACE_NOT_ENROLLED') _load();
-        }
-      }
-    } finally {
-      frames?.clear(); // drop the face images as soon as the attempt is over
-      if (mounted) setState(() => _phase = _Phase.idle);
-    }
-    if (retryAfter && mounted) await _punch(direction);
+  /// The punch flow lives in [PunchController] (shared with Home); this supplies the dialogs and camera.
+  void _punch(String direction) {
+    final ui = ContextPunchUi(context, ref, onPunchedCallback: widget.onPunched, onFaceNotEnrolledCallback: _load);
+    ref.read(punchControllerProvider.notifier).punchFace(direction, ui);
   }
 
   @override
@@ -214,18 +113,19 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
       message = _loadError!;
       actions = [OutlinedButton(onPressed: _load, child: const Text('Retry'))];
     } else if (status!.isEnrolled) {
-      final busy = _phase != _Phase.idle;
-      message = switch (_phase) {
-        _Phase.locating => 'Checking your location…',
-        _Phase.challenge => 'Preparing a face check…',
-        _Phase.capturing => 'Look at the camera…',
-        _Phase.verifying => 'Verifying your face…',
-        _Phase.idle => 'Punch with your face. Hold the phone yourself, in good light, with no one else in frame.',
+      final phase = ref.watch(punchControllerProvider.select((s) => s.facePhase));
+      final busy = phase != FacePhase.idle;
+      message = switch (phase) {
+        FacePhase.locating => 'Checking your location…',
+        FacePhase.challenge => 'Preparing a face check…',
+        FacePhase.capturing => 'Look at the camera…',
+        FacePhase.verifying => 'Verifying your face…',
+        FacePhase.idle => 'Punch with your face. Hold the phone yourself, in good light, with no one else in frame.',
       };
       actions = [
         if (busy) const LinearProgressIndicator(),
         if (busy) const SizedBox(height: 12),
-        Row(children: [
+        if (widget.showButtons) Row(children: [
           Expanded(
             child: FilledButton.icon(
               onPressed: busy ? null : () => _punch('IN'),
@@ -265,18 +165,26 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
       message = 'Face attendance is not set up yet. Ask HR to open face enrollment for you.';
     }
 
-    return AppCard(
+    final t = EmployeeTokens.of(context);
+    // Nothing to enroll in and nothing required: one quiet caption, no box.
+    final notSetUp = !_loading && _loadError == null && !status!.isEnrolled && !status.isPendingApproval && !status.canEnroll && status.profileStatus != 'REJECTED';
+    if (notSetUp) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Text('Face attendance is not set up. Ask HR to open face enrollment for you.', style: text.bodySmall?.copyWith(color: t.inkSecondary)),
+      );
+    }
+    // A flat inset, not a card with an icon badge: it is a status block, not a destination.
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: t.inset, borderRadius: BorderRadius.circular(EmployeeTokens.radiusSurface)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(children: [
-            const IconBadge(icon: Icons.face_retouching_natural, size: 36),
-            const SizedBox(width: 12),
-            Text('Face attendance', style: text.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
-          ]),
-          const SizedBox(height: 10),
-          Text(message, style: text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant, height: 1.4)),
-          if (actions.isNotEmpty) const SizedBox(height: 14),
+          Semantics(header: true, child: Text('FACE ATTENDANCE', style: text.labelMedium?.copyWith(color: t.inkSecondary))),
+          const SizedBox(height: 6),
+          Text(message, style: text.bodyMedium?.copyWith(color: scheme.onSurface, height: 1.4)),
+          if (actions.isNotEmpty) const SizedBox(height: 12),
           ...actions,
         ],
       ),

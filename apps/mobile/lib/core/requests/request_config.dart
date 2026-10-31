@@ -43,6 +43,7 @@ class RequestConfig {
     this.onBehalfPermission,
     this.createSpec,
     this.createChoiceKeys = const [],
+    this.optionalChoiceKeys = const [],
     this.buildCreateBody,
     this.canCancel,
     this.selfApprovalCode,
@@ -72,6 +73,10 @@ class RequestConfig {
   /// The creation form, if the user can raise one. Null = system-created (overtime).
   final FormSpec Function(bool onBehalf)? createSpec;
   final List<String> createChoiceKeys;
+
+  /// Choice sources the create form can do without (one option of it needs them). Loaded
+  /// independently; a refusal disables only the field that needs the source.
+  final List<String> optionalChoiceKeys;
 
   /// Turns the form payload into the request body (`zone` is the company timezone).
   final Map<String, dynamic> Function(Map<String, dynamic> payload, String zone)? buildCreateBody;

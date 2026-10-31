@@ -13,6 +13,7 @@ import '../../shell/more_action.dart';
 import '../data/leave_repository.dart';
 import '../domain/leave_application_form.dart';
 import 'leave_application_detail_screen.dart';
+import '../../../core/theme/employee_theme_scope.dart';
 
 /// Leave applications — mirrors `apps/web/src/app/app/leave-applications/page.tsx`. "Mine" and
 /// "Team" are two filters over the same permission-scoped read: the server only returns what the
@@ -252,7 +253,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                                 leading: IconBadge(icon: _iconFor(a.status), tone: toneForStatus(a.status)),
                                 trailing: _StatusChip(status: a.status),
                                 onTap: () async {
-                                  await Navigator.of(context).push(MaterialPageRoute(builder: (_) => LeaveApplicationDetailScreen(applicationId: a.id, initial: a)));
+                                  await pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: a.id, initial: a));
                                   _load();
                                 },
                               ),

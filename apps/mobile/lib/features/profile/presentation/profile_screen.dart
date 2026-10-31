@@ -9,6 +9,7 @@ import '../../auth/state/auth_controller.dart';
 import '../../employees/presentation/employees_screen.dart' show EmployeeDetailScreen;
 import '../data/employee_repository.dart';
 import 'employee_overview.dart';
+import '../../../core/theme/employee_theme_scope.dart';
 
 final employeeRepositoryProvider = Provider<EmployeeRepository>(
   (ref) => EmployeeRepository(ref.watch(apiClientProvider)),
@@ -86,7 +87,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             OutlinedButton.icon(
               icon: const Icon(Icons.folder_open_outlined),
               label: const Text('Employment & records'),
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: _employee!))),
+              onPressed: () => pushKeepingTheme<void>(context, (_) => EmployeeDetailScreen(employee: _employee!)),
             ),
             TextButton.icon(
               icon: const Icon(Icons.logout_rounded),

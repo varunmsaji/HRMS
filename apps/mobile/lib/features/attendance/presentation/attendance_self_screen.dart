@@ -1,20 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/theme/employee_theme_scope.dart';
+import '../../../core/widgets/employee/attendance_history.dart';
+import '../../../core/widgets/employee/check_in_action.dart';
+import '../../../core/widgets/employee/interaction.dart';
+import '../../../core/widgets/employee/today_status_panel.dart';
 import '../../../core/widgets/ui.dart';
 
-import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/time.dart';
+import '../../../core/auth/surface.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../shell/more_action.dart';
 import '../data/attendance_repository.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_month_card.dart';
-import 'attendance_widgets.dart';
-import '../domain/punch_location.dart';
 import 'face_punch_card.dart';
-import 'punch_location_flow.dart';
+import '../state/punch_controller.dart';
+import 'context_punch_ui.dart';
+import '../state/today_provider.dart';
 
 /// Mirrors the "My Attendance" portion of the Stitch Mobile Dashboard —
 /// today's punch status plus the last 14 days, for the signed-in employee.
@@ -27,13 +32,20 @@ class AttendanceSelfScreen extends ConsumerStatefulWidget {
 
 class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
   bool _loading = true;
-  bool _punching = false;
-
-  /// True once the server says this employee must punch with their face (enrolled). The plain
-  /// buttons are then not offered at all; the server refuses them regardless (403).
-  bool _faceRequired = false;
   List<AttendanceDay> _days = const [];
   ApiError? _error;
+
+  /// False until the face status read has finished (worked or not): the sticky control must not
+  /// offer a plain punch and then have it refused for an enrolled employee.
+  bool _faceKnown = false;
+
+  /// Bumped to make the face card re-read its status (after a `FACE_NOT_ENROLLED` answer).
+  int _faceReload = 0;
+
+  final _barKey = GlobalKey();
+
+  /// The bar plus its 16 px padding above and below.
+  double _barHeight() => (_barKey.currentContext?.size?.height ?? 0) + 32;
 
   @override
   void initState() {
@@ -68,87 +80,46 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
     }
   }
 
-  /// The idempotency key of a punch whose outcome is unknown (no response). A retry of the
-  /// *same* direction reuses it, so a punch that did reach the server is not recorded twice.
-  ({String direction, String key})? _unconfirmedPunch;
-
-  Future<void> _punch(String direction) async {
-    if (_punching) return; // one attempt at a time, including the location capture
-    setState(() => _punching = true);
-    try {
-      var again = true;
-      while (again && mounted) {
-        again = await _punchOnce(direction);
-      }
-    } finally {
-      if (mounted) setState(() => _punching = false);
-    }
-  }
-
-  /// One attempt. Returns true when the employee chose to try again after a location refusal.
-  Future<bool> _punchOnce(String direction) async {
-    // Only when the employee's policy asks for it, and only now, for this punch: one fresh
-    // foreground fix. Nothing is collected in the background.
-    final plan = await planPunchLocation(context, ref);
-    if (!plan.proceed || !mounted) return false;
-
-    final pending = _unconfirmedPunch;
-    final key =
-        pending != null && pending.direction == direction
-            ? pending.key
-            : ApiClient.newIdempotencyKey();
-    try {
-      await ref.read(attendanceRepositoryProvider).punchMe(
-            direction: direction,
-            idempotencyKey: key,
-            location: plan.location,
-            locationError: plan.locationError,
-          );
-      _unconfirmedPunch = null;
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(direction == 'IN' ? 'Punched in.' : 'Punched out.')));
+  /// Punching (plain) lives in [PunchController], shared with Home; this only supplies the dialogs.
+  void _punch(String direction) {
+    final employeeId = ref.read(authControllerProvider).user?.employeeId;
+    final zone = ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
+    void refresh() {
       _load();
-      return false;
-    } catch (error) {
-      if (error is ApiError && error.code == 'FACE_VERIFICATION_REQUIRED' && mounted) {
-        setState(() => _faceRequired = true);
-      }
-      // No response: keep the key for a retry. Any real answer settles this attempt.
-      _unconfirmedPunch =
-          error is ApiError && error.status == 0
-              ? (direction: direction, key: key)
-              : null;
-      if (error is ApiError && isGeofenceError(error) && mounted) {
-        // A refused location is a real answer: nothing was recorded, so retrying is safe.
-        return showGeofenceRejectedDialog(context, error.code, error.message);
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(describeApiError(error))));
-      }
-      return false;
+      if (employeeId != null) ref.invalidate(todayDataProvider((employeeId: employeeId, zone: zone)));
+    }
+
+    final controller = ref.read(punchControllerProvider.notifier);
+    if (ref.read(punchControllerProvider).faceRequired) {
+      controller.punchFace(direction, ContextPunchUi(context, ref, onPunchedCallback: refresh, onFaceNotEnrolledCallback: () => setState(() => _faceReload++), snackBarClearance: _barHeight));
+    } else {
+      controller.punchPlain(direction, ContextPunchUi(context, ref, onPunchedCallback: refresh, snackBarClearance: _barHeight));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final employeeId = ref.watch(authControllerProvider).user?.employeeId;
+    final punch = ref.watch(punchControllerProvider);
+    // True once the server says this employee must punch with their face (enrolled): the plain
+    // buttons are then not offered at all; the server refuses them regardless (403).
+    final faceRequired = punch.faceRequired;
 
     // The punch controls and the month card load on their own and never wait for the 14-day
     // list: punching is the reason to open this tab, the history is secondary.
     Widget history;
     if (_loading && _days.isEmpty) {
-      history = const Padding(padding: EdgeInsets.symmetric(vertical: 32), child: Center(child: CircularProgressIndicator()));
+      history = const AttendanceHistorySkeleton();
     } else if (_error != null && _days.isEmpty) {
       history = StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load attendance', message: _error!.message, actionLabel: 'Try again', onAction: _load);
     } else if (_days.isEmpty) {
       history = const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: StateMessage(icon: Icons.event_busy_outlined, title: 'No attendance yet', message: 'Your punches will show up here.'));
     } else {
-      history = Column(children: [
-        for (final day in _days)
-          AttendanceDayTile(
-            day: day,
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: day.id, initial: day))),
-          ),
-      ]);
+      history = AttendanceHistoryGroup(
+        days: _days,
+        today: businessToday(ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata'),
+        onTap: (day) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeThemeScope(child: AttendanceDayDetailScreen(dayId: day.id, initial: day)))),
+      );
     }
 
     final Widget body;
@@ -160,52 +131,56 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
         message: 'No employee record is linked to your account.',
       );
     } else {
-      body = RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            FacePunchCard(
-              onPunched: _load,
-              onStatus: (status) {
-                if (status.faceVerificationRequired != _faceRequired) {
-                  setState(() => _faceRequired = status.faceVerificationRequired);
-                }
-              },
-            ),
-            if (!_faceRequired) ...[
-            const SizedBox(height: 16),
-            Row(children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _punching ? null : () => _punch('IN'),
-                  icon: const Icon(Icons.login_rounded),
-                  label: const Text('Punch in'),
-                ),
+      final zone = ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
+      final key = (employeeId: employeeId, zone: zone);
+      final today = ref.watch(todayDataProvider(key));
+      final state = todayStateOf(today, key);
+      body = WithStickyBar(
+        body: RefreshIndicator(
+          onRefresh: () async {
+            ref.invalidate(todayDataProvider(key));
+            await _load();
+          },
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              TodayStatusPanel(
+                state: state,
+                zone: zone,
+                scheduleText: scheduleCaption(today.valueOrNull?.todayRow, zone),
+                onRetry: () => ref.invalidate(todayDataProvider(key)),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _punching ? null : () => _punch('OUT'),
-                  icon: const Icon(Icons.logout_rounded),
-                  label: const Text('Punch out'),
-                ),
+              const SizedBox(height: 16),
+              FacePunchCard(
+                key: ValueKey(_faceReload),
+                onPunched: _load,
+                showButtons: false,
+                onResolved: () {
+                  if (mounted && !_faceKnown) setState(() => _faceKnown = true);
+                },
               ),
-            ]),
+              const SizedBox(height: 24),
+              const SectionHeader('This month'),
+              AttendanceMonthCard(employeeId: employeeId, zone: zone),
+              const SizedBox(height: 24),
+              const SectionHeader('Last 14 days'),
+              history,
             ],
-            const SizedBox(height: 24),
-            const SectionHeader('This month'),
-            AttendanceMonthCard(employeeId: employeeId, zone: ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata'),
-            const SizedBox(height: 24),
-            const SectionHeader('Last 14 days'),
-            history,
-          ],
+          ),
         ),
+        bar: KeyedSubtree(key: _barKey, child: CheckInAction(
+          likely: state.likely,
+          faceRequired: faceRequired,
+          busy: punch.plainBusy || punch.faceBusy,
+          ready: _faceKnown,
+          busyLabel: punch.faceBusy ? 'Verifying…' : 'Recording punch…',
+          onPunch: _punch,
+        )),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Attendance'), automaticallyImplyLeading: false, actions: const [MoreAction()]),
+      appBar: AppBar(title: const Text('Attendance'), automaticallyImplyLeading: false, actions: usesEmployeeSurface(ref.watch(authControllerProvider).user) ? null : const [MoreAction()]),
       body: body,
     );
   }

@@ -1,0 +1,989 @@
+ThemeData#xxxxx
+   adaptations: []
+   applyElevationOverlayColor: false
+   extensions: Instance of 'AppStatusColors'
+   inputDecorationTheme: InputDecorationTheme#xxxxx(labelStyle:
+     TextStyle(debugLabel: (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.2627, green:
+     0.2745, blue: 0.3333, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     400, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), hintStyle:
+     TextStyle(debugLabel: (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 0.7000, red: 0.2627, green:
+     0.2745, blue: 0.3333, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     400, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), contentPadding:
+     EdgeInsets(16.0, 14.0, 16.0, 14.0), prefixIconColor:
+     Color(alpha: 1.0000, red: 0.2627, green: 0.2745, blue: 0.3333,
+     colorSpace: ColorSpace.sRGB), suffixIconColor: Color(alpha:
+     1.0000, red: 0.2627, green: 0.2745, blue: 0.3333, colorSpace:
+     ColorSpace.sRGB), filled: true, fillColor: Color(alpha: 1.0000,
+     red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), errorBorder: OutlineInputBorder(),
+     focusedBorder: OutlineInputBorder(), focusedErrorBorder:
+     OutlineInputBorder(), disabledBorder: OutlineInputBorder(),
+     enabledBorder: OutlineInputBorder(), border:
+     OutlineInputBorder())
+   materialTapTargetSize: MaterialTapTargetSize.padded
+   pageTransitionsTheme: PageTransitionsTheme#xxxxx(builders:
+     {TargetPlatform.android: Instance of
+     'FadeForwardsPageTransitionsBuilder', TargetPlatform.iOS:
+     Instance of 'CupertinoPageTransitionsBuilder'})
+   canvasColor: Color(alpha: 1.0000, red: 0.9804, green: 0.9725,
+     blue: 1.0000, colorSpace: ColorSpace.sRGB)
+   cardColor: Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue:
+     1.0000, colorSpace: ColorSpace.sRGB)
+   colorScheme: ColorScheme#xxxxx(primary: Color(alpha: 1.0000, red:
+     0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB), primaryContainer: Color(alpha: 1.0000, red:
+     0.1451, green: 0.3882, blue: 0.9216, colorSpace:
+     ColorSpace.sRGB), onPrimaryContainer: Color(alpha: 1.0000, red:
+     0.9333, green: 0.9373, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), primaryFixed: Color(alpha: 1.0000, red:
+     0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB), primaryFixedDim: Color(alpha: 1.0000, red:
+     0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB), secondary: Color(alpha: 1.0000, red: 0.3137,
+     green: 0.3725, blue: 0.4627, colorSpace: ColorSpace.sRGB),
+     onSecondary: Color(alpha: 1.0000, red: 1.0000, green: 1.0000,
+     blue: 1.0000, colorSpace: ColorSpace.sRGB), secondaryContainer:
+     Color(alpha: 1.0000, red: 0.8157, green: 0.8824, blue: 0.9843,
+     colorSpace: ColorSpace.sRGB), onSecondaryContainer:
+     Color(alpha: 1.0000, red: 0.3294, green: 0.3922, blue: 0.4784,
+     colorSpace: ColorSpace.sRGB), secondaryFixed: Color(alpha:
+     1.0000, red: 0.3137, green: 0.3725, blue: 0.4627, colorSpace:
+     ColorSpace.sRGB), secondaryFixedDim: Color(alpha: 1.0000, red:
+     0.3137, green: 0.3725, blue: 0.4627, colorSpace:
+     ColorSpace.sRGB), onSecondaryFixed: Color(alpha: 1.0000, red:
+     1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), onSecondaryFixedVariant: Color(alpha: 1.0000,
+     red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), tertiary: Color(alpha: 1.0000, red: 0.0549,
+     green: 0.6471, blue: 0.9137, colorSpace: ColorSpace.sRGB),
+     onTertiary: Color(alpha: 1.0000, red: 1.0000, green: 1.0000,
+     blue: 1.0000, colorSpace: ColorSpace.sRGB), tertiaryContainer:
+     Color(alpha: 1.0000, red: 0.7373, green: 0.2824, blue: 0.0000,
+     colorSpace: ColorSpace.sRGB), onTertiaryContainer: Color(alpha:
+     1.0000, red: 1.0000, green: 0.9294, blue: 0.9020, colorSpace:
+     ColorSpace.sRGB), tertiaryFixed: Color(alpha: 1.0000, red:
+     0.0549, green: 0.6471, blue: 0.9137, colorSpace:
+     ColorSpace.sRGB), tertiaryFixedDim: Color(alpha: 1.0000, red:
+     0.0549, green: 0.6471, blue: 0.9137, colorSpace:
+     ColorSpace.sRGB), onTertiaryFixed: Color(alpha: 1.0000, red:
+     1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), onTertiaryFixedVariant: Color(alpha: 1.0000,
+     red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), error: Color(alpha: 1.0000, red: 0.9373,
+     green: 0.2667, blue: 0.2667, colorSpace: ColorSpace.sRGB),
+     errorContainer: Color(alpha: 1.0000, red: 1.0000, green:
+     0.8549, blue: 0.8392, colorSpace: ColorSpace.sRGB),
+     onErrorContainer: Color(alpha: 1.0000, red: 0.5765, green:
+     0.0000, blue: 0.0392, colorSpace: ColorSpace.sRGB), surface:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), onSurface: Color(alpha: 1.0000,
+     red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB), surfaceDim: Color(alpha: 1.0000, red: 0.9804,
+     green: 0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB),
+     surfaceBright: Color(alpha: 1.0000, red: 0.9804, green: 0.9725,
+     blue: 1.0000, colorSpace: ColorSpace.sRGB),
+     surfaceContainerLow: Color(alpha: 1.0000, red: 0.9529, green:
+     0.9529, blue: 0.9961, colorSpace: ColorSpace.sRGB),
+     surfaceContainer: Color(alpha: 1.0000, red: 0.9294, green:
+     0.9294, blue: 0.9765, colorSpace: ColorSpace.sRGB),
+     surfaceContainerHigh: Color(alpha: 1.0000, red: 0.9059, green:
+     0.9059, blue: 0.9529, colorSpace: ColorSpace.sRGB),
+     surfaceContainerHighest: Color(alpha: 1.0000, red: 0.8824,
+     green: 0.8863, blue: 0.9294, colorSpace: ColorSpace.sRGB),
+     onSurfaceVariant: Color(alpha: 1.0000, red: 0.2627, green:
+     0.2745, blue: 0.3333, colorSpace: ColorSpace.sRGB), outline:
+     Color(alpha: 1.0000, red: 0.7961, green: 0.8353, blue: 0.8824,
+     colorSpace: ColorSpace.sRGB), outlineVariant: Color(alpha:
+     1.0000, red: 0.7647, green: 0.7765, blue: 0.8431, colorSpace:
+     ColorSpace.sRGB), inverseSurface: Color(alpha: 1.0000, red:
+     0.1804, green: 0.1882, blue: 0.2235, colorSpace:
+     ColorSpace.sRGB), onInverseSurface: Color(alpha: 1.0000, red:
+     0.9412, green: 0.9412, blue: 0.9843, colorSpace:
+     ColorSpace.sRGB), inversePrimary: Color(alpha: 1.0000, red:
+     0.7059, green: 0.7725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), surfaceTint: Color(alpha: 1.0000, red:
+     0.0000, green: 0.3255, blue: 0.8588, colorSpace:
+     ColorSpace.sRGB), background: Color(alpha: 1.0000, red: 0.9804,
+     green: 0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB),
+     onBackground: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), surfaceVariant:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB))
+   dividerColor: Color(alpha: 1.0000, red: 0.7961, green: 0.8353,
+     blue: 0.8824, colorSpace: ColorSpace.sRGB)
+   primaryColor: Color(alpha: 1.0000, red: 0.0000, green: 0.2902,
+     blue: 0.7765, colorSpace: ColorSpace.sRGB)
+   scaffoldBackgroundColor: Color(alpha: 1.0000, red: 0.9529, green:
+     0.9529, blue: 0.9961, colorSpace: ColorSpace.sRGB)
+   iconTheme: IconThemeData#xxxxx(color: Color(alpha: 0.8667, red:
+     0.0000, green: 0.0000, blue: 0.0000, colorSpace:
+     ColorSpace.sRGB))
+   primaryIconTheme: IconThemeData#xxxxx(color: Color(alpha: 1.0000,
+     red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB))
+   primaryTextTheme: TextTheme#xxxxx(displayLarge:
+     TextStyle(debugLabel: (whiteMountainView displayLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), displayMedium: TextStyle(debugLabel:
+     (whiteMountainView displayMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     displaySmall: TextStyle(debugLabel: (whiteMountainView
+     displaySmall).apply, inherit: true, color: Color(alpha: 1.0000,
+     red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), family: Roboto, decoration: Color(alpha:
+     1.0000, red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), headlineLarge:
+     TextStyle(debugLabel: (whiteMountainView headlineLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), headlineMedium: TextStyle(debugLabel:
+     (whiteMountainView headlineMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     headlineSmall: TextStyle(debugLabel: (whiteMountainView
+     headlineSmall).apply, inherit: true, color: Color(alpha:
+     1.0000, red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), family: Roboto, decoration: Color(alpha:
+     1.0000, red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), titleLarge:
+     TextStyle(debugLabel: (whiteMountainView titleLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), titleMedium: TextStyle(debugLabel:
+     (whiteMountainView titleMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), titleSmall:
+     TextStyle(debugLabel: (whiteMountainView titleSmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), bodyLarge: TextStyle(debugLabel:
+     (whiteMountainView bodyLarge).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), bodyMedium:
+     TextStyle(debugLabel: (whiteMountainView bodyMedium).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), bodySmall: TextStyle(debugLabel:
+     (whiteMountainView bodySmall).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), labelLarge:
+     TextStyle(debugLabel: (whiteMountainView labelLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), labelMedium: TextStyle(debugLabel:
+     (whiteMountainView labelMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), labelSmall:
+     TextStyle(debugLabel: (whiteMountainView labelSmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none))
+   textTheme: TextTheme#xxxxx(displayLarge: TextStyle(debugLabel:
+     (blackMountainView displayLarge).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     displayMedium: TextStyle(debugLabel: (blackMountainView
+     displayMedium).apply, inherit: true, color: Color(alpha:
+     1.0000, red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB), family: Roboto, decoration: Color(alpha:
+     1.0000, red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), displaySmall:
+     TextStyle(debugLabel: (blackMountainView displaySmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), headlineLarge: TextStyle(debugLabel:
+     ((blackMountainView
+     headlineLarge).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 24.0, weight:
+     600, letterSpacing: -0.5, height: 1.3x, decoration:
+     Color(alpha: 1.0000, red: 0.1137, green: 0.1059, blue: 0.1255,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     headlineMedium: TextStyle(debugLabel: ((blackMountainView
+     headlineMedium).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 20.0, weight:
+     600, letterSpacing: -0.3, height: 1.4x, decoration:
+     Color(alpha: 1.0000, red: 0.1137, green: 0.1059, blue: 0.1255,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     headlineSmall: TextStyle(debugLabel: ((blackMountainView
+     headlineSmall).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 16.0, weight:
+     600, letterSpacing: -0.2, height: 1.5x, decoration:
+     Color(alpha: 1.0000, red: 0.1137, green: 0.1059, blue: 0.1255,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), titleLarge:
+     TextStyle(debugLabel: (blackMountainView titleLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), titleMedium: TextStyle(debugLabel:
+     (blackMountainView titleMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), titleSmall:
+     TextStyle(debugLabel: (blackMountainView titleSmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), bodyLarge: TextStyle(debugLabel:
+     ((blackMountainView
+     bodyLarge).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     400, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), bodyMedium:
+     TextStyle(debugLabel: ((blackMountainView
+     bodyMedium).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 13.0, weight:
+     400, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), bodySmall:
+     TextStyle(debugLabel: ((blackMountainView
+     bodySmall).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 12.0, weight:
+     400, letterSpacing: 0.0, height: 1.3x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), labelLarge:
+     TextStyle(debugLabel: (blackMountainView labelLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), labelMedium: TextStyle(debugLabel:
+     ((blackMountainView
+     labelMedium).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 12.0, weight:
+     500, letterSpacing: 0.1, height: 1.3x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), labelSmall:
+     TextStyle(debugLabel: ((blackMountainView
+     labelSmall).apply).merge(((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith), inherit:
+     true, color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 11.0, weight:
+     600, letterSpacing: 0.2, height: 1.3x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none))
+   typography: Typography#xxxxx(black: TextTheme#xxxxx(displayLarge:
+     TextStyle(debugLabel: (blackMountainView displayLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), displayMedium: TextStyle(debugLabel:
+     (blackMountainView displayMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     displaySmall: TextStyle(debugLabel: (blackMountainView
+     displaySmall).apply, inherit: true, color: Color(alpha: 1.0000,
+     red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB), family: Roboto, decoration: Color(alpha:
+     1.0000, red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), headlineLarge:
+     TextStyle(debugLabel: (blackMountainView headlineLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), headlineMedium: TextStyle(debugLabel:
+     (blackMountainView headlineMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     headlineSmall: TextStyle(debugLabel: (blackMountainView
+     headlineSmall).apply, inherit: true, color: Color(alpha:
+     1.0000, red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB), family: Roboto, decoration: Color(alpha:
+     1.0000, red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), titleLarge:
+     TextStyle(debugLabel: (blackMountainView titleLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), titleMedium: TextStyle(debugLabel:
+     (blackMountainView titleMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), titleSmall:
+     TextStyle(debugLabel: (blackMountainView titleSmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), bodyLarge: TextStyle(debugLabel:
+     (blackMountainView bodyLarge).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), bodyMedium:
+     TextStyle(debugLabel: (blackMountainView bodyMedium).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), bodySmall: TextStyle(debugLabel:
+     (blackMountainView bodySmall).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), labelLarge:
+     TextStyle(debugLabel: (blackMountainView labelLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), labelMedium: TextStyle(debugLabel:
+     (blackMountainView labelMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue: 0.1373,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), labelSmall:
+     TextStyle(debugLabel: (blackMountainView labelSmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none)), white: TextTheme#xxxxx(displayLarge:
+     TextStyle(debugLabel: (whiteMountainView displayLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), displayMedium: TextStyle(debugLabel:
+     (whiteMountainView displayMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     displaySmall: TextStyle(debugLabel: (whiteMountainView
+     displaySmall).apply, inherit: true, color: Color(alpha: 1.0000,
+     red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), family: Roboto, decoration: Color(alpha:
+     1.0000, red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), headlineLarge:
+     TextStyle(debugLabel: (whiteMountainView headlineLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), headlineMedium: TextStyle(debugLabel:
+     (whiteMountainView headlineMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none),
+     headlineSmall: TextStyle(debugLabel: (whiteMountainView
+     headlineSmall).apply, inherit: true, color: Color(alpha:
+     1.0000, red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), family: Roboto, decoration: Color(alpha:
+     1.0000, red: 0.9804, green: 0.9725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), titleLarge:
+     TextStyle(debugLabel: (whiteMountainView titleLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), titleMedium: TextStyle(debugLabel:
+     (whiteMountainView titleMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), titleSmall:
+     TextStyle(debugLabel: (whiteMountainView titleSmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), bodyLarge: TextStyle(debugLabel:
+     (whiteMountainView bodyLarge).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), bodyMedium:
+     TextStyle(debugLabel: (whiteMountainView bodyMedium).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), bodySmall: TextStyle(debugLabel:
+     (whiteMountainView bodySmall).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), labelLarge:
+     TextStyle(debugLabel: (whiteMountainView labelLarge).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none), labelMedium: TextStyle(debugLabel:
+     (whiteMountainView labelMedium).apply, inherit: true, color:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), family: Roboto, decoration:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none), labelSmall:
+     TextStyle(debugLabel: (whiteMountainView labelSmall).apply,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB), family:
+     Roboto, decoration: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)
+     TextDecoration.none)), englishLike:
+     TextTheme#xxxxx(displayLarge: TextStyle(debugLabel: englishLike
+     displayLarge 2021, inherit: false, size: 57.0, weight: 400,
+     letterSpacing: -0.3, baseline: alphabetic, height: 1.1x,
+     leadingDistribution: even), displayMedium:
+     TextStyle(debugLabel: englishLike displayMedium 2021, inherit:
+     false, size: 45.0, weight: 400, letterSpacing: 0.0, baseline:
+     alphabetic, height: 1.2x, leadingDistribution: even),
+     displaySmall: TextStyle(debugLabel: englishLike displaySmall
+     2021, inherit: false, size: 36.0, weight: 400, letterSpacing:
+     0.0, baseline: alphabetic, height: 1.2x, leadingDistribution:
+     even), headlineLarge: TextStyle(debugLabel: englishLike
+     headlineLarge 2021, inherit: false, size: 32.0, weight: 400,
+     letterSpacing: 0.0, baseline: alphabetic, height: 1.3x,
+     leadingDistribution: even), headlineMedium:
+     TextStyle(debugLabel: englishLike headlineMedium 2021, inherit:
+     false, size: 28.0, weight: 400, letterSpacing: 0.0, baseline:
+     alphabetic, height: 1.3x, leadingDistribution: even),
+     headlineSmall: TextStyle(debugLabel: englishLike headlineSmall
+     2021, inherit: false, size: 24.0, weight: 400, letterSpacing:
+     0.0, baseline: alphabetic, height: 1.3x, leadingDistribution:
+     even), titleLarge: TextStyle(debugLabel: englishLike titleLarge
+     2021, inherit: false, size: 22.0, weight: 400, letterSpacing:
+     0.0, baseline: alphabetic, height: 1.3x, leadingDistribution:
+     even), titleMedium: TextStyle(debugLabel: englishLike
+     titleMedium 2021, inherit: false, size: 16.0, weight: 500,
+     letterSpacing: 0.1, baseline: alphabetic, height: 1.5x,
+     leadingDistribution: even), titleSmall: TextStyle(debugLabel:
+     englishLike titleSmall 2021, inherit: false, size: 14.0,
+     weight: 500, letterSpacing: 0.1, baseline: alphabetic, height:
+     1.4x, leadingDistribution: even), bodyLarge:
+     TextStyle(debugLabel: englishLike bodyLarge 2021, inherit:
+     false, size: 16.0, weight: 400, letterSpacing: 0.5, baseline:
+     alphabetic, height: 1.5x, leadingDistribution: even),
+     bodyMedium: TextStyle(debugLabel: englishLike bodyMedium 2021,
+     inherit: false, size: 14.0, weight: 400, letterSpacing: 0.3,
+     baseline: alphabetic, height: 1.4x, leadingDistribution: even),
+     bodySmall: TextStyle(debugLabel: englishLike bodySmall 2021,
+     inherit: false, size: 12.0, weight: 400, letterSpacing: 0.4,
+     baseline: alphabetic, height: 1.3x, leadingDistribution: even),
+     labelLarge: TextStyle(debugLabel: englishLike labelLarge 2021,
+     inherit: false, size: 14.0, weight: 500, letterSpacing: 0.1,
+     baseline: alphabetic, height: 1.4x, leadingDistribution: even),
+     labelMedium: TextStyle(debugLabel: englishLike labelMedium
+     2021, inherit: false, size: 12.0, weight: 500, letterSpacing:
+     0.5, baseline: alphabetic, height: 1.3x, leadingDistribution:
+     even), labelSmall: TextStyle(debugLabel: englishLike labelSmall
+     2021, inherit: false, size: 11.0, weight: 500, letterSpacing:
+     0.5, baseline: alphabetic, height: 1.4x, leadingDistribution:
+     even)), dense: TextTheme#xxxxx(displayLarge:
+     TextStyle(debugLabel: dense displayLarge 2021, inherit: false,
+     size: 57.0, weight: 400, letterSpacing: -0.3, baseline:
+     ideographic, height: 1.1x, leadingDistribution: even),
+     displayMedium: TextStyle(debugLabel: dense displayMedium 2021,
+     inherit: false, size: 45.0, weight: 400, letterSpacing: 0.0,
+     baseline: ideographic, height: 1.2x, leadingDistribution:
+     even), displaySmall: TextStyle(debugLabel: dense displaySmall
+     2021, inherit: false, size: 36.0, weight: 400, letterSpacing:
+     0.0, baseline: ideographic, height: 1.2x, leadingDistribution:
+     even), headlineLarge: TextStyle(debugLabel: dense headlineLarge
+     2021, inherit: false, size: 32.0, weight: 400, letterSpacing:
+     0.0, baseline: ideographic, height: 1.3x, leadingDistribution:
+     even), headlineMedium: TextStyle(debugLabel: dense
+     headlineMedium 2021, inherit: false, size: 28.0, weight: 400,
+     letterSpacing: 0.0, baseline: ideographic, height: 1.3x,
+     leadingDistribution: even), headlineSmall:
+     TextStyle(debugLabel: dense headlineSmall 2021, inherit: false,
+     size: 24.0, weight: 400, letterSpacing: 0.0, baseline:
+     ideographic, height: 1.3x, leadingDistribution: even),
+     titleLarge: TextStyle(debugLabel: dense titleLarge 2021,
+     inherit: false, size: 22.0, weight: 400, letterSpacing: 0.0,
+     baseline: ideographic, height: 1.3x, leadingDistribution:
+     even), titleMedium: TextStyle(debugLabel: dense titleMedium
+     2021, inherit: false, size: 16.0, weight: 500, letterSpacing:
+     0.1, baseline: ideographic, height: 1.5x, leadingDistribution:
+     even), titleSmall: TextStyle(debugLabel: dense titleSmall 2021,
+     inherit: false, size: 14.0, weight: 500, letterSpacing: 0.1,
+     baseline: ideographic, height: 1.4x, leadingDistribution:
+     even), bodyLarge: TextStyle(debugLabel: dense bodyLarge 2021,
+     inherit: false, size: 16.0, weight: 400, letterSpacing: 0.5,
+     baseline: ideographic, height: 1.5x, leadingDistribution:
+     even), bodyMedium: TextStyle(debugLabel: dense bodyMedium 2021,
+     inherit: false, size: 14.0, weight: 400, letterSpacing: 0.3,
+     baseline: ideographic, height: 1.4x, leadingDistribution:
+     even), bodySmall: TextStyle(debugLabel: dense bodySmall 2021,
+     inherit: false, size: 12.0, weight: 400, letterSpacing: 0.4,
+     baseline: ideographic, height: 1.3x, leadingDistribution:
+     even), labelLarge: TextStyle(debugLabel: dense labelLarge 2021,
+     inherit: false, size: 14.0, weight: 500, letterSpacing: 0.1,
+     baseline: ideographic, height: 1.4x, leadingDistribution:
+     even), labelMedium: TextStyle(debugLabel: dense labelMedium
+     2021, inherit: false, size: 12.0, weight: 500, letterSpacing:
+     0.5, baseline: ideographic, height: 1.3x, leadingDistribution:
+     even), labelSmall: TextStyle(debugLabel: dense labelSmall 2021,
+     inherit: false, size: 11.0, weight: 500, letterSpacing: 0.5,
+     baseline: ideographic, height: 1.4x, leadingDistribution:
+     even)), tall: TextTheme#xxxxx(displayLarge:
+     TextStyle(debugLabel: tall displayLarge 2021, inherit: false,
+     size: 57.0, weight: 400, letterSpacing: -0.3, baseline:
+     alphabetic, height: 1.1x, leadingDistribution: even),
+     displayMedium: TextStyle(debugLabel: tall displayMedium 2021,
+     inherit: false, size: 45.0, weight: 400, letterSpacing: 0.0,
+     baseline: alphabetic, height: 1.2x, leadingDistribution: even),
+     displaySmall: TextStyle(debugLabel: tall displaySmall 2021,
+     inherit: false, size: 36.0, weight: 400, letterSpacing: 0.0,
+     baseline: alphabetic, height: 1.2x, leadingDistribution: even),
+     headlineLarge: TextStyle(debugLabel: tall headlineLarge 2021,
+     inherit: false, size: 32.0, weight: 400, letterSpacing: 0.0,
+     baseline: alphabetic, height: 1.3x, leadingDistribution: even),
+     headlineMedium: TextStyle(debugLabel: tall headlineMedium 2021,
+     inherit: false, size: 28.0, weight: 400, letterSpacing: 0.0,
+     baseline: alphabetic, height: 1.3x, leadingDistribution: even),
+     headlineSmall: TextStyle(debugLabel: tall headlineSmall 2021,
+     inherit: false, size: 24.0, weight: 400, letterSpacing: 0.0,
+     baseline: alphabetic, height: 1.3x, leadingDistribution: even),
+     titleLarge: TextStyle(debugLabel: tall titleLarge 2021,
+     inherit: false, size: 22.0, weight: 400, letterSpacing: 0.0,
+     baseline: alphabetic, height: 1.3x, leadingDistribution: even),
+     titleMedium: TextStyle(debugLabel: tall titleMedium 2021,
+     inherit: false, size: 16.0, weight: 500, letterSpacing: 0.1,
+     baseline: alphabetic, height: 1.5x, leadingDistribution: even),
+     titleSmall: TextStyle(debugLabel: tall titleSmall 2021,
+     inherit: false, size: 14.0, weight: 500, letterSpacing: 0.1,
+     baseline: alphabetic, height: 1.4x, leadingDistribution: even),
+     bodyLarge: TextStyle(debugLabel: tall bodyLarge 2021, inherit:
+     false, size: 16.0, weight: 400, letterSpacing: 0.5, baseline:
+     alphabetic, height: 1.5x, leadingDistribution: even),
+     bodyMedium: TextStyle(debugLabel: tall bodyMedium 2021,
+     inherit: false, size: 14.0, weight: 400, letterSpacing: 0.3,
+     baseline: alphabetic, height: 1.4x, leadingDistribution: even),
+     bodySmall: TextStyle(debugLabel: tall bodySmall 2021, inherit:
+     false, size: 12.0, weight: 400, letterSpacing: 0.4, baseline:
+     alphabetic, height: 1.3x, leadingDistribution: even),
+     labelLarge: TextStyle(debugLabel: tall labelLarge 2021,
+     inherit: false, size: 14.0, weight: 500, letterSpacing: 0.1,
+     baseline: alphabetic, height: 1.4x, leadingDistribution: even),
+     labelMedium: TextStyle(debugLabel: tall labelMedium 2021,
+     inherit: false, size: 12.0, weight: 500, letterSpacing: 0.5,
+     baseline: alphabetic, height: 1.3x, leadingDistribution: even),
+     labelSmall: TextStyle(debugLabel: tall labelSmall 2021,
+     inherit: false, size: 11.0, weight: 500, letterSpacing: 0.5,
+     baseline: alphabetic, height: 1.4x, leadingDistribution:
+     even)))
+   actionIconTheme: null
+   appBarTheme: AppBarTheme#xxxxx(backgroundColor: Color(alpha:
+     1.0000, red: 0.9529, green: 0.9529, blue: 0.9961, colorSpace:
+     ColorSpace.sRGB), foregroundColor: Color(alpha: 1.0000, red:
+     0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB), elevation: 0.0, scrolledUnderElevation: 0.0,
+     surfaceTintColor: Color(alpha: 0.0000, red: 0.0000, green:
+     0.0000, blue: 0.0000, colorSpace: ColorSpace.sRGB),
+     centerTitle: false, titleSpacing: 16.0, titleTextStyle:
+     TextStyle(debugLabel: (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 20.0, weight:
+     700, letterSpacing: -0.3, height: 1.4x, decoration:
+     Color(alpha: 1.0000, red: 0.1137, green: 0.1059, blue: 0.1255,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none))
+   bottomSheetTheme: BottomSheetThemeData#xxxxx(backgroundColor:
+     Color(alpha: 1.0000, red: 1.0000, green: 1.0000, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), surfaceTintColor: Color(alpha:
+     0.0000, red: 0.0000, green: 0.0000, blue: 0.0000, colorSpace:
+     ColorSpace.sRGB), shape:
+     RoundedRectangleBorder(BorderSide(width: 0.0, style: none),
+     BorderRadius.only(topLeft: Radius.circular(28.0), topRight:
+     Radius.circular(28.0))), showDragHandle: true)
+   buttonTheme: ButtonThemeData#xxxxx(buttonColor: Color(alpha:
+     1.0000, red: 0.8784, green: 0.8784, blue: 0.8784, colorSpace:
+     ColorSpace.sRGB), focusColor: Color(alpha: 0.1216, red: 0.0000,
+     green: 0.0000, blue: 0.0000, colorSpace: ColorSpace.sRGB),
+     hoverColor: Color(alpha: 0.0392, red: 0.0000, green: 0.0000,
+     blue: 0.0000, colorSpace: ColorSpace.sRGB), colorScheme:
+     ColorScheme#xxxxx(primary: Color(alpha: 1.0000, red: 0.0000,
+     green: 0.2902, blue: 0.7765, colorSpace: ColorSpace.sRGB),
+     primaryContainer: Color(alpha: 1.0000, red: 0.1451, green:
+     0.3882, blue: 0.9216, colorSpace: ColorSpace.sRGB),
+     onPrimaryContainer: Color(alpha: 1.0000, red: 0.9333, green:
+     0.9373, blue: 1.0000, colorSpace: ColorSpace.sRGB),
+     primaryFixed: Color(alpha: 1.0000, red: 0.0000, green: 0.2902,
+     blue: 0.7765, colorSpace: ColorSpace.sRGB), primaryFixedDim:
+     Color(alpha: 1.0000, red: 0.0000, green: 0.2902, blue: 0.7765,
+     colorSpace: ColorSpace.sRGB), secondary: Color(alpha: 1.0000,
+     red: 0.3137, green: 0.3725, blue: 0.4627, colorSpace:
+     ColorSpace.sRGB), onSecondary: Color(alpha: 1.0000, red:
+     1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), secondaryContainer: Color(alpha: 1.0000, red:
+     0.8157, green: 0.8824, blue: 0.9843, colorSpace:
+     ColorSpace.sRGB), onSecondaryContainer: Color(alpha: 1.0000,
+     red: 0.3294, green: 0.3922, blue: 0.4784, colorSpace:
+     ColorSpace.sRGB), secondaryFixed: Color(alpha: 1.0000, red:
+     0.3137, green: 0.3725, blue: 0.4627, colorSpace:
+     ColorSpace.sRGB), secondaryFixedDim: Color(alpha: 1.0000, red:
+     0.3137, green: 0.3725, blue: 0.4627, colorSpace:
+     ColorSpace.sRGB), onSecondaryFixed: Color(alpha: 1.0000, red:
+     1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), onSecondaryFixedVariant: Color(alpha: 1.0000,
+     red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), tertiary: Color(alpha: 1.0000, red: 0.0549,
+     green: 0.6471, blue: 0.9137, colorSpace: ColorSpace.sRGB),
+     onTertiary: Color(alpha: 1.0000, red: 1.0000, green: 1.0000,
+     blue: 1.0000, colorSpace: ColorSpace.sRGB), tertiaryContainer:
+     Color(alpha: 1.0000, red: 0.7373, green: 0.2824, blue: 0.0000,
+     colorSpace: ColorSpace.sRGB), onTertiaryContainer: Color(alpha:
+     1.0000, red: 1.0000, green: 0.9294, blue: 0.9020, colorSpace:
+     ColorSpace.sRGB), tertiaryFixed: Color(alpha: 1.0000, red:
+     0.0549, green: 0.6471, blue: 0.9137, colorSpace:
+     ColorSpace.sRGB), tertiaryFixedDim: Color(alpha: 1.0000, red:
+     0.0549, green: 0.6471, blue: 0.9137, colorSpace:
+     ColorSpace.sRGB), onTertiaryFixed: Color(alpha: 1.0000, red:
+     1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), onTertiaryFixedVariant: Color(alpha: 1.0000,
+     red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), error: Color(alpha: 1.0000, red: 0.9373,
+     green: 0.2667, blue: 0.2667, colorSpace: ColorSpace.sRGB),
+     errorContainer: Color(alpha: 1.0000, red: 1.0000, green:
+     0.8549, blue: 0.8392, colorSpace: ColorSpace.sRGB),
+     onErrorContainer: Color(alpha: 1.0000, red: 0.5765, green:
+     0.0000, blue: 0.0392, colorSpace: ColorSpace.sRGB), surface:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), onSurface: Color(alpha: 1.0000,
+     red: 0.0980, green: 0.1059, blue: 0.1373, colorSpace:
+     ColorSpace.sRGB), surfaceDim: Color(alpha: 1.0000, red: 0.9804,
+     green: 0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB),
+     surfaceBright: Color(alpha: 1.0000, red: 0.9804, green: 0.9725,
+     blue: 1.0000, colorSpace: ColorSpace.sRGB),
+     surfaceContainerLow: Color(alpha: 1.0000, red: 0.9529, green:
+     0.9529, blue: 0.9961, colorSpace: ColorSpace.sRGB),
+     surfaceContainer: Color(alpha: 1.0000, red: 0.9294, green:
+     0.9294, blue: 0.9765, colorSpace: ColorSpace.sRGB),
+     surfaceContainerHigh: Color(alpha: 1.0000, red: 0.9059, green:
+     0.9059, blue: 0.9529, colorSpace: ColorSpace.sRGB),
+     surfaceContainerHighest: Color(alpha: 1.0000, red: 0.8824,
+     green: 0.8863, blue: 0.9294, colorSpace: ColorSpace.sRGB),
+     onSurfaceVariant: Color(alpha: 1.0000, red: 0.2627, green:
+     0.2745, blue: 0.3333, colorSpace: ColorSpace.sRGB), outline:
+     Color(alpha: 1.0000, red: 0.7961, green: 0.8353, blue: 0.8824,
+     colorSpace: ColorSpace.sRGB), outlineVariant: Color(alpha:
+     1.0000, red: 0.7647, green: 0.7765, blue: 0.8431, colorSpace:
+     ColorSpace.sRGB), inverseSurface: Color(alpha: 1.0000, red:
+     0.1804, green: 0.1882, blue: 0.2235, colorSpace:
+     ColorSpace.sRGB), onInverseSurface: Color(alpha: 1.0000, red:
+     0.9412, green: 0.9412, blue: 0.9843, colorSpace:
+     ColorSpace.sRGB), inversePrimary: Color(alpha: 1.0000, red:
+     0.7059, green: 0.7725, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), surfaceTint: Color(alpha: 1.0000, red:
+     0.0000, green: 0.3255, blue: 0.8588, colorSpace:
+     ColorSpace.sRGB), background: Color(alpha: 1.0000, red: 0.9804,
+     green: 0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB),
+     onBackground: Color(alpha: 1.0000, red: 0.0980, green: 0.1059,
+     blue: 0.1373, colorSpace: ColorSpace.sRGB), surfaceVariant:
+     Color(alpha: 1.0000, red: 0.9804, green: 0.9725, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB)), materialTapTargetSize:
+     MaterialTapTargetSize.padded)
+   cardTheme: CardThemeData#xxxxx(color: Color(alpha: 1.0000, red:
+     1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), surfaceTintColor: Color(alpha: 0.0000, red:
+     0.0000, green: 0.0000, blue: 0.0000, colorSpace:
+     ColorSpace.sRGB), elevation: 0.0, margin: EdgeInsets.zero,
+     shape: RoundedRectangleBorder(BorderSide(color: Color(alpha:
+     0.6000, red: 0.7647, green: 0.7765, blue: 0.8431, colorSpace:
+     ColorSpace.sRGB)), BorderRadius.circular(16.0)))
+   chipTheme: ChipThemeData#xxxxx(backgroundColor: Color(alpha:
+     1.0000, red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), selectedColor: Color(alpha: 0.1200, red:
+     0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB), showCheckmark: false, side: BorderSide(color:
+     Color(alpha: 0.9000, red: 0.7647, green: 0.7765, blue: 0.8431,
+     colorSpace: ColorSpace.sRGB)), shape:
+     StadiumBorder(BorderSide(width: 0.0, style: none)), labelStyle:
+     TextStyle(debugLabel: ((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith, inherit: true,
+     color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue:
+     0.1373, colorSpace: ColorSpace.sRGB), family: Inter_regular,
+     familyFallback: [Inter], size: 12.0, weight: 500,
+     letterSpacing: 0.1, height: 1.3x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none))
+   dialogTheme: DialogThemeData#xxxxx(backgroundColor: Color(alpha:
+     1.0000, red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), surfaceTintColor: Color(alpha: 0.0000, red:
+     0.0000, green: 0.0000, blue: 0.0000, colorSpace:
+     ColorSpace.sRGB), shape:
+     RoundedRectangleBorder(BorderSide(width: 0.0, style: none),
+     BorderRadius.circular(24.0)), titleTextStyle:
+     TextStyle(debugLabel: (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 20.0, weight:
+     700, letterSpacing: -0.3, height: 1.4x, decoration:
+     Color(alpha: 1.0000, red: 0.1137, green: 0.1059, blue: 0.1255,
+     colorSpace: ColorSpace.sRGB) TextDecoration.none))
+   dividerTheme: DividerThemeData#xxxxx(color: Color(alpha: 0.6000,
+     red: 0.7647, green: 0.7765, blue: 0.8431, colorSpace:
+     ColorSpace.sRGB), space: 1.0, thickness: 1.0)
+   elevatedButtonTheme: ElevatedButtonThemeData#xxxxx(style:
+     ButtonStyle#xxxxx(textStyle:
+     WidgetStatePropertyAll(TextStyle(debugLabel:
+     (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     600, letterSpacing: 0.1, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none)), backgroundColor:
+     WidgetStateMapper<Color?>({WidgetState.disabled: Color(alpha:
+     0.4000, red: 0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB), WidgetState.any: Color(alpha: 1.0000, red:
+     0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB)}), foregroundColor:
+     WidgetStateMapper<Color?>({WidgetState.disabled: null,
+     WidgetState.any: Color(alpha: 1.0000, red: 1.0000, green:
+     1.0000, blue: 1.0000, colorSpace: ColorSpace.sRGB)}),
+     overlayColor: WidgetStateMapper<Color?>({WidgetState.pressed:
+     Color(alpha: 0.1020, red: 1.0000, green: 1.0000, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), WidgetState.hovered: Color(alpha:
+     0.0784, red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB), WidgetState.focused: Color(alpha: 0.1020,
+     red: 1.0000, green: 1.0000, blue: 1.0000, colorSpace:
+     ColorSpace.sRGB)}), elevation:
+     WidgetStateMapper<double>({WidgetState.disabled: 0.0,
+     WidgetState.pressed: 6.0, WidgetState.hovered: 2.0,
+     WidgetState.focused: 2.0, WidgetState.any: 0.0}), padding:
+     WidgetStatePropertyAll(EdgeInsets(20.0, 14.0, 20.0, 14.0)),
+     minimumSize: WidgetStatePropertyAll(Size(Infinity, 50.0)),
+     shape:
+     WidgetStatePropertyAll(RoundedRectangleBorder(BorderSide(width:
+     0.0, style: none), BorderRadius.circular(12.0))), mouseCursor:
+     WidgetStateMapper<MouseCursor?>({WidgetState.disabled: null,
+     WidgetState.any: null})))
+   expansionTileTheme: ExpansionTileThemeData#xxxxx
+   filledButtonTheme: FilledButtonThemeData#xxxxx(style:
+     ButtonStyle#xxxxx(textStyle:
+     WidgetStatePropertyAll(TextStyle(debugLabel:
+     (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     600, letterSpacing: 0.1, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none)), padding:
+     WidgetStatePropertyAll(EdgeInsets(20.0, 12.0, 20.0, 12.0)),
+     minimumSize: WidgetStatePropertyAll(Size(64.0, 48.0)), shape:
+     WidgetStatePropertyAll(RoundedRectangleBorder(BorderSide(width:
+     0.0, style: none), BorderRadius.circular(12.0))), mouseCursor:
+     WidgetStateMapper<MouseCursor?>({WidgetState.disabled: null,
+     WidgetState.any: null})))
+   floatingActionButtonTheme:
+     FloatingActionButtonThemeData#xxxxx(foregroundColor:
+     Color(alpha: 1.0000, red: 1.0000, green: 1.0000, blue: 1.0000,
+     colorSpace: ColorSpace.sRGB), backgroundColor: Color(alpha:
+     1.0000, red: 0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB), elevation: 3.0, highlightElevation: 4.0,
+     shape: RoundedRectangleBorder(BorderSide(width: 0.0, style:
+     none), BorderRadius.circular(16.0)), extendedTextStyle:
+     TextStyle(debugLabel: (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     600, letterSpacing: 0.1, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none))
+   listTileTheme: ListTileThemeData#xxxxx(shape:
+     RoundedRectangleBorder(BorderSide(width: 0.0, style: none),
+     BorderRadius.circular(8.0)), iconColor: Color(alpha: 1.0000,
+     red: 0.2627, green: 0.2745, blue: 0.3333, colorSpace:
+     ColorSpace.sRGB), titleTextStyle: TextStyle(debugLabel:
+     (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     600, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), subtitleTextStyle:
+     TextStyle(debugLabel: (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.2627, green:
+     0.2745, blue: 0.3333, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 13.0, weight:
+     400, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), contentPadding:
+     EdgeInsets(16.0, 2.0, 16.0, 2.0))
+   navigationBarTheme: NavigationBarThemeData#xxxxx(height: 68.0,
+     backgroundColor: Color(alpha: 1.0000, red: 1.0000, green:
+     1.0000, blue: 1.0000, colorSpace: ColorSpace.sRGB), elevation:
+     0.0, surfaceTintColor: Color(alpha: 0.0000, red: 0.0000, green:
+     0.0000, blue: 0.0000, colorSpace: ColorSpace.sRGB),
+     indicatorColor: Color(alpha: 0.1000, red: 0.0000, green:
+     0.2902, blue: 0.7765, colorSpace: ColorSpace.sRGB),
+     indicatorShape: RoundedRectangleBorder(BorderSide(width: 0.0,
+     style: none), BorderRadius.circular(999.0)), labelTextStyle:
+     Instance of '_WidgetStatePropertyWith<TextStyle?>', iconTheme:
+     Instance of '_WidgetStatePropertyWith<IconThemeData?>')
+   outlinedButtonTheme: OutlinedButtonThemeData#xxxxx(style:
+     ButtonStyle#xxxxx(textStyle:
+     WidgetStatePropertyAll(TextStyle(debugLabel:
+     (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     600, letterSpacing: 0.1, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none)), padding:
+     WidgetStatePropertyAll(EdgeInsets(20.0, 12.0, 20.0, 12.0)),
+     minimumSize: WidgetStatePropertyAll(Size(64.0, 48.0)), side:
+     WidgetStatePropertyAll(BorderSide(color: Color(alpha: 1.0000,
+     red: 0.7961, green: 0.8353, blue: 0.8824, colorSpace:
+     ColorSpace.sRGB))), shape:
+     WidgetStatePropertyAll(RoundedRectangleBorder(BorderSide(width:
+     0.0, style: none), BorderRadius.circular(12.0))), mouseCursor:
+     WidgetStateMapper<MouseCursor?>({WidgetState.disabled: null,
+     WidgetState.any: null})))
+   progressIndicatorTheme: ProgressIndicatorThemeData#xxxxx(color:
+     Color(alpha: 1.0000, red: 0.0000, green: 0.2902, blue: 0.7765,
+     colorSpace: ColorSpace.sRGB), linearTrackColor: Color(alpha:
+     1.0000, red: 0.9059, green: 0.9059, blue: 0.9529, colorSpace:
+     ColorSpace.sRGB), linearMinHeight: 6.0, borderRadius:
+     BorderRadius.circular(999.0))
+   sliderTheme: SliderThemeData#xxxxx
+   snackBarTheme: SnackBarThemeData#xxxxx(backgroundColor:
+     Color(alpha: 1.0000, red: 0.1804, green: 0.1882, blue: 0.2235,
+     colorSpace: ColorSpace.sRGB), contentTextStyle:
+     TextStyle(debugLabel: (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.9412, green:
+     0.9412, blue: 0.9843, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     400, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), shape:
+     RoundedRectangleBorder(BorderSide(width: 0.0, style: none),
+     BorderRadius.circular(8.0)), behavior:
+     SnackBarBehavior.floating)
+   tabBarTheme: TabBarThemeData#xxxxx(indicatorSize:
+     TabBarIndicatorSize.label, dividerColor: Color(alpha: 0.0000,
+     red: 0.0000, green: 0.0000, blue: 0.0000, colorSpace:
+     ColorSpace.sRGB), labelStyle: TextStyle(debugLabel:
+     (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     700, letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none), unselectedLabelStyle:
+     TextStyle(debugLabel: ((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith, inherit: true,
+     color: Color(alpha: 1.0000, red: 0.0980, green: 0.1059, blue:
+     0.1373, colorSpace: ColorSpace.sRGB), family: Inter_regular,
+     familyFallback: [Inter], size: 14.0, weight: 400,
+     letterSpacing: 0.0, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none))
+   textButtonTheme: TextButtonThemeData#xxxxx(style:
+     ButtonStyle#xxxxx(textStyle:
+     WidgetStatePropertyAll(TextStyle(debugLabel:
+     (((((blackMountainView
+     bodyMedium).apply).copyWith).copyWith).copyWith).copyWith,
+     inherit: true, color: Color(alpha: 1.0000, red: 0.0980, green:
+     0.1059, blue: 0.1373, colorSpace: ColorSpace.sRGB), family:
+     Inter_regular, familyFallback: [Inter], size: 14.0, weight:
+     600, letterSpacing: 0.1, height: 1.4x, decoration: Color(alpha:
+     1.0000, red: 0.1137, green: 0.1059, blue: 0.1255, colorSpace:
+     ColorSpace.sRGB) TextDecoration.none)), foregroundColor:
+     WidgetStateMapper<Color?>({WidgetState.disabled: null,
+     WidgetState.any: Color(alpha: 1.0000, red: 0.0000, green:
+     0.2902, blue: 0.7765, colorSpace: ColorSpace.sRGB)}),
+     overlayColor: WidgetStateMapper<Color?>({WidgetState.pressed:
+     Color(alpha: 0.1020, red: 0.0000, green: 0.2902, blue: 0.7765,
+     colorSpace: ColorSpace.sRGB), WidgetState.hovered: Color(alpha:
+     0.0784, red: 0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB), WidgetState.focused: Color(alpha: 0.1020,
+     red: 0.0000, green: 0.2902, blue: 0.7765, colorSpace:
+     ColorSpace.sRGB)}), shape:
+     WidgetStatePropertyAll(RoundedRectangleBorder(BorderSide(width:
+     0.0, style: none), BorderRadius.circular(12.0))), mouseCursor:
+     WidgetStateMapper<MouseCursor?>({WidgetState.disabled: null,
+     WidgetState.any: null})))
+   toggleButtonsTheme: ToggleButtonsThemeData#xxxxx
+   tooltipTheme: TooltipThemeData#xxxxx
+   dialogBackgroundColor: Color(alpha: 1.0000, red: 0.9804, green:
+     0.9725, blue: 1.0000, colorSpace: ColorSpace.sRGB)

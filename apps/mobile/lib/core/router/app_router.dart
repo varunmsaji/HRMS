@@ -17,6 +17,10 @@ import '../../features/attendance/presentation/roster_calendar_screen.dart';
 import '../../features/attendance/presentation/rosters_screen.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/auth/state/auth_state.dart';
+import '../../features/home/presentation/employee_home_screen.dart';
+import '../auth/surface.dart';
+import '../nav/nav_entries.dart';
+import '../theme/employee_theme_scope.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/employees/presentation/employees_screen.dart';
 import '../../features/leave/presentation/leave_applications_screen.dart';
@@ -63,32 +67,37 @@ class _AuthRefreshNotifier extends ChangeNotifier {
 
 final _authRefreshProvider = Provider<_AuthRefreshNotifier>((ref) => _AuthRefreshNotifier(ref));
 
+/// The router's redirect rules as a pure function (so every user type can be tested without
+/// building screens). Returns the location to go to instead, or null to stay.
+String? appRedirect(AuthState auth, String location) {
+  if (_alwaysPublicPaths.any((p) => location.startsWith(p))) return null;
+
+  if (auth.status == AuthStatus.loading) {
+    return location == '/splash' ? null : '/splash';
+  }
+
+  final isAuthOnly = _authOnlyPaths.any((p) => location.startsWith(p));
+  if (auth.status == AuthStatus.unauthenticated) {
+    return isAuthOnly ? null : '/login';
+  }
+
+  // Authenticated.
+  if (location == '/splash' || isAuthOnly) return landingPathFor(auth.user);
+  // Branch 0 holds both the company dashboard and the employee Home; each user only gets their
+  // own, so a link or a tab re-tap to the other one lands on the right one.
+  final employee = usesEmployeeSurface(auth.user);
+  if (location == '/app/dashboard' && employee) return '/app/home';
+  if (location == '/app/home' && !employee) return '/app/dashboard';
+  // Administrator destinations: an employee following a stale link or a deep link lands on their
+  // landing page instead of a screen that can only answer 403. UX only; the API is the authority.
+  return guardRedirect(location, auth.user, landing: landingPathFor(auth.user));
+}
+
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/splash',
     refreshListenable: ref.watch(_authRefreshProvider),
-    redirect: (context, state) {
-      final auth = ref.read(authControllerProvider);
-      final location = state.matchedLocation;
-
-      if (_alwaysPublicPaths.any((p) => location.startsWith(p))) return null;
-
-      if (auth.status == AuthStatus.loading) {
-        return location == '/splash' ? null : '/splash';
-      }
-
-      final isAuthOnly = _authOnlyPaths.any((p) => location.startsWith(p));
-      if (auth.status == AuthStatus.unauthenticated) {
-        return isAuthOnly ? null : '/login';
-      }
-
-      // Authenticated.
-      if (location == '/splash' || isAuthOnly) return landingPathFor(auth.user);
-      // The Home tab is hidden for them (see `showHomeTab`), so don't strand an employee on the
-      // dashboard's "No access" page if something navigates there.
-      if (location == '/app/dashboard' && !showHomeTab(auth.user)) return landingPathFor(auth.user);
-      return null;
-    },
+    redirect: (context, state) => appRedirect(ref.read(authControllerProvider), state.matchedLocation),
     routes: [
       GoRoute(path: '/splash', builder: (context, state) => const SplashScreen()),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
@@ -153,15 +162,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         branches: [
           StatefulShellBranch(routes: [
             GoRoute(path: '/app/dashboard', builder: (context, state) => const DashboardScreen()),
+            GoRoute(path: '/app/home', builder: (context, state) => const EmployeeHomeScreen()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/app/attendance', builder: (context, state) => const AttendanceSelfScreen()),
+            GoRoute(path: '/app/attendance', builder: (context, state) => const EmployeeThemeScope(child: AttendanceSelfScreen())),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/app/leave-applications', builder: (context, state) => const LeaveApplicationsScreen()),
+            GoRoute(path: '/app/leave-applications', builder: (context, state) => const EmployeeThemeScope(child: LeaveApplicationsScreen())),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/app/me', builder: (context, state) => const ProfileScreen()),
+            GoRoute(path: '/app/me', builder: (context, state) => const EmployeeThemeScope(child: ProfileScreen())),
           ]),
         ],
       ),

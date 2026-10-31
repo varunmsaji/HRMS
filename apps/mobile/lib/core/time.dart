@@ -56,6 +56,12 @@ String formatClockTime(String? iso, String zone) {
   return t == null ? '—' : '${_clock(t)} ${zoneLabel(zone)}';
 }
 
+/// "05:30" (24-hour, company zone, no zone suffix); null/empty -> "—".
+String formatClock24(String? iso, String zone) {
+  final t = _inZone(iso, zone);
+  return t == null ? '—' : '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+}
+
 /// "Oct 1, 2026, 5:30 am IST"; null/empty -> "—".
 String formatDateTime(String? iso, String zone) {
   final t = _inZone(iso, zone);
@@ -63,6 +69,12 @@ String formatDateTime(String? iso, String zone) {
 }
 
 String _date(tz.TZDateTime t) => '${t.year.toString().padLeft(4, '0')}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')}';
+
+/// The date (YYYY-MM-DD) of the instant [iso] in [zone]; null if [iso] is empty or unparsable.
+String? dateInZone(String? iso, String zone) {
+  final t = _inZone(iso, zone);
+  return t == null ? null : _date(t);
+}
 
 /// The current business date (YYYY-MM-DD) in [zone] — never the device's date.
 String businessToday(String zone, {DateTime? now}) => _date(tz.TZDateTime.from(now ?? DateTime.now(), _location(zone)));

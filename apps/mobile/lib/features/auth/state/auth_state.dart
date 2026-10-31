@@ -19,9 +19,9 @@ class AuthState {
 /// a user right after login/registration/invite-acceptance. A
 /// `COMPANY_ADMIN`/`HR_ADMIN`-shaped user holds `DASHBOARD.COMPANY.VIEW` and
 /// goes to the company dashboard; an `EMPLOYEE`/`REPORTING_MANAGER`-shaped
-/// user goes to their own profile instead, when one exists.
+/// user goes to the employee Home (the workday) instead, when they have an employee record.
 String landingPathFor(UserProfile? user) {
   if (user != null && user.permissions.contains(dashboardCompanyView)) return '/app/dashboard';
-  if (user?.employeeId != null) return '/app/me';
+  if (user?.employeeId != null) return '/app/home';
   return '/app/dashboard';
 }

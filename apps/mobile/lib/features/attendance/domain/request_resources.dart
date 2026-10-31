@@ -120,7 +120,9 @@ final regularizationConfig = RequestConfig(
   rowTitle: (r, who) => '${who.isEmpty ? '' : '$who · '}${regularizationTypeLabels[r['request_type']] ?? r['request_type']} · ${r['attendance_date']}',
   rowSubtitle: (r) => r['reason'] as String?,
   createSpec: regularizationSpec,
-  createChoiceKeys: const ['shifts'],
+  // `GET /shifts` needs ORG.SHIFT.MANAGE, which an employee does not hold: optional, so a 403 only
+  // disables the "correct the shift" option (docs/design/employee-mobile/T3-03_SHIFTS_DEPENDENCY.md).
+  optionalChoiceKeys: const ['shifts'],
   buildCreateBody: buildRegularizationBody,
   sections: _regularizationSections,
   isPending: (r) => r['status'] == 'SUBMITTED' && r['approval_stage'] != null,

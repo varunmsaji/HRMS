@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
+import '../../../core/nav/nav_entries.dart' show isPayrollRoute, kPayrollInRelease;
 import '../../../core/providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
@@ -730,7 +731,7 @@ class _QuickActions extends StatelessWidget {
         mainAxisSpacing: 12,
         childAspectRatio: 0.9,
         children: [
-          for (final action in _actions)
+          for (final action in _actions.where((a) => kPayrollInRelease || !isPayrollRoute(a.route)))
             InkWell(
               onTap: () => context.push(action.route),
               borderRadius: BorderRadius.circular(12),
