@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, Clock, Palmtree, UserPlus, UserRoundPlus, Users, type LucideIcon } from "lucide-react";
+import { ArrowRight, CalendarClock, Clock, Palmtree, UserPlus, UserRoundPlus, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -23,6 +23,13 @@ const ACTIONS: Action[] = [
   { href: "/app/employees", label: "Employee directory", icon: Users, anyOf: ["EMPLOYEE.VIEW_ALL"] },
 ];
 
+const TILES = [
+  "bg-gradient-to-br from-blue-600 to-blue-700 text-white [&_p]:text-white/80",
+  "bg-gradient-to-br from-cyan-500 to-sky-500 text-white [&_p]:text-white/80",
+  "bg-surface border border-border text-foreground",
+  "bg-surface border border-border text-foreground",
+];
+
 export function QuickActions() {
   const { canAny } = usePermissions();
   const visible = ACTIONS.filter((a) => a.anyOf.length === 0 || canAny(a.anyOf));
@@ -30,17 +37,23 @@ export function QuickActions() {
   return (
     <section aria-label="Quick actions">
       <h2 className="mb-3 text-base font-semibold text-foreground">Quick actions</h2>
-      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        {visible.map((a) => {
+      <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {visible.slice(0, 4).map((a, i) => {
           const Icon = a.icon;
+          const filled = i < 2;
           return (
             <li key={a.label} className="min-w-0">
               <Link
                 href={a.href}
-                className="flex h-full items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2.5 text-sm font-medium text-foreground hover:border-border-strong hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={`flex h-full items-center gap-4 rounded-2xl p-5 shadow-elevation-1 transition-shadow hover:shadow-elevation-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${TILES[i]}`}
               >
-                <Icon className="h-4 w-4 shrink-0 text-foreground-secondary" aria-hidden="true" />
-                <span className="truncate">{a.label}</span>
+                <span
+                  className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${filled ? "bg-white/20" : "bg-primary-subtle text-primary"}`}
+                >
+                  <Icon className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold">{a.label}</span>
+                <ArrowRight className="h-4 w-4 shrink-0 opacity-70" aria-hidden="true" />
               </Link>
             </li>
           );

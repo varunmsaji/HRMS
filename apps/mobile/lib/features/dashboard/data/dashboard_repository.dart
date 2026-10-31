@@ -121,6 +121,78 @@ class CompanyProfileSummary {
       );
 }
 
+/// `GET /dashboards/company/attendance-overview` — today's mutually exclusive buckets, as the
+/// backend computed them. Only the fields the mobile dashboard shows.
+class AttendanceOverviewSummary {
+  AttendanceOverviewSummary({required this.total, required this.present, required this.onLeave, required this.absent, required this.notCheckedIn, required this.other});
+
+  final int total;
+  final int present;
+  final int onLeave;
+  final int absent;
+  final int notCheckedIn;
+
+  /// Everything else (on duty, remote, incomplete, weekly off, no record) so the buckets still sum to [total].
+  final int other;
+
+  factory AttendanceOverviewSummary.fromJson(Map<String, dynamic> json) {
+    int n(String k) => (json[k] as num?)?.toInt() ?? 0;
+    final total = n('total');
+    final present = n('present'), onLeave = n('on_leave'), absent = n('absent'), notIn = n('not_checked_in');
+    return AttendanceOverviewSummary(
+      total: total,
+      present: present,
+      onLeave: onLeave,
+      absent: absent,
+      notCheckedIn: notIn,
+      other: total - present - onLeave - absent - notIn,
+    );
+  }
+}
+
+class LeaveTypeStat {
+  LeaveTypeStat({required this.name, required this.days});
+  final String name;
+  final num days;
+}
+
+class RecentActivity {
+  RecentActivity({required this.title, this.subject, this.detail, required this.occurredAt});
+  final String title;
+  final String? subject;
+  final String? detail;
+  final String occurredAt;
+}
+
+/// `GET /dashboards/company/insights` — leave statistics and recent activity (growth and
+/// birthdays are on the web dashboard only).
+class CompanyInsights {
+  CompanyInsights({required this.leaveTotalDays, required this.leaveByType, required this.recentActivities});
+
+  final num leaveTotalDays;
+  final List<LeaveTypeStat> leaveByType;
+  final List<RecentActivity> recentActivities;
+
+  factory CompanyInsights.fromJson(Map<String, dynamic> json) {
+    final leave = json['leave_statistics'] as Map<String, dynamic>? ?? const {};
+    return CompanyInsights(
+      leaveTotalDays: leave['total_days'] as num? ?? 0,
+      leaveByType: [
+        for (final t in (leave['by_type'] as List? ?? const [])) LeaveTypeStat(name: (t as Map<String, dynamic>)['name'] as String, days: t['days'] as num? ?? 0),
+      ],
+      recentActivities: [
+        for (final a in (json['recent_activities'] as List? ?? const []))
+          RecentActivity(
+            title: (a as Map<String, dynamic>)['title'] as String? ?? '',
+            subject: a['subject'] as String?,
+            detail: a['detail'] as String?,
+            occurredAt: a['occurred_at'] as String? ?? '',
+          ),
+      ],
+    );
+  }
+}
+
 class DashboardRepository {
   DashboardRepository(this._client);
 
@@ -130,6 +202,23 @@ class DashboardRepository {
         '/dashboards/company',
         parse: (data) => CompanyDashboardSummary.fromJson(data as Map<String, dynamic>),
       );
+
+  Future<AttendanceOverviewSummary> getAttendanceOverview() => _client.get(
+        '/dashboards/company/attendance-overview',
+        parse: (data) => AttendanceOverviewSummary.fromJson(data as Map<String, dynamic>),
+      );
+
+  Future<CompanyInsights> getInsights() => _client.get(
+        '/dashboards/company/insights?growth_months=6&leave_scope=month',
+        parse: (data) => CompanyInsights.fromJson(data as Map<String, dynamic>),
+      );
+
+  /// How many records of [path] match [filters] right now, from the list's own `pagination.total`
+  /// (which already applies the caller's data scope).
+  Future<int> countPending(String path, Map<String, dynamic> filters) async {
+    final env = await _client.getList<int>(path, query: PageQuery(page: 1, perPage: 1), filters: filters, parseItem: (_) => 0);
+    return env.pagination?.total ?? env.data.length;
+  }
 
   Future<SubscriptionSummary> getSubscription() => _client.get(
         '/companies/current/subscription',

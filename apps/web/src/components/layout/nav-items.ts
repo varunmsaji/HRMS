@@ -100,6 +100,19 @@ export const PRIMARY_NAV_GROUPS: PrimaryNavGroup[] = [
   },
 ];
 
+/** Flat sidebar for staff who only have a personal (employee) view — no admin groups. */
+export const EMPLOYEE_NAV_ITEMS: NavItem[] = [
+  { href: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/app/attendance", label: "My Attendance", icon: Clock },
+  { href: "/app/leave-applications", label: "Leave", icon: Palmtree },
+  { href: "/app/leave-balances", label: "Leave Balances", icon: Wallet },
+  { href: "/app/regularizations", label: "Corrections", icon: ClipboardEdit },
+  { href: "/app/overtime", label: "Overtime", icon: AlarmClock },
+  { href: "/app/me/calendar", label: "My Calendar", icon: CalendarDays },
+  { href: "/app/me/payslips", label: "My Payslips", icon: Banknote },
+  { href: "/app/me", label: "My Profile", icon: UserCircle },
+];
+
 /** Day-to-day items, kept directly in the sidebar. Configuration/admin screens live under
  * Settings (`SETTINGS_NAV_GROUPS` below) instead of crowding the primary nav. */
 export const NAV_ITEMS: NavItem[] = PRIMARY_NAV_GROUPS.flatMap((group) => group.items);

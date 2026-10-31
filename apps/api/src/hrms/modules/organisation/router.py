@@ -40,6 +40,11 @@ from hrms.modules.organisation.calendar_setup import (
     WorkCalendarSetupStatus,
     get_work_calendar_setup_service,
 )
+from hrms.modules.organisation.dashboard_insights import (
+    CompanyDashboardInsights,
+    LeaveScope,
+    build_company_insights,
+)
 from hrms.modules.organisation.dependencies import get_organisation_service
 from hrms.modules.organisation.employee_calendar import (
     EmployeeCalendarRead,
@@ -227,6 +232,23 @@ async def get_company_dashboard(
     service: Annotated[OrganisationService, Depends(get_organisation_service)],
 ) -> DataEnvelope[CompanyDashboardSummary]:
     data = await service.get_dashboard_summary(tenant.company_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/dashboards/company/insights", status_code=status.HTTP_200_OK)
+async def get_company_dashboard_insights(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(DASHBOARD_COMPANY_VIEW))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+    growth_months: Annotated[int, Query(ge=3, le=12)] = 6,
+    leave_scope: LeaveScope = "month",
+) -> DataEnvelope[CompanyDashboardInsights]:
+    data = await build_company_insights(
+        service._session,  # noqa: SLF001 - read-only aggregation on the request's session
+        tenant.company_id,
+        growth_months=growth_months,
+        leave_scope=leave_scope,
+    )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

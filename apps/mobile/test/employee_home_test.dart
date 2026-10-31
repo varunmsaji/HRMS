@@ -85,7 +85,7 @@ Future<void> _pump(
   List<String> permissions = _full,
   String? employeeId = 'e-1',
   FakeApiClient? api,
-  Size size = const Size(390, 1400), // tall enough to build every Home section (the list builds lazily)
+  Size size = const Size(390, 2400), // tall enough to build every Home section (the list builds lazily)
   double textScale = 1.0,
 }) async {
   tester.view.physicalSize = size * 3;

@@ -11,7 +11,6 @@ import '../../../core/format.dart';
 import '../../../core/time.dart';
 import '../../../core/widgets/employee/check_in_action.dart';
 import '../../../core/widgets/employee/layout.dart';
-import '../../../core/widgets/employee/leave_balance_strip.dart';
 import '../../../core/widgets/employee/request_row.dart';
 import '../../../core/widgets/employee/status_map.dart';
 import '../../../core/widgets/employee/today_status_panel.dart';
@@ -25,7 +24,9 @@ import '../../leave/presentation/leave_application_detail_screen.dart';
 import '../../payroll/data/payroll_repository.dart' show PayslipSummary;
 import '../../payroll/presentation/payslip_screen.dart';
 import '../../payroll/presentation/pay_runs_screen.dart' show payrollRepositoryProvider;
+import '../../../core/widgets/dashboard_kit.dart';
 import '../state/home_providers.dart';
+import '../state/home_stats.dart';
 import 'home_sections.dart';
 
 /// Brand palette (Krewoxa brand concept): Deep Blue, a lighter blue for the gradient.
@@ -66,6 +67,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     ref.invalidate(homeFaceStatusProvider(employeeId));
     ref.invalidate(homeLatestPayslipProvider(employeeId));
     ref.invalidate(homeWorkProfileProvider(employeeId));
+    ref.invalidate(homeMonthDaysProvider((employeeId: employeeId, zone: ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata')));
   }
 
   void _punch(String direction, TodayKey key) {
@@ -130,7 +132,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text('Home', style: theme.textTheme.headlineSmall?.copyWith(color: onBrand, fontWeight: FontWeight.w700)),
+              Text('Dashboard', style: theme.textTheme.headlineSmall?.copyWith(color: onBrand, fontWeight: FontWeight.w700)),
               Text(_longDate(zone), style: theme.textTheme.bodySmall?.copyWith(color: onBrand.withValues(alpha: 0.85))),
             ]),
           ),
@@ -210,6 +212,45 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     if (canViewAttendance) {
       final profile = ref.watch(homeWorkProfileProvider(employeeId)).valueOrNull;
       if (profile != null) children.add(WorkProfileCards(profile: profile));
+    }
+
+    // Stat tiles and the two charts, from the same day rows the Attendance tab reads.
+    if (canViewAttendance) {
+      final today = ref.watch(todayDataProvider(key)).valueOrNull;
+      final monthDays = ref.watch(homeMonthDaysProvider(key)).valueOrNull;
+      final balances = canSeeLeave ? ref.watch(homeBalancesProvider(employeeId)).valueOrNull : null;
+      final leaveApps = canSeeLeave ? ref.watch(homeLeaveProvider(employeeId)).valueOrNull : null;
+      final corrections = ref.watch(homeSubmittedCorrectionsProvider(employeeId)).valueOrNull;
+      final waitingLeave = leaveApps?.where((a) => a.status == 'SUBMITTED').length;
+      final waiting = waitingLeave == null && corrections == null ? null : (waitingLeave ?? 0) + (corrections?.length ?? 0);
+      final leaveLeft = balances?.fold<num>(0, (sum, b) => sum + b.balance);
+      children
+        ..add(const SizedBox(height: 16))
+        ..add(StatGrid(tiles: [
+          if (canSeeLeave) StatTile(icon: Icons.beach_access_outlined, label: 'Leave left', value: leaveLeft == null ? '—' : (leaveLeft == leaveLeft.roundToDouble() ? '${leaveLeft.toInt()}' : leaveLeft.toStringAsFixed(1)), hint: balances == null ? null : 'Across ${balances.length} types', accent: const Color(0xFFF59E0B)),
+          StatTile(icon: Icons.hourglass_bottom_outlined, label: 'Waiting on HR', value: waiting == null ? '—' : '$waiting', hint: 'Leave and corrections'),
+        ]));
+      if (monthDays != null) {
+        final bars = weekBars(monthDays, today?.today ?? businessToday(zone));
+        final monthPrefix = (today?.today ?? businessToday(zone)).substring(0, 7);
+        final month = summariseMonth(monthDays.where((d) => d.attendanceDate.startsWith(monthPrefix) && d.attendanceDate != (today?.today ?? businessToday(zone))));
+        children
+          ..add(DashPanel(
+            title: 'Hours this week',
+            caption: 'Hours per day, Mon–Sun',
+            child: BarChart(bars: [for (final b in bars) BarDatum(b.label, b.hours, highlight: b.date == (today?.today ?? businessToday(zone)))]),
+          ))
+          ..add(DashPanel(
+            title: 'Attendance this month',
+            caption: 'Completed days · ${month.weeklyOffs} weekly offs · ${month.holidays} ${month.holidays == 1 ? 'holiday' : 'holidays'}',
+            child: DonutChart(centerLabel: 'Days', segments: [
+              DonutSegment('Present', month.present, const Color(0xFF16A34A)),
+              DonutSegment('On leave', month.onLeave, const Color(0xFF8B5CF6)),
+              DonutSegment('Absent', month.absent, const Color(0xFFEF4444)),
+              DonutSegment('Other', month.other, const Color(0xFF0EA5E9)),
+            ]),
+          ));
+      }
     }
 
     // Shortcuts, only to what this user may do.
