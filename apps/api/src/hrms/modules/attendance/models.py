@@ -90,6 +90,8 @@ class AttendancePolicyVersion(Base, TimestampMixin):
     # Grace (§11.6, §6)
     grace_in_minutes: Mapped[int] = mapped_column(Integer, default=0)
     grace_out_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    # Minutes before shift start a self-service punch-in is accepted; NULL = no early limit.
+    early_in_allowance_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Rounding (§11.6)
     punch_rounding: Mapped[str] = mapped_column(String(10), default="NONE")

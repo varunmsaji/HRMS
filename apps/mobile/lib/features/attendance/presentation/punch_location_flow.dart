@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/employee_tokens.dart';
 import '../data/attendance_repository.dart';
 import '../data/location_provider.dart';
+import '../domain/outside_shift_window.dart';
 import '../domain/punch_location.dart';
 
 /// What a punch should send about location, decided before the request.
@@ -186,4 +187,27 @@ Future<bool> showGeofenceRejectedDialog(BuildContext context, String code, Strin
     ),
   );
   return retry ?? false;
+}
+
+/// Shown when the server refuses a punch-in that is too early for the shift. Nothing was recorded
+/// and the only action is to dismiss: the employee punches in later, on their own.
+Future<void> showOutsideShiftWindowDialog(BuildContext context, OutsideShiftWindow window) {
+  final localizations = MaterialLocalizations.of(context);
+  final use24h = MediaQuery.alwaysUse24HourFormatOf(context);
+  final text = window.message((time) => localizations.formatTimeOfDay(TimeOfDay.fromDateTime(time), alwaysUse24HourFormat: use24h));
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) => _PunchDialog(
+      title: 'Too early to punch in',
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, color: EmployeeTokens.of(dialogContext).warningText),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text)),
+        ],
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Dismiss'))],
+    ),
+  );
 }

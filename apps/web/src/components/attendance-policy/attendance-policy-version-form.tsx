@@ -104,6 +104,19 @@ export function AttendancePolicyVersionForm({
               onChange={(e) => update("graceOutMinutes", e.target.value)}
             />
           </FormField>
+          <FormField
+            id="early-in-allowance"
+            label="Earliest punch-in before shift start (minutes)"
+            description="Self-service punch-ins earlier than this are refused. Leave blank for no limit."
+            error={errors.earlyInAllowanceMinutes}
+          >
+            <Input
+              type="number"
+              min={0}
+              value={values.earlyInAllowanceMinutes}
+              onChange={(e) => update("earlyInAllowanceMinutes", e.target.value)}
+            />
+          </FormField>
         </div>
       </section>
 

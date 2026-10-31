@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/attendance_repository.dart';
+import '../domain/outside_shift_window.dart';
 import '../domain/punch_location.dart';
 import '../domain/face_liveness_capture.dart';
 import '../state/punch_controller.dart';
@@ -36,6 +37,9 @@ class ContextPunchUi implements PunchUi {
 
   @override
   Future<bool> showGeofenceRejected(String code, String message) => showGeofenceRejectedDialog(context, code, message);
+
+  @override
+  Future<void> showOutsideShiftWindow(OutsideShiftWindow window) => showOutsideShiftWindowDialog(context, window);
 
   @override
   Future<FaceCaptureOutcome> captureFace(FaceLivenessSession session) => ref.read(faceLivenessCaptureProvider)(context, session);

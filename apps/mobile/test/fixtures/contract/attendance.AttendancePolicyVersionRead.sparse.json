@@ -23,6 +23,7 @@
  "excess_break_count_window": "x",
  "excess_break_days_to_half_day_count": null,
  "grace_in_minutes": 1,
+ "early_in_allowance_minutes": null,
  "grace_out_minutes": 1,
  "half_day_boundary_minutes": null,
  "half_day_split": "x",

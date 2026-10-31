@@ -64,3 +64,35 @@ describe("attendance policy geofence fields", () => {
     expect(errors.geofenceMaxAccuracyM).toBe("too low");
   });
 });
+
+describe("attendance policy early punch-in allowance", () => {
+  it("is blank (no limit) by default and sent as null", () => {
+    expect(base.earlyInAllowanceMinutes).toBe("");
+    expect(buildAttendancePolicyVersionPayload(base).early_in_allowance_minutes).toBeNull();
+    expect(validateAttendancePolicyVersionForm(base).earlyInAllowanceMinutes).toBeUndefined();
+  });
+
+  it("sends the chosen number of minutes", () => {
+    const payload = buildAttendancePolicyVersionPayload({ ...base, earlyInAllowanceMinutes: "60" });
+    expect(payload.early_in_allowance_minutes).toBe(60);
+  });
+
+  it("accepts 0 and rejects a negative value", () => {
+    expect(
+      validateAttendancePolicyVersionForm({ ...base, earlyInAllowanceMinutes: "0" })
+        .earlyInAllowanceMinutes,
+    ).toBeUndefined();
+    expect(
+      validateAttendancePolicyVersionForm({ ...base, earlyInAllowanceMinutes: "-5" })
+        .earlyInAllowanceMinutes,
+    ).toBeTruthy();
+  });
+
+  it("maps a server field error onto the form", () => {
+    expect(
+      mapAttendancePolicyVersionApiErrors([
+        { field: "early_in_allowance_minutes", code: "X", message: "Bad" },
+      ]).earlyInAllowanceMinutes,
+    ).toBe("Bad");
+  });
+});

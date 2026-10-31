@@ -1414,6 +1414,17 @@ class FacePunchService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        # Same reasoning for a punch-in that is too early for the shift.
+        await PunchService(self._session).enforce_shift_window(
+            company_id,
+            employee_id,
+            direction=direction,
+            source="FACE",
+            punch_time=datetime.now(UTC),
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         await self._enforce_attempt_limit(company_id, employee_id)
         if stored_key is not None:
             awaited = await self._await_in_flight_duplicate(

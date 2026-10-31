@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/api/api_error.dart';
+import 'package:hrms_mobile/core/api/envelope.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/domain/face_liveness_capture.dart';
+import 'package:hrms_mobile/features/attendance/domain/outside_shift_window.dart';
 import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/presentation/punch_location_flow.dart';
 import 'package:hrms_mobile/features/attendance/state/punch_controller.dart';
@@ -16,6 +18,7 @@ class _Ui implements PunchUi {
   @override
   bool active = true;
   final messages = <String>[];
+  final shiftWindows = <OutsideShiftWindow>[];
   var punched = 0;
   var notEnrolled = 0;
 
@@ -27,6 +30,8 @@ class _Ui implements PunchUi {
   Future<bool> showLocationProblem(LocationFailure failure, LocationCapture capture) async => false;
   @override
   Future<bool> showGeofenceRejected(String code, String message) async => false;
+  @override
+  Future<void> showOutsideShiftWindow(OutsideShiftWindow window) async => shiftWindows.add(window);
   @override
   Future<FaceCaptureOutcome> captureFace(FaceLivenessSession session) async => const FaceCaptureCancelled();
   @override
@@ -68,6 +73,22 @@ class _Repo implements AttendanceRepository {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+
+ApiError outsideShiftWindowError() => ApiError(
+      status: 422,
+      code: 'OUTSIDE_SHIFT_WINDOW',
+      message: 'It is too early to punch in for your shift.',
+      details: [
+        ErrorDetail(field: 'punch_time', code: 'OUTSIDE_SHIFT_WINDOW', message: 'early', context: {
+          'shift_start': '2026-10-30T09:30:00+00:00',
+          'shift_end': '2026-10-30T18:30:00+00:00',
+          'grace_in_minutes': 10,
+          'grace_out_minutes': 15,
+          'early_in_allowance_minutes': 60,
+          'earliest_punch_in': '2026-10-30T08:30:00+00:00',
+        }),
+      ],
+    );
 
 ApiError _offline() => ApiError(status: 0, code: 'NETWORK_ERROR', message: 'offline');
 
@@ -188,5 +209,32 @@ void main() {
     expect(s.repo.challenges, ['IN']);
     s.repo.gate!.complete();
     await plain;
+  });
+
+  test('a punch-in refused as too early shows the shift-window warning, records nothing and is not retried', () async {
+    final s = _setup();
+    final ui = _Ui('a');
+    s.repo.answers.add(outsideShiftWindowError());
+    await s.ctl.punchPlain('IN', ui);
+
+    expect(ui.shiftWindows, hasLength(1));
+    expect(ui.shiftWindows.single.earlyInAllowanceMinutes, 60);
+    expect(ui.messages, isEmpty); // no "Punched in." and no raw error text
+    expect(ui.punched, 0);
+    expect(s.repo.directions, ['IN']); // exactly one request: the dialog has no retry
+    expect(s.container.read(punchControllerProvider).plainBusy, isFalse);
+
+    // The refusal was a real answer, so a later punch starts a new attempt with a new key.
+    await s.ctl.punchPlain('IN', ui);
+    expect(s.repo.keys[1], isNot(s.repo.keys[0]));
+  });
+
+  test('another 422 is still reported as a plain message, not as a shift-window warning', () async {
+    final s = _setup();
+    final ui = _Ui('a');
+    s.repo.answers.add(ApiError(status: 422, code: 'SOMETHING_ELSE', message: 'Nope.'));
+    await s.ctl.punchPlain('IN', ui);
+    expect(ui.shiftWindows, isEmpty);
+    expect(ui.messages, ['Nope.']);
   });
 }

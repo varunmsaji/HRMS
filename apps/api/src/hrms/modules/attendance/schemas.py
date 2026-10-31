@@ -348,6 +348,7 @@ def early_departure_band_to_read(
 _ATTENDANCE_VERSION_FIELDS = (
     "grace_in_minutes",
     "grace_out_minutes",
+    "early_in_allowance_minutes",
     "punch_rounding",
     "rounding_minutes",
     "missing_punch_behaviour",
@@ -385,6 +386,7 @@ class AttendancePolicyVersionCreate(BaseModel):
 
     grace_in_minutes: int = Field(default=0, ge=0)
     grace_out_minutes: int = Field(default=0, ge=0)
+    early_in_allowance_minutes: int | None = Field(default=None, ge=0)
     punch_rounding: str = "NONE"
     rounding_minutes: int | None = Field(default=None, gt=0)
     missing_punch_behaviour: str = "INCOMPLETE"
@@ -470,6 +472,7 @@ class AttendancePolicyVersionUpdate(BaseModel):
     effective_from: date | None = None
     grace_in_minutes: int | None = Field(default=None, ge=0)
     grace_out_minutes: int | None = Field(default=None, ge=0)
+    early_in_allowance_minutes: int | None = Field(default=None, ge=0)
     punch_rounding: str | None = None
     rounding_minutes: int | None = Field(default=None, gt=0)
     missing_punch_behaviour: str | None = None
@@ -568,6 +571,7 @@ class AttendancePolicyVersionRead(BaseModel):
 
     grace_in_minutes: int
     grace_out_minutes: int
+    early_in_allowance_minutes: int | None
     punch_rounding: str
     rounding_minutes: int | None
     missing_punch_behaviour: str
@@ -625,6 +629,7 @@ def attendance_policy_version_to_read(
         effective_to=row.effective_to,
         grace_in_minutes=row.grace_in_minutes,
         grace_out_minutes=row.grace_out_minutes,
+        early_in_allowance_minutes=row.early_in_allowance_minutes,
         punch_rounding=row.punch_rounding,
         rounding_minutes=row.rounding_minutes,
         missing_punch_behaviour=row.missing_punch_behaviour,

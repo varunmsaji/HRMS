@@ -82,6 +82,7 @@ export interface AttendancePolicyVersionFormValues {
   effectiveFrom: string;
   graceInMinutes: string;
   graceOutMinutes: string;
+  earlyInAllowanceMinutes: string;
   punchRounding: string;
   roundingMinutes: string;
   missingPunchBehaviour: string;
@@ -118,6 +119,7 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
   effectiveFrom: "",
   graceInMinutes: "0",
   graceOutMinutes: "0",
+  earlyInAllowanceMinutes: "",
   punchRounding: "NONE",
   roundingMinutes: "",
   missingPunchBehaviour: "INCOMPLETE",
@@ -152,6 +154,7 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
 
 export interface AttendancePolicyVersionFormErrors {
   effectiveFrom?: string;
+  earlyInAllowanceMinutes?: string;
   geofenceMaxAccuracyM?: string;
   geofenceMaxAgeSeconds?: string;
   hourBands?: string;
@@ -184,6 +187,8 @@ export function attendancePolicyVersionToFormValues(
     effectiveFrom: version.effective_from ?? "",
     graceInMinutes: String(version.grace_in_minutes),
     graceOutMinutes: String(version.grace_out_minutes),
+    earlyInAllowanceMinutes:
+      version.early_in_allowance_minutes == null ? "" : String(version.early_in_allowance_minutes),
     punchRounding: version.punch_rounding,
     roundingMinutes: version.rounding_minutes === null ? "" : String(version.rounding_minutes),
     missingPunchBehaviour: version.missing_punch_behaviour,
@@ -259,6 +264,7 @@ export function buildAttendancePolicyVersionPayload(
     effective_from: values.effectiveFrom || null,
     grace_in_minutes: intOrNull(values.graceInMinutes) ?? 0,
     grace_out_minutes: intOrNull(values.graceOutMinutes) ?? 0,
+    early_in_allowance_minutes: intOrNull(values.earlyInAllowanceMinutes),
     punch_rounding: values.punchRounding,
     rounding_minutes: intOrNull(values.roundingMinutes),
     missing_punch_behaviour: values.missingPunchBehaviour,
@@ -309,6 +315,11 @@ export function validateAttendancePolicyVersionForm(
     });
   }
 
+  const earlyIn = intOrNull(values.earlyInAllowanceMinutes);
+  if (earlyIn !== null && earlyIn < 0) {
+    errors.earlyInAllowanceMinutes = "Enter 0 or more minutes, or leave blank for no limit.";
+  }
+
   const accuracy = intOrNull(values.geofenceMaxAccuracyM);
   if (accuracy === null || accuracy < GEOFENCE_ACCURACY_MIN_M || accuracy > GEOFENCE_ACCURACY_MAX_M) {
     errors.geofenceMaxAccuracyM = `Enter ${GEOFENCE_ACCURACY_MIN_M}-${GEOFENCE_ACCURACY_MAX_M} metres.`;
@@ -342,6 +353,7 @@ export function mapAttendancePolicyVersionApiErrors(
   for (const detail of details) {
     if (detail.field === "hour_bands") errors.hourBands = detail.message;
     if (detail.field === "effective_from") errors.effectiveFrom = detail.message;
+    if (detail.field === "early_in_allowance_minutes") errors.earlyInAllowanceMinutes = detail.message;
     if (detail.field === "geofence_max_accuracy_m") errors.geofenceMaxAccuracyM = detail.message;
     if (detail.field === "geofence_max_age_seconds") errors.geofenceMaxAgeSeconds = detail.message;
   }

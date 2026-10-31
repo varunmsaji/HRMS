@@ -6,6 +6,7 @@ import '../../../core/api/api_error.dart';
 import '../data/attendance_repository.dart';
 import '../data/location_provider.dart';
 import '../domain/face_liveness_capture.dart';
+import '../domain/outside_shift_window.dart';
 import '../domain/punch_location.dart';
 import '../presentation/punch_location_flow.dart';
 
@@ -57,6 +58,9 @@ abstract class PunchUi {
 
   /// "Punch not recorded" dialog; true = try again.
   Future<bool> showGeofenceRejected(String code, String message);
+
+  /// "Too early to punch in" warning; nothing was recorded and there is nothing to retry.
+  Future<void> showOutsideShiftWindow(OutsideShiftWindow window);
 
   /// Opens the camera for the server's challenge.
   Future<FaceCaptureOutcome> captureFace(FaceLivenessSession session);
@@ -147,6 +151,11 @@ class PunchController extends StateNotifier<PunchState> {
       if (error is ApiError && isGeofenceError(error) && ui.active) {
         // A refused location is a real answer: nothing was recorded, so retrying is safe.
         return ui.showGeofenceRejected(error.code, error.message);
+      }
+      final shiftWindow = OutsideShiftWindow.fromError(error);
+      if (shiftWindow != null) {
+        if (ui.active) await ui.showOutsideShiftWindow(shiftWindow);
+        return false;
       }
       if (ui.active) ui.message(describeApiError(error));
       return false;
@@ -244,6 +253,10 @@ class PunchController extends StateNotifier<PunchState> {
           // the whole punch starts again once this attempt has been cleaned up.
           _facePending = null;
           if (ui.active) retryAfter = await ui.showGeofenceRejected(error.code, error.message);
+        } else if (OutsideShiftWindow.fromError(error) case final shiftWindow?) {
+          // Refused as too early for the shift: nothing was recorded, and retrying cannot help.
+          _facePending = null;
+          if (ui.active) await ui.showOutsideShiftWindow(shiftWindow);
         } else {
           final unknown = facePunchOutcomeUnknown(error);
           // Unknown outcome: keep the key for the retry. Any real answer settles this attempt.

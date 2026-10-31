@@ -5,7 +5,7 @@ one identity+version+publish shape (mirrors `organisation.exceptions`'s `ShiftVe
 generalised here instead of tripled — the three families differ only in which typed rule
 children they carry, not in the versioning state machine)."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from hrms.core.errors.base import (
@@ -1289,6 +1289,42 @@ class GeofenceRejectedError(AppError):
             "context": context or None,
         }
         super().__init__(message, code=f"PUNCH_{outcome}", details=[detail])
+
+
+class OutsideShiftWindowError(AppError):
+    """A self-service punch-in was refused because it is earlier than the policy's early-in
+    allowance before the employee's shift. 422, like the geofence refusal. `details[0].context`
+    carries the shift times (ISO-8601 UTC instants) and the policy values, nothing else."""
+
+    status_code = 422
+    code = "OUTSIDE_SHIFT_WINDOW"
+
+    def __init__(
+        self,
+        *,
+        shift_start: datetime,
+        shift_end: datetime,
+        grace_in_minutes: int,
+        grace_out_minutes: int,
+        early_in_allowance_minutes: int,
+        earliest_punch_in: datetime,
+    ) -> None:
+        message = "It is too early to punch in for your shift."
+        context: dict[str, Any] = {
+            "shift_start": shift_start.isoformat(),
+            "shift_end": shift_end.isoformat(),
+            "grace_in_minutes": grace_in_minutes,
+            "grace_out_minutes": grace_out_minutes,
+            "early_in_allowance_minutes": early_in_allowance_minutes,
+            "earliest_punch_in": earliest_punch_in.isoformat(),
+        }
+        detail: dict[str, Any] = {
+            "field": "punch_time",
+            "code": self.code,
+            "message": message,
+            "context": context,
+        }
+        super().__init__(message, details=[detail])
 
 
 class WorkplaceAuthorizationExistsError(ConflictError):

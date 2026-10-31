@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +53,7 @@ from hrms.modules.attendance.exceptions import (
     LeaveProjectionNotFoundError,
     LeaveProjectionOutsideEmploymentError,
     LeaveProjectionOverlapError,
+    OutsideShiftWindowError,
     OvertimeApproverMismatchError,
     OvertimeInvalidTransitionError,
     OvertimeRecordNotFoundError,
@@ -207,9 +209,15 @@ from hrms.modules.attendance.schemas import (
     shift_roster_to_audit_dict,
     shift_roster_to_read,
 )
+from hrms.modules.attendance.shift_window import (
+    ShiftSpan,
+    ShiftWindowDecision,
+    combine_shift_window_decisions,
+    evaluate_shift_window,
+)
 from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
-from hrms.shared.timezone import resolve_zoneinfo
+from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 
 _logger = get_logger(__name__)
 
@@ -413,6 +421,7 @@ class AttendanceService:
                 "effective_to": None,
                 "grace_in_minutes": body.grace_in_minutes,
                 "grace_out_minutes": body.grace_out_minutes,
+                "early_in_allowance_minutes": body.early_in_allowance_minutes,
                 "punch_rounding": body.punch_rounding,
                 "rounding_minutes": body.rounding_minutes,
                 "missing_punch_behaviour": body.missing_punch_behaviour,
@@ -2583,6 +2592,126 @@ def _ensure_same_logical_punch(existing: Punch, *, direction: str, source: str) 
         )
 
 
+@dataclass(frozen=True)
+class _ResolvedShiftSchedule:
+    shift_inputs: calc.ShiftInputs | None
+    shift_version_id: UUID | None
+    tz_name: str
+    window: calc.ScheduleWindow
+
+
+def _zone_or_none(tz_name: str | None) -> ZoneInfo | None:
+    """A stored timezone, or None when it is missing or no longer resolvable.
+
+    `None` is not a guess at UTC: the shift-window check fails open when the date it would
+    judge cannot be resolved (`TimezoneConfigurationError`), rather than refusing a punch
+    against the wrong day or failing the request."""
+    if not tz_name:
+        return None
+    try:
+        return resolve_zoneinfo(tz_name)
+    except TimezoneConfigurationError:
+        return None
+
+
+async def _resolve_shift_schedule(
+    organisation_service: Any,
+    *,
+    company_id: UUID,
+    shift_id: UUID | None,
+    target_date: date,
+    branch_timezone: str | None,
+    company_timezone: str,
+) -> _ResolvedShiftSchedule:
+    """The shift version, timezone and schedule window of `shift_id` on one date. The single
+    resolution both the calculation input and the self-service punch shift-window check use."""
+    from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
+
+    shift_inputs: calc.ShiftInputs | None = None
+    shift_version_timezone: str | None = None
+    shift_version_id: UUID | None = None
+    raw_start_time = raw_end_time = raw_window_start = raw_window_end = None
+    if shift_id is not None:
+        try:
+            shift_version = await organisation_service.resolve_shift_version_as_of(
+                company_id, shift_id, target_date
+            )
+        except ShiftVersionNotFoundForDateError:
+            shift_version = None
+        if shift_version is not None:
+            shift_version_id = shift_version.id
+            shift_version_timezone = shift_version.timezone
+            raw_start_time = (
+                _parse_time(shift_version.start_time) if shift_version.start_time else None
+            )
+            raw_end_time = _parse_time(shift_version.end_time) if shift_version.end_time else None
+            raw_window_start = (
+                _parse_time(shift_version.window_start) if shift_version.window_start else None
+            )
+            raw_window_end = (
+                _parse_time(shift_version.window_end) if shift_version.window_end else None
+            )
+            shift_inputs = calc.ShiftInputs(
+                shift_type=shift_version.shift_type,
+                is_ot_eligible=shift_version.is_ot_eligible,
+                operates_on_holiday=shift_version.operates_on_holiday,
+                operates_on_weekly_off=shift_version.operates_on_weekly_off,
+                is_cross_midnight=shift_version.is_cross_midnight,
+                is_night_shift=shift_version.is_night_shift,
+                breaks=[
+                    calc.ShiftBreakData(
+                        id=b.id,
+                        break_kind=b.break_kind,
+                        start_time=_parse_time(b.start_time) if b.start_time else None,
+                        end_time=_parse_time(b.end_time) if b.end_time else None,
+                        window_start=_parse_time(b.window_start) if b.window_start else None,
+                        window_end=_parse_time(b.window_end) if b.window_end else None,
+                        min_minutes=b.min_minutes,
+                        max_minutes=b.max_minutes,
+                        is_paid=b.is_paid,
+                        is_mandatory=b.is_mandatory,
+                    )
+                    for b in shift_version.breaks
+                ],
+                duty_blocks=[
+                    calc.ShiftDutyBlockData(
+                        sequence=d.sequence,
+                        start_time=_parse_time(d.start_time),
+                        end_time=_parse_time(d.end_time),
+                        crosses_midnight=d.crosses_midnight,
+                    )
+                    for d in shift_version.duty_blocks
+                ],
+                core_start=(
+                    _parse_time(shift_version.core_start) if shift_version.core_start else None
+                ),
+                core_end=(_parse_time(shift_version.core_end) if shift_version.core_end else None),
+                required_minutes=shift_version.required_minutes,
+            )
+
+    tz_name = calc.resolve_timezone(
+        shift_version_timezone=shift_version_timezone,
+        branch_timezone=branch_timezone,
+        company_timezone=company_timezone,
+    )
+
+    window = calc.resolve_schedule_window(
+        attendance_date=target_date,
+        tz_name=tz_name,
+        shift=shift_inputs,
+        start_time=raw_start_time,
+        end_time=raw_end_time,
+        window_start=raw_window_start,
+        window_end=raw_window_end,
+    )
+    return _ResolvedShiftSchedule(
+        shift_inputs=shift_inputs,
+        shift_version_id=shift_version_id,
+        tz_name=tz_name,
+        window=window,
+    )
+
+
 class PunchService:
     """Punch ingestion (architecture §19.1 step 9, WD-11 — punches are immutable, append-only
     once written; corrections are new punches, never an UPDATE/DELETE of this row)."""
@@ -2590,6 +2719,7 @@ class PunchService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._repo = PunchRepository()
+        self._roster_repo = ShiftRosterRepository()
         self._audit = AuditService()
 
     async def record_punch(
@@ -2722,6 +2852,19 @@ class PunchService:
         now = datetime.now(UTC)
         punch_time = now if requested_punch_time is None else requested_punch_time
 
+        # Shift window — right after the geofence, before anything is written. A rejection here
+        # records no punch; only self-service sources are checked.
+        await self.enforce_shift_window(
+            company_id,
+            employee_id,
+            direction=direction,
+            source=source,
+            punch_time=punch_time,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
         if requested_punch_time is not None:
             # On-behalf only. The self path cannot reach any of these bounds because it has no
             # client instant to bound — `punch_time` is `now` by construction above.
@@ -2806,6 +2949,248 @@ class PunchService:
             user_agent=user_agent,
         )
         return read, False
+
+    async def enforce_shift_window(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        direction: str,
+        source: str,
+        punch_time: datetime,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """Refuses a self-service punch-IN earlier than the policy's `early_in_allowance_minutes`
+        before the employee's shift (`OutsideShiftWindowError`, after an audit event written in
+        its own transaction — the request transaction rolls back with the error, and no punch is
+        ever created). Everything else is recorded: lateness stays the calculation engine's job,
+        and a punch after shift end + grace-out is only logged. No resolvable shift or policy, or
+        no allowance set, never refuses — those skips are logged (`punch_shift_window_skipped`)
+        so a missing shift or policy stays visible. Only `GEOFENCED_SOURCES` (WEB, FACE) are
+        checked, so HR corrections, regularizations, imports and device/API punches are untouched.
+
+        The shift comes from `_resolve_shift_schedule`, the same resolution the calculation uses
+        (published roster entry, else the assignment's shift). Both the punch's local date and the
+        day before are resolved so a punch just after midnight is not judged "too early" against
+        today's shift while yesterday's overnight shift is still running.
+
+        The local date is the branch date (company date when the branch has none). The schedule
+        window itself is in the shift timezone (WD-06). When those two calendar dates differ, both
+        are judged and the punch is refused only if every candidate is too early; a date that
+        cannot be resolved, or that still disagrees after one re-resolution, fails open.
+        Calendar day type is not consulted: a weekly off, a holiday, or an authorized rostered
+        shift does not bypass the window of the shift this resolution returns."""
+        if source not in GEOFENCED_SOURCES:
+            return
+        from hrms.modules.employee.service import EmployeeAssignmentService
+        from hrms.modules.organisation.service import OrganisationService
+
+        def skip(reason: str) -> None:
+            _logger.info(
+                "punch_shift_window_skipped",
+                reason=reason,
+                company_id=str(company_id),
+                employee_id=str(employee_id),
+                direction=direction,
+                source=source,
+            )
+
+        organisation_service = OrganisationService(self._session)
+        assignment_service = EmployeeAssignmentService(self._session)
+        company = await organisation_service.get_company_profile(company_id)
+        resolved: dict[date, tuple[_ResolvedShiftSchedule, str | None]] = {}
+
+        async def schedule_for(target_date: date) -> tuple[_ResolvedShiftSchedule, str | None]:
+            cached = resolved.get(target_date)
+            if cached is not None:
+                return cached
+            assignment = await assignment_service.get_assignment_as_of(
+                company_id, employee_id, target_date
+            )
+            branch_timezone: str | None = None
+            if assignment is not None and assignment.branch_id is not None:
+                branch_timezone = (
+                    await organisation_service.get_branch(company_id, assignment.branch_id)
+                ).timezone
+            roster_entry = await self._roster_repo.get_published_for_date(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                roster_date=target_date,
+            )
+            shift_id = (
+                roster_entry.shift_id
+                if roster_entry is not None
+                else (assignment.shift_id if assignment else None)
+            )
+            schedule = await _resolve_shift_schedule(
+                organisation_service,
+                company_id=company_id,
+                shift_id=shift_id,
+                target_date=target_date,
+                branch_timezone=branch_timezone,
+                company_timezone=company.timezone,
+            )
+            resolved[target_date] = (schedule, branch_timezone)
+            return schedule, branch_timezone
+
+        try:
+            company_zone = _zone_or_none(company.timezone)
+            # A bad company zone must not pick the date. UTC is only a probe so the placement
+            # (and therefore the branch zone) can still be loaded; the branch zone decides.
+            probe_date = (
+                punch_time.astimezone(company_zone).date()
+                if company_zone is not None
+                else punch_time.date()
+            )
+            _probe, branch_tz_name = await schedule_for(probe_date)
+            if branch_tz_name:
+                branch_zone = _zone_or_none(branch_tz_name)
+                if branch_zone is None:
+                    skip("unresolvable_timezone")
+                    return
+            else:
+                branch_zone = company_zone
+            if branch_zone is None:
+                skip("unresolvable_timezone")
+                return
+            local_date = punch_time.astimezone(branch_zone).date()
+            anchor, _ = await schedule_for(local_date)
+            shift_zone = _zone_or_none(anchor.tz_name)
+            if shift_zone is None:
+                skip("unresolvable_timezone")
+                return
+            shift_date = punch_time.astimezone(shift_zone).date()
+            dates = [local_date]
+            if shift_date != local_date:
+                dates.append(shift_date)
+                alternate, _ = await schedule_for(shift_date)
+                alternate_zone = _zone_or_none(alternate.tz_name)
+                if alternate_zone is None:
+                    skip("unresolvable_timezone")
+                    return
+                alternate_date = punch_time.astimezone(alternate_zone).date()
+                if alternate_date not in {local_date, shift_date}:
+                    # Still ambiguous after re-resolving. Do not refuse.
+                    skip("timezone_date_disagreement")
+                    return
+            for target in list(dates):
+                await schedule_for(target)
+                await schedule_for(target - timedelta(days=1))
+        except (TimezoneConfigurationError, ZoneInfoNotFoundError):
+            skip("unresolvable_timezone")
+            return
+
+        def span(schedule: _ResolvedShiftSchedule) -> ShiftSpan | None:
+            w = schedule.window
+            if (
+                schedule.shift_inputs is None
+                or w.scheduled_start is None
+                or w.scheduled_end is None
+            ):
+                return None
+            return ShiftSpan(start=w.scheduled_start, end=w.scheduled_end)
+
+        async def version_for(target_date: date) -> Any:
+            resolution = await PolicyResolutionService(self._session).resolve(
+                company_id, "ATTENDANCE_POLICY", employee_id=employee_id, target_date=target_date
+            )
+            if (
+                resolution.config_incomplete
+                or resolution.resolved_policy_id is None
+                or resolution.resolved_version_id is None
+            ):
+                return None
+            return await AttendancePolicyRepository().get_version(
+                self._session,
+                company_id=company_id,
+                policy_id=resolution.resolved_policy_id,
+                version_id=resolution.resolved_version_id,
+            )
+
+        versions: dict[date, Any] = {}
+        decisions: list[ShiftWindowDecision] = []
+        for target in dates:
+            version = await version_for(target)
+            versions[target] = version
+            if version is None:
+                # No policy on this candidate: nothing may be refused from it.
+                decisions.append(ShiftWindowDecision("ALLOWED"))
+                continue
+            current_schedule, _ = resolved[target]
+            previous_schedule, _ = resolved[target - timedelta(days=1)]
+            decisions.append(
+                evaluate_shift_window(
+                    direction=direction,
+                    punch_time=punch_time,
+                    current=span(current_schedule),
+                    previous=span(previous_schedule),
+                    early_in_allowance_minutes=version.early_in_allowance_minutes,
+                    grace_out_minutes=version.grace_out_minutes,
+                )
+            )
+        if all(item is None for item in versions.values()):
+            skip("no_policy")
+            return
+        decision = combine_shift_window_decisions(decisions)
+        disagreed = len(dates) > 1 and any(item.outcome == "TOO_EARLY" for item in decisions)
+        if decision.outcome != "TOO_EARLY" and disagreed:
+            skip("timezone_date_disagreement")
+        elif decision.outcome == "NO_SHIFT":
+            skip("no_shift")
+        if decision.outcome == "AFTER_SHIFT":
+            security_event(
+                "punch.outside_shift_window",
+                level="info",
+                reason="AFTER_SHIFT_END",
+                direction=direction,
+                company_id=str(company_id),
+                employee_id=str(employee_id),
+            )
+            return
+        primary = versions.get(local_date)
+        if (
+            decision.outcome != "TOO_EARLY"
+            or decision.shift is None
+            or decision.earliest_punch_in is None
+            or primary is None
+            or primary.early_in_allowance_minutes is None
+        ):
+            return
+        async with session_scope(company_id=str(company_id)) as audit_session:
+            await self._audit.record(
+                audit_session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="PUNCH_REJECTED_OUTSIDE_SHIFT_WINDOW",
+                entity_type="employee",
+                entity_id=employee_id,
+                after={
+                    "reason": "BEFORE_EARLIEST_PUNCH_IN",
+                    "direction": direction,
+                    "source": source,
+                    "earliest_punch_in": decision.earliest_punch_in.isoformat(),
+                },
+                ip=ip_address,
+                user_agent=user_agent,
+            )
+        security_event(
+            "punch.rejected",
+            level="warning",
+            reason="OUTSIDE_SHIFT_WINDOW",
+            company_id=str(company_id),
+            employee_id=str(employee_id),
+        )
+        raise OutsideShiftWindowError(
+            shift_start=decision.shift.start,
+            shift_end=decision.shift.end,
+            grace_in_minutes=primary.grace_in_minutes,
+            grace_out_minutes=primary.grace_out_minutes,
+            early_in_allowance_minutes=primary.early_in_allowance_minutes,
+            earliest_punch_in=decision.earliest_punch_in,
+        )
 
     async def _ensure_plain_punch_allowed(
         self,
@@ -3644,7 +4029,6 @@ class AttendanceDayService:
             CalendarResolutionService,
             weekly_off_fraction_of,
         )
-        from hrms.modules.organisation.exceptions import ShiftVersionNotFoundForDateError
         from hrms.modules.organisation.service import OrganisationService
 
         employment_service = EmploymentService(self._session)
@@ -3688,92 +4072,23 @@ class AttendanceDayService:
             roster_entry.is_holiday_working_override if roster_entry is not None else False
         )
 
-        shift_inputs: calc.ShiftInputs | None = None
-        shift_version_timezone: str | None = None
-        shift_version_id: UUID | None = None
-        raw_start_time = raw_end_time = raw_window_start = raw_window_end = None
         shift_id = (
             roster_entry.shift_id
             if roster_entry is not None
             else (assignment.shift_id if assignment else None)
         )
-        if shift_id is not None:
-            try:
-                shift_version = await organisation_service.resolve_shift_version_as_of(
-                    company_id, shift_id, target_date
-                )
-            except ShiftVersionNotFoundForDateError:
-                shift_version = None
-            if shift_version is not None:
-                shift_version_id = shift_version.id
-                shift_version_timezone = shift_version.timezone
-                raw_start_time = (
-                    _parse_time(shift_version.start_time) if shift_version.start_time else None
-                )
-                raw_end_time = (
-                    _parse_time(shift_version.end_time) if shift_version.end_time else None
-                )
-                raw_window_start = (
-                    _parse_time(shift_version.window_start) if shift_version.window_start else None
-                )
-                raw_window_end = (
-                    _parse_time(shift_version.window_end) if shift_version.window_end else None
-                )
-                shift_inputs = calc.ShiftInputs(
-                    shift_type=shift_version.shift_type,
-                    is_ot_eligible=shift_version.is_ot_eligible,
-                    operates_on_holiday=shift_version.operates_on_holiday,
-                    operates_on_weekly_off=shift_version.operates_on_weekly_off,
-                    is_cross_midnight=shift_version.is_cross_midnight,
-                    is_night_shift=shift_version.is_night_shift,
-                    breaks=[
-                        calc.ShiftBreakData(
-                            id=b.id,
-                            break_kind=b.break_kind,
-                            start_time=_parse_time(b.start_time) if b.start_time else None,
-                            end_time=_parse_time(b.end_time) if b.end_time else None,
-                            window_start=_parse_time(b.window_start) if b.window_start else None,
-                            window_end=_parse_time(b.window_end) if b.window_end else None,
-                            min_minutes=b.min_minutes,
-                            max_minutes=b.max_minutes,
-                            is_paid=b.is_paid,
-                            is_mandatory=b.is_mandatory,
-                        )
-                        for b in shift_version.breaks
-                    ],
-                    duty_blocks=[
-                        calc.ShiftDutyBlockData(
-                            sequence=d.sequence,
-                            start_time=_parse_time(d.start_time),
-                            end_time=_parse_time(d.end_time),
-                            crosses_midnight=d.crosses_midnight,
-                        )
-                        for d in shift_version.duty_blocks
-                    ],
-                    core_start=(
-                        _parse_time(shift_version.core_start) if shift_version.core_start else None
-                    ),
-                    core_end=(
-                        _parse_time(shift_version.core_end) if shift_version.core_end else None
-                    ),
-                    required_minutes=shift_version.required_minutes,
-                )
-
-        tz_name = calc.resolve_timezone(
-            shift_version_timezone=shift_version_timezone,
+        schedule = await _resolve_shift_schedule(
+            organisation_service,
+            company_id=company_id,
+            shift_id=shift_id,
+            target_date=target_date,
             branch_timezone=branch_timezone,
             company_timezone=company.timezone,
         )
-
-        window = calc.resolve_schedule_window(
-            attendance_date=target_date,
-            tz_name=tz_name,
-            shift=shift_inputs,
-            start_time=raw_start_time,
-            end_time=raw_end_time,
-            window_start=raw_window_start,
-            window_end=raw_window_end,
-        )
+        shift_inputs = schedule.shift_inputs
+        shift_version_id = schedule.shift_version_id
+        tz_name = schedule.tz_name
+        window = schedule.window
 
         calendar_result = await calendar_service.resolve_for_employee(
             company_id, employee_id, target_date
