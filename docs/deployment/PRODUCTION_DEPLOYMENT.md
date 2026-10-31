@@ -231,11 +231,28 @@ needs a config change.
 ## 12. Verify
 
 ```bash
-curl -I https://${WEB_DOMAIN}/login          # 200, HSTS present, CSP with a nonce
+curl -I https://${WEB_DOMAIN}/login          # 200, HSTS present, CSP with a nonce, Cache-Control: ...no-store
 curl -I https://${API_DOMAIN}/health         # 200, HSTS present
 curl https://${API_DOMAIN}/health/ready      # {"data":{"ready":true,...}}
 curl -I http://${WEB_DOMAIN}/                # 301 -> https://
 ```
+
+A header on its own proves nothing about the CSP: a response can carry a nonce in the header while
+its `<script>` tags carry none (the page then never hydrates). Also confirm the served HTML matches
+its own header — every `<script>` must carry the nonce from that response, and two requests must
+get different nonces:
+
+```bash
+for i in 1 2; do
+  curl -s -D /tmp/h -o /tmp/b https://${WEB_DOMAIN}/login
+  N=$(grep -io "nonce-[A-Za-z0-9+/=]*" /tmp/h | head -1 | sed 's/nonce-//')
+  echo "nonce=$N scripts=$(grep -o '<script' /tmp/b | wc -l) with-this-nonce=$(grep -o "<script[^>]*nonce=\"$N\"" /tmp/b | wc -l)"
+done                                         # scripts == with-this-nonce, and the two nonces differ
+```
+
+The repository's own check is `npm run test:e2e:csp` in `apps/web` (production build, CSP enforced,
+real browser; set `CSP_E2E_BASE_URL` to run it against an nginx+TLS front). See
+`docs/audits/CSP_HYDRATION_REMEDIATION_2026-10-29.md`.
 
 If `/health/ready` reports `database`/`redis` as `"error"` rather than `"ok"`, check
 `TRUSTED_PROXY_HOSTS` (§3) matches the actual Docker network Nginx runs on — a mismatch there is

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -35,7 +36,20 @@ export const metadata: Metadata = {
   description: "Krewoxa — local development",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+/**
+ * Every page is rendered per request, never prerendered at build time.
+ *
+ * The strict CSP (`script-src 'nonce-…' 'strict-dynamic'`, middleware.ts) only works if each
+ * response's scripts carry *that response's* nonce, and Next.js can only stamp a nonce while it
+ * renders for a request. A prerendered page is built once without any request, so its scripts
+ * have no nonce, the browser refuses all of them and the page never hydrates (verified on
+ * `/login`, `/register`, `/app/**`, the 404 page); it would also be served from cache with a
+ * stale nonce. `connection()` is Next's documented way to wait for an incoming request, and
+ * placing it in the root layout covers every route and the not-found page. The HTML shells are
+ * tiny; the JS/CSS/font assets under `/_next/static` stay immutable-cached.
+ */
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  await connection();
   return (
     <html lang="en" className={inter.variable}>
       <body>

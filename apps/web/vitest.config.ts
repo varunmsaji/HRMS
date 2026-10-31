@@ -13,6 +13,6 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
     css: false,
-    exclude: ["e2e/**", "node_modules/**", ".next/**"],
+    exclude: ["e2e/**", "e2e-csp/**", "node_modules/**", ".next/**"],
   },
 });
