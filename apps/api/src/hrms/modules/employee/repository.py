@@ -539,6 +539,87 @@ class EmployeeAssignmentRepository:
         )
         return set((await session.execute(stmt)).scalars().all())
 
+    @staticmethod
+    def _direct_report_conditions(
+        *,
+        company_id: UUID,
+        manager_employee_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        include_inactive: bool,
+    ) -> list[Any]:
+        """Shared by the page query and its COUNT so `total` can never disagree with the rows.
+        "Direct report" is exactly what `get_direct_report_ids` (the `REPORTEES` scope) means —
+        the employee's *current* assignment row names this manager — narrowed by the caller's own
+        visible set, so a page can only ever hold rows the caller could read individually."""
+        conditions: list[Any] = [
+            EmployeeAssignment.company_id == company_id,
+            EmployeeAssignment.reporting_manager_id == manager_employee_id,
+            EmployeeAssignment.deleted_at.is_(None),
+            EmployeeAssignment.effective_to.is_(None),
+            Employee.company_id == company_id,
+            Employee.deleted_at.is_(None),
+        ]
+        if not include_inactive:
+            conditions.append(Employee.is_active.is_(True))
+        if visible_employee_ids is not None:
+            conditions.append(Employee.id.in_(visible_employee_ids))
+        return conditions
+
+    async def list_direct_reports(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        manager_employee_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        include_inactive: bool,
+        limit: int,
+        offset: int,
+    ) -> list[tuple[Employee, EmployeeAssignment]]:
+        """One page of the manager's direct reports with the assignment row that links them.
+        `visible_employee_ids=None` is `COMPANY` scope. Deterministic order (`created_at`, `id`)
+        so page boundaries are stable, same as `EmployeeRepository.list_employees`."""
+        stmt = (
+            select(Employee, EmployeeAssignment)
+            .join(EmployeeAssignment, EmployeeAssignment.employee_id == Employee.id)
+            .where(
+                *self._direct_report_conditions(
+                    company_id=company_id,
+                    manager_employee_id=manager_employee_id,
+                    visible_employee_ids=visible_employee_ids,
+                    include_inactive=include_inactive,
+                )
+            )
+            .order_by(Employee.created_at, Employee.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        return [(row[0], row[1]) for row in (await session.execute(stmt)).all()]
+
+    async def count_direct_reports(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        manager_employee_id: UUID,
+        visible_employee_ids: frozenset[UUID] | None,
+        include_inactive: bool,
+    ) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(Employee)
+            .join(EmployeeAssignment, EmployeeAssignment.employee_id == Employee.id)
+            .where(
+                *self._direct_report_conditions(
+                    company_id=company_id,
+                    manager_employee_id=manager_employee_id,
+                    visible_employee_ids=visible_employee_ids,
+                    include_inactive=include_inactive,
+                )
+            )
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
     async def get_reportee_tree_ids(
         self,
         session: AsyncSession,

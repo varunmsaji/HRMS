@@ -2,6 +2,8 @@
 lifecycle), E-04 (employee assignment), E-06 (employee compensation), E-07 (employee
 statutory), and E-08 (employee banking)."""
 
+import hashlib
+import hmac
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -12,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.audit.service import AuditService
 from hrms.core.config.settings import Settings, get_settings
 from hrms.core.crypto.service import PiiCryptoService
-from hrms.core.db.locks import lock_employee_leave_dates
+from hrms.core.db.locks import lock_employee_leave_dates, lock_reporting_hierarchy
 from hrms.core.db.repositories.identity import IdentityRepository
 from hrms.core.errors.base import NotFoundError
 from hrms.core.observability.operations import logged_operation
@@ -52,6 +54,7 @@ from hrms.modules.employee.exceptions import (
     InvalidLegalEntityReferenceError,
     InvalidReportingManagerError,
     InvalidShiftReferenceError,
+    ManagerChangeRequiresConfirmationError,
     NoActiveEmploymentError,
     NomineePercentageExceededError,
     ShiftIdRequiredError,
@@ -83,6 +86,7 @@ from hrms.modules.employee.schemas import (
     BankRead,
     CompensationCreate,
     CompensationRead,
+    DirectReportRead,
     EmployeeConfirmInput,
     EmployeeCreate,
     EmployeeDependentCreate,
@@ -101,6 +105,8 @@ from hrms.modules.employee.schemas import (
     EmploymentRead,
     EmploymentTerminate,
     EmploymentUpdate,
+    ManagerChangeImpactRead,
+    PendingRequestCounts,
     StatutoryCreate,
     StatutoryRead,
     assignment_to_audit_dict,
@@ -133,7 +139,19 @@ from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
 
 if TYPE_CHECKING:
-    from hrms.modules.employee.models import EmployeeBank, EmployeeDependent
+    from hrms.modules.employee.models import Employee, EmployeeBank, EmployeeDependent
+
+
+def counts_total(counts: PendingRequestCounts) -> int:
+    return counts.leave + counts.attendance_regularization + counts.overtime
+
+
+def _impact_payload(counts: PendingRequestCounts) -> dict[str, Any]:
+    return {
+        "has_pending_requests": True,
+        "total_pending_requests": counts_total(counts),
+        "requests": counts.model_dump(),
+    }
 
 
 def _chained_version(expected_version: int | None) -> int:
@@ -1782,12 +1800,24 @@ class EmployeeAssignmentService:
             raise InactiveMasterDataReferenceError(field="shift_id", kind="shift")
 
     async def _assert_manager_reference(
-        self, company_id: UUID, employee_id: UUID, manager_id: UUID, *, field: str
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        manager_id: UUID,
+        *,
+        field: str,
+        eligible_as_of: date | None = None,
     ) -> None:
         """Covers both `reporting_manager_id` and `dotted_line_manager_id` — must resolve to
         an existing, same-tenant, non-deleted `Employee`, and must not equal the assignment's
-        own `employee_id` (a direct-self-reference guard only, not full cycle detection,
-        plan §14.5)."""
+        own `employee_id`. For `reporting_manager_id` it also rejects a link that would close a
+        reporting loop (`_assert_no_reporting_cycle`).
+
+        `eligible_as_of` is passed only when this write is *choosing* the manager (a new or
+        changed `reporting_manager_id`), never when the value is just carried forward from the
+        current row: a manager who has since left must not block an unrelated transfer of their
+        report. When given, the manager must also be eligible on that date
+        (`_assert_manager_eligible`)."""
         if manager_id == employee_id:
             raise InvalidReportingManagerError(
                 field=field, message=f"{field} cannot reference the employee themselves"
@@ -1799,8 +1829,42 @@ class EmployeeAssignmentService:
             raise InvalidReportingManagerError(
                 field=field, message=f"{field} does not reference a valid employee"
             )
+        if eligible_as_of is not None:
+            await self._assert_manager_eligible(
+                company_id, manager, field=field, as_of=eligible_as_of
+            )
         if field == "reporting_manager_id":
             await self._assert_no_reporting_cycle(company_id, employee_id, manager_id)
+
+    async def _assert_manager_eligible(
+        self, company_id: UUID, manager: "Employee", *, field: str, as_of: date
+    ) -> None:
+        """A chosen reporting manager must be a working member of the company on `as_of`.
+
+        The employment lifecycle, not `Employee.status`, is the source of truth for "currently
+        employed": termination (`terminate_employment`) sets the employment episode to
+        `TERMINATED` with a `last_working_day` — which may still be in the future during a notice
+        period — and leaves `Employee.status` untouched. So eligibility is: not deliberately
+        deactivated (`Employee.is_active`), and an employment episode covering `as_of` whose status
+        is still `ACTIVE`. A person already terminated (even one still inside their notice period)
+        cannot be named as someone's manager. No manager role or permission is required: being
+        named as a reporting manager is what makes someone one."""
+        if not manager.is_active:
+            raise InvalidReportingManagerError(
+                field=field, message=f"{field} references a deactivated employee"
+            )
+        employment = await self._employment_repo.get_employment_as_of(
+            self._session, company_id=company_id, employee_id=manager.id, as_of=as_of
+        )
+        if employment is None:
+            raise InvalidReportingManagerError(
+                field=field,
+                message=f"{field} references an employee with no employment covering {as_of}",
+            )
+        if employment.status != "ACTIVE":
+            raise InvalidReportingManagerError(
+                field=field, message=f"{field} references an employee whose employment has ended"
+            )
 
     async def _assert_no_reporting_cycle(
         self, company_id: UUID, employee_id: UUID, manager_id: UUID
@@ -1870,6 +1934,14 @@ class EmployeeAssignmentService:
         if body.change_type == "SHIFT_CHANGE" and body.shift_id is None:
             raise ShiftIdRequiredError()
 
+        if body.reporting_manager_id is not None:
+            # Taken before anything the loop walk or the optimistic version check reads: a
+            # concurrent writer linking the opposite way waits here, then walks this write's
+            # committed link instead of the stale hierarchy it would otherwise have read (READ
+            # COMMITTED). Only a write that names a manager can close a loop — clearing one or
+            # carrying one forward cannot — so every other assignment write skips the lock.
+            await lock_reporting_hierarchy(self._session, company_id)
+
         current = await self._repo.get_current_assignment(
             self._session, company_id=company_id, employee_id=employee_id
         )
@@ -1912,11 +1984,12 @@ class EmployeeAssignmentService:
                 body.designation_id if body.designation_id is not None else current.designation_id
             )
             grade_id = body.grade_id if body.grade_id is not None else current.grade_id
-            reporting_manager_id = (
-                body.reporting_manager_id
-                if body.reporting_manager_id is not None
-                else current.reporting_manager_id
-            )
+            if body.clear_reporting_manager:
+                reporting_manager_id = None
+            elif body.reporting_manager_id is not None:
+                reporting_manager_id = body.reporting_manager_id
+            else:
+                reporting_manager_id = current.reporting_manager_id
             dotted_line_manager_id = (
                 body.dotted_line_manager_id
                 if body.dotted_line_manager_id is not None
@@ -1943,13 +2016,38 @@ class EmployeeAssignmentService:
         if shift_id is not None:
             await self._assert_shift_ownership(company_id, shift_id)
         if reporting_manager_id is not None:
+            manager_chosen = current is None or reporting_manager_id != current.reporting_manager_id
             await self._assert_manager_reference(
-                company_id, employee_id, reporting_manager_id, field="reporting_manager_id"
+                company_id,
+                employee_id,
+                reporting_manager_id,
+                field="reporting_manager_id",
+                eligible_as_of=body.effective_from if manager_chosen else None,
             )
         if dotted_line_manager_id is not None:
             await self._assert_manager_reference(
                 company_id, employee_id, dotted_line_manager_id, field="dotted_line_manager_id"
             )
+
+        pending_impact_acknowledged: dict[str, int] | None = None
+        if current is not None and reporting_manager_id != current.reporting_manager_id:
+            # Evaluated here, inside the write's own transaction, so the figures can never be
+            # older than the write itself: the caller must have acknowledged *this* set of
+            # pending requests (`pending_impact_token`), not whatever a preview showed earlier.
+            counts, impact_token = await self._pending_manager_change_impact(
+                company_id, employee_id, new_manager_id=reporting_manager_id
+            )
+            if counts_total(counts) > 0:
+                acknowledged = (
+                    body.confirm_pending_request_impact
+                    and body.pending_impact_token is not None
+                    and hmac.compare_digest(body.pending_impact_token, impact_token)
+                )
+                if not acknowledged:
+                    raise ManagerChangeRequiresConfirmationError(
+                        impact=_impact_payload(counts), impact_token=impact_token
+                    )
+                pending_impact_acknowledged = counts.model_dump()
 
         now = datetime.now(UTC)
         before_read = assignment_to_read(current) if current is not None else None
@@ -2019,11 +2117,196 @@ class EmployeeAssignmentService:
             entity_type="employee_assignment",
             entity_id=assignment_id,
             before=assignment_to_audit_dict(before_read) if before_read is not None else None,
-            after=assignment_to_audit_dict(after_read),
+            after={
+                **assignment_to_audit_dict(after_read),
+                **(
+                    {"pending_request_impact_acknowledged": pending_impact_acknowledged}
+                    if pending_impact_acknowledged is not None
+                    else {}
+                ),
+            },
             ip=ip_address,
             user_agent=user_agent,
         )
         return after_read
+
+    async def _pending_manager_change_impact(
+        self, company_id: UUID, employee_id: UUID, *, new_manager_id: UUID | None
+    ) -> tuple[PendingRequestCounts, str]:
+        """Counts of the employee's requests that are waiting on a manager's decision and will stay
+        with an approver other than `new_manager_id`, plus a token that identifies exactly which
+        requests those are. Leave and Attendance own those tables; they answer with plain ids
+        through their public seams (same lazy cross-module import convention as the termination
+        guard), so nothing here reads another module's data."""
+        from hrms.modules.attendance.pending_approvals import (
+            list_pending_manager_stage_ids as attendance_pending_ids,
+        )
+        from hrms.modules.leave.service import LeaveApplicationService
+
+        leave_ids = await LeaveApplicationService(self._session).list_pending_manager_stage_ids(
+            company_id, employee_id, excluding_manager_id=new_manager_id
+        )
+        attendance_ids = await attendance_pending_ids(
+            self._session, company_id, employee_id, excluding_manager_id=new_manager_id
+        )
+        counts = PendingRequestCounts(
+            leave=len(leave_ids),
+            attendance_regularization=len(attendance_ids["regularization"]),
+            overtime=len(attendance_ids["overtime"]),
+        )
+        digest = hashlib.sha256()
+        for part in (
+            str(company_id),
+            str(employee_id),
+            str(new_manager_id),
+            *(f"leave:{i}" for i in leave_ids),
+            *(f"reg:{i}" for i in attendance_ids["regularization"]),
+            *(f"ot:{i}" for i in attendance_ids["overtime"]),
+        ):
+            digest.update(part.encode())
+            digest.update(b"\x00")
+        return counts, digest.hexdigest()
+
+    async def get_manager_change_impact(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        proposed_manager_id: UUID | None,
+        effective_from: date | None,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+    ) -> ManagerChangeImpactRead:
+        """Read-only preview of what changing (or, with `proposed_manager_id=None`, removing) the
+        employee's reporting manager would do to their pending requests. Same visibility rule as
+        the write: an employee the caller cannot see is the same 404 as one that does not exist,
+        so counts cannot be probed across tenants or outside the caller's scope."""
+        await self._assert_employee_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        current = await self._repo.get_current_assignment(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        current_manager_id = current.reporting_manager_id if current is not None else None
+        changes_manager = proposed_manager_id != current_manager_id
+        counts, token = await self._pending_manager_change_impact(
+            company_id, employee_id, new_manager_id=proposed_manager_id
+        )
+        if not changes_manager:
+            counts = PendingRequestCounts(leave=0, attendance_regularization=0, overtime=0)
+        total = counts_total(counts)
+        return ManagerChangeImpactRead(
+            employee_id=employee_id,
+            current_reporting_manager_id=current_manager_id,
+            proposed_reporting_manager_id=proposed_manager_id,
+            changes_manager=changes_manager,
+            new_manager_applies_to_requests_dated_from=effective_from,
+            has_pending_requests=total > 0,
+            total_pending_requests=total,
+            requests=counts,
+            requires_confirmation=total > 0,
+            impact_token=token,
+        )
+
+    async def list_direct_reports(
+        self,
+        company_id: UUID,
+        manager_id: UUID,
+        *,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        page: PageParams,
+        include_inactive: bool = False,
+    ) -> tuple[list[DirectReportRead], int]:
+        """The employees whose current assignment names `manager_id`, one page at a time.
+
+        `scope` is required (unlike the older methods here, there is no unscoped legacy caller to
+        keep working), so the endpoint cannot be reached without a resolved `DataScope`.
+
+        Two independent narrowing steps, both applied in SQL before `LIMIT`/`OFFSET` so a page can
+        never be used to walk around authorization:
+
+        1. The *manager* must be someone the caller may see, or the caller themself ("my team" —
+           `REPORTEES` never implies `SELF`, so a plain manager would otherwise be unable to ask
+           about their own reports). Otherwise the answer is the same `404` a nonexistent or
+           cross-tenant id gets, so the endpoint cannot be used to probe who exists or who
+           manages whom.
+        2. The *rows* are intersected with the caller's visible set. A `REPORTEES` caller asking
+           about one of their own reports therefore gets an empty page (they cannot see that
+           person's reports), and `total` counts only visible rows, so counts leak nothing either.
+
+        A manager who has left (or been deactivated) can still be queried — that is how HR finds
+        the reports still pointing at them. Deactivated *reports* are hidden unless
+        `include_inactive` is set; reports whose employment ended have already had their
+        assignment closed by termination and so no longer appear.
+        """
+        visible_ids = await self._employee_service.resolve_visible_employee_ids(
+            company_id, scope, caller_employee_id
+        )
+        manager_lookup_ids = (
+            None
+            if visible_ids is None
+            else (
+                visible_ids | {caller_employee_id}
+                if caller_employee_id is not None
+                else visible_ids
+            )
+        )
+        manager = await self._employee_repo.get_employee(
+            self._session,
+            company_id=company_id,
+            employee_id=manager_id,
+            visible_employee_ids=manager_lookup_ids,
+        )
+        if manager is None:
+            raise NotFoundError("Resource not found")
+
+        rows = await self._repo.list_direct_reports(
+            self._session,
+            company_id=company_id,
+            manager_employee_id=manager_id,
+            visible_employee_ids=visible_ids,
+            include_inactive=include_inactive,
+            limit=page.limit,
+            offset=page.offset,
+        )
+        # Sequential: a single `AsyncSession` cannot run two statements concurrently.
+        total = await self._repo.count_direct_reports(
+            self._session,
+            company_id=company_id,
+            manager_employee_id=manager_id,
+            visible_employee_ids=visible_ids,
+            include_inactive=include_inactive,
+        )
+        employments = await self._employment_repo.list_latest_employments(
+            self._session,
+            company_id=company_id,
+            employee_ids=[employee.id for employee, _assignment in rows],
+        )
+        reads = []
+        for employee, assignment in rows:
+            employment = employments.get(employee.id)
+            reads.append(
+                DirectReportRead(
+                    employee_id=employee.id,
+                    employee_code=employee.employee_code,
+                    first_name=employee.first_name,
+                    middle_name=employee.middle_name,
+                    last_name=employee.last_name,
+                    display_name=employee.display_name,
+                    status=employee.status,
+                    is_active=employee.is_active,
+                    branch_id=assignment.branch_id,
+                    department_id=assignment.department_id,
+                    designation_id=assignment.designation_id,
+                    reporting_since=assignment.effective_from,
+                    employment_joining_date=employment.joining_date if employment else None,
+                    employment_last_working_day=(
+                        employment.last_working_day if employment else None
+                    ),
+                )
+            )
+        return reads, total
 
     async def list_assignments(
         self,

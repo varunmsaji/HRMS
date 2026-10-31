@@ -37,6 +37,14 @@ an insert; without a lock, parallel creates all pass the check. It is a LEAF loc
 check and the insert, then the transaction ends - and nothing else in this list is acquired while
 holding it.
 
+`reporting-hierarchy` serialises writes that set an employee's reporting manager within one
+company. "This link closes no loop" is a read of other employees' rows followed by a write to this
+one, and the optimistic `version` check only covers the row being written, so two transactions
+linking A under B and B under A both pass the walk and commit a ring. The second writer waits, then
+walks the first's committed link and is refused. It is a LEAF lock: taken first in the assignment
+write (nothing the walk depends on is read or locked before it), with no other lock in this list
+acquired while holding it, so it cannot take part in a cycle.
+
 Lock order, outermost first — always acquire in this order, never the reverse:
 
     leave-dates  ->  payroll-finalise  ->  attendance-period-close  ->  leave balance
@@ -122,6 +130,16 @@ async def lock_calendar_policy_dependencies(session: AsyncSession, company_id: U
     `work-calendar-change:<company>` when both are needed (change-impact confirmation). A leaf
     lock otherwise."""
     key = f"calendar-policy-dependencies:{company_id}"
+    async with bounded_lock_wait(
+        session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
+    ):
+        await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0))))
+
+
+async def lock_reporting_hierarchy(session: AsyncSession, company_id: UUID) -> None:
+    """Held until the transaction ends. Per company, so unrelated tenants never contend. A leaf
+    lock; see the module docstring."""
+    key = f"reporting-hierarchy:{company_id}"
     async with bounded_lock_wait(
         session, lock_timeout_ms=get_settings().attendance_lock_timeout_ms
     ):

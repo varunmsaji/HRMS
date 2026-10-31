@@ -24,6 +24,7 @@ from tests.integration.modules.leave.test_leave_application import (
     _submit,
     _teardown,
 )
+from tests.integration.modules.organisation.test_registration_flow import _cleanup
 
 from hrms.core.db.session import get_engine, get_session_factory
 from hrms.modules.organisation.models import Subscription
@@ -50,6 +51,15 @@ class QueryCounter:
 
     def __exit__(self, *_exc: Any) -> None:
         event.remove(self._sync_engine, "before_cursor_execute", self._on_execute)
+
+
+async def _dispose(*, company_id: UUID, user_id: UUID | None) -> None:
+    """`_teardown` only clears the tenant-owned tables; `_cleanup` removes the company itself
+    (audit rows, membership, user). Run both, and the second even if the first raises."""
+    try:
+        await _teardown(company_id=company_id)
+    finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
 
 
 async def _raise_seat_limit(*, company_id: UUID, limit: int = 500) -> None:
@@ -139,7 +149,7 @@ async def test_default_page_and_filters_preserved(
         assert single_body["pagination"]["total"] == 1
         assert single_body["data"][0]["id"] == applications[0]["id"]
     finally:
-        await _teardown(company_id=company_id)
+        await _dispose(company_id=company_id, user_id=admin_id)
 
 
 async def test_page_two_and_boundary(client: AsyncClient, seeded_plan_catalogue: None) -> None:
@@ -170,7 +180,7 @@ async def test_page_two_and_boundary(client: AsyncClient, seeded_plan_catalogue:
         assert beyond.json()["data"] == []
         assert beyond.json()["pagination"]["total"] == 7
     finally:
-        await _teardown(company_id=company_id)
+        await _dispose(company_id=company_id, user_id=admin_id)
 
 
 @pytest.mark.parametrize("query", ["page=0", "per_page=0", "per_page=101"])
@@ -182,7 +192,7 @@ async def test_invalid_pagination_params_rejected(
         response = await client.get(f"/v1/leave-applications?{query}", headers=headers)
         assert response.status_code == 422
     finally:
-        await _teardown(company_id=company_id)
+        await _dispose(company_id=company_id, user_id=admin_id)
 
 
 async def test_day_and_action_data_correct_under_pagination(
@@ -212,7 +222,7 @@ async def test_day_and_action_data_correct_under_pagination(
             assert row["days"][0]["calendar_date"] == "2026-09-08"
             assert any(a["action"] == "SUBMITTED" for a in row["actions"])
     finally:
-        await _teardown(company_id=company_id)
+        await _dispose(company_id=company_id, user_id=admin_id)
 
 
 async def test_n_plus_one_removed_query_count_bounded(
@@ -249,4 +259,4 @@ async def test_n_plus_one_removed_query_count_bounded(
         # instead of staying flat.
         assert large_page.count == small_page.count
     finally:
-        await _teardown(company_id=company_id)
+        await _dispose(company_id=company_id, user_id=admin_id)

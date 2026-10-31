@@ -2850,6 +2850,19 @@ class LeaveApplicationService:
             for row in rows
         ]
 
+    async def list_pending_manager_stage_ids(
+        self, company_id: UUID, employee_id: UUID, *, excluding_manager_id: UUID | None
+    ) -> list[UUID]:
+        """Ids of this employee's applications that are waiting on a manager's decision and are
+        snapshotted to someone other than `excluding_manager_id` - what the employment module
+        warns about before a reporting-manager change. Plain ids, no application data."""
+        return await self._repo.list_pending_manager_stage_ids(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            excluding_manager_id=excluding_manager_id,
+        )
+
     async def _approver_ineligibility(self, company_id: UUID, employee_id: UUID) -> str | None:
         """Why this employee cannot act as an approver today, or `None` when they can. The same
         facts the approve route itself relies on: an employee record, an employment covering

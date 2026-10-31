@@ -28,6 +28,33 @@ class StaleResourceError(ConflictError):
         )
 
 
+class ManagerChangeRequiresConfirmationError(ConflictError):
+    """Raised by `EmployeeAssignmentService.create_assignment` when a change of reporting manager
+    would leave pending requests with their current approvers and the caller has not acknowledged
+    that. Nothing is written. `context` carries the impact and the token to send back with
+    `confirm_pending_request_impact` to proceed - the same figures `GET .../manager-change-impact`
+    returns, recomputed inside the write transaction so they are never staler than the write."""
+
+    code = "MANAGER_CHANGE_REQUIRES_CONFIRMATION"
+
+    def __init__(self, *, impact: dict[str, Any], impact_token: str) -> None:
+        message = (
+            f"This employee has {impact['total_pending_requests']} pending request(s) that will "
+            "stay with their current approver. Confirm to change the reporting manager."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "reporting_manager_id",
+                    "code": "MANAGER_CHANGE_REQUIRES_CONFIRMATION",
+                    "message": message,
+                    "context": {"impact": impact, "impact_token": impact_token},
+                }
+            ],
+        )
+
+
 class EmployeeSeatLimitExceededError(ConflictError):
     """Raised by `EmployeeService.create_employee` when the company's active employee count
     has already reached the plan's resolved `EMPLOYEE_SEATS` limit

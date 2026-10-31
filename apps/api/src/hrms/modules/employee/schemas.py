@@ -492,10 +492,31 @@ class AssignmentCreate(BaseModel):
     designation_id: UUID | None = None
     grade_id: UUID | None = None
     reporting_manager_id: UUID | None = None
+    # `reporting_manager_id: null` means "carry the current manager forward" like every other
+    # optional field here (existing clients send `null` for a blank form field), so it cannot also
+    # mean "remove". Removal is therefore its own explicit flag; it is mutually exclusive with
+    # naming a manager.
+    clear_reporting_manager: bool = False
+    # Acknowledging that this change leaves the employee's pending requests with their current
+    # approvers. The server decides whether acknowledgement is needed (`GET
+    # .../manager-change-impact`, or the 409 a change returns) and hands back the token that
+    # identifies exactly which requests were shown; a stale or missing token is not accepted.
+    confirm_pending_request_impact: bool = False
+    pending_impact_token: str | None = Field(default=None, min_length=1, max_length=128)
     dotted_line_manager_id: UUID | None = None
     cost_centre_id: UUID | None = None
     shift_id: UUID | None = None
     work_location_type: WorkLocationType | None = None
+
+    @model_validator(mode="after")
+    def _clear_excludes_manager(self) -> "AssignmentCreate":
+        if self.clear_reporting_manager and self.reporting_manager_id is not None:
+            raise ValueError(
+                "clear_reporting_manager cannot be combined with a reporting_manager_id"
+            )
+        if self.confirm_pending_request_impact and self.pending_impact_token is None:
+            raise ValueError("confirm_pending_request_impact requires pending_impact_token")
+        return self
 
 
 class AssignmentRead(BaseModel):
@@ -518,6 +539,55 @@ class AssignmentRead(BaseModel):
     version: int
     created_at: str
     updated_at: str
+
+
+class PendingRequestCounts(BaseModel):
+    leave: int
+    attendance_regularization: int
+    overtime: int
+
+
+class ManagerChangeImpactRead(BaseModel):
+    """What a reporting-manager change does to the employee's requests that are already pending.
+
+    Existing pending requests are never moved: each stays with the approver resolved when it was
+    created. `requests` counts the ones waiting on a manager's decision whose approver differs
+    from the proposed manager - the ones that will *stay* with someone other than the new manager.
+    Requests for dates on or after the change takes effect resolve the new manager; the approver
+    is looked up by the request's own date (leave start date, attendance date), not by when it is
+    submitted."""
+
+    employee_id: UUID
+    current_reporting_manager_id: UUID | None
+    proposed_reporting_manager_id: UUID | None
+    changes_manager: bool
+    new_manager_applies_to_requests_dated_from: date | None
+    has_pending_requests: bool
+    total_pending_requests: int
+    requests: PendingRequestCounts
+    requires_confirmation: bool
+    impact_token: str
+
+
+class DirectReportRead(BaseModel):
+    """One row of a manager's team list. Deliberately a lean read model, not `EmployeeRead`: a
+    team view needs who the person is, whether they are still working, and where they sit — not
+    their date of birth, contact details, address or emergency contacts."""
+
+    employee_id: UUID
+    employee_code: str
+    first_name: str
+    middle_name: str | None
+    last_name: str | None
+    display_name: str | None
+    status: str
+    is_active: bool
+    branch_id: UUID | None
+    department_id: UUID | None
+    designation_id: UUID | None
+    reporting_since: date
+    employment_joining_date: date | None
+    employment_last_working_day: date | None
 
 
 def assignment_to_read(assignment: "EmployeeAssignment") -> AssignmentRead:

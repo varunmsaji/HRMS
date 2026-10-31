@@ -12,6 +12,7 @@ from tests.integration.modules.leave.test_leave_application import (
     _create_department,
     _create_designation,
     _create_employee,
+    _create_employment,
     _register_tenant,
     _setup_full,
     _submit,
@@ -35,6 +36,15 @@ async def _assign(
     """Full control over `department_id`/`reporting_manager_id` — unlike
     `_give_employee_a_manager`, both may be independently `None` here so each stage's
     resolution can be tested in isolation."""
+    if reporting_manager_id is not None:
+        # A reporting manager must be employed on the effective date, so the manager is hired first.
+        await _create_employment(
+            client,
+            headers,
+            employee_id=reporting_manager_id,
+            legal_entity_id=legal_entity_id,
+            joining_date=effective_from,
+        )
     branch = await _create_branch(client, headers, legal_entity_id=legal_entity_id)
     designation = await _create_designation(client, headers, department_id=department_id)
     body: dict[str, Any] = {

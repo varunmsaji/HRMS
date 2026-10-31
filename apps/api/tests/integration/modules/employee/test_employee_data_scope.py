@@ -1069,6 +1069,9 @@ async def test_legitimate_manager_change_to_third_party_still_succeeds(
         target = await _create_employee(client, headers, first_name="Target")
         new_manager = await _create_employee(client, headers, first_name="NewManager")
         await _setup_active_employment(company_id=company_id, employee_id=UUID(target["id"]))
+        # A reporting manager must be a working member of the company (active employment on the
+        # effective date), so the new manager is hired too — a bare employee record is rejected.
+        await _setup_active_employment(company_id=company_id, employee_id=UUID(new_manager["id"]))
         await _assign_manager(
             company_id=company_id, employee_id=UUID(target["id"]), reporting_manager_id=None
         )

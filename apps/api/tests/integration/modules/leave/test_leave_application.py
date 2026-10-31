@@ -113,6 +113,16 @@ async def _give_employee_a_manager(
     (branch/department/designation), then assigns `manager_employee_id` as
     `reporting_manager_id` — mirrors `test_employee_assignment.py`'s
     `_setup_employee_with_employment`/`_create_assignment` pattern."""
+    # A reporting manager must be employed on the effective date, so the manager is hired first.
+    # (Callers that already employed the manager get the overlap 409 and carry on.)
+    hired = await client.post(
+        f"/v1/employees/{manager_employee_id}/employments",
+        headers=headers,
+        json={"legal_entity_id": legal_entity_id, "joining_date": effective_from},
+    )
+    assert hired.status_code in (201, 409), hired.text
+    if hired.status_code == 409:
+        assert hired.json()["error"]["code"] == "EMPLOYMENT_DATES_OVERLAP", hired.text
     branch = await _create_branch(client, headers, legal_entity_id=legal_entity_id)
     department = await _create_department(client, headers, branch_id=branch["id"])
     designation = await _create_designation(client, headers, department_id=department["id"])

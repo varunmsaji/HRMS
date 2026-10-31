@@ -97,6 +97,7 @@ from hrms.modules.employee.schemas import (
     BankRead,
     CompensationCreate,
     CompensationRead,
+    DirectReportRead,
     EmployeeConfirmInput,
     EmployeeCreate,
     EmployeeDependentCreate,
@@ -116,6 +117,7 @@ from hrms.modules.employee.schemas import (
     EmploymentRead,
     EmploymentTerminate,
     EmploymentUpdate,
+    ManagerChangeImpactRead,
     StatutoryCreate,
     StatutoryRead,
 )
@@ -527,6 +529,75 @@ async def list_assignments(
         caller_employee_id=user.employee_id,
     )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get(
+    "/employees/{employee_id}/direct-reports",
+    status_code=status.HTTP_200_OK,
+)
+async def list_direct_reports(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW))],
+    service: Annotated[EmployeeAssignmentService, Depends(get_employee_assignment_service)],
+    page: Annotated[PageParams, Depends(pagination_params)],
+    include_inactive: Annotated[bool, Query()] = False,
+) -> ListEnvelope[DirectReportRead]:
+    """The employees who currently report directly to `employee_id`, paginated.
+
+    Gated by `EMPLOYEE.VIEW` and narrowed by the caller's own data scope: the manager must be
+    visible to the caller (or be the caller — "my team"), and only reports the caller could read
+    individually are returned. Anything else is the same `404` as a nonexistent id."""
+    data, total = await service.list_direct_reports(
+        tenant.company_id,
+        employee_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        page=page,
+        include_inactive=include_inactive,
+    )
+    return ListEnvelope(
+        data=data,
+        pagination=build_pagination_meta(page, total=total),
+        meta=build_meta(current_request_id() or "unknown"),
+    )
+
+
+@router.get(
+    "/employees/{employee_id}/manager-change-impact",
+    status_code=status.HTTP_200_OK,
+)
+async def get_manager_change_impact(
+    employee_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_TRANSFER))],
+    service: Annotated[EmployeeAssignmentService, Depends(get_employee_assignment_service)],
+    reporting_manager_id: Annotated[
+        UUID | None,
+        Query(description="The proposed new manager. Omit to preview removing the manager."),
+    ] = None,
+    effective_from: Annotated[
+        date | None, Query(description="When the change would take effect.")
+    ] = None,
+) -> DataEnvelope[ManagerChangeImpactRead]:
+    """Read-only preview: which of the employee's pending requests would stay with their current
+    approver if their reporting manager were changed to `reporting_manager_id` (or removed).
+
+    Gated by the same permission as the change itself (`EMPLOYEE.TRANSFER`) and the same
+    visibility rule, so only someone who could make the change can see the counts. The write
+    recomputes the impact itself; this endpoint only tells the caller what to expect and
+    supplies the `impact_token` that acknowledges it."""
+    data = await service.get_manager_change_impact(
+        tenant.company_id,
+        employee_id,
+        proposed_manager_id=reporting_manager_id,
+        effective_from=effective_from,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get(

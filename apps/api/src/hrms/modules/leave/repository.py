@@ -733,6 +733,34 @@ class LeaveApplicationRepository:
         )
         return list((await session.execute(stmt)).scalars().all())
 
+    async def list_pending_manager_stage_ids(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        excluding_manager_id: UUID | None,
+    ) -> list[UUID]:
+        """Applications still waiting on a *manager's* decision (`SUBMITTED` at the `MANAGER`
+        stage) whose snapshotted approver is anyone other than `excluding_manager_id`. Those are
+        the requests that stay with their original approver when the employee's reporting manager
+        becomes `excluding_manager_id` (`None`: when the manager is removed). `HOD` and `HR`
+        stages are not tied to the reporting manager and are not counted."""
+        stmt = (
+            select(LeaveApplication.id)
+            .where(
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.employee_id == employee_id,
+                LeaveApplication.status == "SUBMITTED",
+                LeaveApplication.approval_stage == "MANAGER",
+                LeaveApplication.resolved_approver_manager_id.is_distinct_from(
+                    excluding_manager_id
+                ),
+            )
+            .order_by(LeaveApplication.id)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     def _filtered_conditions(
         self,
         *,

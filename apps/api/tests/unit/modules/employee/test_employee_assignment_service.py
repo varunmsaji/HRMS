@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from hrms.core.errors.base import NotFoundError
@@ -24,7 +25,7 @@ from hrms.modules.employee.exceptions import (
     StaleResourceError,
 )
 from hrms.modules.employee.models import Employee, EmployeeAssignment, Employment
-from hrms.modules.employee.schemas import AssignmentCreate
+from hrms.modules.employee.schemas import AssignmentCreate, PendingRequestCounts
 from hrms.modules.employee.service import EmployeeAssignmentService
 
 
@@ -119,6 +120,17 @@ def service() -> EmployeeAssignmentService:
     svc._employment_repo = AsyncMock()
     svc._audit = AsyncMock()
     return svc
+
+
+@pytest.fixture(autouse=True)
+def reporting_lock():  # type: ignore[no-untyped-def]
+    """The advisory lock needs a real transaction; these tests use a mock session, so the lock is
+    replaced and exposed for assertions. Its real behavior is covered by the database-backed
+    `test_reporting_manager_lifecycle.py`."""
+    with patch(
+        "hrms.modules.employee.service.lock_reporting_hierarchy", new_callable=AsyncMock
+    ) as lock:
+        yield lock
 
 
 def _mock_organisation_ok() -> AsyncMock:
@@ -742,6 +754,305 @@ async def test_create_assignment_unknown_reporting_manager_rejected(
                 expected_version=None,
                 actor_user_id=uuid4(),
             )
+
+
+# --- Reporting manager lifecycle: eligibility, explicit removal, hierarchy lock ---------------
+
+
+def _wire_reporting_manager(
+    service: EmployeeAssignmentService,
+    *,
+    company_id: object,
+    employee_id: object,
+    manager_id: object | None = None,
+    manager_active: bool = True,
+    manager_employment: Employment | None = None,
+    current: EmployeeAssignment | None = None,
+) -> None:
+    """The employee being assigned is always valid; the manager (if any) is configurable."""
+
+    async def _get_employee(
+        _session: object,
+        *,
+        company_id: object,
+        employee_id: object,
+        visible_employee_ids: object = None,
+    ) -> Employee | None:
+        if employee_id == manager_id:
+            return _employee(id=manager_id, company_id=company_id, is_active=manager_active)
+        return _employee(id=employee_id, company_id=company_id)
+
+    async def _employment_as_of(
+        _session: object, *, company_id: object, employee_id: object, as_of: date
+    ) -> Employment | None:
+        if employee_id == manager_id:
+            return manager_employment
+        return _employment(company_id=company_id, employee_id=employee_id)
+
+    service._employee_repo.get_employee.side_effect = _get_employee
+    service._employment_repo.get_employment_as_of.side_effect = _employment_as_of
+    service._repo.get_current_assignment.return_value = current
+    service._repo.close_assignment.return_value = (
+        _assignment(id=current.id, effective_to=date(2028, 3, 31), version=2) if current else None
+    )
+    service._repo.insert_assignment.return_value = _assignment(
+        company_id=company_id, employee_id=employee_id
+    )
+
+
+def _transfer_body(**overrides: object) -> AssignmentCreate:
+    fields: dict[str, object] = {
+        "effective_from": date(2028, 4, 1),
+        "change_type": "MANAGER_CHANGE",
+    }
+    fields.update(overrides)
+    return AssignmentCreate(**fields)  # type: ignore[arg-type]
+
+
+async def _create(
+    service: EmployeeAssignmentService,
+    company_id: object,
+    employee_id: object,
+    body: AssignmentCreate,
+    *,
+    expected_version: int | None = 1,
+) -> None:
+    # The pending-request impact runs real queries (covered by the integration tests in
+    # `integration/modules/employee/test_manager_change_*`); this mocked session has none to give.
+    no_impact = AsyncMock(
+        return_value=(PendingRequestCounts(leave=0, attendance_regularization=0, overtime=0), "t")
+    )
+    with (
+        _patch_organisation(_mock_organisation_ok()),
+        patch.object(service, "_pending_manager_change_impact", no_impact),
+    ):
+        await service.create_assignment(
+            company_id,  # type: ignore[arg-type]
+            employee_id,  # type: ignore[arg-type]
+            body,
+            expected_version=expected_version,
+            actor_user_id=uuid4(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_eligible_manager_is_accepted(service: EmployeeAssignmentService) -> None:
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    current = _assignment(company_id=company_id, employee_id=employee_id)
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_employment=_employment(company_id=company_id, employee_id=manager_id),
+        current=current,
+    )
+
+    await _create(service, company_id, employee_id, _transfer_body(reporting_manager_id=manager_id))
+
+    insert_data = service._repo.insert_assignment.call_args.kwargs["data"]
+    assert insert_data["reporting_manager_id"] == manager_id
+
+
+@pytest.mark.asyncio
+async def test_deactivated_manager_rejected(service: EmployeeAssignmentService) -> None:
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_active=False,
+        manager_employment=_employment(company_id=company_id, employee_id=manager_id),
+        current=_assignment(company_id=company_id, employee_id=employee_id),
+    )
+
+    with pytest.raises(InvalidReportingManagerError, match="deactivated"):
+        await _create(
+            service, company_id, employee_id, _transfer_body(reporting_manager_id=manager_id)
+        )
+    service._repo.insert_assignment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_manager_without_covering_employment_rejected(
+    service: EmployeeAssignmentService,
+) -> None:
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_employment=None,
+        current=_assignment(company_id=company_id, employee_id=employee_id),
+    )
+
+    with pytest.raises(InvalidReportingManagerError, match="no employment covering"):
+        await _create(
+            service, company_id, employee_id, _transfer_body(reporting_manager_id=manager_id)
+        )
+    service._repo.insert_assignment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_terminated_manager_rejected_even_inside_notice_period(
+    service: EmployeeAssignmentService,
+) -> None:
+    """Termination leaves the episode covering dates up to `last_working_day` but flips it to
+    `TERMINATED`; a manager on notice is still not a valid new manager."""
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_employment=_employment(
+            company_id=company_id,
+            employee_id=manager_id,
+            status="TERMINATED",
+            last_working_day=date(2028, 6, 30),
+        ),
+        current=_assignment(company_id=company_id, employee_id=employee_id),
+    )
+
+    with pytest.raises(InvalidReportingManagerError, match="employment has ended"):
+        await _create(
+            service, company_id, employee_id, _transfer_body(reporting_manager_id=manager_id)
+        )
+    service._repo.insert_assignment.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_carried_forward_manager_is_not_re_checked_for_eligibility(
+    service: EmployeeAssignmentService,
+) -> None:
+    """A manager who left must not block an unrelated change to their report: eligibility applies
+    to choosing a manager, not to leaving one in place."""
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    current = _assignment(
+        company_id=company_id, employee_id=employee_id, reporting_manager_id=manager_id
+    )
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_active=False,
+        manager_employment=None,
+        current=current,
+    )
+
+    await _create(service, company_id, employee_id, _transfer_body(change_type="TRANSFER"))
+
+    insert_data = service._repo.insert_assignment.call_args.kwargs["data"]
+    assert insert_data["reporting_manager_id"] == manager_id
+
+
+@pytest.mark.asyncio
+async def test_resubmitting_the_current_manager_is_not_re_checked_for_eligibility(
+    service: EmployeeAssignmentService,
+) -> None:
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    current = _assignment(
+        company_id=company_id, employee_id=employee_id, reporting_manager_id=manager_id
+    )
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_active=False,
+        manager_employment=None,
+        current=current,
+    )
+
+    await _create(
+        service,
+        company_id,
+        employee_id,
+        _transfer_body(change_type="TRANSFER", reporting_manager_id=manager_id),
+    )
+
+    insert_data = service._repo.insert_assignment.call_args.kwargs["data"]
+    assert insert_data["reporting_manager_id"] == manager_id
+
+
+@pytest.mark.asyncio
+async def test_clear_reporting_manager_removes_it(service: EmployeeAssignmentService) -> None:
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    current = _assignment(
+        company_id=company_id, employee_id=employee_id, reporting_manager_id=manager_id
+    )
+    _wire_reporting_manager(
+        service, company_id=company_id, employee_id=employee_id, current=current
+    )
+
+    await _create(service, company_id, employee_id, _transfer_body(clear_reporting_manager=True))
+
+    insert_data = service._repo.insert_assignment.call_args.kwargs["data"]
+    assert insert_data["reporting_manager_id"] is None
+    # The prior row is closed, not overwritten — history is preserved.
+    assert service._repo.close_assignment.call_args.kwargs["effective_to"] == date(2028, 3, 31)
+
+
+@pytest.mark.asyncio
+async def test_omitted_reporting_manager_is_carried_forward(
+    service: EmployeeAssignmentService,
+) -> None:
+    """`reporting_manager_id: null` (what the web form sends for a blank field) is *not* removal."""
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    current = _assignment(
+        company_id=company_id, employee_id=employee_id, reporting_manager_id=manager_id
+    )
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_employment=_employment(company_id=company_id, employee_id=manager_id),
+        current=current,
+    )
+
+    await _create(
+        service,
+        company_id,
+        employee_id,
+        _transfer_body(change_type="TRANSFER", reporting_manager_id=None),
+    )
+
+    insert_data = service._repo.insert_assignment.call_args.kwargs["data"]
+    assert insert_data["reporting_manager_id"] == manager_id
+
+
+def test_clear_and_named_manager_are_mutually_exclusive() -> None:
+    with pytest.raises(ValidationError, match="cannot be combined"):
+        _transfer_body(reporting_manager_id=uuid4(), clear_reporting_manager=True)
+
+
+@pytest.mark.asyncio
+async def test_hierarchy_lock_taken_only_when_a_manager_is_named(
+    service: EmployeeAssignmentService, reporting_lock: AsyncMock
+) -> None:
+    company_id, employee_id, manager_id = uuid4(), uuid4(), uuid4()
+    current = _assignment(
+        company_id=company_id, employee_id=employee_id, reporting_manager_id=manager_id
+    )
+    _wire_reporting_manager(
+        service,
+        company_id=company_id,
+        employee_id=employee_id,
+        manager_id=manager_id,
+        manager_employment=_employment(company_id=company_id, employee_id=manager_id),
+        current=current,
+    )
+
+    await _create(service, company_id, employee_id, _transfer_body(change_type="TRANSFER"))
+    await _create(service, company_id, employee_id, _transfer_body(clear_reporting_manager=True))
+    reporting_lock.assert_not_awaited()
+
+    await _create(service, company_id, employee_id, _transfer_body(reporting_manager_id=manager_id))
+    reporting_lock.assert_awaited_once_with(service._session, company_id)
 
 
 # --- GiST exclusion constraint race backstop ------------------------------------------------
