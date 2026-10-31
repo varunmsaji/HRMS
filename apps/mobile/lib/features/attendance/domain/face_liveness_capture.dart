@@ -91,8 +91,13 @@ sealed class FaceCaptureOutcome {
 
 /// Frames held in memory only; the camera's temporary files are already deleted.
 class FaceCaptureFrames extends FaceCaptureOutcome {
-  const FaceCaptureFrames(this.frames);
+  const FaceCaptureFrames(this.frames, {this.activeLivenessPassed = false});
   final List<Uint8List> frames;
+
+  /// True only when the capture screen ran and completed the on-device active challenge for
+  /// THESE frames. The punch flow refuses to submit without it when active liveness is on.
+  /// It is a client-side gate and is not sent to the server.
+  final bool activeLivenessPassed;
 }
 
 class FaceCaptureCancelled extends FaceCaptureOutcome {

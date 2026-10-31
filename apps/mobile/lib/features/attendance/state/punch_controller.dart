@@ -9,6 +9,7 @@ import '../domain/face_liveness_capture.dart';
 import '../domain/outside_shift_window.dart';
 import '../domain/punch_location.dart';
 import '../presentation/punch_location_flow.dart';
+import 'active_liveness_config.dart';
 
 /// Where a face punch is in its flow (drives the face card's sentence and disables its buttons).
 enum FacePhase { idle, locating, challenge, capturing, verifying }
@@ -206,8 +207,14 @@ class PunchController extends StateNotifier<PunchState> {
       _patch(facePhase: FacePhase.capturing);
       final outcome = await ui.captureFace(session);
       switch (outcome) {
-        case FaceCaptureFrames(frames: final captured):
+        case FaceCaptureFrames(frames: final captured, activeLivenessPassed: final live):
           frames = captured;
+          // Defence in depth: when active liveness is required, frames that did not come out of
+          // a completed challenge are never submitted, whatever produced them.
+          if (_ref.read(activeLivenessConfigProvider).enabled && !live) {
+            _say(ui, 'Face verification could not be completed. Please try again.');
+            return;
+          }
         case FaceCaptureCancelled():
           return;
         case FaceCapturePermissionDenied():

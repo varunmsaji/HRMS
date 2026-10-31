@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' show Random;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -7,7 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
 import '../data/attendance_repository.dart' show FaceLivenessSession;
+import '../domain/active_liveness.dart';
 import '../domain/face_liveness_capture.dart';
+import 'active_liveness_panel.dart';
 import 'camera_input_image.dart';
 
 /// Captures the frames for one server-issued liveness challenge: live camera + on-device
@@ -17,9 +20,16 @@ import 'camera_input_image.dart';
 /// Frames live in memory only (each camera temp file is deleted as soon as it is read) and are
 /// handed straight to the caller. No liveness decision is made here — the server makes it.
 class FaceLivenessCaptureScreen extends StatefulWidget {
-  const FaceLivenessCaptureScreen({super.key, required this.session});
+  const FaceLivenessCaptureScreen({super.key, required this.session, this.liveness = const ActiveLivenessConfig(), this.random});
 
   final FaceLivenessSession session;
+
+  /// When [ActiveLivenessConfig.enabled], a randomized on-device challenge must be completed
+  /// before any frame is captured. Disabled = the original quality-gate-only behaviour.
+  final ActiveLivenessConfig liveness;
+
+  /// Test seam; production uses a secure random per attempt.
+  final Random? random;
 
   @override
   State<FaceLivenessCaptureScreen> createState() => _FaceLivenessCaptureScreenState();
@@ -31,6 +41,8 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
   FaceDetector? _detector;
   final FaceCaptureGate _gate = FaceCaptureGate();
   Timer? _expiryTimer;
+  Timer? _livenessTimer;
+  ActiveLivenessEngine? _engine;
   bool _processingFrame = false;
   bool _capturing = false;
   bool _finished = false;
@@ -43,6 +55,16 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (widget.liveness.enabled) {
+      _engine = ActiveLivenessEngine(config: widget.liveness, random: widget.random)..start();
+      _livenessTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+        final engine = _engine;
+        if (engine == null || _finished) return;
+        final before = engine.state;
+        engine.checkTimeout(DateTime.now());
+        if (engine.state != before && mounted) setState(() {});
+      });
+    }
     _expiryTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!challengeStillUsable(widget.session.expiresAt, DateTime.now())) _finish(const FaceCaptureExpired());
     });
@@ -53,6 +75,8 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
+    _livenessTimer?.cancel();
+    _engine?.cancel(); // destroys the sequence and any progress; late frames are ignored
     _stopCamera();
     super.dispose();
   }
@@ -96,6 +120,8 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
       }
       setState(() => _camera = controller);
       await controller.startImageStream(_onFrame);
+      _engine?.cameraReady(DateTime.now());
+      if (mounted) setState(() {});
     } on CameraException catch (e) {
       _finish(e.code.contains('AccessDenied') || e.code.contains('Restricted')
           ? const FaceCapturePermissionDenied()
@@ -122,12 +148,17 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
     if (_finished) return;
     _finished = true;
     _expiryTimer?.cancel();
+    _livenessTimer?.cancel();
     _stopCamera();
     if (mounted) Navigator.of(context).pop(outcome);
   }
 
   Future<void> _onFrame(CameraImage image) async {
     if (_processingFrame || _capturing || _finished) return;
+    final engine = _engine;
+    // Backpressure: one frame in flight at a time, and none at all once the attempt has ended.
+    if (engine != null && !engine.passed && !engine.consumesFrames) return;
+    final session = engine?.sessionId ?? 0;
     final camera = _cameraDescription;
     final controller = _camera;
     final detector = _detector;
@@ -137,15 +168,25 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
     _processingFrame = true;
     try {
       final faces = await detector.processImage(input);
+      if (_finished) return;
       final face = faces.length == 1 ? faces.first : null;
-      final hint = _gate.accept(FaceFrameReading(
+      final reading = FaceFrameReading(
         faceCount: faces.length,
         faceWidthFraction: face == null ? null : face.boundingBox.width / uprightWidth(input),
         yaw: face?.headEulerAngleY,
         pitch: face?.headEulerAngleX,
         leftEyeOpen: face?.leftEyeOpenProbability,
         rightEyeOpen: face?.rightEyeOpenProbability,
-      ));
+      );
+      if (engine != null && !engine.passed) {
+        // Challenge stage. The session id was read before the await, so a result that belongs
+        // to an earlier attempt is ignored by the engine.
+        final before = (engine.state, engine.hint, engine.challengeIndex);
+        engine.accept(reading, DateTime.now(), forSession: session);
+        if (mounted && before != (engine.state, engine.hint, engine.challengeIndex)) setState(() {});
+        return;
+      }
+      final hint = _gate.accept(reading);
       if (mounted && hint != _hint) setState(() => _hint = hint);
       if (_gate.ready) await _captureFrames();
     } catch (_) {
@@ -158,6 +199,8 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
   Future<void> _captureFrames() async {
     final controller = _camera;
     if (controller == null || _capturing) return;
+    // Never capture for a punch unless the required challenge was completed in this session.
+    if (_engine != null && !_engine!.passed) return;
     _capturing = true;
     final frames = <Uint8List>[];
     try {
@@ -173,16 +216,33 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
         _finish(const FaceCaptureExpired());
         return;
       }
-      _finish(FaceCaptureFrames(frames));
+      if (_engine != null && !_engine!.passed) {
+        frames.clear();
+        _finish(const FaceCaptureFailed('Face verification could not be completed. Please try again.'));
+        return;
+      }
+      _finish(FaceCaptureFrames(frames, activeLivenessPassed: _engine?.passed ?? false));
     } catch (_) {
       frames.clear();
       _finish(const FaceCaptureFailed('Could not take the photos. Please try again.'));
     }
   }
 
+  void _retryLiveness() {
+    final engine = _engine;
+    if (engine == null || _finished) return;
+    // A new session with a new random sequence; nothing from the failed attempt survives.
+    if (engine.retry()) {
+      _gate.accept(const FaceFrameReading(faceCount: 0)); // reset the quality streak
+      engine.cameraReady(DateTime.now());
+    }
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _camera;
+    final engine = _engine;
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
@@ -195,24 +255,44 @@ class _FaceLivenessCaptureScreenState extends State<FaceLivenessCaptureScreen> w
       ),
       body: SafeArea(
         child: Column(children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-            child: Column(children: [
+          ConstrainedBox(
+            // Large text on a small screen scrolls here instead of squeezing out the camera.
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.42),
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Column(children: [
               Text(
                 'Hold the phone yourself and look straight at the camera.',
                 style: Theme.of(context).textTheme.titleMedium,
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 4),
-              Semantics(
-                liveRegion: true,
-                child: Text(
-                  faceCaptureHintText(_hint),
-                  style: TextStyle(color: scheme.onSurfaceVariant),
-                  textAlign: TextAlign.center,
+              if (engine != null && !engine.passed)
+                ActiveLivenessPanel(
+                  state: engine.state,
+                  hint: engine.hint,
+                  challenge: engine.currentChallenge,
+                  challengeIndex: engine.challengeIndex,
+                  challengeCount: engine.challengeCount,
+                  attemptsExhausted: engine.attemptsExhausted,
+                  onRetry: _retryLiveness,
+                  onClose: () => _finish(engine.attemptsExhausted
+                      ? const FaceCaptureFailed('Liveness verification could not be completed. Please try again later.')
+                      : const FaceCaptureCancelled()),
+                )
+              else
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    faceCaptureHintText(_hint),
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                    textAlign: TextAlign.center,
+                  ),
                 ),
-              ),
             ]),
+          ),
+            ),
           ),
           Expanded(
             child: Center(

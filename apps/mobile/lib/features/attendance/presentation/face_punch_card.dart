@@ -6,6 +6,7 @@ import '../data/attendance_repository.dart';
 import '../domain/face_liveness_capture.dart';
 import 'face_enrollment_screen.dart';
 import 'face_liveness_capture_screen.dart';
+import '../state/active_liveness_config.dart';
 import '../state/punch_controller.dart';
 import 'context_punch_ui.dart';
 import '../../../core/theme/employee_theme_scope.dart';
@@ -15,9 +16,10 @@ import '../../../core/theme/employee_tokens.dart';
 typedef FaceLivenessCapture = Future<FaceCaptureOutcome> Function(BuildContext context, FaceLivenessSession session);
 
 final faceLivenessCaptureProvider = Provider<FaceLivenessCapture>((ref) {
+  final liveness = ref.watch(activeLivenessConfigProvider);
   return (context, session) async {
     final outcome = await Navigator.of(context).push<FaceCaptureOutcome>(
-      MaterialPageRoute(fullscreenDialog: true, builder: (_) => FaceLivenessCaptureScreen(session: session)),
+      MaterialPageRoute(fullscreenDialog: true, builder: (_) => FaceLivenessCaptureScreen(session: session, liveness: liveness)),
     );
     return outcome ?? const FaceCaptureCancelled();
   };
