@@ -278,3 +278,66 @@ async def test_deactivate_shift_is_semantic_wrapper_around_update_shift(
 
     assert result.is_active is False
     assert service._audit.record.call_args.kwargs["action"] == "SHIFT_DEACTIVATED"
+
+
+class _FakeShift:
+    def __init__(self, *, is_active: bool) -> None:
+        self.id = uuid4()
+        self.is_active = is_active
+
+
+class _FakeRepo:
+    def __init__(self, refs: dict[str, int]) -> None:
+        self._refs = refs
+        self._session = None
+
+    async def count_shift_references(self, session, *, company_id, shift_id):  # type: ignore[no-untyped-def]
+        return self._refs
+
+
+_NO_REFS = {
+    "assignment_rows": 0,
+    "active_employees": 0,
+    "roster_rows": 0,
+    "attendance_days": 0,
+    "regularization_requests": 0,
+    "published_versions": 1,
+    "draft_versions": 0,
+}
+
+
+async def _deletion_check(refs: dict[str, int], *, is_active: bool):  # type: ignore[no-untyped-def]
+    service = OrganisationService.__new__(OrganisationService)
+    service._repo = _FakeRepo(refs)  # type: ignore[attr-defined]
+    service._session = None  # type: ignore[attr-defined]
+    return await service._shift_deletion_check(uuid4(), _FakeShift(is_active=is_active))  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_deletion_check_allows_an_inactive_never_used_shift() -> None:
+    check = await _deletion_check(_NO_REFS, is_active=False)
+    assert check.can_delete is True
+    assert check.blockers == []
+    assert check.published_version_count == 1
+
+
+@pytest.mark.asyncio
+async def test_deletion_check_reports_every_blocker_at_once() -> None:
+    refs = {
+        **_NO_REFS,
+        "assignment_rows": 4,
+        "active_employees": 2,
+        "roster_rows": 3,
+        "attendance_days": 10,
+        "regularization_requests": 1,
+    }
+    check = await _deletion_check(refs, is_active=True)
+    assert check.can_delete is False
+    assert {b.code for b in check.blockers} == {
+        "SHIFT_STILL_ACTIVE",
+        "SHIFT_HAS_ACTIVE_EMPLOYEES",
+        "SHIFT_HAS_ASSIGNMENT_HISTORY",
+        "SHIFT_HAS_ROSTER_ENTRIES",
+        "SHIFT_HAS_ATTENDANCE_RECORDS",
+        "SHIFT_HAS_REGULARIZATION_REQUESTS",
+    }

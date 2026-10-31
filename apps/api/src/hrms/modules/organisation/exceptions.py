@@ -962,3 +962,45 @@ class InvalidPolicyScopeError(ValidationError):
         super().__init__(
             message, details=[{"field": "scope_id", "code": self.code, "message": message}]
         )
+
+
+class ShiftDeletionBlockedError(ConflictError):
+    """A shift that is still active, or that any employee, roster, attendance or regularisation
+    record points at, can never be deleted — doing so would orphan or rewrite payroll-relevant
+    history. Every blocker is returned so the operator sees the full picture in one go."""
+
+    code = "SHIFT_DELETE_BLOCKED"
+
+    def __init__(self, *, blockers: list[dict[str, Any]]) -> None:
+        message = "This shift cannot be deleted: " + "; ".join(b["message"] for b in blockers)
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "shift",
+                    "code": b["code"],
+                    "message": b["message"],
+                    "context": {"count": b["count"]},
+                }
+                for b in blockers
+            ],
+        )
+
+
+class ShiftDeleteConfirmationMismatchError(ValidationError):
+    """The typed confirmation did not exactly match the shift's name."""
+
+    code = "SHIFT_DELETE_CONFIRMATION_MISMATCH"
+
+    def __init__(self) -> None:
+        message = "Type the shift's exact name to confirm deletion"
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "confirm_name",
+                    "code": "SHIFT_DELETE_CONFIRMATION_MISMATCH",
+                    "message": message,
+                }
+            ],
+        )

@@ -156,6 +156,11 @@ kind = "company_level"
 reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."
 
 [[permission]]
+code = "ONBOARDING.CANCEL"
+kind = "company_level"
+reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (seeded in organisation/service.py via onboarding_permission_rows with DataScopeLevel.COMPANY)."
+
+[[permission]]
 code = "ONBOARDING.CREATE"
 kind = "company_level"
 reason = "Onboarding cases are company-level records created before an employee exists, so there is no employee scope to apply. Shipped roles hold ONBOARDING.* at COMPANY only (asserted live)."

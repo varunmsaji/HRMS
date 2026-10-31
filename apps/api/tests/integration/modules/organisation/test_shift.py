@@ -76,6 +76,31 @@ async def test_list_shifts_empty_state(client: AsyncClient, seeded_plan_catalogu
 
 
 @pytest.mark.asyncio
+async def test_create_shift_auto_assigns_sequential_code(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        codes = []
+        for name in ("Morning", "Evening", "Night"):
+            response = await client.post("/v1/shifts", headers=headers, json={"name": name})
+            assert response.status_code == 201
+            codes.append(response.json()["data"]["code"])
+        assert codes == ["SHF-001", "SHF-002", "SHF-003"]
+
+        # An explicit code is kept as given and does not disturb the sequence.
+        explicit = await client.post(
+            "/v1/shifts", headers=headers, json={"name": "Custom", "code": "GEN"}
+        )
+        assert explicit.json()["data"]["code"] == "GEN"
+        after = await client.post("/v1/shifts", headers=headers, json={"name": "Next"})
+        assert after.json()["data"]["code"] == "SHF-004"
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
 async def test_create_shift_success(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
@@ -358,6 +383,75 @@ async def test_multiple_shifts_supported(client: AsyncClient, seeded_plan_catalo
         listed = await client.get("/v1/shifts", headers=headers)
         codes = {row["code"] for row in listed.json()["data"]}
         assert codes == {"GEN", "NGT"}
+    finally:
+        await _cleanup_shifts(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_delete_shift_safeguards(client: AsyncClient, seeded_plan_catalogue: None) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        shift = await _create_shift(client, headers, code="DEL", name="Delete Me")
+        sid = shift["id"]
+        good = {
+            "confirm_name": "Delete Me",
+            "reason": "Created by mistake during setup",
+            "acknowledge_irreversible": True,
+        }
+
+        # 1. Preview: an active shift is blocked, with the reason itemised.
+        check = (await client.get(f"/v1/shifts/{sid}/deletion-check", headers=headers)).json()[
+            "data"
+        ]
+        assert check["can_delete"] is False
+        assert [b["code"] for b in check["blockers"]] == ["SHIFT_STILL_ACTIVE"]
+
+        # 2. Deleting while active is refused.
+        response = await client.post(
+            f"/v1/shifts/{sid}/delete", headers={**headers, "If-Match": "1"}, json=good
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "SHIFT_DELETE_BLOCKED"
+
+        # 3. Deactivate, then every body-level safeguard still applies.
+        deact = await client.delete(f"/v1/shifts/{sid}", headers={**headers, "If-Match": "1"})
+        assert deact.status_code == 200
+        version = str(deact.json()["data"]["version"])
+        url = f"/v1/shifts/{sid}/delete"
+        h = {**headers, "If-Match": version}
+        wrong_name = await client.post(url, headers=h, json={**good, "confirm_name": "nope"})
+        assert wrong_name.status_code == 422
+        assert wrong_name.json()["error"]["code"] == "SHIFT_DELETE_CONFIRMATION_MISMATCH"
+        short = await client.post(url, headers=h, json={**good, "reason": "too short"})
+        assert short.status_code == 422
+        no_ack = await client.post(url, headers=h, json={**good, "acknowledge_irreversible": False})
+        assert no_ack.status_code == 422
+        stale = await client.post(url, headers={**headers, "If-Match": "1"}, json=good)
+        assert stale.status_code == 409
+        assert stale.json()["error"]["code"] == "STALE_RESOURCE"
+        still_there = await client.get(f"/v1/shifts/{sid}", headers=headers)
+        assert still_there.status_code == 200
+
+        # 4. All guards satisfied -> deleted, gone from list and get, audit-logged.
+        done = await client.post(url, headers=h, json=good)
+        assert done.status_code == 204
+        assert (await client.get(f"/v1/shifts/{sid}", headers=headers)).status_code == 404
+        listed = (await client.get("/v1/shifts", headers=headers)).json()["data"]
+        assert all(row["id"] != sid for row in listed)
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            count = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM audit_log WHERE entity_id = :i "
+                        "AND action = 'SHIFT_DELETED'"
+                    ),
+                    {"i": sid},
+                )
+            ).scalar_one()
+        assert count == 1
     finally:
         await _cleanup_shifts(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

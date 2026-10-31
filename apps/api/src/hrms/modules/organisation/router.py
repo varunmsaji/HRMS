@@ -46,6 +46,11 @@ from hrms.modules.organisation.employee_calendar import (
     EmployeeCalendarService,
     get_employee_calendar_service,
 )
+from hrms.modules.organisation.my_work_profile import (
+    MyWorkProfileRead,
+    MyWorkProfileService,
+    get_my_work_profile_service,
+)
 from hrms.modules.organisation.permissions import (
     DASHBOARD_COMPANY_VIEW,
     ORG_BRANCH_MANAGE,
@@ -94,6 +99,8 @@ from hrms.modules.organisation.schemas import (
     PolicyAssignmentRead,
     RegistrationConfigRead,
     ShiftCreate,
+    ShiftDeleteRequest,
+    ShiftDeletionCheck,
     ShiftRead,
     ShiftUpdate,
     ShiftVersionCreate,
@@ -725,6 +732,42 @@ async def deactivate_shift(
         user_agent=request.headers.get("User-Agent"),
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/shifts/{shift_id}/deletion-check", status_code=status.HTTP_200_OK)
+async def check_shift_deletion(
+    shift_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> DataEnvelope[ShiftDeletionCheck]:
+    """Read-only preview of whether the shift can be deleted and, if not, every reason why."""
+    data = await service.get_shift_deletion_check(tenant.company_id, shift_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/shifts/{shift_id}/delete", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_shift(
+    shift_id: UUID,
+    body: ShiftDeleteRequest,
+    request: Request,
+    if_match: Annotated[str, Header(alias="If-Match")],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> Response:
+    """Guarded, audited soft delete of a never-used, already-deactivated shift. A POST (not
+    DELETE) because it carries a confirmation body; `DELETE /shifts/{id}` stays deactivation."""
+    await service.delete_shift(
+        tenant.company_id,
+        shift_id,
+        body,
+        expected_version=parse_if_match(if_match),
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------
@@ -1572,4 +1615,28 @@ async def confirm_work_calendar_change(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/employee-work-profile/me", status_code=status.HTTP_200_OK)
+async def get_my_work_profile(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[MyWorkProfileService, Depends(get_my_work_profile_service)],
+) -> DataEnvelope[MyWorkProfileRead]:
+    """The caller's own current shift and work location (Home's "Shift assigned" / "Work
+    location"). Each is `null` when the placement carries none."""
+    if user.employee_id is None:
+        raise ValidationError(
+            "The caller has no linked employee record",
+            details=[
+                {
+                    "field": "employee",
+                    "code": "EMPLOYEE_RECORD_REQUIRED",
+                    "message": "No employee record is linked to this account",
+                }
+            ],
+        )
+    data = await service.get_my_work_profile(tenant.company_id, user.employee_id)
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))

@@ -29,9 +29,11 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.auth.dependencies import get_current_user
 from hrms.core.auth.types import AuthenticatedUser
+from hrms.core.db.session import get_session
 from hrms.core.errors.base import PermissionDeniedError, ValidationError
 from hrms.core.rbac.dependencies import get_rbac_service, require_permission
 from hrms.core.rbac.service import RbacService
@@ -60,6 +62,8 @@ from hrms.modules.attendance.face_rate_limit import (
 )
 from hrms.modules.attendance.face_service import FaceEnrollmentService, FacePunchService
 from hrms.modules.attendance.geofence_form import parse_form_location
+from hrms.modules.attendance.overview import AttendanceOverviewService
+from hrms.modules.attendance.overview_schemas import AttendanceOverviewRead
 from hrms.modules.attendance.permissions import (
     ATTENDANCE_FACE_ENROLLMENT_MANAGE,
     ATTENDANCE_LEAVE_PROJECTION_SYNC,
@@ -146,6 +150,7 @@ from hrms.modules.attendance.service import (
     ShiftRosterService,
 )
 from hrms.modules.identity.schemas import build_meta
+from hrms.modules.organisation.permissions import DASHBOARD_COMPANY_VIEW
 from hrms.shared.if_match import parse_if_match
 from hrms.shared.pagination import (
     DataEnvelope,
@@ -904,6 +909,38 @@ async def list_punches(
         pagination=build_pagination_meta(page, total=total),
         meta=build_meta(current_request_id() or "unknown"),
     )
+
+
+@router.get("/dashboards/company/attendance-overview", status_code=status.HTTP_200_OK)
+async def get_company_attendance_overview(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    _dashboard: Annotated[object, Depends(require_permission(DASHBOARD_COMPANY_VIEW))],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    attendance_date: Annotated[date | None, Query(alias="date")] = None,
+    department_id: Annotated[UUID | None, Query()] = None,
+    branch_id: Annotated[UUID | None, Query()] = None,
+) -> DataEnvelope[AttendanceOverviewRead]:
+    """Today's (or a past date's) workforce status, grouped from the persisted attendance days
+    the calculation engine already wrote. Needs both the company-dashboard grant and attendance
+    view; the headcount is limited to the employees the caller's attendance scope can see."""
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    data = await AttendanceOverviewService(session).overview(
+        tenant.company_id,
+        timezone=company.timezone,
+        attendance_date=attendance_date,
+        visible_employee_ids=visible_ids,
+        department_id=department_id,
+        branch_id=branch_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, delete, func, or_, select, text, update
+from sqlalchemy import Integer, and_, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import (
@@ -707,6 +707,65 @@ class OrganisationRepository:
         session.add(row)
         await session.flush()
         return row
+
+    async def next_auto_shift_code(self, session: AsyncSession, *, company_id: UUID) -> str:
+        """Next `SHF-NNN` code for the company. Serialised per company with a transaction-scoped
+        advisory lock (`shift.code` has no unique constraint), and soft-deleted rows are counted
+        so a code is never reused."""
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"shift_code:{company_id}"},
+        )
+        stmt = select(
+            func.coalesce(
+                func.max(func.substring(Shift.code, r"^SHF-(\d+)$").cast(Integer)),
+                0,
+            )
+        ).where(Shift.company_id == company_id)
+        highest = (await session.execute(stmt)).scalar_one()
+        return f"SHF-{highest + 1:03d}"
+
+    async def count_shift_references(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+    ) -> dict[str, int]:
+        """Every record elsewhere that points at this shift. Soft-deleted rows are counted on
+        purpose: they are still history. Read-only SQL (no cross-module model import)."""
+        queries = {
+            "assignment_rows": "SELECT count(*) FROM employee_assignment "
+            "WHERE company_id = :c AND shift_id = :s",
+            "active_employees": "SELECT count(DISTINCT a.employee_id) FROM employee_assignment a "
+            "JOIN employee e ON e.id = a.employee_id "
+            "WHERE a.company_id = :c AND a.shift_id = :s AND a.deleted_at IS NULL "
+            "AND e.is_active AND e.deleted_at IS NULL "
+            "AND (a.effective_to IS NULL OR a.effective_to >= CURRENT_DATE)",
+            "roster_rows": "SELECT count(*) FROM shift_roster "
+            "WHERE company_id = :c AND shift_id = :s",
+            "attendance_days": "SELECT count(*) FROM attendance_day "
+            "WHERE company_id = :c AND shift_id = :s",
+            "regularization_requests": "SELECT count(*) FROM attendance_regularization_request "
+            "WHERE company_id = :c AND requested_shift_id = :s",
+            "published_versions": "SELECT count(*) FROM shift_version "
+            "WHERE company_id = :c AND shift_id = :s AND status = 'PUBLISHED'",
+            "draft_versions": "SELECT count(*) FROM shift_version "
+            "WHERE company_id = :c AND shift_id = :s AND status = 'DRAFT'",
+        }
+        params = {"c": str(company_id), "s": str(shift_id)}
+        return {
+            key: int((await session.execute(text(sql), params)).scalar_one())
+            for key, sql in queries.items()
+        }
+
+    async def lock_shift(
+        self, session: AsyncSession, *, company_id: UUID, shift_id: UUID
+    ) -> Shift | None:
+        """`FOR UPDATE` (not just a plain UPDATE) so a concurrent insert that references this
+        shift — which takes a `FOR KEY SHARE` lock through its foreign key — must wait for us."""
+        stmt = (
+            select(Shift)
+            .where(Shift.id == shift_id, Shift.company_id == company_id, Shift.deleted_at.is_(None))
+            .with_for_update()
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     async def list_shifts(self, session: AsyncSession, *, company_id: UUID) -> list[Shift]:
         # API-01 Tier 2 decision — see `list_branches`: bounded config collection (shift

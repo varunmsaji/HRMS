@@ -1106,6 +1106,48 @@ class ShiftRead(BaseModel):
     draft_version_id: UUID | None = None
 
 
+class ShiftDeleteRequest(BaseModel):
+    """Body for `POST /shifts/{id}/delete` — deliberate friction: the exact shift name typed
+    back, a written reason (kept in the audit log), and an explicit acknowledgement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_name: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=10, max_length=500)
+    acknowledge_irreversible: bool
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) < 10:
+            raise ValueError("reason must be at least 10 characters")
+        return stripped
+
+    @field_validator("acknowledge_irreversible")
+    @classmethod
+    def must_acknowledge(cls, value: bool) -> bool:
+        if value is not True:
+            raise ValueError("You must acknowledge that deletion cannot be undone from the app")
+        return value
+
+
+class ShiftDeletionBlocker(BaseModel):
+    code: str
+    message: str
+    count: int
+
+
+class ShiftDeletionCheck(BaseModel):
+    """Read-only preview of whether (and why not) a shift can be deleted. Computed by the same
+    function the delete itself re-runs inside its transaction, so the two can never disagree."""
+
+    can_delete: bool
+    blockers: list[ShiftDeletionBlocker]
+    published_version_count: int
+    draft_version_count: int
+
+
 def shift_to_read(
     shift: "Shift",
     *,

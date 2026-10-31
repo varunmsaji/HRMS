@@ -77,6 +77,8 @@ from hrms.modules.organisation.exceptions import (
     PolicyAssignmentOverlapError,
     PolicyAssignmentVersionRequiredError,
     PolicyKindNotSupportedError,
+    ShiftDeleteConfirmationMismatchError,
+    ShiftDeletionBlockedError,
     ShiftVersionDraftAlreadyExistsError,
     ShiftVersionNotDraftError,
     ShiftVersionNotFoundForDateError,
@@ -153,6 +155,9 @@ from hrms.modules.organisation.schemas import (
     SetupStepSummary,
     ShiftBreakCreate,
     ShiftCreate,
+    ShiftDeleteRequest,
+    ShiftDeletionBlocker,
+    ShiftDeletionCheck,
     ShiftDutyBlockCreate,
     ShiftRead,
     ShiftUpdate,
@@ -2129,16 +2134,20 @@ class OrganisationService:
         evaluation columns are frozen-zero placeholders for new rows (never read again by W2+
         code — see `ShiftRead`'s field docstrings). A new shift is meaningless without a
         schedule, so an initial empty DRAFT `ShiftVersion` is created in the same transaction
-        rather than requiring a mandatory second round-trip."""
+        rather than requiring a mandatory second round-trip. A blank `code` is auto-assigned
+        (`SHF-001`, `SHF-002`, …)."""
         now = datetime.now(UTC)
         shift_id = uuid4()
+        code = (body.code or "").strip() or await self._repo.next_auto_shift_code(
+            self._session, company_id=company_id
+        )
         shift = await self._repo.insert_shift(
             self._session,
             data={
                 "id": shift_id,
                 "company_id": company_id,
                 "name": body.name,
-                "code": body.code,
+                "code": code,
                 "start_time": time(0, 0),
                 "end_time": time(0, 0),
                 "break_minutes_paid": 0,
@@ -2359,6 +2368,129 @@ class OrganisationService:
             expected_version=expected_version,
             actor_user_id=actor_user_id,
             ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    async def _shift_deletion_check(self, company_id: UUID, shift: Any) -> ShiftDeletionCheck:
+        refs = await self._repo.count_shift_references(
+            self._session, company_id=company_id, shift_id=shift.id
+        )
+        blockers: list[ShiftDeletionBlocker] = []
+
+        def block(code: str, message: str, count: int) -> None:
+            blockers.append(ShiftDeletionBlocker(code=code, message=message, count=count))
+
+        if shift.is_active:
+            block(
+                "SHIFT_STILL_ACTIVE",
+                "the shift is still active; deactivate it first",
+                1,
+            )
+        if refs["active_employees"]:
+            block(
+                "SHIFT_HAS_ACTIVE_EMPLOYEES",
+                f"{refs['active_employees']} active employee(s) are currently assigned to it",
+                refs["active_employees"],
+            )
+        past_only = refs["assignment_rows"]
+        if past_only:
+            block(
+                "SHIFT_HAS_ASSIGNMENT_HISTORY",
+                f"{past_only} employee assignment record(s), current or historical, use it",
+                past_only,
+            )
+        if refs["roster_rows"]:
+            block(
+                "SHIFT_HAS_ROSTER_ENTRIES",
+                f"{refs['roster_rows']} roster entr(ies) use it",
+                refs["roster_rows"],
+            )
+        if refs["attendance_days"]:
+            block(
+                "SHIFT_HAS_ATTENDANCE_RECORDS",
+                f"{refs['attendance_days']} attendance day record(s) were calculated against it",
+                refs["attendance_days"],
+            )
+        if refs["regularization_requests"]:
+            block(
+                "SHIFT_HAS_REGULARIZATION_REQUESTS",
+                f"{refs['regularization_requests']} attendance regularisation request(s) "
+                "reference it",
+                refs["regularization_requests"],
+            )
+        return ShiftDeletionCheck(
+            can_delete=not blockers,
+            blockers=blockers,
+            published_version_count=refs["published_versions"],
+            draft_version_count=refs["draft_versions"],
+        )
+
+    async def get_shift_deletion_check(
+        self, company_id: UUID, shift_id: UUID
+    ) -> ShiftDeletionCheck:
+        shift = await self._repo.get_shift(self._session, company_id=company_id, shift_id=shift_id)
+        if shift is None:
+            raise NotFoundError("Resource not found")
+        return await self._shift_deletion_check(company_id, shift)
+
+    async def delete_shift(
+        self,
+        company_id: UUID,
+        shift_id: UUID,
+        body: ShiftDeleteRequest,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        """Guarded removal of a shift that has never been used. A soft delete (`deleted_at`) —
+        FR-ORG-014 forbids hard deletes — so the row, its versions and the full audit trail
+        stay recoverable by an operator.
+
+        Safeguards, in order: the row is locked `FOR UPDATE`; the optimistic-concurrency token
+        must match; the deactivate-first rule and every reference check are re-run *inside* the
+        locked transaction (not trusted from the earlier preview); the typed name must match
+        exactly; a written reason is recorded in the audit log together with a full snapshot."""
+        shift = await self._repo.lock_shift(self._session, company_id=company_id, shift_id=shift_id)
+        if shift is None:
+            raise NotFoundError("Resource not found")
+        if shift.version != expected_version:
+            raise StaleResourceError(
+                "This shift has been modified by another request",
+                current=shift_to_audit_dict(shift_to_read(shift)),
+            )
+
+        check = await self._shift_deletion_check(company_id, shift)
+        if not check.can_delete:
+            raise ShiftDeletionBlockedError(blockers=[b.model_dump() for b in check.blockers])
+        if body.confirm_name != shift.name:
+            raise ShiftDeleteConfirmationMismatchError()
+
+        snapshot = shift_to_audit_dict(shift_to_read(shift))
+        snapshot["published_version_count"] = check.published_version_count
+        snapshot["draft_version_count"] = check.draft_version_count
+        now = datetime.now(UTC)
+        updated = await self._repo.update_shift(
+            self._session,
+            company_id=company_id,
+            shift_id=shift_id,
+            values={"deleted_at": now, "is_active": False},
+            expected_version=expected_version,
+            now=now,
+        )
+        if updated is None:
+            raise NotFoundError("Resource not found")
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_DELETED",
+            entity_type="shift",
+            entity_id=shift_id,
+            before=snapshot,
+            after={"deleted_at": now.isoformat(), "reason": body.reason},
+            ip=ip_address,
             user_agent=user_agent,
         )
 
