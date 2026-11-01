@@ -1,16 +1,18 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 
-import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
+import { DayRegularization } from "@/components/attendance/day/day-regularization";
+import { DaySummaryCard } from "@/components/attendance/day/day-summary";
+import { DayTimeline } from "@/components/attendance/day/day-timeline";
 import { KeepLeaveDialog } from "@/components/attendance/keep-leave-dialog";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { RegularizationRequestDialog } from "@/components/regularization/regularization-request-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -23,7 +25,11 @@ import {
 } from "@/components/ui/dialog";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
-import type { AttendanceDay } from "@/lib/attendance/types";
+import { buildTimeline, type BreakEventLite } from "@/lib/attendance/day-detail";
+import { employeeName as nameOf, type EmployeeLite } from "@/lib/attendance/dashboard";
+import type { AttendanceDay, Punch } from "@/lib/attendance/types";
+import { useAuth } from "@/lib/auth/auth-context";
+import type { RegularizationRequest } from "@/lib/regularization/types";
 import { formatDateTime, formatMinutes, zoneLabel } from "@/lib/attendance/format";
 import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
@@ -55,6 +61,13 @@ export default function AttendanceDayDetailPage() {
   const [recomputing, setRecomputing] = useState(false);
   const [keepLeaveOpen, setKeepLeaveOpen] = useState(false);
   const [showSnapshot, setShowSnapshot] = useState(false);
+  const { user } = useAuth();
+  const [employee, setEmployee] = useState<EmployeeLite | null>(null);
+  const [shiftName, setShiftName] = useState<string | null>(null);
+  const [punches, setPunches] = useState<Punch[] | null>(null);
+  const [breakEvents, setBreakEvents] = useState<BreakEventLite[]>([]);
+  const [requests, setRequests] = useState<RegularizationRequest[] | null>(null);
+  const [neighbours, setNeighbours] = useState<{ prev: string | null; next: string | null }>({ prev: null, next: null });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,6 +107,70 @@ export default function AttendanceDayDetailPage() {
     void load();
   }, [load]);
 
+  // Everything below is context for the day; each piece is best-effort and never blocks the page.
+  const dayId = day?.id;
+  const dayEmployee = day?.employee_id;
+  const dayDate = day?.attendance_date;
+  const dayShift = day?.shift_id;
+  useEffect(() => {
+    if (!dayId || !dayEmployee || !dayDate) return;
+    let cancelled = false;
+    const shift = (d: string, n: number) => {
+      const t = new Date(`${d}T00:00:00Z`);
+      t.setUTCDate(t.getUTCDate() + n);
+      return t.toISOString().slice(0, 10);
+    };
+    apiClient.get<EmployeeLite>(`/employees/${dayEmployee}`).then((e) => !cancelled && e && !Array.isArray(e) && setEmployee(e)).catch(() => {});
+    if (dayShift) {
+      apiClient
+        .get<{ id: string; name: string }[]>("/shifts")
+        .then((list) => {
+          const match = Array.isArray(list) ? list.find((s) => s.id === dayShift) : undefined;
+          if (!cancelled && match) setShiftName(match.name);
+        })
+        .catch(() => {});
+    }
+    const q = (o: Record<string, string>) => new URLSearchParams(o).toString();
+    apiClient
+      .get<Punch[]>(`/attendance/punches?${q({ employee_id: dayEmployee, date_from: dayDate, date_to: shift(dayDate, 1) })}`)
+      .then((list) => !cancelled && setPunches(Array.isArray(list) ? list : []))
+      .catch(() => !cancelled && setPunches([]));
+    apiClient
+      .get<{ events: BreakEventLite[] }>(`/attendance/breaks/day?${q({ employee_id: dayEmployee, date: dayDate })}`)
+      .then((d) => !cancelled && Array.isArray(d?.events) && setBreakEvents(d.events))
+      .catch(() => {});
+    apiClient
+      .get<RegularizationRequest[]>(`/regularizations?${q({ employee_id: dayEmployee })}`)
+      .then((list) => !cancelled && Array.isArray(list) && setRequests(list.filter((r) => r.attendance_date === dayDate)))
+      .catch(() => {});
+    apiClient
+      .get<AttendanceDay[]>(`/attendance/days?${q({ employee_id: dayEmployee, date_from: shift(dayDate, -1), date_to: shift(dayDate, 1) })}`)
+      .then((list) => {
+        if (cancelled || !Array.isArray(list)) return;
+        setNeighbours({
+          prev: list.find((d) => d.attendance_date === shift(dayDate, -1))?.id ?? null,
+          next: list.find((d) => d.attendance_date === shift(dayDate, 1))?.id ?? null,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [dayId, dayEmployee, dayDate, dayShift]);
+
+  const timeline = useMemo(
+    () => (day && punches !== null ? buildTimeline(day, punches, breakEvents) : null),
+    [day, punches, breakEvents],
+  );
+  const isOwnDay = Boolean(day && user?.employee_id && day.employee_id === user.employee_id);
+  const requestMode: "SELF" | "ON_BEHALF" | null = !day
+    ? null
+    : isOwnDay && can("ATTENDANCE.REGULARIZATION_REQUEST")
+      ? "SELF"
+      : can("ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF")
+        ? "ON_BEHALF"
+        : null;
+
   async function handleRecompute() {
     setRecomputing(true);
     try {
@@ -111,7 +188,7 @@ export default function AttendanceDayDetailPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Attendance day"
+        title={day && employee ? `${nameOf(employee, day.employee_id)} — attendance` : "Attendance day"}
         description={
           day
             ? // `DEC-TZ-06`/`CD-3` (SELECTED) — labels the zone every timestamp on this page is
@@ -127,11 +204,6 @@ export default function AttendanceDayDetailPage() {
             <Button type="button" variant="outline" onClick={() => router.push("/app/attendance")}>
               Back to attendance
             </Button>
-            {day && can("ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF") ? (
-              <Button type="button" variant="outline" onClick={() => setRegularizeOpen(true)}>
-                Regularize
-              </Button>
-            ) : null}
             {day &&
             can("ATTENDANCE.RECOMPUTE") &&
             day.work_on_leave_flagged &&
@@ -164,64 +236,54 @@ export default function AttendanceDayDetailPage() {
 
       {!loading && !error && day ? (
         <div className="space-y-6">
-          <div className="flex flex-wrap items-center gap-2">
-            <AttendanceStatusBadge status={day.attendance_status} />
-            {day.is_late ? <Badge variant="warning">Late</Badge> : null}
-            {day.is_early_out ? <Badge variant="warning">Early departure</Badge> : null}
-            {day.is_overtime ? <Badge variant="info">Overtime</Badge> : null}
-            {day.is_regularized ? <Badge variant="secondary">Regularized</Badge> : null}
-            {day.is_pending_approval ? <Badge variant="warning">Pending approval</Badge> : null}
-            {day.worked_on_holiday ? <Badge variant="info">Worked on holiday</Badge> : null}
-            {day.worked_on_weekly_off ? <Badge variant="info">Worked on weekly off</Badge> : null}
-            {day.missing_punch ? <Badge variant="danger">Missing punch</Badge> : null}
-            {day.work_on_leave_flagged && !day.work_on_leave_resolution ? (
-              <Badge variant="warning">Worked on leave — needs HR decision</Badge>
-            ) : null}
-            {day.work_on_leave_flagged && day.work_on_leave_resolution === "KEEP_LEAVE" ? (
-              <Badge variant="secondary">Leave kept by HR</Badge>
-            ) : null}
-            {day.is_core_hours_breach ? <Badge variant="warning">Core hours breach</Badge> : null}
-            {day.on_duty ? <Badge variant="info">On duty</Badge> : null}
-            {day.is_locked ? <Badge variant="outline">Locked</Badge> : null}
+          <DaySummaryCard
+            day={day}
+            employeeName={employee ? nameOf(employee, day.employee_id) : null}
+            employeeCode={employee?.employee_code ?? null}
+            shiftName={shiftName}
+            prevDayId={neighbours.prev}
+            nextDayId={neighbours.next}
+          />
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <DayTimeline items={timeline} timezone={day.timezone} />
+            <div className="space-y-6">
+              <DayRegularization
+                requests={requests}
+                canRequest={requestMode !== null}
+                needsCorrection={day.missing_punch || day.is_late || day.is_early_out || day.attendance_status === "INCOMPLETE"}
+                onRequest={() => setRegularizeOpen(true)}
+              />
+              <Card>
+                <CardContent className="pt-6">
+                  <h2 className="mb-4 text-base font-semibold text-foreground">Time summary</h2>
+                  <dl className="grid grid-cols-2 gap-4">
+                    <Field label="Worked" value={formatMinutes(day.worked_minutes)} />
+                    <Field label="Scheduled" value={formatMinutes(day.scheduled_minutes)} />
+                    <Field label="Late" value={day.is_late ? formatMinutes(day.late_minutes) : "—"} />
+                    <Field label="Early departure" value={day.is_early_out ? formatMinutes(day.early_departure_minutes) : "—"} />
+                    <Field label="Paid break" value={formatMinutes(day.paid_break_minutes)} />
+                    <Field label="Unpaid break" value={formatMinutes(day.unpaid_break_minutes)} />
+                    <Field label="Excess break" value={day.excess_break_minutes > 0 ? formatMinutes(day.excess_break_minutes) : "—"} />
+                    <Field
+                      label="Overtime"
+                      value={
+                        day.ot_minutes_detected > 0
+                          ? `${formatMinutes(day.ot_minutes_detected)} (${formatMinutes(day.ot_minutes_approved)} approved)`
+                          : "—"
+                      }
+                    />
+                  </dl>
+                </CardContent>
+              </Card>
+            </div>
           </div>
 
-          <Card>
-            <CardContent className="pt-6">
-              <h2 className="mb-4 text-sm font-medium text-foreground">Schedule</h2>
-              <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="Calendar day type" value={day.calendar_day_type ?? "—"} />
-                <Field label="Holiday" value={day.holiday_name ?? "—"} />
-                <Field
-                  label="Scheduled"
-                  value={
-                    day.scheduled_start && day.scheduled_end
-                      ? `${formatDateTime(day.scheduled_start, day.timezone)} – ${formatDateTime(day.scheduled_end, day.timezone)}`
-                      : "—"
-                  }
-                />
-                <Field label="Scheduled minutes" value={formatMinutes(day.scheduled_minutes)} />
-                <Field label="Shift ID" value={day.shift_id ?? "—"} />
-                <Field label="Shift version" value={day.shift_version_id ?? "—"} />
-              </dl>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <h2 className="mb-4 text-sm font-medium text-foreground">Punches & worked time</h2>
-              <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="First in" value={formatDateTime(day.actual_first_in, day.timezone)} />
-                <Field label="Last out" value={formatDateTime(day.actual_last_out, day.timezone)} />
-                <Field label="Worked minutes" value={formatMinutes(day.worked_minutes)} />
-                <Field label="Unpaid break" value={formatMinutes(day.unpaid_break_minutes)} />
-                <Field label="Paid break" value={formatMinutes(day.paid_break_minutes)} />
-                <Field label="Excess break" value={formatMinutes(day.excess_break_minutes)} />
-                <Field label="Late" value={formatMinutes(day.late_minutes)} />
-                <Field label="Early departure" value={formatMinutes(day.early_departure_minutes)} />
-                <Field label="Late classification" value={day.late_classification ?? "—"} />
-              </dl>
-              {day.breaks.length > 0 ? (
-                <div className="mt-4 overflow-x-auto rounded-md border border-border">
+          {day.breaks.length > 0 ? (
+            <Card>
+              <CardContent className="pt-6">
+                <h2 className="mb-4 text-base font-semibold text-foreground">Breaks</h2>
+                <div className="overflow-x-auto rounded-md border border-border">
                   <table className="w-full text-sm">
                     <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                       <tr>
@@ -245,44 +307,21 @@ export default function AttendanceDayDetailPage() {
                     </tbody>
                   </table>
                 </div>
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <h2 className="mb-4 text-sm font-medium text-foreground">Overtime & pay facts</h2>
-              <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <Field label="OT detected" value={formatMinutes(day.ot_minutes_detected)} />
-                <Field label="OT approved" value={formatMinutes(day.ot_minutes_approved)} />
-                <Field label="OT classification" value={day.ot_classification ?? "—"} />
-                <Field label="Comp-off earned" value={formatMinutes(day.comp_off_minutes_earned)} />
-                <Field label="Paid day fraction" value={day.paid_day_fraction} />
-                <Field label="Leave fraction" value={day.leave_fraction} />
-                <Field label="Weekly-off fraction" value={day.weekly_off_fraction} />
-                <Field label="Unpaid off fraction" value={day.unpaid_off_fraction} />
-                {day.work_on_leave_resolution ? (
-                  <Field
-                    label="Work-on-leave decision"
-                    value={`Leave kept — ${day.work_on_leave_resolution_reason ?? ""}`}
-                  />
-                ) : null}
-                <Field label="LOP fraction" value={day.lop_fraction} />
-              </dl>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {leaveProjections.length > 0 ? (
             <Card>
               <CardContent className="pt-6">
                 <h2 className="mb-4 text-sm font-medium text-foreground">
-                  Leave overlay (W9 — approved leave projections for this date)
+                  Approved leave on this date
                 </h2>
                 <div className="overflow-x-auto rounded-md border border-border">
                   <table className="w-full text-sm">
                     <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                       <tr>
-                        <th className="px-3 py-2 text-left font-medium">Leave application</th>
+                        <th className="px-3 py-2 text-left font-medium">Leave</th>
                         <th className="px-3 py-2 text-left font-medium">Fraction</th>
                         <th className="px-3 py-2 text-left font-medium">Half</th>
                         <th className="px-3 py-2 text-left font-medium">Paid</th>
@@ -292,8 +331,13 @@ export default function AttendanceDayDetailPage() {
                     <tbody className="divide-y divide-border">
                       {leaveProjections.map((projection) => (
                         <tr key={projection.id}>
-                          <td className="px-3 py-2 font-mono text-xs">
-                            {projection.leave_application_id}
+                          <td className="px-3 py-2">
+                            <Link
+                              href={`/app/leave-applications/${projection.leave_application_id}`}
+                              className="font-medium text-primary hover:underline"
+                            >
+                              {projection.leave_type_code ?? "Leave"} — view application
+                            </Link>
                           </td>
                           <td className="px-3 py-2">{projection.fraction}</td>
                           <td className="px-3 py-2">{projection.half ?? "—"}</td>
@@ -312,18 +356,39 @@ export default function AttendanceDayDetailPage() {
             </Card>
           ) : null}
 
-          <Card>
-            <CardContent className="pt-6">
-              <h2 className="mb-4 text-sm font-medium text-foreground">Calculation & audit</h2>
+          <details className="group rounded-2xl border border-border bg-surface shadow-elevation-1">
+            <summary className="cursor-pointer select-none px-6 py-4 text-base font-semibold text-foreground">
+              Calculation details
+              <span className="ml-2 text-xs font-normal text-foreground-muted">for HR and support</span>
+            </summary>
+            <div className="space-y-6 px-6 pb-6">
               <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <Field label="Calendar day type" value={day.calendar_day_type ?? "—"} />
+                <Field label="Holiday" value={day.holiday_name ?? "—"} />
+                <Field label="Shift" value={shiftName ?? day.shift_id ?? "—"} />
+                <Field label="Late classification" value={day.late_classification ?? "—"} />
+                <Field label="OT classification" value={day.ot_classification ?? "—"} />
+                <Field label="Comp-off earned" value={formatMinutes(day.comp_off_minutes_earned)} />
+                <Field label="Paid day fraction" value={day.paid_day_fraction} />
+                <Field label="Leave fraction" value={day.leave_fraction} />
+                <Field label="Weekly-off fraction" value={day.weekly_off_fraction} />
+                <Field label="Unpaid off fraction" value={day.unpaid_off_fraction} />
+                <Field label="LOP fraction" value={day.lop_fraction} />
+                {day.work_on_leave_resolution ? (
+                  <Field
+                    label="Work-on-leave decision"
+                    value={`Leave kept — ${day.work_on_leave_resolution_reason ?? ""}`}
+                  />
+                ) : null}
                 <Field label="Calculation version" value={day.calculation_version} />
                 <Field label="Calculated at" value={formatDateTime(day.calculated_at, day.timezone)} />
+                <Field label="Locked at" value={day.is_locked ? formatDateTime(day.locked_at, day.timezone) : "—"} />
+                <Field label="Shift version" value={day.shift_version_id ?? "—"} />
                 <Field label="Attendance policy version" value={day.attendance_policy_version_id ?? "—"} />
                 <Field label="Overtime policy version" value={day.overtime_policy_version_id ?? "—"} />
                 <Field label="Regularization policy version" value={day.regularization_policy_version_id ?? "—"} />
-                <Field label="Locked at" value={day.is_locked ? formatDateTime(day.locked_at, day.timezone) : "—"} />
               </dl>
-              <div className="mt-4">
+              <div>
                 <Button type="button" variant="outline" size="sm" onClick={() => setShowSnapshot((v) => !v)}>
                   {showSnapshot ? "Hide" : "Show"} computation snapshot
                 </Button>
@@ -333,8 +398,8 @@ export default function AttendanceDayDetailPage() {
                   </pre>
                 ) : null}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </details>
         </div>
       ) : null}
 
@@ -367,12 +432,13 @@ export default function AttendanceDayDetailPage() {
         <RegularizationRequestDialog
           open={regularizeOpen}
           onOpenChange={setRegularizeOpen}
-          mode="ON_BEHALF"
+          mode={requestMode ?? "ON_BEHALF"}
           employeeId={day.employee_id}
           attendanceDate={day.attendance_date}
-          onCreated={() =>
-            toast({ title: "Regularization request submitted", variant: "success" })
-          }
+          onCreated={(created) => {
+            setRequests((prev) => [created, ...(prev ?? [])]);
+            toast({ title: "Regularization request submitted", variant: "success" });
+          }}
         />
       ) : null}
     </div>

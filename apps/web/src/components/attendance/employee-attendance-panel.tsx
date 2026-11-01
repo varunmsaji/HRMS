@@ -4,6 +4,7 @@ import { CalendarClock } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { AttendanceStatusBadge } from "@/components/attendance/attendance-status-badge";
 import { FaceEnrollmentCard } from "@/components/attendance/face-enrollment-card";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
@@ -18,6 +19,8 @@ import { HorizontalScroll } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import { summarizeMonth } from "@/lib/attendance/dashboard";
+import { exceptionLabels, rangePresets } from "@/lib/attendance/day-detail";
 import type { AttendanceDay, Punch } from "@/lib/attendance/types";
 import { businessToday, formatClockTime, formatMinutes } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
@@ -28,10 +31,27 @@ interface EmployeeAttendancePanelProps {
   employeeLabel: string;
 }
 
-function daysAgoIso(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+function RangeSummary({ days }: { days: AttendanceDay[] }) {
+  const m = summarizeMonth(days);
+  const c = m.counts;
+  const stats: [string, string][] = [
+    ["Present", String(c.PRESENT + c.REMOTE + c.ON_DUTY)],
+    ["Absent", String(c.ABSENT)],
+    ["On leave", String(c.LEAVE)],
+    ["Late", String(m.late)],
+    ["Missing punch", String(m.missingPunch)],
+    ["Worked", formatMinutes(m.workedMinutes)],
+  ];
+  return (
+    <dl aria-label="Range summary" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {stats.map(([label, value]) => (
+        <div key={label} className="rounded-xl border border-border bg-surface p-3">
+          <dt className="text-xs text-foreground-muted">{label}</dt>
+          <dd className="mt-1 text-lg font-semibold tabular-nums text-foreground">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 /** Employee-scoped attendance history — architecture §26 "Employee attendance view": shift,
@@ -44,8 +64,11 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
   const { toast } = useToast();
   const { can } = usePermissions();
 
-  const [dateFrom, setDateFrom] = useState(daysAgoIso(6));
-  const [dateTo, setDateTo] = useState(businessToday(user?.company_timezone ?? "Asia/Kolkata"));
+  // The company's business date, not the browser's: near midnight the two can be a day apart.
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
+  const presets = rangePresets(today);
+  const [dateFrom, setDateFrom] = useState(presets[0].from);
+  const [dateTo, setDateTo] = useState(presets[0].to);
   const [days, setDays] = useState<AttendanceDay[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -109,6 +132,22 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
       ) : null}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-wrap items-end gap-3">
+          <div role="group" aria-label="Quick ranges" className="flex gap-1 self-end">
+            {presets.map((p) => (
+              <Button
+                key={p.key}
+                type="button"
+                size="sm"
+                variant={dateFrom === p.from && dateTo === p.to ? "default" : "outline"}
+                onClick={() => {
+                  setDateFrom(p.from);
+                  setDateTo(p.to);
+                }}
+              >
+                {p.label}
+              </Button>
+            ))}
+          </div>
           <FormField id="att-panel-from" label="From" className="w-40">
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
           </FormField>
@@ -149,6 +188,8 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
         />
       ) : null}
 
+      {!loading && !error && days && days.length > 0 ? <RangeSummary days={days} /> : null}
+
       {!loading && !error && days && days.length > 0 ? (
         <HorizontalScroll className="rounded-md border border-border">
           <table className="w-full text-sm">
@@ -166,7 +207,7 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
             </thead>
             <tbody className="divide-y divide-border">
               {days.map((day) => (
-                <tr key={day.id} className="hover:bg-accent">
+                <tr key={day.id} className={`hover:bg-accent ${exceptionLabels(day).length > 0 ? "bg-warning-subtle/40" : ""}`}>
                   <td className="px-3 py-2">
                     <Link href={`/app/attendance/${day.id}`} className="font-medium text-foreground hover:underline">
                       <CompanyDate value={day.attendance_date} />
@@ -191,13 +232,18 @@ export function EmployeeAttendancePanel({ employeeId, employeeLabel }: EmployeeA
                   <td className="px-3 py-2 text-foreground-secondary">
                     {day.is_overtime ? formatMinutes(day.ot_minutes_detected) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-foreground-secondary">
-                    {day.missing_punch ? "Missing punch " : ""}
-                    {day.attendance_status === "CONFIG_ERROR" ? "Config error " : ""}
-                    {day.is_pending_approval ? "Pending approval " : ""}
-                    {!day.missing_punch && day.attendance_status !== "CONFIG_ERROR" && !day.is_pending_approval
-                      ? "—"
-                      : ""}
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {exceptionLabels(day).length === 0 ? (
+                        <span className="text-foreground-muted">—</span>
+                      ) : (
+                        exceptionLabels(day).map((label) => (
+                          <Badge key={label} variant="warning">
+                            {label}
+                          </Badge>
+                        ))
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

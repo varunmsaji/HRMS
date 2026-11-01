@@ -132,6 +132,41 @@ const sampleProjection: LeaveDayProjection = {
   updated_at: "2026-08-10T08:00:00Z",
 };
 
+describe("AttendanceDayDetailPage — context", () => {
+  afterEach(() => {
+    mockedGet.mockReset();
+  });
+
+  it("explains the day in words and lists the punches in order", async () => {
+    const day = { ...sampleDay, is_late: true, late_minutes: 25, actual_first_in: "2026-08-10T09:25:00Z" };
+    mockedGet.mockImplementation((url: string) => {
+      if (url.startsWith("/attendance/days/")) return Promise.resolve(day);
+      if (url.startsWith("/attendance/punches"))
+        return Promise.resolve([
+          { id: "p2", punch_time: "2026-08-10T18:00:00Z", direction: "OUT", source: "MOBILE" },
+          { id: "p1", punch_time: "2026-08-10T09:25:00Z", direction: "IN", source: "WEB" },
+        ]);
+      if (url.startsWith("/employees/")) return Promise.resolve({ id: "emp-1", first_name: "Asha", last_name: "Rao", employee_code: "EMP-001" });
+      if (url.startsWith("/regularizations"))
+        return Promise.resolve([
+          { id: "r1", attendance_date: "2026-08-10", request_type: "MISSING_PUNCH", status: "SUBMITTED", submitted_at: "2026-08-10T19:00:00Z" },
+          { id: "r2", attendance_date: "2026-08-01", request_type: "WRONG_PUNCH", status: "APPROVED", submitted_at: "2026-08-01T19:00:00Z" },
+        ]);
+      return Promise.resolve([]);
+    });
+    render(<AttendanceDayDetailPage />);
+
+    expect(await screen.findByText("9h 0m worked of 9h 0m scheduled.")).toBeInTheDocument();
+    expect(screen.getByText("Late by 0h 25m")).toBeInTheDocument();
+    expect(await screen.findByText("Punched in")).toBeInTheDocument();
+    expect(screen.getByText("Mobile app")).toBeInTheDocument();
+    // Only the request for this date is shown.
+    expect(await screen.findByText("Missing punch")).toBeInTheDocument();
+    expect(screen.queryByText("Wrong punch time")).not.toBeInTheDocument();
+    expect(await screen.findByText("Asha Rao")).toBeInTheDocument();
+  });
+});
+
 describe("AttendanceDayDetailPage", () => {
   afterEach(() => {
     mockedGet.mockReset();
@@ -194,8 +229,11 @@ describe("AttendanceDayDetailPage", () => {
     mockDayAndProjections({ ...sampleDay, attendance_status: "LEAVE" }, [sampleProjection]);
     render(<AttendanceDayDetailPage />);
 
-    expect(await screen.findByText(/leave overlay/i)).toBeInTheDocument();
-    expect(screen.getByText("leave-app-1")).toBeInTheDocument();
+    expect(await screen.findByText(/approved leave on this date/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /EL — view application/ })).toHaveAttribute(
+      "href",
+      "/app/leave-applications/leave-app-1",
+    );
   });
 
   it("shows the needs-HR-decision badge when work_on_leave_flagged is unresolved", async () => {
