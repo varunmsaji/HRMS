@@ -50,6 +50,7 @@ import {
   ONBOARDING_CASE_STATUS_VALUES,
   type OnboardingCase,
   type OnboardingCaseStatus,
+  type OnboardingStatusCounts,
 } from "@/lib/onboarding/types";
 import {
   EMPTY_ONBOARDING_CASE_FORM_VALUES,
@@ -58,6 +59,18 @@ import {
   type OnboardingCaseFormErrors,
   type OnboardingCaseFormValues,
 } from "@/lib/onboarding/validate-onboarding";
+
+/** Tab strip over the case list; each tab is one server-side status filter ("Verified & ready" is
+ * the VERIFIED status, ready to activate). */
+const STATUS_TABS: { label: string; statuses: OnboardingCaseStatus[] | null }[] = [
+  { label: "All cases", statuses: null },
+  { label: "Invited", statuses: ["INVITED"] },
+  { label: "In progress", statuses: ["IN_PROGRESS"] },
+  { label: "Submitted", statuses: ["SUBMITTED"] },
+  { label: "Under review", statuses: ["UNDER_REVIEW"] },
+  { label: "Changes requested", statuses: ["CHANGES_REQUESTED"] },
+  { label: "Verified & ready", statuses: ["VERIFIED"] },
+];
 
 interface ReferenceData {
   branches: Branch[];
@@ -89,6 +102,7 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
+  const [statusCounts, setStatusCounts] = useState<OnboardingStatusCounts | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<OnboardingCaseStatus | "">(() =>
     initialQueryValue("status", ONBOARDING_CASE_STATUS_VALUES),
@@ -102,6 +116,17 @@ export default function OnboardingPage() {
   const [saving, setSaving] = useState(false);
 
   const beginRequest = useLatestRequest();
+
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .get<OnboardingStatusCounts>("/onboarding-cases/status-counts")
+      .then((d) => !cancelled && typeof d?.total === "number" && setStatusCounts(d))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(
     async (targetPage: number, targetStatus: OnboardingCaseStatus | "") => {
@@ -253,6 +278,38 @@ export default function OnboardingPage() {
         }
       />
 
+      {statusCounts ? (
+        <div role="tablist" aria-label="Case status" className="flex flex-wrap gap-1 border-b border-border">
+          {STATUS_TABS.map((tab) => {
+            const count =
+              tab.statuses === null
+                ? statusCounts.total
+                : tab.statuses.reduce((sum, st) => sum + (statusCounts.by_status[st] ?? 0), 0);
+            const active = tab.statuses === null ? statusFilter === "" : tab.statuses[0] === statusFilter;
+            return (
+              <button
+                key={tab.label}
+                role="tab"
+                type="button"
+                aria-selected={active}
+                onClick={() => {
+                  setStatusFilter(tab.statuses === null ? "" : tab.statuses[0]);
+                  setPage(1);
+                }}
+                className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+                  active
+                    ? "border-primary text-primary"
+                    : "border-transparent text-foreground-secondary hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+                <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-2xs tabular-nums">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       <TableContainer>
         {showToolbar ? (
           <TableToolbar>
@@ -383,6 +440,7 @@ export default function OnboardingPage() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead>Candidate</TableHead>
+                  <TableHead>Proposed role</TableHead>
                   <TableHead>Personal email</TableHead>
                   <TableHead>Proposed joining date</TableHead>
                   <TableHead>Status</TableHead>
@@ -397,6 +455,14 @@ export default function OnboardingPage() {
                         name={candidateName(onboardingCase) || "—"}
                         href={`/app/onboarding/${onboardingCase.id}`}
                       />
+                    </TableCell>
+                    <TableCell className="text-foreground-secondary">
+                      {[
+                        refs?.designations.find((d) => d.id === onboardingCase.designation_id)?.title,
+                        refs?.departments.find((d) => d.id === onboardingCase.department_id)?.name,
+                      ]
+                        .filter(Boolean)
+                        .join(" • ") || "—"}
                     </TableCell>
                     <TableCell className="text-foreground-secondary">
                       {onboardingCase.personal_email}

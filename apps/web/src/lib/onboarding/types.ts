@@ -176,6 +176,14 @@ export const ONBOARDING_SECTION_LABELS: Record<OnboardingSectionName, string> = 
  * Deliberately narrower than `OnboardingCase`: no internal IDs, the candidate has no session to
  * look anything else up with. `section_reviews` (O6) lets the wizard show which sections are
  * locked (verified) versus need fixing (rejected, with a reason). */
+/** Offer details HR entered, as names. Any part HR left blank is null (and older servers omit it). */
+export interface PublicRoleSummary {
+  company_name: string | null;
+  designation: string | null;
+  department: string | null;
+  branch: string | null;
+}
+
 export interface PublicOnboardingCase {
   status: string;
   candidate_first_name: string;
@@ -192,6 +200,7 @@ export interface PublicOnboardingCase {
   education_info: Record<string, unknown>;
   nominee_info: Record<string, unknown>;
   section_reviews: OnboardingSectionReview[];
+  role_summary?: PublicRoleSummary | null;
 }
 
 /** `GET /onboarding-cases/{id}` (admin, O6) — mirrors `OnboardingCaseDetailRead`: the case
@@ -261,4 +270,10 @@ export interface OnboardingDocument {
 /** `GET /onboarding-cases/{id}/documents` (admin, O5) — mirrors `OnboardingDocumentWithUrlRead`. */
 export interface OnboardingDocumentWithUrl extends OnboardingDocument {
   download_url: string;
+}
+
+/** `GET /onboarding-cases/status-counts`. A status with no cases is absent from `by_status`. */
+export interface OnboardingStatusCounts {
+  total: number;
+  by_status: Record<string, number>;
 }

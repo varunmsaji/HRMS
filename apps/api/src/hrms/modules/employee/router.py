@@ -70,6 +70,12 @@ from hrms.modules.employee.dependencies import (
     get_employee_statutory_service,
     get_employment_service,
 )
+from hrms.modules.employee.directory import (
+    DirectoryRow,
+    DirectorySummary,
+    directory_rows,
+    directory_summary,
+)
 from hrms.modules.employee.permissions import (
     EMPLOYEE_CONFIRM,
     EMPLOYEE_CREATE,
@@ -145,6 +151,34 @@ from hrms.shared.pagination import (
 )
 
 router = APIRouter(tags=["employee"])
+
+
+@router.get("/employees/directory/summary", status_code=status.HTTP_200_OK)
+async def get_directory_summary(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_ALL))],
+    service: Annotated[EmployeeService, Depends(get_employee_service)],
+) -> DataEnvelope[DirectorySummary]:
+    visible = await service.resolve_visible_employee_ids(tenant.company_id, scope, user.employee_id)
+    data = await directory_summary(service._session, tenant.company_id, visible)  # noqa: SLF001
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/employees/directory/rows", status_code=status.HTTP_200_OK)
+async def get_directory_rows(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_ALL))],
+    service: Annotated[EmployeeService, Depends(get_employee_service)],
+    ids: Annotated[list[UUID], Query(max_length=200)],
+) -> ListEnvelope[DirectoryRow]:
+    visible = await service.resolve_visible_employee_ids(tenant.company_id, scope, user.employee_id)
+    data = await directory_rows(service._session, tenant.company_id, ids, visible)  # noqa: SLF001
+    return ListEnvelope(
+        data=data,
+        meta=build_meta(current_request_id() or "unknown"),
+    )
 
 
 @router.get("/employees", status_code=status.HTTP_200_OK)

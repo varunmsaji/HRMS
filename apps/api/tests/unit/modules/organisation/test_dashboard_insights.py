@@ -2,6 +2,7 @@ from datetime import date
 
 from hrms.modules.organisation.dashboard_insights import (
     CompanyDashboardInsights,
+    KpiComparison,
     LeaveStatistics,
     _next_birthday,
     leave_period,
@@ -36,6 +37,12 @@ def test_empty_insights_are_zero_lists_not_placeholders() -> None:
     start, end = leave_period(today, "month")
     insights = CompanyDashboardInsights(
         today=today,
+        kpi_comparison=KpiComparison(
+            headcount_prev_month_end=0,
+            yesterday=date(2026, 10, 30),
+            yesterday_present=0,
+            yesterday_on_leave=0,
+        ),
         headcount_trend=[],
         leave_statistics=LeaveStatistics(
             scope="month", period_start=start, period_end=end, total_days=0, by_type=[]

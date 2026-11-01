@@ -5,7 +5,7 @@ Read-only aggregation over data other modules own (employment, leave, audit log)
 writes, and every figure is computed from stored rows — no placeholder values."""
 
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -14,6 +14,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 LeaveScope = Literal["month", "year"]
+
+# Same verdicts the attendance overview counts as "present" (attendance.overview.PRESENT_STATUSES).
+_PRESENT_STATUSES = ("PRESENT", "HALF_DAY")
 
 # audit action -> (activity title, whether the subject line names the employee)
 _ACTIVITY_TITLES: dict[str, str] = {
@@ -64,8 +67,18 @@ class RecentActivity(BaseModel):
     occurred_at: datetime
 
 
+class KpiComparison(BaseModel):
+    """Prior-period figures the KPI cards compare today's live numbers against."""
+
+    headcount_prev_month_end: int
+    yesterday: date
+    yesterday_present: int
+    yesterday_on_leave: int
+
+
 class CompanyDashboardInsights(BaseModel):
     today: date
+    kpi_comparison: KpiComparison
     headcount_trend: list[HeadcountPoint]
     leave_statistics: LeaveStatistics
     upcoming_birthdays: list[UpcomingBirthday]
@@ -260,8 +273,44 @@ async def build_company_insights(
         for r in activity_rows
     ]
 
+    # -- comparison figures for the KPI trend chips ---------------------------------------------
+    prev_month_end = today.replace(day=1) - timedelta(days=1)
+    yesterday = today - timedelta(days=1)
+    headcount_prev = (
+        await session.execute(
+            text(
+                """
+                SELECT count(*) FROM employment em
+                WHERE em.company_id = :cid AND em.deleted_at IS NULL
+                  AND em.joining_date <= :d
+                  AND (em.last_working_day IS NULL OR em.last_working_day > :d)
+                """
+            ),
+            {**params, "d": prev_month_end},
+        )
+    ).scalar_one()
+    day_row = (
+        await session.execute(
+            text(
+                """
+                SELECT count(*) FILTER (WHERE attendance_status = ANY(:present)) AS present,
+                       count(*) FILTER (WHERE attendance_status = 'LEAVE') AS on_leave
+                FROM attendance_day
+                WHERE company_id = :cid AND attendance_date = :d
+                """
+            ),
+            {**params, "d": yesterday, "present": list(_PRESENT_STATUSES)},
+        )
+    ).one()
+
     return CompanyDashboardInsights(
         today=today,
+        kpi_comparison=KpiComparison(
+            headcount_prev_month_end=int(headcount_prev),
+            yesterday=yesterday,
+            yesterday_present=int(day_row.present),
+            yesterday_on_leave=int(day_row.on_leave),
+        ),
         headcount_trend=trend,
         leave_statistics=leave_stats,
         upcoming_birthdays=birthdays,

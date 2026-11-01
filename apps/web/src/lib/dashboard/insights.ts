@@ -38,8 +38,16 @@ export interface RecentActivity {
   occurred_at: string;
 }
 
+export interface KpiComparison {
+  headcount_prev_month_end: number;
+  yesterday: string;
+  yesterday_present: number;
+  yesterday_on_leave: number;
+}
+
 export interface CompanyDashboardInsights {
   today: string;
+  kpi_comparison: KpiComparison;
   headcount_trend: HeadcountPoint[];
   leave_statistics: LeaveStatistics;
   upcoming_birthdays: UpcomingBirthday[];
@@ -83,4 +91,29 @@ export function monthShort(yyyyMm: string): string {
 export function initials(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
+}
+
+export interface Trend {
+  pct: number; // signed, whole percent
+  label: string; // "vs last month"
+}
+
+/** Whole-percent change from `previous` to `current`; null when there is no baseline to compare. */
+export function trendOf(current: number | null | undefined, previous: number | null | undefined, label: string): Trend | null {
+  if (current == null || previous == null || previous <= 0) return null;
+  return { pct: Math.round(((current - previous) / previous) * 100), label };
+}
+
+/** "01 Oct 2026 – 31 Oct 2026" from two YYYY-MM-DD dates. */
+export function periodLabel(start: string, end: string): string {
+  const fmt = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  };
+  return `${fmt(start)} – ${fmt(end)}`;
 }

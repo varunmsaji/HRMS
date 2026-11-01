@@ -75,6 +75,7 @@ from hrms.modules.onboarding.service import (
     OnboardingReviewService,
     OnboardingTokenService,
 )
+from hrms.modules.onboarding.status_counts import OnboardingStatusCounts, onboarding_status_counts
 from hrms.shared.pagination import (
     DataEnvelope,
     ListEnvelope,
@@ -140,6 +141,16 @@ async def list_onboarding_cases(
         pagination=build_pagination_meta(page, total=total),
         meta=build_meta(current_request_id() or "unknown"),
     )
+
+
+@router.get("/onboarding-cases/status-counts", status_code=status.HTTP_200_OK)
+async def get_onboarding_status_counts(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ONBOARDING_VIEW))],
+    service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
+) -> DataEnvelope[OnboardingStatusCounts]:
+    data = await onboarding_status_counts(service._session, tenant.company_id)  # noqa: SLF001
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/onboarding-cases/{case_id}", status_code=status.HTTP_200_OK)

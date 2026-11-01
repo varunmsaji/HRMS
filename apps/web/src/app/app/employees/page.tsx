@@ -1,10 +1,11 @@
 "use client";
 
-import { Search, UserPlus, Users, X } from "lucide-react";
+import { Download, Search, UserPlus, Users, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { DirectorySummaryCards } from "@/components/employee/directory-summary";
 import { EmployeeForm } from "@/components/employee/employee-form";
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { EmployeeStatusBadge } from "@/components/employee/employee-status-badge";
@@ -41,6 +42,12 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import {
+  directoryRowsPath,
+  employeesToCsv,
+  type DirectoryRow,
+  type DirectorySummary,
+} from "@/lib/employee/directory";
 import type { Employee } from "@/lib/employee/types";
 import {
   EMPTY_EMPLOYEE_FORM_VALUES,
@@ -67,7 +74,10 @@ export default function EmployeesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState("");
+  // The top-bar search links here as `?q=<text>`, so start from it.
+  const [searchQuery, setSearchQuery] = useState(() =>
+    typeof window === "undefined" ? "" : (new URLSearchParams(window.location.search).get("q") ?? ""),
+  );
   const [statusFilter, setStatusFilter] = useState("");
   const [stateFilter, setStateFilter] = useState<"" | "ACTIVE" | "INACTIVE">("");
 
@@ -111,6 +121,32 @@ export default function EmployeesPage() {
     void loadEmployees(page);
   }, [loadEmployees, page]);
 
+  // Headline counts, and designation / department / manager / shift for the rows on this page.
+  const [summary, setSummary] = useState<DirectorySummary | null>(null);
+  const [details, setDetails] = useState<Map<string, DirectoryRow>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .get<DirectorySummary>("/employees/directory/summary")
+      .then((d) => !cancelled && setSummary(d))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const pageIds = useMemo(() => (employees ?? []).map((e) => e.id), [employees]);
+  useEffect(() => {
+    if (pageIds.length === 0) return;
+    let cancelled = false;
+    apiClient
+      .get<DirectoryRow[]>(directoryRowsPath(pageIds))
+      .then((rows) => !cancelled && setDetails(new Map(rows.map((r) => [r.employee_id, r]))))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pageIds]);
+
   const availableStatuses = useMemo(() => {
     if (!employees) return [];
     return Array.from(new Set(employees.map((e) => e.status).filter(Boolean))).sort();
@@ -131,6 +167,31 @@ export default function EmployeesPage() {
       return name.includes(q) || code.includes(q) || email.includes(q) || mobile.includes(q);
     });
   }, [employees, searchQuery, statusFilter, stateFilter]);
+
+  function exportCsv() {
+    const csv = employeesToCsv(
+      (filteredEmployees ?? []).map((e) => {
+        const d = details.get(e.id);
+        return {
+          code: e.employee_code,
+          name: employeeName(e),
+          email: e.personal_email,
+          mobile: e.personal_mobile,
+          status: e.status,
+          designation: d?.designation ?? null,
+          department: d?.department ?? null,
+          manager: d?.manager_name ?? null,
+          shift: d?.shift_name ?? null,
+        };
+      }),
+    );
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "employees.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const hasFilters = Boolean(searchQuery.trim() || statusFilter || stateFilter);
 
@@ -215,14 +276,24 @@ export default function EmployeesPage() {
           ) : undefined
         }
         actions={
-          employees && totalCount > 0 && canCreate ? (
-            <Button type="button" onClick={openCreate}>
-              <UserPlus className="h-4 w-4" aria-hidden="true" />
-              Add Employee
-            </Button>
+          employees && totalCount > 0 ? (
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={exportCsv}>
+                <Download className="h-4 w-4" aria-hidden="true" />
+                Export CSV
+              </Button>
+              {canCreate ? (
+                <Button type="button" onClick={openCreate}>
+                  <UserPlus className="h-4 w-4" aria-hidden="true" />
+                  Add Employee
+                </Button>
+              ) : null}
+            </div>
           ) : null
         }
       />
+
+      <DirectorySummaryCards summary={summary} />
 
       <TableContainer>
         {!error && employees && employees.length > 0 ? (
@@ -289,7 +360,7 @@ export default function EmployeesPage() {
 
         {loading && employees === null ? (
           <div role="status" aria-label="Loading employees">
-            <TableSkeleton rows={8} columns={5} />
+            <TableSkeleton rows={8} columns={7} />
             <span className="sr-only">Loading employees…</span>
           </div>
         ) : null}
@@ -345,8 +416,10 @@ export default function EmployeesPage() {
                 <TableRow className="hover:bg-transparent">
                   <TableHead>Employee</TableHead>
                   <TableHead className="hidden sm:table-cell">Code</TableHead>
-                  <TableHead className="hidden md:table-cell">Personal email</TableHead>
-                  <TableHead className="hidden lg:table-cell">Personal mobile</TableHead>
+                  <TableHead className="hidden md:table-cell">Designation</TableHead>
+                  <TableHead className="hidden md:table-cell">Department</TableHead>
+                  <TableHead className="hidden lg:table-cell">Reporting manager</TableHead>
+                  <TableHead className="hidden lg:table-cell">Shift</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden sm:table-cell">State</TableHead>
                   <TableHead align="right">Actions</TableHead>
@@ -371,10 +444,20 @@ export default function EmployeesPage() {
                       {employee.employee_code}
                     </TableCell>
                     <TableCell className="hidden text-foreground-secondary md:table-cell">
-                      {employee.personal_email ?? "—"}
+                      {details.get(employee.id)?.designation ?? "—"}
                     </TableCell>
-                    <TableCell className="hidden tabular-nums text-foreground-secondary lg:table-cell">
-                      {employee.personal_mobile ?? "—"}
+                    <TableCell className="hidden md:table-cell">
+                      {details.get(employee.id)?.department ? (
+                        <Badge variant="secondary">{details.get(employee.id)?.department}</Badge>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden text-foreground-secondary lg:table-cell">
+                      {details.get(employee.id)?.manager_name ?? "—"}
+                    </TableCell>
+                    <TableCell className="hidden text-foreground-secondary lg:table-cell">
+                      {details.get(employee.id)?.shift_name ?? "—"}
                     </TableCell>
                     <TableCell>
                       <EmployeeStatusBadge status={employee.status} />

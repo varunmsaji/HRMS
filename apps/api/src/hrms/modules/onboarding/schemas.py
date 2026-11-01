@@ -461,6 +461,16 @@ class OnboardingSectionReviewRead(BaseModel):
     rejection_reason: str | None
 
 
+class PublicRoleSummary(BaseModel):
+    """The offer details HR entered, as plain names (never ids): what the candidate was already
+    told, shown back so they can confirm it. Any part HR left blank is `None`."""
+
+    company_name: str | None = None
+    designation: str | None = None
+    department: str | None = None
+    branch: str | None = None
+
+
 class PublicOnboardingCaseRead(BaseModel):
     """`GET /public/onboarding/{token}` — deliberately narrower than `OnboardingCaseRead`: no
     `id`/`company_id`/`created_by_user_id`/`employee_id` (the candidate has no use for internal
@@ -486,6 +496,7 @@ class PublicOnboardingCaseRead(BaseModel):
     education_info: dict[str, object]
     nominee_info: dict[str, object]
     section_reviews: list[OnboardingSectionReviewRead]
+    role_summary: PublicRoleSummary | None = None
 
 
 class OnboardingInviteRead(BaseModel):

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { CoverageGrid } from "@/components/shift-roster/coverage-grid";
 import { BusyRegion } from "@/components/common/busy-region";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -21,6 +22,7 @@ import type { PaginationMeta } from "@/lib/api/types";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
+import { buildCoverage } from "@/lib/shift-roster/coverage";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
 
 interface ShiftOption {
@@ -188,6 +190,11 @@ export default function RosterGridPage() {
     });
   }, [employees, rosteredIds, search, onlyRostered]);
 
+  const coverage = useMemo(
+    () => buildCoverage(range?.entries ?? [], dates, (id) => shiftById.get(id)?.name),
+    [range, dates, shiftById],
+  );
+
   const truncated = range !== null && range.total > range.entries.length;
   const loading = employeesLoading || rosterLoading;
   const error = employeesError ?? rosterError;
@@ -259,6 +266,16 @@ export default function RosterGridPage() {
         </div>
       ) : null}
       {error && !loading ? <ErrorState message={error.message} /> : null}
+
+      {range && !rosterError ? (
+        <CoverageGrid
+          coverage={coverage}
+          dates={dates}
+          today={today}
+          totalEmployees={employeePagination?.total ?? null}
+          truncated={truncated}
+        />
+      ) : null}
 
       {hasData && !error ? (
         rows.length === 0 ? (

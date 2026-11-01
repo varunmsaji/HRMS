@@ -9,7 +9,9 @@ vi.mock("@/lib/auth/auth-context", () => ({
   useAuth: () => ({ user: { permissions: ["EMPLOYEE.CREATE"] }, session: { companyId: "c1" } }),
 }));
 vi.mock("@/components/common/toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
-vi.mock("@/lib/api/client", () => ({ apiClient: { getList: vi.fn(), post: vi.fn() } }));
+vi.mock("@/lib/api/client", () => ({
+  apiClient: { getList: vi.fn(), post: vi.fn(), get: vi.fn().mockRejectedValue(new Error("not under test")) },
+}));
 
 import EmployeesPage from "@/app/app/employees/page";
 import { apiClient } from "@/lib/api/client";

@@ -13,6 +13,7 @@ import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { LeaveApplicationDialog } from "@/components/leave-application/leave-application-dialog";
+import { LeaveDecisionCenter } from "@/components/leave-application/decision-center";
 import { LeaveApplicationStatusBadge } from "@/components/leave-application/leave-application-status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,7 +54,7 @@ function addDays(iso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-type ViewMode = "MINE" | "TEAM";
+type ViewMode = "MINE" | "TEAM" | "DECISIONS";
 
 /** `/v1/leave-applications` list/filter + create (LEAVE_DECISION_LOG.md LD-02/LD-05). Every row
  * here is already DataScope-filtered server-side — "Mine" and "Team" are just different query
@@ -65,7 +66,7 @@ export default function LeaveApplicationsPage() {
   const canSubmitSelf = can("LEAVE.APPLICATION_SUBMIT");
   const canSubmitOnBehalf = can("LEAVE.APPLICATION_SUBMIT_ON_BEHALF");
 
-  const [view, setView] = useState<ViewMode>(canApprove ? "TEAM" : "MINE");
+  const [view, setView] = useState<ViewMode>(canApprove ? "DECISIONS" : "MINE");
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [dateFrom, setDateFrom] = useState(addDays(today, -30));
   const [dateTo, setDateTo] = useState(addDays(today, 90));
@@ -192,6 +193,20 @@ export default function LeaveApplicationsPage() {
           >
             My applications
           </button>
+          {canApprove ? (
+            <button
+              type="button"
+              onClick={() => setView("DECISIONS")}
+              className={cn(
+                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
+                view === "DECISIONS"
+                  ? "bg-primary text-on-primary"
+                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
+              )}
+            >
+              Decision center
+            </button>
+          ) : null}
           {canApprove || canSubmitOnBehalf ? (
             <button
               type="button"
@@ -209,6 +224,9 @@ export default function LeaveApplicationsPage() {
         </div>
       </div>
 
+      {view === "DECISIONS" ? <LeaveDecisionCenter /> : null}
+
+      {view !== "DECISIONS" ? (
       <TableContainer>
         <TableToolbar className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <FormField id="leave-applications-date-from" label="From">
@@ -350,6 +368,7 @@ export default function LeaveApplicationsPage() {
           />
         ) : null}
       </TableContainer>
+      ) : null}
 
       <LeaveApplicationDialog
         open={dialogOpen}

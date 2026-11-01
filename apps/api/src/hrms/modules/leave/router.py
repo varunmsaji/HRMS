@@ -36,6 +36,7 @@ from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.identity.schemas import build_meta
+from hrms.modules.leave.decision_center import DecisionCenter, DecisionTab, build_decision_center
 from hrms.modules.leave.dependencies import (
     get_leave_application_service,
     get_leave_combination_rule_service,
@@ -713,6 +714,24 @@ async def list_leave_applications(
         pagination=build_pagination_meta(page, total=total),
         meta=build_meta(current_request_id() or "unknown"),
     )
+
+
+@router.get("/leave-applications/decision-center", status_code=status.HTTP_200_OK)
+async def get_leave_decision_center(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(LEAVE_APPLICATION_APPROVE))],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    tab: DecisionTab = "pending",
+) -> DataEnvelope[DecisionCenter]:
+    """Read-only approver screen data; approving/rejecting stays on the routes below."""
+    from hrms.modules.employee.service import EmployeeService
+
+    visible = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    data = await build_decision_center(session, tenant.company_id, visible, tab=tab)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/leave-applications/{application_id}", status_code=status.HTTP_200_OK)

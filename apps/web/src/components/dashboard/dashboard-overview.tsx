@@ -7,6 +7,8 @@ import {
   CalendarCheck,
   CalendarDays,
   CalendarOff,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -40,8 +42,11 @@ import { usePermissions } from "@/lib/auth/use-permissions";
 import { attendanceHref, type AttendanceOverview } from "@/lib/dashboard/overview";
 import {
   insightsPath,
+  periodLabel,
   relativeTime,
+  trendOf,
   type CompanyDashboardInsights,
+  type Trend,
 } from "@/lib/dashboard/insights";
 import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import { cn } from "@/lib/utils";
@@ -59,6 +64,7 @@ function KpiCard({
   tile,
   href,
   hint,
+  trend,
 }: {
   label: string;
   value: number | null;
@@ -66,6 +72,7 @@ function KpiCard({
   tile: string;
   href?: string;
   hint?: ReactNode;
+  trend?: Trend | null;
 }) {
   const body = (
     <>
@@ -73,9 +80,30 @@ function KpiCard({
         <Icon className="h-5 w-5" aria-hidden="true" />
       </span>
       <p className="mt-4 text-sm text-foreground-secondary">{label}</p>
-      <p className="mt-1 text-3xl font-bold tabular-nums tracking-tight text-foreground">
-        {value === null ? "—" : value.toLocaleString()}
-      </p>
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-2">
+        <p className="text-3xl font-bold tabular-nums tracking-tight text-foreground">
+          {value === null ? "—" : value.toLocaleString()}
+        </p>
+        {trend ? (
+          <p className="flex items-center gap-1 text-xs text-foreground-muted">
+            <span
+              className={cn(
+                "inline-flex items-center font-semibold",
+                trend.pct >= 0 ? "text-success" : "text-danger",
+              )}
+            >
+              {trend.pct >= 0 ? (
+                <ArrowUp className="h-3 w-3" aria-hidden="true" />
+              ) : (
+                <ArrowDown className="h-3 w-3" aria-hidden="true" />
+              )}
+              {trend.pct >= 0 ? "+" : ""}
+              {trend.pct}%
+            </span>
+            {trend.label}
+          </p>
+        ) : null}
+      </div>
       {hint ? <p className="mt-1 text-xs text-foreground-muted">{hint}</p> : null}
     </>
   );
@@ -343,8 +371,24 @@ export function DashboardOverview({ today }: Props) {
 
   const select = "h-8 w-auto py-0 text-xs";
 
+  const cmp = ins?.kpi_comparison;
+  const headcountTrend = trendOf(d?.total, cmp?.headcount_prev_month_end, "vs last month");
+  const presentTrend = trendOf(d?.present, cmp?.yesterday_present, "vs yesterday");
+  const onLeaveTrend = trendOf(d?.on_leave, cmp?.yesterday_on_leave, "vs yesterday");
+
   return (
     <div className="space-y-5">
+      {ins ? (
+        <div className="flex justify-end">
+          <span
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-foreground shadow-elevation-1"
+            title="Period covered by the leave statistics card"
+          >
+            <CalendarDays className="h-4 w-4 text-primary" aria-hidden="true" />
+            {periodLabel(ins.leave_statistics.period_start, ins.leave_statistics.period_end)}
+          </span>
+        </div>
+      ) : null}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {canAttendance ? (
           <>
@@ -354,6 +398,7 @@ export function DashboardOverview({ today }: Props) {
               icon={Users}
               tile="bg-primary-subtle text-primary"
               href="/app/employees"
+              trend={headcountTrend}
               hint={d ? `${d.expected_employees} expected to work today` : undefined}
             />
             <KpiCard
@@ -362,6 +407,7 @@ export function DashboardOverview({ today }: Props) {
               icon={CheckCircle2}
               tile="bg-success-subtle text-success"
               href={attendanceHref("present", d?.attendance_date ?? today, today)}
+              trend={presentTrend}
               hint={d?.late ? `${d.late} late arrivals` : undefined}
             />
             <KpiCard
@@ -370,6 +416,7 @@ export function DashboardOverview({ today }: Props) {
               icon={CalendarOff}
               tile="bg-warning-subtle text-warning"
               href={attendanceHref("on_leave", d?.attendance_date ?? today, today)}
+              trend={onLeaveTrend}
               hint={d?.half_day_leave ? `${d.half_day_leave} half-day` : undefined}
             />
           </>

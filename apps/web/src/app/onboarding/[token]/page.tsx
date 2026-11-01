@@ -579,6 +579,37 @@ export default function OnboardingWizardPage() {
                     It takes about 10 minutes. Keep these handy before you start:
                   </p>
                 </div>
+                {onboardingCase.role_summary &&
+                (onboardingCase.role_summary.designation ||
+                  onboardingCase.role_summary.department ||
+                  onboardingCase.role_summary.branch) ? (
+                  <section aria-label="Your role" className="rounded-xl border border-border bg-muted/30 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-foreground">Your role &amp; assignment</h3>
+                      {onboardingCase.role_summary.company_name ? (
+                        <span className="rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-foreground-secondary">
+                          {onboardingCase.role_summary.company_name}
+                        </span>
+                      ) : null}
+                    </div>
+                    <dl className="mt-3 grid gap-4 sm:grid-cols-3">
+                      {[
+                        ["Offered designation", onboardingCase.role_summary.designation],
+                        ["Department", onboardingCase.role_summary.department],
+                        ["Reporting location", onboardingCase.role_summary.branch],
+                      ].map(([label, value]) =>
+                        value ? (
+                          <div key={label}>
+                            <dt className="text-2xs font-semibold uppercase tracking-wider text-foreground-muted">
+                              {label}
+                            </dt>
+                            <dd className="mt-1 text-sm font-medium text-foreground">{value}</dd>
+                          </div>
+                        ) : null,
+                      )}
+                    </dl>
+                  </section>
+                ) : null}
                 <ul className="grid gap-3 sm:grid-cols-3">
                   {[
                     { icon: Landmark, title: "Bank details", text: "Account number and IFSC, or a cancelled cheque." },

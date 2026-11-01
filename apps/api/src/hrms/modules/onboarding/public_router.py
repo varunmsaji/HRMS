@@ -25,6 +25,7 @@ from hrms.modules.onboarding.dependencies import (
     get_onboarding_document_service,
 )
 from hrms.modules.onboarding.exceptions import InvalidOnboardingSectionError
+from hrms.modules.onboarding.public_summary import public_role_summary
 from hrms.modules.onboarding.schemas import (
     ONBOARDING_DOCUMENT_MAX_SIZE_BYTES,
     SECTION_SCHEMAS,
@@ -47,6 +48,8 @@ async def get_public_onboarding_case(
     service: Annotated[OnboardingCaseService, Depends(get_onboarding_case_service)],
 ) -> DataEnvelope[PublicOnboardingCaseRead]:
     data = await service.get_public_case(ctx.company_id, ctx.case_id)
+    summary = await public_role_summary(service._session, ctx.company_id, ctx.case_id)  # noqa: SLF001
+    data = data.model_copy(update={"role_summary": summary})
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

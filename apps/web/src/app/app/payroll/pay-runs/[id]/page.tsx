@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CompanyDate } from "@/components/common/company-date";
@@ -12,6 +13,7 @@ import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { PayRunEmployeeDialog } from "@/components/payroll/pay-run-employee-dialog";
+import { PayRunStatCards, PreDisbursalChecklist } from "@/components/payroll/pay-run-overview";
 import { PayRunStatusBadge } from "@/components/payroll/pay-run-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -68,31 +70,6 @@ const CONFIRM: Partial<Record<Action, { title: string; description: string; labe
   },
 };
 
-function StatCell({
-  label,
-  value,
-  emphasis = false,
-}: {
-  label: string;
-  value: ReactNode;
-  emphasis?: boolean;
-}) {
-  return (
-    <div className="px-4 py-3.5">
-      <div className="text-2xs font-semibold uppercase tracking-wider text-foreground-muted">
-        {label}
-      </div>
-      <div
-        className={`mt-1 text-lg font-semibold tabular-nums ${
-          emphasis ? "text-primary" : "text-foreground"
-        }`}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
 /** Payroll Phase 5.2 — one pay run: lock inputs from the closed attendance period, compute,
  * resolve errors and acknowledge variances, then approve (a different user — D9), finalise and
  * mark paid. The backend decides every transition; this page only offers the plausible ones. */
@@ -106,6 +83,7 @@ export default function PayRunDetailPage() {
   const canApprove = can("PAYROLL.RUN_APPROVE");
   const canBankAdvice = can("PAYROLL.BANK_ADVICE_DOWNLOAD");
 
+  const [query, setQuery] = useState("");
   const [run, setRun] = useState<PayRun | null>(null);
   const [employees, setEmployees] = useState<PayRunEmployee[]>([]);
   const [entityName, setEntityName] = useState<string | null>(null);
@@ -340,12 +318,17 @@ export default function PayRunDetailPage() {
 
   const actions = payRunActions(run.status);
   const computed = !["DRAFT", "INPUTS_LOCKED"].includes(run.status);
-  const visible = employees.filter((employee) =>
-    filter === "ISSUES"
-      ? employee.issues.length > 0
-      : filter === "VARIANCE"
-        ? employee.variance_flagged
-        : true,
+  const q = query.trim().toLowerCase();
+  const visible = employees.filter(
+    (employee) =>
+      (filter === "ISSUES"
+        ? employee.issues.length > 0
+        : filter === "VARIANCE"
+          ? employee.variance_flagged
+          : true) &&
+      (!q ||
+        (employee.employee_name ?? "").toLowerCase().includes(q) ||
+        (employee.employee_code ?? "").toLowerCase().includes(q)),
   );
   const confirmCopy = confirm ? CONFIRM[confirm] : undefined;
 
@@ -428,24 +411,11 @@ export default function PayRunDetailPage() {
         }
       />
 
-      <div className="overflow-hidden rounded-lg border border-border bg-surface">
-        <div className="grid grid-cols-2 gap-px bg-border sm:grid-cols-5 [&>*]:bg-surface">
-          <StatCell label="Employees" value={run.employee_count} />
-          <StatCell label="Gross" value={computed ? formatInr(run.gross_minor) : "—"} />
-          <StatCell label="Deductions" value={computed ? formatInr(run.deductions_minor) : "—"} />
-          <StatCell
-            label="Net pay"
-            value={computed ? formatInr(run.net_minor) : "—"}
-            emphasis={computed}
-          />
-          <div className="col-span-2 sm:col-span-1">
-            <StatCell
-              label="Employer contributions"
-              value={computed ? formatInr(run.employer_contributions_minor) : "—"}
-            />
-          </div>
-        </div>
+      <PayRunStatCards run={run} computed={computed} />
 
+      <PreDisbursalChecklist run={run} />
+
+      <div className="overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border bg-surface-secondary/50 px-4 py-2.5 text-xs text-foreground-secondary">
           <span className="tabular-nums">
             Pay date <CompanyDate value={run.pay_date} />
@@ -510,6 +480,20 @@ export default function PayRunDetailPage() {
       {employees.length > 0 ? (
         <TableContainer>
           <TableToolbar>
+            <div className="relative w-full max-w-xs">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-foreground-muted"
+                aria-hidden="true"
+              />
+              <Input
+                type="search"
+                aria-label="Search employees"
+                placeholder="Search by name or code…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="pl-8"
+              />
+            </div>
             <div className="w-full max-w-xs">
               <NativeSelect
                 aria-label="Filter employees"
@@ -530,6 +514,7 @@ export default function PayRunDetailPage() {
                 <TableHead align="right">Paid days</TableHead>
                 <TableHead align="right">LOP</TableHead>
                 <TableHead align="right">Gross</TableHead>
+                <TableHead align="right">Deductions</TableHead>
                 <TableHead align="right">Net</TableHead>
                 <TableHead>Variance</TableHead>
                 <TableHead>Issues</TableHead>
@@ -555,6 +540,11 @@ export default function PayRunDetailPage() {
                   </TableCell>
                   <TableCell align="right" numeric>
                     {employee.is_computed ? formatInr(employee.gross_minor) : "—"}
+                  </TableCell>
+                  <TableCell align="right" numeric className="text-danger">
+                    {employee.is_computed && employee.deductions_minor > 0
+                      ? `−${formatInr(employee.deductions_minor)}`
+                      : "—"}
                   </TableCell>
                   <TableCell align="right" numeric className="font-semibold text-foreground">
                     {employee.is_computed ? formatInr(employee.net_minor) : "—"}

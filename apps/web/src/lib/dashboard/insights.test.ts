@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { birthdayLabel, initials, insightsPath, monthShort, relativeTime, type UpcomingBirthday } from "./insights";
+import { birthdayLabel, initials, insightsPath, monthShort, periodLabel, relativeTime, trendOf, type UpcomingBirthday } from "./insights";
 
 const birthday = (over: Partial<UpcomingBirthday> = {}): UpcomingBirthday => ({
   employee_id: "e1",
@@ -36,5 +36,24 @@ describe("dashboard insight helpers", () => {
     expect(monthShort("2026-10")).toBe("Oct");
     expect(initials("Asha Rao")).toBe("AR");
     expect(initials("")).toBe("?");
+  });
+});
+
+describe("trendOf", () => {
+  it("is the whole-percent change from the previous figure", () => {
+    expect(trendOf(112, 100, "vs last month")).toEqual({ pct: 12, label: "vs last month" });
+    expect(trendOf(90, 100, "vs yesterday")?.pct).toBe(-10);
+  });
+
+  it("is null without a baseline rather than inventing one", () => {
+    expect(trendOf(5, 0, "x")).toBeNull();
+    expect(trendOf(null, 10, "x")).toBeNull();
+    expect(trendOf(5, undefined, "x")).toBeNull();
+  });
+});
+
+describe("periodLabel", () => {
+  it("formats a date range", () => {
+    expect(periodLabel("2026-10-01", "2026-10-31")).toBe("01 Oct 2026 – 31 Oct 2026");
   });
 });

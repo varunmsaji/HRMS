@@ -88,6 +88,11 @@ from hrms.modules.attendance.permissions import (
     ATTENDANCE_VIEW,
     ATTENDANCE_VIEW_ALL,
 )
+from hrms.modules.attendance.regularization_decision_center import (
+    RegularizationDecisionCenter,
+    RegularizationTab,
+    build_regularization_decision_center,
+)
 from hrms.modules.attendance.schemas import (
     FACE_IMAGE_MAX_BYTES,
     FACE_LIVENESS_FRAME_MAX_BYTES,
@@ -1362,6 +1367,24 @@ async def list_regularization_requests(
         pagination=build_pagination_meta(page, total=total),
         meta=build_meta(current_request_id() or "unknown"),
     )
+
+
+@router.get("/regularizations/decision-center", status_code=status.HTTP_200_OK)
+async def get_regularization_decision_center(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_REGULARIZATION_APPROVE))],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    tab: RegularizationTab = "pending",
+) -> DataEnvelope[RegularizationDecisionCenter]:
+    """Read-only approver screen data; approving/rejecting stays on the routes below."""
+    from hrms.modules.employee.service import EmployeeService
+
+    visible = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    data = await build_regularization_decision_center(session, tenant.company_id, visible, tab=tab)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/regularizations/{request_id}", status_code=status.HTTP_200_OK)

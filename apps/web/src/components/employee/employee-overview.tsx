@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { EmployeeSideCards } from "@/components/employee/employee-side-cards";
 import { ErrorState } from "@/components/common/error-state";
 import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
@@ -154,7 +155,8 @@ export function EmployeeOverview({ employee }: { employee: Employee }) {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="grid content-start gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle>Personal &amp; Contact Information</CardTitle>
@@ -280,6 +282,8 @@ export function EmployeeOverview({ employee }: { employee: Employee }) {
           ) : null}
         </CardContent>
       </Card>
+    </div>
+    <EmployeeSideCards employeeId={employee.id} />
     </div>
   );
 }

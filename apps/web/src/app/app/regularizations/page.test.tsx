@@ -26,6 +26,12 @@ vi.mock("@/lib/api/client", () => ({
   apiClient: { get: vi.fn(), getList: vi.fn(), post: vi.fn() },
 }));
 
+// The approver's default view is the decision center (covered by its own test); these tests
+// exercise the request table, reached through "Team requests".
+vi.mock("@/components/regularization/decision-center", () => ({
+  RegularizationDecisionCenter: () => null,
+}));
+
 import RegularizationsPage from "@/app/app/regularizations/page";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
@@ -96,24 +102,27 @@ describe("RegularizationsPage", () => {
     toastMock.mockReset();
   });
 
-  it("shows a loading state before data resolves", () => {
+  it("shows a loading state before data resolves", async () => {
     mockedGet.mockReturnValue(new Promise(() => {}));
     mockedGetList.mockReturnValue(new Promise(() => {}));
     render(<RegularizationsPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /team requests/i }));
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("shows the empty state when there are no requests", async () => {
     mockLoad([]);
     render(<RegularizationsPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /team requests/i }));
     expect(await screen.findByText(/no regularization requests in this range/i)).toBeInTheDocument();
   });
 
   it("renders request rows once loaded", async () => {
     mockLoad([sampleRequest]);
     render(<RegularizationsPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /team requests/i }));
 
-    expect(await screen.findByText("Missing punch")).toBeInTheDocument();
+    expect((await screen.findAllByText("Missing punch")).length).toBeGreaterThan(0);
     expect(screen.getByText("Submitted")).toBeInTheDocument();
     expect(screen.getByText("10/08/2026")).toBeInTheDocument();
   });
@@ -129,6 +138,7 @@ describe("RegularizationsPage", () => {
       });
     });
     render(<RegularizationsPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /team requests/i }));
 
     expect(
       await screen.findByText(/you do not have permission to view these requests/i),
@@ -139,9 +149,10 @@ describe("RegularizationsPage", () => {
     mockLoad([]);
     const user = userEvent.setup();
     render(<RegularizationsPage />);
+    await user.click(screen.getByRole("button", { name: /team requests/i }));
     await screen.findByText(/no regularization requests in this range/i);
 
-    // Default view is "Team" (the mock user holds REGULARIZATION_APPROVE); "New request" only
+    // The approver is switched to "Team" (the mock user holds REGULARIZATION_APPROVE); "New request" only
     // shows there with an on-behalf grant, which this mock doesn't have — switch to "My
     // requests" first, matching the SELF-submit permission the mock does hold.
     await user.click(screen.getByRole("button", { name: /my requests/i }));
@@ -156,7 +167,8 @@ describe("RegularizationsPage", () => {
     mockLoad([sampleRequest]);
     const user = userEvent.setup();
     render(<RegularizationsPage />);
-    await screen.findByText("Missing punch");
+    await user.click(screen.getByRole("button", { name: /my requests/i }));
+    await screen.findAllByText("Missing punch");
 
     await user.click(screen.getByRole("button", { name: /team requests/i }));
     expect(mockedGetList).toHaveBeenCalledWith(

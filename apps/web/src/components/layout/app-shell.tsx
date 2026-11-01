@@ -8,6 +8,7 @@ import { useState, type ReactNode } from "react";
 import { Logo } from "@/components/brand/logo";
 import { AppBreadcrumbs } from "@/components/layout/breadcrumbs";
 import { CompanyContext } from "@/components/layout/company-context";
+import { CompanySearch } from "@/components/layout/company-search";
 import { CompanyStatusBanner } from "@/components/layout/company-status-banner";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { NotificationBell } from "@/components/notifications/notification-bell";
@@ -123,6 +124,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="hidden h-4 w-px bg-border sm:block" aria-hidden="true" />
             <AppBreadcrumbs />
           </div>
+          <CompanySearch />
           <div className="flex items-center gap-1.5">
             <NotificationBell />
             <UserMenu />
