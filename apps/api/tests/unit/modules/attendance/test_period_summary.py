@@ -47,6 +47,12 @@ def _row(
         "comp_off_minutes_earned": 0,
         "is_late": False,
         "worked_minutes": 0,
+        "paid_break_minutes": 0,
+        "unpaid_break_minutes": 0,
+        "auto_deducted_break_minutes": 0,
+        "actual_break_minutes": 0,
+        "excess_break_minutes": 0,
+        "has_unresolved_break": False,
     }
     values.update(extra)
     values["weekly_off_fraction"] = Decimal(str(values["weekly_off_fraction"]))

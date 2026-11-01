@@ -24,6 +24,7 @@ from hrms.core.links import mobile_link
 from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
 from hrms.core.storage import DocumentStorageService
+from hrms.modules.attendance.face_policy import FacePolicyService
 from hrms.modules.onboarding.document_validation import (
     content_disposition_attachment,
     safe_document_object_key,
@@ -487,7 +488,7 @@ class OnboardingCaseService:
             self._session, company_id=company_id, case_id=case_id
         )
         latest_token = await self._token_repo.get_latest_for_case(self._session, case_id=case_id)
-        return onboarding_case_to_detail_read(
+        detail = onboarding_case_to_detail_read(
             case,
             reviews,
             bank_info=await self._decrypt_bank_info(case),
@@ -495,6 +496,14 @@ class OnboardingCaseService:
             nominee_info=await self._decrypt_nominee_info(case),
             latest_token=latest_token,
         )
+        face = FacePolicyService(self._session)
+        detail.face_enrollment_required = await face.is_required(company_id)
+        if case.employee_id is not None:
+            detail.face_enrollment = await face.onboarding_status(company_id, case.employee_id)
+            detail.onboarding_requirements_complete = (
+                case.status == "ACTIVATED" and detail.face_enrollment.requirement_met
+            )
+        return detail
 
     async def get_public_case(self, company_id: UUID, case_id: UUID) -> PublicOnboardingCaseRead:
         """Called only after `OnboardingTokenService.resolve_and_touch` has already proven the

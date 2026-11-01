@@ -114,6 +114,8 @@ class AttendanceOverviewService:
             ad.missing_punch.is_(True),
             ad.is_pending_approval.is_(True),
             ad.attendance_status.in_(("INCOMPLETE", "CONFIG_ERROR")),
+            ad.has_unresolved_break.is_(True),
+            ad.has_excess_break_exception.is_(True),
             pending_regularization,
         )
 

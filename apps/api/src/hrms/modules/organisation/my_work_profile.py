@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hrms.core.db.models.identity import Company
 from hrms.core.db.session import get_session
 from hrms.modules.employee.models import EmployeeAssignment
-from hrms.modules.organisation.models import Branch, Shift, ShiftVersion
+from hrms.modules.organisation.models import (
+    Branch,
+    Department,
+    Designation,
+    Shift,
+    ShiftVersion,
+)
 from hrms.shared.business_time import business_today
 
 
@@ -40,6 +46,8 @@ class MyWorkLocationRead(BaseModel):
 class MyWorkProfileRead(BaseModel):
     shift: MyShiftRead | None = None
     work_location: MyWorkLocationRead | None = None
+    designation: str | None = None
+    department: str | None = None
 
 
 class MyWorkProfileService:
@@ -77,7 +85,33 @@ class MyWorkProfileService:
             if assignment.branch_id
             else None
         )
-        return MyWorkProfileRead(shift=shift, work_location=location)
+        designation = (
+            (
+                await self._session.execute(
+                    select(Designation.name).where(
+                        Designation.company_id == company_id,
+                        Designation.id == assignment.designation_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if assignment.designation_id
+            else None
+        )
+        department = (
+            (
+                await self._session.execute(
+                    select(Department.name).where(
+                        Department.company_id == company_id,
+                        Department.id == assignment.department_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if assignment.department_id
+            else None
+        )
+        return MyWorkProfileRead(
+            shift=shift, work_location=location, designation=designation, department=department
+        )
 
     async def _shift(self, company_id: UUID, shift_id: UUID, today: date) -> MyShiftRead | None:
         shift = (

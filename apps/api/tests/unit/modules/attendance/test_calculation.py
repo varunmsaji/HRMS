@@ -508,7 +508,8 @@ def test_evaluate_day_present_full_day() -> None:
     ]
     result = evaluate_day(_base_input(punches=punches))
     assert result.attendance_status == "PRESENT"
-    assert result.worked_minutes == 550
+    # 5 min before the 09:30 start is recorded attendance but not credited work.
+    assert result.worked_minutes == 545
     assert result.is_late is False
     assert result.paid_day_fraction == "1.00"
 

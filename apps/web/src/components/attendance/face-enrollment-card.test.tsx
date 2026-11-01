@@ -2,8 +2,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mockedToast = vi.hoisted(() => vi.fn(() => ({ toast: vi.fn() })));
 vi.mock("@/components/common/toast", () => ({
-  useToast: () => ({ toast: vi.fn() }),
+  useToast: () => mockedToast(),
 }));
 
 vi.mock("@/lib/api/client", () => ({
@@ -70,12 +71,56 @@ describe("FaceEnrollmentCard", () => {
     const user = userEvent.setup();
     renderCard();
 
-    await user.click(await screen.findByRole("button", { name: "Open face enrollment" }));
+    await user.click(await screen.findByRole("button", { name: "Initiate face enrollment" }));
+    // Nothing is created until HR confirms in the dialog.
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(screen.getByText("Initiate face enrollment?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Initiate enrollment" }));
 
+    expect(mockedPost).toHaveBeenCalledTimes(1);
     expect(mockedPost).toHaveBeenCalledWith(`${BASE}/enrollment-window`);
     expect(await screen.findByText("Enrollment open")).toBeInTheDocument();
-    expect(screen.getByText(/can set up face attendance in the mobile app until/)).toBeInTheDocument();
+    expect(screen.getByText(/Enrollment is currently available for Priya Sharma/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel enrollment" })).toBeInTheDocument();
+  });
+
+  it("cancelling the dialog creates nothing, and a 409 re-reads server state", async () => {
+    statusSequence({ profile: null, open_window: null }, { profile: null, open_window: WINDOW });
+    mockedPost.mockRejectedValueOnce(new Error("conflict"));
+    const user = userEvent.setup();
+    renderCard();
+
+    await user.click(await screen.findByRole("button", { name: "Initiate face enrollment" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mockedPost).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Initiate face enrollment" }));
+    await user.click(screen.getByRole("button", { name: "Initiate enrollment" }));
+    // Failure reloaded the canonical state: the window opened elsewhere now shows, no Initiate.
+    expect(await screen.findByText("Enrollment open")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Initiate face enrollment" })).toBeNull();
+  });
+
+  it.each([
+    ["QUEUED", /notification email has been queued/],
+    ["FAILED", /A notification could not be sent/],
+    ["NOT_SUPPORTED", /A notification could not be sent/],
+  ] as const)("reports notification_status %s truthfully", async (notification_status, expected) => {
+    const toast = vi.fn();
+    mockedToast.mockReturnValue({ toast });
+    statusSequence({ profile: null, open_window: null }, { profile: null, open_window: WINDOW });
+    mockedPost.mockResolvedValue({ ...WINDOW, notification_status });
+    const user = userEvent.setup();
+    renderCard();
+
+    await user.click(await screen.findByRole("button", { name: "Initiate face enrollment" }));
+    await user.click(screen.getByRole("button", { name: "Initiate enrollment" }));
+
+    await screen.findByText("Enrollment open");
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Enrollment initiated", description: expect.stringMatching(expected) }),
+    );
+    expect(JSON.stringify(toast.mock.calls)).not.toMatch(/has been notified|delivered/);
   });
 
   it("cancels an open window", async () => {
@@ -87,7 +132,7 @@ describe("FaceEnrollmentCard", () => {
     await user.click(await screen.findByRole("button", { name: "Cancel enrollment" }));
 
     expect(mockedDelete).toHaveBeenCalledWith(`${BASE}/enrollment-window`);
-    expect(await screen.findByRole("button", { name: "Open face enrollment" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Initiate face enrollment" })).toBeInTheDocument();
   });
 
   it("shows the submitted photo and approves it", async () => {
@@ -133,7 +178,7 @@ describe("FaceEnrollmentCard", () => {
     await waitFor(() => expect(mockedPost).toHaveBeenCalledWith(`${BASE}/reject`, { note: "Different person" }));
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.getByText(/Different person/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open face enrollment" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Initiate face enrollment" })).toBeInTheDocument();
   });
 
   it("revokes an enrolled profile after confirmation", async () => {

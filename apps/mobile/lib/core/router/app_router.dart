@@ -11,6 +11,8 @@ import '../../features/auth/presentation/verify_email_screen.dart';
 import '../../features/attendance/presentation/attendance_periods_screen.dart';
 import '../../features/attendance/presentation/attendance_insights_screen.dart';
 import '../../features/attendance/presentation/attendance_self_screen.dart';
+import '../../features/attendance/presentation/face_setup_screen.dart';
+import '../../features/notifications/presentation/notifications_screen.dart';
 import '../../features/attendance/presentation/policy_assignments_screen.dart';
 import '../../features/attendance/presentation/policy_resolution_screen.dart';
 import '../../features/attendance/presentation/roster_calendar_screen.dart';
@@ -119,6 +121,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/onboarding/:token',
         builder: (context, state) => PublicOnboardingScreen(token: state.pathParameters['token']!),
       ),
+      GoRoute(path: '/app/notifications', builder: (context, state) => const EmployeeThemeScope(child: NotificationsScreen())),
+      GoRoute(path: '/app/attendance/face-setup', builder: (context, state) => const EmployeeThemeScope(child: FaceSetupScreen())),
       GoRoute(path: '/app/more', builder: (context, state) => const SettingsHubScreen()),
       GoRoute(path: '/app/company', builder: (context, state) => const CompanyProfileScreen()),
       GoRoute(path: '/app/branches', builder: (context, state) => ResourceListScreen(config: branchResource())),

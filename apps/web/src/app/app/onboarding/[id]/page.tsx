@@ -1,5 +1,6 @@
 "use client";
 
+import { FACE_ENROLLMENT_STATE_LABEL } from "@/lib/attendance/types";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -689,6 +690,29 @@ export default function OnboardingCaseDetailPage() {
           </Card>
         );
       })}
+
+      {onboardingCase.face_enrollment_required ? (
+        <Card>
+          <CardContent className="space-y-2 pt-6">
+            <h3 className="text-sm font-medium text-foreground">Face enrollment</h3>
+            <p className="text-sm text-foreground-muted">
+              Your company requires face enrollment as part of onboarding.
+            </p>
+            {onboardingCase.face_enrollment ? (
+              <p className="text-sm text-foreground">
+                Status: {FACE_ENROLLMENT_STATE_LABEL[onboardingCase.face_enrollment.state]}
+                {onboardingCase.face_enrollment.requirement_met
+                  ? " — requirement met"
+                  : " — onboarding is not complete until HR approves the enrollment"}
+              </p>
+            ) : (
+              <p className="text-sm text-foreground-muted">
+                Available after the employee is activated.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardContent className="space-y-4 pt-6">

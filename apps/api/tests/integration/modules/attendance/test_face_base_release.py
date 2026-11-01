@@ -409,6 +409,11 @@ async def test_window_reopened_during_provider_work_does_not_let_the_old_submiss
 
     first = asyncio.create_task(_submit(client, me))
     await asyncio.wait_for(probing_provider.entered.wait(), 5)
+    assert (
+        await client.delete(
+            f"/v1/attendance/face-profiles/{employee_id}/enrollment-window", headers=admin
+        )
+    ).status_code == 204
     assert (await _open(client, admin, employee_id)).status_code == 201  # supersedes the window
     probing_provider.gate.set()
     stale = await first

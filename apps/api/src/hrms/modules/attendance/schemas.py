@@ -118,6 +118,8 @@ _REGULARIZATION_TYPES = (
     "ON_DUTY",
     "EXCESS_BREAK",
     "FULL_DAY",
+    # Break management — corrects/resolves a recorded break; applied via `BreakEventService`.
+    "BREAK_CORRECTION",
     # WD-32 decision 5 — the one type that is forward-dated by nature; see
     # `RegularizationRequestService.submit`'s future-date carve-out.
     "EARLY_DEPARTURE_APPROVAL",
@@ -1460,6 +1462,17 @@ class AttendanceBreakRead(BaseModel):
     minutes: int
     is_paid: bool
     is_excess: bool
+    name: str | None = None
+    kind: str = "PUNCHED_GAP"
+    rule_source: str | None = None
+    override_id: UUID | None = None
+    scheduled_minutes: int | None = None
+    excess_minutes: int = 0
+    deducted_minutes: int = 0
+    needs_review: bool = False
+    is_approved: bool = False
+    start_event_id: UUID | None = None
+    end_event_id: UUID | None = None
 
 
 def attendance_break_to_read(row: "AttendanceBreak") -> AttendanceBreakRead:
@@ -1472,6 +1485,17 @@ def attendance_break_to_read(row: "AttendanceBreak") -> AttendanceBreakRead:
         minutes=row.minutes,
         is_paid=row.is_paid,
         is_excess=row.is_excess,
+        name=row.name,
+        kind=row.kind,
+        rule_source=row.rule_source,
+        override_id=row.override_id,
+        scheduled_minutes=row.scheduled_minutes,
+        excess_minutes=row.excess_minutes,
+        deducted_minutes=row.deducted_minutes,
+        needs_review=row.needs_review,
+        is_approved=row.is_approved,
+        start_event_id=row.start_event_id,
+        end_event_id=row.end_event_id,
     )
 
 
@@ -1503,6 +1527,13 @@ class AttendanceDayRead(BaseModel):
     unpaid_break_minutes: int
     paid_break_minutes: int
     excess_break_minutes: int
+    actual_break_minutes: int = 0
+    auto_deducted_break_minutes: int = 0
+    unresolved_break_count: int = 0
+    has_unresolved_break: bool = False
+    has_active_break: bool = False
+    has_excess_break_exception: bool = False
+    gross_elapsed_minutes: int = 0
 
     attendance_status: str
     late_minutes: int
@@ -1583,6 +1614,13 @@ def attendance_day_to_read(
         unpaid_break_minutes=row.unpaid_break_minutes,
         paid_break_minutes=row.paid_break_minutes,
         excess_break_minutes=row.excess_break_minutes,
+        actual_break_minutes=row.actual_break_minutes,
+        auto_deducted_break_minutes=row.auto_deducted_break_minutes,
+        unresolved_break_count=row.unresolved_break_count,
+        has_unresolved_break=row.has_unresolved_break,
+        has_active_break=row.has_active_break,
+        has_excess_break_exception=row.has_excess_break_exception,
+        gross_elapsed_minutes=row.gross_elapsed_minutes,
         attendance_status=row.attendance_status,
         late_minutes=row.late_minutes,
         early_departure_minutes=row.early_departure_minutes,
@@ -1735,6 +1773,11 @@ class RegularizationRequestCreate(BaseModel):
     requested_shift_id: UUID | None = None
     attachment_reference: str | None = Field(default=None, max_length=500)
     requested_punches: list[RegularizationRequestedPunchInput] = Field(default_factory=list)
+    # BREAK_CORRECTION only: the break START event being corrected and its corrected end,
+    # given either as an absolute time or as a duration from the START.
+    break_start_event_id: UUID | None = None
+    requested_break_end: datetime | None = None
+    requested_break_minutes: int | None = Field(default=None, ge=1, le=1440)
 
     @field_validator("request_type")
     @classmethod
@@ -1745,6 +1788,23 @@ class RegularizationRequestCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_correction_payload(self) -> "RegularizationRequestCreate":
+        has_break_fields = (
+            self.break_start_event_id is not None
+            or self.requested_break_end is not None
+            or self.requested_break_minutes is not None
+        )
+        if self.request_type == "BREAK_CORRECTION":
+            if self.break_start_event_id is None:
+                raise ValueError("break_start_event_id is required for BREAK_CORRECTION")
+            if (self.requested_break_end is None) == (self.requested_break_minutes is None):
+                raise ValueError(
+                    "exactly one of requested_break_end or requested_break_minutes is required"
+                )
+            if self.requested_punches or self.requested_shift_id is not None:
+                raise ValueError("BREAK_CORRECTION cannot carry punches or a shift")
+            return self
+        if has_break_fields:
+            raise ValueError("break fields are only valid for BREAK_CORRECTION")
         if not self.requested_punches and self.requested_shift_id is None:
             raise ValueError(
                 "requested_punches or requested_shift_id is required — see WD-28 decision 2"
@@ -1774,6 +1834,9 @@ class RegularizationRequestRead(BaseModel):
     reason: str | None
     requested_shift_id: UUID | None
     attachment_reference: str | None
+    break_start_event_id: UUID | None = None
+    requested_break_end: datetime | None = None
+    requested_break_minutes: int | None = None
 
     status: str
     approval_chain: str
@@ -1818,6 +1881,9 @@ def regularization_request_to_read(
         reason=row.reason,
         requested_shift_id=row.requested_shift_id,
         attachment_reference=row.attachment_reference,
+        break_start_event_id=row.break_start_event_id,
+        requested_break_end=row.requested_break_end,
+        requested_break_minutes=row.requested_break_minutes,
         status=row.status,
         approval_chain=row.approval_chain,
         approval_stage=row.approval_stage,
@@ -2174,6 +2240,13 @@ class AttendancePeriodSummaryRead(BaseModel):
     comp_off_minutes_earned: int
     late_count: int
     worked_minutes_total: int
+    # Break management — None on a summary frozen before these figures existed.
+    paid_break_minutes_total: int | None = None
+    unpaid_break_minutes_total: int | None = None
+    auto_deducted_break_minutes_total: int | None = None
+    actual_break_minutes_total: int | None = None
+    excess_break_minutes_total: int | None = None
+    unresolved_break_days: int | None = None
     generated_at: str
     frozen: bool
 
@@ -2207,6 +2280,12 @@ def attendance_period_summary_to_read(
         comp_off_minutes_earned=row.comp_off_minutes_earned,
         late_count=row.late_count,
         worked_minutes_total=row.worked_minutes_total,
+        paid_break_minutes_total=row.paid_break_minutes_total,
+        unpaid_break_minutes_total=row.unpaid_break_minutes_total,
+        auto_deducted_break_minutes_total=row.auto_deducted_break_minutes_total,
+        actual_break_minutes_total=row.actual_break_minutes_total,
+        excess_break_minutes_total=row.excess_break_minutes_total,
+        unresolved_break_days=row.unresolved_break_days,
         generated_at=_format_timestamp(row.generated_at) or "",
         frozen=frozen,
     )
@@ -2392,6 +2471,10 @@ class FaceEnrollmentWindowRead(BaseModel):
     opened_by_user_id: UUID | None
     opened_at: str
     expires_at: str
+    notification_status: str | None = None
+    """Only on the response to an HR initiation: QUEUED (an email is in the outbox, not yet known
+    to be delivered), NOT_SUPPORTED (the employee has no usable email) or FAILED (could not be
+    queued). The window exists in every case; this never reports delivery as done."""
 
 
 def face_window_to_read(row: "FaceEnrollmentWindow") -> FaceEnrollmentWindowRead:
@@ -2414,6 +2497,10 @@ class FaceEnrollmentStatusRead(BaseModel):
     face_verification_required: bool = False
     """True when the employee's profile is ENROLLED: their own punches must go through the face
     punch flow and `POST /attendance/punches/me` is refused (403 FACE_VERIFICATION_REQUIRED)."""
+    enrollment_state: str = "NOT_ENROLLED"
+    """Derived (face_policy.derive_enrollment_state): NOT_ENROLLED, ENROLLMENT_AVAILABLE,
+    PENDING_APPROVAL, ENROLLED, REJECTED or REVOKED."""
+    company_requires_enrollment: bool = False
 
 
 class FaceProfileRejectInput(BaseModel):

@@ -46,6 +46,7 @@ from hrms.modules.attendance.dependencies import (
     get_attendance_period_service,
     get_attendance_service,
     get_face_enrollment_service,
+    get_face_policy_service,
     get_face_punch_service,
     get_leave_projection_service,
     get_overtime_record_service,
@@ -55,6 +56,11 @@ from hrms.modules.attendance.dependencies import (
 )
 from hrms.modules.attendance.exceptions import FaceImageInvalidError
 from hrms.modules.attendance.face_comparison_router import router as face_comparison_router
+from hrms.modules.attendance.face_policy import (
+    FaceEnrollmentPolicyRead,
+    FaceEnrollmentPolicyUpdate,
+    FacePolicyService,
+)
 from hrms.modules.attendance.face_rate_limit import (
     face_enrollment_rate_limit,
     face_punch_rate_limit,
@@ -961,6 +967,11 @@ async def list_attendance_days(
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     attendance_status: Annotated[str | None, Query()] = None,
+    break_filter: Annotated[
+        Literal["UNRESOLVED", "ACTIVE", "EXCESS", "AUTO_DEDUCTED", "RECORDED", "ANY_EXCEPTION"]
+        | None,
+        Query(description="Restrict to days with a break exception or break activity"),
+    ] = None,
 ) -> ListEnvelope[AttendanceDayRead]:
     data, total = await service.list_attendance_days(
         tenant.company_id,
@@ -970,6 +981,7 @@ async def list_attendance_days(
         date_from=date_from,
         date_to=date_to,
         status=attendance_status,
+        break_filter=break_filter,
         page=page,
     )
     return ListEnvelope(
@@ -1828,6 +1840,32 @@ def _client_meta(request: Request) -> dict[str, str | None]:
     }
 
 
+@router.get("/attendance/face-enrollment-policy", status_code=status.HTTP_200_OK)
+async def get_face_enrollment_policy(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FacePolicyService, Depends(get_face_policy_service)],
+) -> DataEnvelope[FaceEnrollmentPolicyRead]:
+    data = await service.get_policy(tenant.company_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.put("/attendance/face-enrollment-policy", status_code=status.HTTP_200_OK)
+async def update_face_enrollment_policy(
+    body: FaceEnrollmentPolicyUpdate,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
+    service: Annotated[FacePolicyService, Depends(get_face_policy_service)],
+) -> DataEnvelope[FaceEnrollmentPolicyRead]:
+    """Whether face enrollment is a required onboarding step. Policy only: it never marks anyone
+    enrolled, and turning it on does not lock existing employees out of attendance."""
+    data = await service.set_policy(
+        tenant.company_id, body, actor_user_id=tenant.user_id, **_client_meta(request)
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
 @router.get("/attendance/face-profiles", status_code=status.HTTP_200_OK)
 async def list_face_profiles(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
@@ -2012,6 +2050,24 @@ async def get_my_face_enrollment(
         raise ValidationError("The caller has no linked employee record")
     data = await service.get_status(
         tenant.company_id, user.employee_id, scope=None, caller_employee_id=user.employee_id
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance/face-enrollment/me/window", status_code=status.HTTP_201_CREATED)
+async def start_my_face_enrollment(
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_PUNCH))],
+    service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+) -> DataEnvelope[FaceEnrollmentWindowRead]:
+    """Self-service "Start face enrollment": opens the caller's own one-time window. The employee
+    is the authenticated user's own record - there is no employee id in the request."""
+    if user.employee_id is None:
+        raise ValidationError("The caller has no linked employee record")
+    data = await service.open_own_window(
+        tenant.company_id, user.employee_id, actor_user_id=tenant.user_id, **_client_meta(request)
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 

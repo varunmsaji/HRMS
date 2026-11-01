@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1092,6 +1092,21 @@ class PunchRepository:
 # ---------------------------------------------------------------------------
 
 
+# Break-related day filters for HR / manager exception views (`break_filter` query parameter).
+_BREAK_FILTERS: dict[str, ColumnElement[bool]] = {
+    "UNRESOLVED": AttendanceDay.has_unresolved_break.is_(True),
+    "ACTIVE": AttendanceDay.has_active_break.is_(True),
+    "EXCESS": AttendanceDay.has_excess_break_exception.is_(True),
+    "AUTO_DEDUCTED": AttendanceDay.auto_deducted_break_minutes > 0,
+    "RECORDED": AttendanceDay.actual_break_minutes > 0,
+    "ANY_EXCEPTION": or_(
+        AttendanceDay.has_unresolved_break.is_(True),
+        AttendanceDay.has_excess_break_exception.is_(True),
+    ),
+}
+BREAK_FILTER_CODES = tuple(_BREAK_FILTERS)
+
+
 class AttendanceDayRepository:
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> AttendanceDay:
         row = AttendanceDay(**data)
@@ -1175,6 +1190,7 @@ class AttendanceDayRepository:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
+        break_filter: str | None = None,
     ) -> Select[Any] | None:
         conditions = [AttendanceDay.company_id == company_id]
         if visible_employee_ids is not None:
@@ -1189,6 +1205,8 @@ class AttendanceDayRepository:
             conditions.append(AttendanceDay.attendance_date <= date_to)
         if status is not None:
             conditions.append(AttendanceDay.attendance_status == status)
+        if break_filter is not None:
+            conditions.append(_BREAK_FILTERS[break_filter])
         stmt = (
             select(AttendanceDay)
             .where(*conditions)
@@ -1253,9 +1271,22 @@ class AttendanceDayRepository:
         caller passes the day *before* the date being recomputed (mirrors
         `OvertimeRecordRepository.sum_minutes_detected_for_range`'s own exclude-today shape) so
         this day's own fresh computation, done by the pure engine, is never double-counted."""
-        condition = (
-            AttendanceDay.is_late if flag == "LATE" else AttendanceDay.excess_break_minutes > 0
+        # Mirrors the engine's `counter_excess_minutes`: a legacy punched-gap excess, or a V1
+        # break whose excess needs review. Excess a shift rule only RECORDs (no exception, no
+        # deduction) must not drive the cumulative half-day counter.
+        excess_exists = (
+            select(AttendanceBreak.id)
+            .where(
+                AttendanceBreak.attendance_day_id == AttendanceDay.id,
+                AttendanceBreak.is_excess.is_(True),
+                or_(
+                    AttendanceBreak.kind == "PUNCHED_GAP",
+                    AttendanceBreak.needs_review.is_(True),
+                ),
+            )
+            .exists()
         )
+        condition = AttendanceDay.is_late if flag == "LATE" else excess_exists
         stmt = (
             select(func.count())
             .select_from(AttendanceDay)

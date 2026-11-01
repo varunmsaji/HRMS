@@ -9,6 +9,7 @@ from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session
 from hrms.core.storage import DocumentStorageService
 from hrms.modules.attendance.face_comparison_admin import FaceComparisonAdminService
+from hrms.modules.attendance.face_policy import FacePolicyService
 from hrms.modules.attendance.face_service import (
     FaceEnrollmentService,
     FacePhotoStorage,
@@ -94,6 +95,12 @@ def get_face_liveness_engine() -> LivenessEngine | None:
 
 def get_face_photo_storage() -> FacePhotoStorage:
     return DocumentStorageService(get_settings())
+
+
+def get_face_policy_service(
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+) -> FacePolicyService:
+    return FacePolicyService(session)
 
 
 def get_face_enrollment_service(

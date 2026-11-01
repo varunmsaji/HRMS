@@ -244,7 +244,7 @@ bool facePunchOutcomeUnknown(Object error) =>
 
 /// The signed-in employee's face enrollment state (`GET /attendance/face-enrollment/me`).
 class FaceEnrollmentStatus {
-  FaceEnrollmentStatus({this.profileStatus, this.reviewNote, this.windowExpiresAt, bool? faceVerificationRequired})
+  FaceEnrollmentStatus({this.profileStatus, this.reviewNote, this.windowExpiresAt, bool? faceVerificationRequired, this.enrollmentState, this.companyRequiresEnrollment = false})
       : _faceVerificationRequired = faceVerificationRequired;
 
   /// `PENDING_APPROVAL` | `ENROLLED` | `REJECTED` | `REVOKED`, or null if never enrolled.
@@ -255,6 +255,13 @@ class FaceEnrollmentStatus {
   final DateTime? windowExpiresAt;
 
   final bool? _faceVerificationRequired;
+
+  /// The server's single derived state: `NOT_ENROLLED`, `ENROLLMENT_AVAILABLE`, `PENDING_APPROVAL`,
+  /// `ENROLLED`, `REJECTED` or `REVOKED`. Null only against an older server.
+  final String? enrollmentState;
+
+  /// Company policy: face enrollment is a required onboarding step.
+  final bool companyRequiresEnrollment;
 
   bool get isEnrolled => profileStatus == 'ENROLLED';
 
@@ -273,6 +280,8 @@ class FaceEnrollmentStatus {
       reviewNote: profile?['review_note'] as String?,
       windowExpiresAt: window == null ? null : DateTime.parse(window['expires_at'] as String),
       faceVerificationRequired: json['face_verification_required'] as bool?,
+      enrollmentState: json['enrollment_state'] as String?,
+      companyRequiresEnrollment: json['company_requires_enrollment'] as bool? ?? false,
     );
   }
 }
@@ -503,6 +512,10 @@ class AttendanceRepository {
         '/attendance/face-enrollment/me',
         parse: (d) => FaceEnrollmentStatus.fromJson(d as Map<String, dynamic>),
       );
+
+  /// Self-service "Start face enrollment": opens the caller's own one-time window (the server uses
+  /// the signed-in employee; no id is sent). Capture, liveness and HR approval still apply.
+  Future<void> startMyFaceEnrollment() => _client.post('/attendance/face-enrollment/me/window', body: const {}, parse: (_) {});
 
   /// Submits the five captures (keyed by [faceEnrollmentAngles]) inside an open window. The
   /// result waits for HR approval before it can be used to punch.

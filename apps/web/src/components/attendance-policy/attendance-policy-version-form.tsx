@@ -107,7 +107,7 @@ export function AttendancePolicyVersionForm({
           <FormField
             id="early-in-allowance"
             label="Earliest punch-in before shift start (minutes)"
-            description="Self-service punch-ins earlier than this are refused. Leave blank for no limit."
+            description="Employees can punch in this many minutes before their scheduled shift start; earlier self-service punch-ins are refused. Early attendance is recorded but does not count as work time or overtime. This is separate from late-arrival grace. Leave blank for no limit."
             error={errors.earlyInAllowanceMinutes}
           >
             <Input

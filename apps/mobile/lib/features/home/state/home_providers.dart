@@ -30,8 +30,9 @@ final homeLeaveProvider = FutureProvider.autoDispose.family<List<LeaveApplicatio
 
 /// A correction request, reduced to what Home shows.
 class HomeCorrection {
-  const HomeCorrection({required this.id, required this.title, this.caption});
+  const HomeCorrection({required this.id, required this.title, this.caption, this.submittedAt});
   final String id;
+  final String? submittedAt;
   final String title;
   final String? caption;
 }
@@ -48,6 +49,7 @@ final homeSubmittedCorrectionsProvider = FutureProvider.autoDispose.family<List<
             id: m['id'] as String,
             title: regularizationTypeLabels[m['request_type']] ?? 'Attendance correction',
             caption: m['attendance_date'] as String?,
+            submittedAt: m['submitted_at'] as String?,
           );
         },
       );
@@ -89,7 +91,7 @@ class HomeActivity {
 /// The caller's current shift and work location (`GET /employee-work-profile/me`,
 /// `ATTENDANCE.VIEW`). Either part is null when the placement carries none; Home then omits that card.
 class HomeWorkProfile {
-  const HomeWorkProfile({this.shiftName, this.shiftStart, this.shiftEnd, this.locationName, this.locationDetail});
+  const HomeWorkProfile({this.shiftName, this.shiftStart, this.shiftEnd, this.locationName, this.locationDetail, this.designation, this.department});
 
   final String? shiftName;
 
@@ -100,6 +102,8 @@ class HomeWorkProfile {
 
   /// Address line and city, whichever the branch has.
   final String? locationDetail;
+  final String? designation;
+  final String? department;
 
   factory HomeWorkProfile.fromJson(Map<String, dynamic> json) {
     String? hhmm(Object? v) => v is String && v.length >= 5 ? v.substring(0, 5) : null;
@@ -112,6 +116,8 @@ class HomeWorkProfile {
       shiftEnd: hhmm(shift?['end_time']),
       locationName: location?['name'] as String?,
       locationDetail: detail.isEmpty ? null : detail,
+      designation: json['designation'] as String?,
+      department: json['department'] as String?,
     );
   }
 }

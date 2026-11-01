@@ -348,6 +348,17 @@ class ShiftBreak(Base, TimestampMixin):
     allows_split: Mapped[bool] = mapped_column(Boolean, default=False)
     crosses_midnight: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # Break management V1. `mode` NULL = legacy break (matched against a punch gap, as before);
+    # otherwise MANDATORY_PUNCH | AUTO_DEDUCT | OPTIONAL_PUNCH.
+    mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    break_type: Mapped[str] = mapped_column(String(20), default="OTHER")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # RECORD_ONLY | EXCEPTION | REQUIRE_APPROVAL | DEDUCT; NULL = the attendance policy's
+    # `excess_break_behaviour` decides (legacy).
+    excess_outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    auto_deduct_full: Mapped[bool] = mapped_column(Boolean, default=False)
+    optional_recorded_deducts: Mapped[bool] = mapped_column(Boolean, default=True)
+    optional_scheduled_fallback: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class ShiftDutyBlock(Base, TimestampMixin):

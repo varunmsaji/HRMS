@@ -10,6 +10,8 @@ import { AppBreadcrumbs } from "@/components/layout/breadcrumbs";
 import { CompanyContext } from "@/components/layout/company-context";
 import { CompanyStatusBanner } from "@/components/layout/company-status-banner";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { NotificationBell } from "@/components/notifications/notification-bell";
+import { NotificationsProvider } from "@/components/notifications/notifications-provider";
 import { UserMenu } from "@/components/layout/user-menu";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/common/toast";
@@ -78,6 +80,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
+    <NotificationsProvider>
     <div className="flex min-h-screen bg-background text-foreground">
       <a
         href="#main-content"
@@ -120,7 +123,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="hidden h-4 w-px bg-border sm:block" aria-hidden="true" />
             <AppBreadcrumbs />
           </div>
-          <UserMenu />
+          <div className="flex items-center gap-1.5">
+            <NotificationBell />
+            <UserMenu />
+          </div>
         </header>
         ) : null}
 
@@ -149,5 +155,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         </SheetContent>
       </Sheet>
     </div>
+    </NotificationsProvider>
   );
 }

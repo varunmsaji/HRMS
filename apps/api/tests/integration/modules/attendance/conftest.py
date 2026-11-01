@@ -259,6 +259,8 @@ async def _face_tenant(
             "face_liveness_session",
             "employee_face_profile",
             "face_enrollment_window",
+            "company_face_policy",
+            "notification",
         ):
             await session.execute(
                 text(f"DELETE FROM {table} WHERE company_id = :cid"), {"cid": str(company_id)}

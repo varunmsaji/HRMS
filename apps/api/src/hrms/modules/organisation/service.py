@@ -2563,7 +2563,17 @@ class OrganisationService:
 
     def _validate_shift_breaks(self, breaks: list[ShiftBreakCreate]) -> None:
         fixed_windows: list[tuple[int, str, str]] = []
+        seen_names: set[str] = set()
         for index, brk in enumerate(breaks):
+            # Break management V1: a break is addressed by name (employee overrides, break
+            # events), so names must be unique within a version.
+            key = brk.name.strip().lower()
+            if key in seen_names:
+                raise InvalidShiftBreakError(
+                    "break names must be unique within a shift", index=index
+                )
+            seen_names.add(key)
+            self._validate_break_durations(brk, index)
             if brk.break_kind == "FIXED_WINDOW":
                 if brk.start_time is None or brk.end_time is None:
                     raise InvalidShiftBreakError(
@@ -2614,6 +2624,53 @@ class OrganisationService:
                 if self._interval_overlaps(start_a, end_a, wraps_a, start_b, end_b, wraps_b):
                     raise InvalidShiftBreakOverlapError(index=idx_b)
 
+    @staticmethod
+    def _validate_break_durations(brk: ShiftBreakCreate, index: int) -> None:
+        """Duration rules shared by every break kind (V1). `mode=None` legacy breaks keep the
+        pre-V1 rules only, so existing payloads still validate."""
+        if brk.mode is None:
+            return
+        if brk.max_minutes is not None and brk.max_minutes < 1:
+            raise InvalidShiftBreakError("max_minutes must be at least 1", index=index)
+        if (
+            brk.min_minutes is not None
+            and brk.max_minutes is not None
+            and brk.min_minutes > brk.max_minutes
+        ):
+            raise InvalidShiftBreakError("min_minutes must not exceed max_minutes", index=index)
+        if (
+            brk.scheduled_minutes is not None
+            and brk.max_minutes is not None
+            and brk.scheduled_minutes > brk.max_minutes
+        ):
+            raise InvalidShiftBreakError(
+                "scheduled_minutes must not exceed max_minutes", index=index
+            )
+        if (
+            brk.scheduled_minutes is not None
+            and brk.min_minutes is not None
+            and brk.scheduled_minutes < brk.min_minutes
+        ):
+            raise InvalidShiftBreakError(
+                "scheduled_minutes must not be below min_minutes", index=index
+            )
+        if brk.mode == "AUTO_DEDUCT":
+            if brk.break_kind == "FLEXIBLE_DURATION" and not brk.scheduled_minutes:
+                raise InvalidShiftBreakError(
+                    "scheduled_minutes is required for an AUTO_DEDUCT FLEXIBLE_DURATION break",
+                    index=index,
+                )
+            if brk.break_kind == "FIXED_WINDOW" and brk.scheduled_minutes:
+                # A deduction longer than its own window can never be taken from presence.
+                start, end = brk.start_time, brk.end_time
+                if start and end:
+                    span = _clock_minutes(end) - _clock_minutes(start)
+                    span = span + 1440 if span <= 0 else span
+                    if brk.scheduled_minutes > span:
+                        raise InvalidShiftBreakError(
+                            "scheduled_minutes must not exceed the break window", index=index
+                        )
+
     def _build_break_rows(
         self, *, company_id: UUID, shift_version_id: UUID, breaks: list[ShiftBreakCreate]
     ) -> list[dict[str, Any]]:
@@ -2645,6 +2702,13 @@ class OrganisationService:
                     "allows_split": brk.allows_split,
                     "crosses_midnight": crosses_midnight,
                     "sort_order": brk.sort_order,
+                    "mode": brk.mode,
+                    "break_type": brk.break_type,
+                    "is_enabled": brk.is_enabled,
+                    "excess_outcome": brk.excess_outcome,
+                    "auto_deduct_full": brk.auto_deduct_full,
+                    "optional_recorded_deducts": brk.optional_recorded_deducts,
+                    "optional_scheduled_fallback": brk.optional_scheduled_fallback,
                 }
             )
         return rows
@@ -4639,3 +4703,8 @@ def _format_time(value: time | None) -> str | None:
 def _parse_time(value: str) -> time:
     hour, minute = value.split(":")
     return time(int(hour), int(minute))
+
+
+def _clock_minutes(value: str) -> int:
+    parsed = _parse_time(value)
+    return parsed.hour * 60 + parsed.minute

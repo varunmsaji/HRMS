@@ -910,6 +910,16 @@ class FaceProfilePendingApprovalError(ConflictError):
         super().__init__(message)
 
 
+class FaceEnrollmentWindowAlreadyOpenError(ConflictError):
+    code = "FACE_ENROLLMENT_WINDOW_ALREADY_OPEN"
+
+    def __init__(
+        self,
+        message: str = "An enrollment window is already open; cancel it first to start a new one",
+    ) -> None:
+        super().__init__(message)
+
+
 class FaceProfileNotPendingError(ConflictError):
     code = "FACE_PROFILE_NOT_PENDING"
 

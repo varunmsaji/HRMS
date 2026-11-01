@@ -1196,6 +1196,9 @@ def build_shift_update_values(patch: ShiftUpdate) -> dict[str, Any]:
 
 _SHIFT_VERSION_TYPES = ("FIXED", "FLEXIBLE", "SPLIT")
 _SHIFT_BREAK_KINDS = ("FIXED_WINDOW", "FLEXIBLE_DURATION")
+SHIFT_BREAK_MODES = ("MANDATORY_PUNCH", "AUTO_DEDUCT", "OPTIONAL_PUNCH")
+SHIFT_BREAK_TYPES = ("LUNCH", "TEA", "REST", "PRAYER", "OTHER")
+SHIFT_BREAK_EXCESS_OUTCOMES = ("RECORD_ONLY", "EXCEPTION", "REQUIRE_APPROVAL", "DEDUCT")
 
 
 class ShiftBreakCreate(BaseModel):
@@ -1219,12 +1222,41 @@ class ShiftBreakCreate(BaseModel):
     is_mandatory: bool = True
     allows_split: bool = False
     sort_order: int = 0
+    # Break management V1. `mode=None` keeps the legacy behaviour (matched against a punch gap).
+    mode: str | None = None
+    break_type: str = "OTHER"
+    is_enabled: bool = True
+    excess_outcome: str | None = None
+    auto_deduct_full: bool = False
+    optional_recorded_deducts: bool = True
+    optional_scheduled_fallback: bool = False
 
     @field_validator("break_kind")
     @classmethod
     def validate_break_kind(cls, value: str) -> str:
         if value not in _SHIFT_BREAK_KINDS:
             raise ValueError(f"break_kind must be one of {_SHIFT_BREAK_KINDS}")
+        return value
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str | None) -> str | None:
+        if value is not None and value not in SHIFT_BREAK_MODES:
+            raise ValueError(f"mode must be one of {SHIFT_BREAK_MODES}")
+        return value
+
+    @field_validator("break_type")
+    @classmethod
+    def validate_break_type(cls, value: str) -> str:
+        if value not in SHIFT_BREAK_TYPES:
+            raise ValueError(f"break_type must be one of {SHIFT_BREAK_TYPES}")
+        return value
+
+    @field_validator("excess_outcome")
+    @classmethod
+    def validate_excess_outcome(cls, value: str | None) -> str | None:
+        if value is not None and value not in SHIFT_BREAK_EXCESS_OUTCOMES:
+            raise ValueError(f"excess_outcome must be one of {SHIFT_BREAK_EXCESS_OUTCOMES}")
         return value
 
 
@@ -1245,6 +1277,13 @@ class ShiftBreakRead(BaseModel):
     allows_split: bool
     crosses_midnight: bool
     sort_order: int
+    mode: str | None = None
+    break_type: str = "OTHER"
+    is_enabled: bool = True
+    excess_outcome: str | None = None
+    auto_deduct_full: bool = False
+    optional_recorded_deducts: bool = True
+    optional_scheduled_fallback: bool = False
 
 
 def shift_break_to_read(row: "ShiftBreak") -> ShiftBreakRead:
@@ -1265,6 +1304,13 @@ def shift_break_to_read(row: "ShiftBreak") -> ShiftBreakRead:
         allows_split=row.allows_split,
         crosses_midnight=row.crosses_midnight,
         sort_order=row.sort_order,
+        mode=row.mode,
+        break_type=row.break_type,
+        is_enabled=row.is_enabled,
+        excess_outcome=row.excess_outcome,
+        auto_deduct_full=row.auto_deduct_full,
+        optional_recorded_deducts=row.optional_recorded_deducts,
+        optional_scheduled_fallback=row.optional_scheduled_fallback,
     )
 
 

@@ -1,10 +1,11 @@
 "use client";
 
-import { Bell, ChevronDown, LogOut, Menu, Search, User } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Search, User } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
+import { NotificationBell } from "@/components/notifications/notification-bell";
 import { useToast } from "@/components/common/toast";
 import {
   DropdownMenu,
@@ -86,14 +87,7 @@ export function EmployeeTopBar({ onOpenNav }: { onOpenNav: () => void }) {
       </div>
 
       <div className="flex items-center gap-4">
-        <Link
-          href="/app/leave-applications"
-          aria-label="Notifications"
-          className="relative flex h-9 w-9 items-center justify-center rounded-full text-foreground-secondary hover:bg-muted"
-        >
-          <Bell className="h-5 w-5" aria-hidden="true" />
-          <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-sky-400" aria-hidden="true" />
-        </Link>
+        <NotificationBell />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button

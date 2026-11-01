@@ -53,8 +53,10 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: `computation_snapshot`, so a payslip can name the rules its figures came from. Bump it
 #: whenever a change alters any output for unchanged inputs. 1 = rows computed before this
 #: constant existed (backfilled as NULL); 2 = payroll-readiness step 1 (PAY-002…PAY-012,
-#: ATT-005, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decisions 1/4/5).
-ENGINE_VERSION = 2
+#: ATT-005, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decisions 1/4/5); 3 = break management
+#: V1 (break events, automatic deduction, unresolved/excess breaks). Breaks with `mode=None`
+#: (every break configured before V1) calculate exactly as under 2.
+ENGINE_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -80,6 +82,36 @@ class ShiftBreakData:
     max_minutes: int | None
     is_paid: bool
     is_mandatory: bool
+    # Break management V1 — all defaulted so a break built the old way stays a legacy break.
+    name: str = ""
+    break_type: str = "OTHER"
+    mode: str | None = (
+        None  # None = legacy gap-matched | MANDATORY_PUNCH | AUTO_DEDUCT | OPTIONAL_PUNCH
+    )
+    scheduled_minutes: int | None = None
+    crosses_midnight: bool = False
+    excess_outcome: str | None = None  # RECORD_ONLY | EXCEPTION | REQUIRE_APPROVAL | DEDUCT
+    auto_deduct_full: bool = False
+    optional_recorded_deducts: bool = True
+    optional_scheduled_fallback: bool = False
+    is_enabled: bool = True
+    sort_order: int = 0
+    rule_source: str = "SHIFT"  # SHIFT | EMPLOYEE_OVERRIDE
+    override_id: UUID | None = None
+    allows_split: bool = False  # more than one punched instance of this break per day
+
+
+@dataclass(frozen=True, slots=True)
+class BreakEventData:
+    """One row of `attendance_break_event`, as the pure engine sees it."""
+
+    id: UUID
+    event_type: str  # START | END
+    event_time: datetime  # tz-aware, UTC
+    break_name: str | None = None
+    shift_break_id: UUID | None = None
+    supersedes_event_id: UUID | None = None
+    approved: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +201,9 @@ class ShiftInputs:
     core_start: time | None = None
     core_end: time | None = None
     required_minutes: int | None = None  # FLEXIBLE
+    # Break management V1 — which employee overrides shaped `breaks` (audit trail for the
+    # calculation snapshot); empty when the shift's own breaks were used as configured.
+    break_provenance: list[dict[str, str | None]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,16 +271,35 @@ class AttendanceCalculationInput:
     # resolved by `service.py`. Mirrors `leave_entries`: an empty/False value makes the overlay a
     # complete no-op.
     on_duty_approved: bool = False
+    # Break management V1 — the day's break START/END events (including superseded ones; the
+    # engine drops those itself) and whether the day can still receive punches. An open START
+    # on a day that is still `day_open` and has no later OUT is an *active* break; on any other
+    # day it is *unresolved* and needs review.
+    break_events: list[BreakEventData] = field(default_factory=list)
+    day_open: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class MatchedBreak:
-    start: datetime
-    end: datetime
+    start: datetime | None
+    end: datetime | None
     minutes: int
     is_paid: bool
     is_excess: bool
     shift_break_id: UUID | None
+    # Break management V1 (defaults keep a legacy gap break constructible as before).
+    kind: str = "PUNCHED_GAP"  # PUNCHED_GAP | EVENT | AUTO_DEDUCTED | UNRESOLVED
+    name: str | None = None
+    rule_source: str | None = None
+    override_id: UUID | None = None
+    scheduled_minutes: int | None = None
+    excess_minutes: int = 0
+    deducted_minutes: int = 0
+    needs_review: bool = False
+    is_approved: bool = False
+    start_event_id: UUID | None = None
+    end_event_id: UUID | None = None
+    is_active: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +360,14 @@ class AttendanceCalculationResult:
     # flag" mode, mirroring `work_on_leave_flagged`'s own shape); the `on_duty_requires_punch
     # =False` short-circuit path sets `attendance_status="ON_DUTY"` directly instead.
     is_on_duty_flagged: bool = False
+    # Break management V1 — see `BreakTotals`; all derived, replaced on every recompute.
+    actual_break_minutes: int = 0
+    auto_deducted_break_minutes: int = 0
+    unresolved_break_count: int = 0
+    has_unresolved_break: bool = False
+    has_active_break: bool = False
+    has_excess_break_exception: bool = False
+    gross_elapsed_minutes: int = 0
     # PAY-003 — the share of this day `_apply_leave_overlay` actually honoured as leave (0.00 when
     # no leave applied, or when `PRESENT_CANCEL_LEAVE_HINT` kept the punch-derived outcome). Lets
     # the period summary split a half-day-leave day into its leave and non-leave halves.
@@ -674,6 +736,575 @@ def match_breaks(
             )
         )
     return matched
+
+
+# ---------------------------------------------------------------------------
+# Break management V1 — explicit break events, automatic deduction, unresolved / excess breaks
+# ---------------------------------------------------------------------------
+#
+# Everything below is part of `evaluate_day`'s existing flow (called from
+# `_evaluate_fixed_or_flex` / `_evaluate_split`); it is not a second engine. Rules:
+#
+# * A break whose `mode` is None is a *legacy* break: only punch gaps are matched against it
+#   (`match_breaks`, unchanged). Breaks with a mode are resolved here and never matched to gaps.
+# * Explicit START/END events are the only confirmation that a break was taken. A gap between
+#   punches is never promoted to a MANDATORY/OPTIONAL break.
+# * Every deduction is taken from *presence* (the credited IN→OUT intervals) and the deducted
+#   intervals are unioned, so no minute of presence is deducted twice. A recorded event for a
+#   rule replaces that rule's scheduled automatic deduction (1:05–2:00 recorded against a 1:00–
+#   2:00 schedule deducts 55, not 55 + 60), and an event of one rule also keeps another rule's
+#   automatic deduction off the minutes it covers.
+# * An open START (no END) is *unresolved*: nothing after it is credited, the day cannot be
+#   classified, and the break is never closed for the employee.
+
+Interval = tuple[datetime, datetime]
+
+#: `excess_break_behaviour` (policy) → the per-break outcome vocabulary.
+_POLICY_EXCESS_TO_OUTCOME = {
+    "IGNORE": "RECORD_ONLY",
+    "FLAG": "EXCEPTION",
+    "REQUIRE_APPROVAL": "REQUIRE_APPROVAL",
+    "DEDUCT": "DEDUCT",
+}
+
+
+def _merge_intervals(intervals: list[Interval]) -> list[Interval]:
+    ordered = sorted((s, e) for s, e in intervals if e > s)
+    merged: list[Interval] = []
+    for start, end in ordered:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _intersect_intervals(a: list[Interval], b: list[Interval]) -> list[Interval]:
+    out: list[Interval] = []
+    for a_start, a_end in a:
+        for b_start, b_end in b:
+            start, end = max(a_start, b_start), min(a_end, b_end)
+            if end > start:
+                out.append((start, end))
+    return _merge_intervals(out)
+
+
+def _subtract_intervals(a: list[Interval], b: list[Interval]) -> list[Interval]:
+    remaining = _merge_intervals(a)
+    for b_start, b_end in _merge_intervals(b):
+        next_remaining: list[Interval] = []
+        for start, end in remaining:
+            if b_end <= start or b_start >= end:
+                next_remaining.append((start, end))
+                continue
+            if start < b_start:
+                next_remaining.append((start, b_start))
+            if b_end < end:
+                next_remaining.append((b_end, end))
+        remaining = next_remaining
+    return remaining
+
+
+def _intervals_minutes(intervals: list[Interval]) -> int:
+    return int(sum((e - s).total_seconds() for s, e in intervals) // 60)
+
+
+def _take_minutes(intervals: list[Interval], minutes: int) -> list[Interval]:
+    """The first `minutes` minutes of `intervals` (already ordered/merged)."""
+    out: list[Interval] = []
+    left = timedelta(minutes=minutes)
+    for start, end in intervals:
+        if left <= timedelta(0):
+            break
+        take = min(end - start, left)
+        out.append((start, start + take))
+        left -= take
+    return out
+
+
+def effective_break_events(events: list[BreakEventData]) -> list[BreakEventData]:
+    """The events that count: every event not superseded by a correction, in time order. The
+    superseded originals stay in storage (and in the snapshot) but never feed a calculation."""
+    superseded = {e.supersedes_event_id for e in events if e.supersedes_event_id is not None}
+    live = [e for e in events if e.id not in superseded]
+    return sorted(live, key=lambda e: (e.event_time, 0 if e.event_type == "START" else 1))
+
+
+def pair_break_events(
+    events: list[BreakEventData],
+) -> list[tuple[BreakEventData, BreakEventData | None]]:
+    """Pairs START with the next END. A START met while another is still open leaves the earlier
+    one open (unresolved); an END with no open START is dropped (the service never writes one)."""
+    pairs: list[tuple[BreakEventData, BreakEventData | None]] = []
+    open_start: BreakEventData | None = None
+    for event in events:
+        if event.event_type == "START":
+            if open_start is not None:
+                pairs.append((open_start, None))
+            open_start = event
+        elif open_start is not None:
+            pairs.append((open_start, event))
+            open_start = None
+    if open_start is not None:
+        pairs.append((open_start, None))
+    return pairs
+
+
+def _rule_for_event(event: BreakEventData, rules: list[ShiftBreakData]) -> ShiftBreakData | None:
+    if event.break_name:
+        wanted = event.break_name.strip().lower()
+        for rule in rules:
+            if rule.name.strip().lower() == wanted:
+                return rule
+    if event.shift_break_id is not None:
+        for rule in rules:
+            if rule.id == event.shift_break_id:
+                return rule
+    return None
+
+
+def _rule_window(
+    rule: ShiftBreakData,
+    *,
+    attendance_date: date,
+    tz: ZoneInfo,
+    scheduled_start: datetime | None,
+) -> Interval | None:
+    """The rule's scheduled interval in UTC. A clock time earlier than the shift's own start
+    belongs to the next calendar day (a night shift's 01:00 break), and an end at or before the
+    start crosses midnight — dates are derived, never assumed to be the attendance date."""
+    if rule.break_kind == "FIXED_WINDOW":
+        start_t, end_t = rule.start_time, rule.end_time
+    else:
+        start_t, end_t = rule.window_start, rule.window_end
+    if start_t is None:
+        return None
+    day = attendance_date
+    start = _local_to_utc(day, start_t, tz)
+    if scheduled_start is not None and start < scheduled_start:
+        day = attendance_date + timedelta(days=1)
+        start = _local_to_utc(day, start_t, tz)
+    if end_t is None or end_t == start_t:
+        duration = rule.scheduled_minutes or 0
+        return (start, start + timedelta(minutes=duration)) if duration > 0 else None
+    end_day = day + timedelta(days=1) if (end_t < start_t or rule.crosses_midnight) else day
+    end = _local_to_utc(end_day, end_t, tz)
+    if end <= start:
+        end = _local_to_utc(end_day + timedelta(days=1), end_t, tz)
+    return (start, end)
+
+
+def _rule_duration(rule: ShiftBreakData, window: Interval | None) -> int:
+    if rule.scheduled_minutes:
+        return rule.scheduled_minutes
+    if rule.break_kind == "FIXED_WINDOW" and window is not None:
+        return int((window[1] - window[0]).total_seconds() // 60)
+    return rule.max_minutes or rule.min_minutes or 0
+
+
+def scheduled_unpaid_break_minutes(
+    shift: ShiftInputs | None,
+    *,
+    attendance_date: date,
+    tz_name: str,
+    scheduled_start: datetime | None,
+) -> int:
+    """Unpaid minutes the shift's V1 breaks take out of its scheduled span, so overtime compares
+    net worked time against the *net* schedule (9:00–18:00 less an unpaid hour is 480, not 540).
+    Legacy (mode-less) breaks are excluded: they never reduced the scheduled side."""
+    if shift is None:
+        return 0
+    tz = ZoneInfo(tz_name)
+    total = 0
+    for rule in shift.breaks:
+        if rule.mode is None or not rule.is_enabled or rule.is_paid:
+            continue
+        window = _rule_window(
+            rule, attendance_date=attendance_date, tz=tz, scheduled_start=scheduled_start
+        )
+        total += _rule_duration(rule, window)
+    return total
+
+
+@dataclass(frozen=True, slots=True)
+class BreakComputation:
+    breaks: list[MatchedBreak]
+    #: the earliest unresolved break start; presence from here on is not credited
+    credit_cutoff: datetime | None
+    #: minutes removed from worked time by V1 breaks (recorded + automatic + paid-excess)
+    v1_deducted_minutes: int
+    snapshot: dict[str, Any]
+
+
+def credit_cutoff_for(
+    inputs: AttendanceCalculationInput, pairs: list[tuple[PunchData, PunchData]]
+) -> datetime | None:
+    """The earliest START that is still open on a day that can no longer produce its END
+    (the employee punched out after it, or the day is closed) — `None` when every break is
+    closed or merely active."""
+    cutoff: datetime | None = None
+    for start, end in pair_break_events(effective_break_events(inputs.break_events)):
+        if end is not None:
+            continue
+        if _is_active_break(start, pairs, day_open=inputs.day_open):
+            continue
+        if cutoff is None or start.event_time < cutoff:
+            cutoff = start.event_time
+    return cutoff
+
+
+def _is_active_break(
+    start: BreakEventData, pairs: list[tuple[PunchData, PunchData]], *, day_open: bool
+) -> bool:
+    punched_out_after = any(out_p.punch_time > start.event_time for _in, out_p in pairs)
+    return day_open and not punched_out_after
+
+
+def clip_pairs_at(
+    pairs: list[tuple[PunchData, PunchData]], cutoff: datetime | None
+) -> list[tuple[PunchData, PunchData]]:
+    """Presence credited up to `cutoff`: pairs after it are dropped and the pair spanning it is
+    ended there. The original punches are untouched — only this evaluation copy is clipped."""
+    if cutoff is None:
+        return pairs
+    clipped: list[tuple[PunchData, PunchData]] = []
+    for in_p, out_p in pairs:
+        if in_p.punch_time >= cutoff:
+            continue
+        if out_p.punch_time > cutoff:
+            out_p = replace(out_p, punch_time=cutoff)
+        clipped.append((in_p, out_p))
+    return clipped
+
+
+def clamp_pairs_to_start(
+    pairs: list[tuple[PunchData, PunchData]], start: datetime | None
+) -> list[tuple[PunchData, PunchData]]:
+    """Credited presence never begins before the scheduled shift start. Time between an allowed
+    early punch-in and the shift start is recorded attendance (the punch and `actual_first_in`
+    keep the real instant) but is neither credited as normal work nor counted as overtime.
+    A pair that ends at or before `start` earns no credit. Only this evaluation copy changes."""
+    if start is None:
+        return pairs
+    clamped: list[tuple[PunchData, PunchData]] = []
+    for in_p, out_p in pairs:
+        if out_p.punch_time <= start:
+            continue
+        if in_p.punch_time < start:
+            in_p = replace(in_p, punch_time=start)
+        clamped.append((in_p, out_p))
+    return clamped
+
+
+def compute_breaks(
+    inputs: AttendanceCalculationInput,
+    *,
+    pairs: list[tuple[PunchData, PunchData]],
+    credit_pairs: list[tuple[PunchData, PunchData]],
+    gaps: list[tuple[datetime, datetime]],
+) -> BreakComputation:
+    """Resolves the day's breaks: legacy gap matching, explicit events, automatic deduction."""
+    assert inputs.shift is not None and inputs.policy is not None
+    shift, policy = inputs.shift, inputs.policy
+    tz = ZoneInfo(inputs.timezone)
+    rules = [b for b in shift.breaks if b.is_enabled]
+    legacy_rules = [b for b in rules if b.mode is None]
+    v1_rules = sorted((b for b in rules if b.mode is not None), key=lambda b: b.sort_order)
+
+    out: list[MatchedBreak] = []
+    notes: dict[str, Any] = {}
+
+    # --- legacy: punch gaps matched against mode-less breaks only (behaviour unchanged) -------
+    for gap_break in match_breaks(gaps, legacy_rules, tz_name=inputs.timezone):
+        out.append(gap_break)
+
+    presence = _merge_intervals([(i.punch_time, o.punch_time) for i, o in credit_pairs])
+    all_events = inputs.break_events
+    live = effective_break_events(all_events)
+    live_ids = {e.id for e in live}
+    notes["superseded_event_ids"] = [str(e.id) for e in all_events if e.id not in live_ids]
+
+    # --- explicit events -----------------------------------------------------------------------
+    explicit_union: list[Interval] = []
+    recorded_rules: set[UUID] = set()
+    deducted_total = 0
+    unclosed = pair_break_events(live)
+    for start_ev, end_ev in unclosed:
+        rule = _rule_for_event(start_ev, rules)
+        is_paid = rule.is_paid if rule is not None else False
+        base: dict[str, Any] = {
+            "name": rule.name if rule is not None else start_ev.break_name,
+            "rule_source": rule.rule_source if rule is not None else None,
+            "override_id": rule.override_id if rule is not None else None,
+            "shift_break_id": rule.id if rule is not None and rule.rule_source == "SHIFT" else None,
+            "scheduled_minutes": rule.scheduled_minutes if rule is not None else None,
+            "is_paid": is_paid,
+            "start_event_id": start_ev.id,
+        }
+        if rule is not None:
+            recorded_rules.add(rule.id)
+        if end_ev is None:
+            active = _is_active_break(start_ev, pairs, day_open=inputs.day_open)
+            out.append(
+                MatchedBreak(
+                    start=start_ev.event_time,
+                    end=None,
+                    minutes=0,
+                    is_excess=False,
+                    kind="EVENT" if active else "UNRESOLVED",
+                    needs_review=not active,
+                    is_active=active,
+                    **base,
+                )
+            )
+            continue
+
+        actual = max(0, int((end_ev.event_time - start_ev.event_time).total_seconds() // 60))
+        window = [(start_ev.event_time, end_ev.event_time)]
+        explicit_union = _merge_intervals(explicit_union + window)
+        in_presence = _intersect_intervals(window, presence)
+        clipped = _intervals_minutes(in_presence)
+        approved = end_ev.approved or start_ev.approved
+        max_minutes = rule.max_minutes if rule is not None else None
+        excess = max(0, actual - max_minutes) if max_minutes is not None else 0
+        outcome = (
+            rule.excess_outcome if rule is not None else None
+        ) or _POLICY_EXCESS_TO_OUTCOME.get(policy.excess_break_behaviour, "EXCEPTION")
+        if (
+            rule is not None
+            and rule.mode == "OPTIONAL_PUNCH"
+            and not rule.optional_recorded_deducts
+        ):
+            deducted = 0
+        else:
+            deducted = 0 if is_paid else clipped
+        # A paid break that ran over its allowance: the excess is not paid time (DEDUCT only,
+        # never when HR has approved the actual duration).
+        if excess and is_paid and outcome == "DEDUCT" and not approved:
+            deducted += min(excess, clipped)
+        needs_review = (
+            bool(excess) and outcome in ("EXCEPTION", "REQUIRE_APPROVAL") and not approved
+        )
+        if rule is not None and rule.min_minutes and actual < rule.min_minutes:
+            notes.setdefault("below_minimum", []).append(str(start_ev.id))
+        deducted_total += deducted
+        out.append(
+            MatchedBreak(
+                start=start_ev.event_time,
+                end=end_ev.event_time,
+                minutes=actual,
+                is_excess=bool(excess),
+                excess_minutes=excess,
+                deducted_minutes=deducted,
+                kind="EVENT",
+                needs_review=needs_review,
+                is_approved=approved,
+                end_event_id=end_ev.id,
+                **base,
+            )
+        )
+
+    # --- automatic deduction (and optional-mode fallback) ---------------------------------------
+    claimed: list[Interval] = []
+    for rule in v1_rules:
+        automatic = rule.mode == "AUTO_DEDUCT" or (
+            rule.mode == "OPTIONAL_PUNCH" and rule.optional_scheduled_fallback
+        )
+        if not automatic:
+            if rule.mode == "MANDATORY_PUNCH" and rule.id not in recorded_rules:
+                notes.setdefault("mandatory_not_recorded", []).append(rule.name)
+            continue
+        if rule.id in recorded_rules:
+            continue  # the recorded interval replaces the scheduled deduction
+        rule_window = _rule_window(
+            rule,
+            attendance_date=inputs.attendance_date,
+            tz=tz,
+            scheduled_start=inputs.scheduled_start,
+        )
+        duration = _rule_duration(rule, rule_window)
+        if rule_window is None or duration <= 0:
+            continue
+        eligible = _subtract_intervals(
+            _intersect_intervals(presence, [rule_window]), explicit_union + claimed
+        )
+        overlap = _intervals_minutes(eligible)
+        if overlap <= 0:
+            notes.setdefault("auto_not_eligible", []).append(rule.name)
+            continue
+        amount = duration if rule.auto_deduct_full else min(duration, overlap)
+        taken = _take_minutes(eligible, amount)
+        claimed = _merge_intervals(claimed + taken)
+        start = taken[0][0]
+        deducted = 0 if rule.is_paid else amount
+        deducted_total += deducted
+        out.append(
+            MatchedBreak(
+                start=start,
+                end=start + timedelta(minutes=amount),
+                minutes=amount,
+                is_paid=rule.is_paid,
+                is_excess=False,
+                shift_break_id=rule.id if rule.rule_source == "SHIFT" else None,
+                kind="AUTO_DEDUCTED",
+                name=rule.name,
+                rule_source=rule.rule_source,
+                override_id=rule.override_id,
+                scheduled_minutes=duration,
+                deducted_minutes=deducted,
+            )
+        )
+
+    notes["provenance"] = list(shift.break_provenance)
+    notes["rules"] = [
+        {
+            "name": r.name,
+            "mode": r.mode,
+            "source": r.rule_source,
+            "override_id": str(r.override_id) if r.override_id else None,
+            "paid": r.is_paid,
+        }
+        for r in rules
+    ]
+    return BreakComputation(
+        breaks=out,
+        credit_cutoff=credit_cutoff_for(inputs, pairs),
+        v1_deducted_minutes=deducted_total,
+        snapshot=notes,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class BreakTotals:
+    unpaid_minutes: int
+    paid_minutes: int
+    excess_minutes: int
+    auto_deducted_minutes: int
+    actual_minutes: int
+    unresolved_count: int
+    has_active: bool
+    has_excess_exception: bool
+
+
+def summarize_breaks(breaks: list[MatchedBreak], *, legacy_excess_flagged: bool) -> BreakTotals:
+    """Day-level break figures. Legacy gap breaks keep their old meaning (`minutes` is both the
+    gap and the deduction); V1 breaks report `deducted_minutes` as the unpaid deduction."""
+    unpaid = paid = excess = auto = actual = unresolved = 0
+    active = exception = False
+    for b in breaks:
+        if b.kind == "PUNCHED_GAP":
+            actual += b.minutes
+            if b.is_paid:
+                paid += b.minutes
+            else:
+                unpaid += b.minutes
+            if b.is_excess:
+                excess += b.minutes
+                exception = exception or legacy_excess_flagged
+            continue
+        if b.kind == "UNRESOLVED":
+            unresolved += 1
+            continue
+        if b.is_active:
+            active = True
+            continue
+        if b.kind == "AUTO_DEDUCTED":
+            if b.is_paid:
+                paid += b.minutes
+            else:
+                unpaid += b.deducted_minutes
+                auto += b.deducted_minutes
+            continue
+        actual += b.minutes
+        excess += b.excess_minutes
+        if b.is_paid:
+            paid += b.minutes
+        unpaid += b.deducted_minutes
+        exception = exception or (b.is_excess and b.needs_review)
+    return BreakTotals(unpaid, paid, excess, auto, actual, unresolved, active, exception)
+
+
+@dataclass(frozen=True, slots=True)
+class DayPresence:
+    """Presence and break figures for one day — the shared first half of both the FIXED/FLEX and
+    SPLIT evaluators."""
+
+    first_in: datetime | None
+    last_out: datetime | None
+    gaps: list[tuple[datetime, datetime]]
+    breaks: list[MatchedBreak]
+    totals: BreakTotals
+    gross_minutes: int
+    worked_minutes: int
+    gross_elapsed_minutes: int
+    counter_excess_minutes: int
+
+
+def evaluate_presence_and_breaks(
+    inputs: AttendanceCalculationInput, pairing: PairingResult, snapshot: dict[str, Any]
+) -> DayPresence:
+    assert inputs.policy is not None and inputs.shift is not None
+    policy = inputs.policy
+    first_in, last_out, _gross_all, _gaps_all = presence_span(
+        pairing.pairs, mode=policy.multi_punch_mode
+    )
+    cutoff = credit_cutoff_for(inputs, pairing.pairs)
+    credit_pairs = clip_pairs_at(pairing.pairs, cutoff)
+    if inputs.shift.shift_type == "FIXED":
+        # Early punch-in allowance is a punch permission, not credited work (see
+        # `clamp_pairs_to_start`). FLEXIBLE/SPLIT shifts have no single start to clamp to.
+        credit_pairs = clamp_pairs_to_start(credit_pairs, inputs.scheduled_start)
+    _fi, _lo, gross_minutes, gaps = presence_span(credit_pairs, mode=policy.multi_punch_mode)
+
+    computation = compute_breaks(inputs, pairs=pairing.pairs, credit_pairs=credit_pairs, gaps=gaps)
+    legacy = [b for b in computation.breaks if b.kind == "PUNCHED_GAP"]
+    worked_minutes = max(
+        0,
+        worked_minutes_from_gross(
+            gross_minutes,
+            mode=policy.multi_punch_mode,
+            paid_break_minutes=sum(b.minutes for b in legacy if b.is_paid),
+            unpaid_break_minutes=sum(b.minutes for b in legacy if not b.is_paid),
+        )
+        - computation.v1_deducted_minutes,
+    )
+    totals = summarize_breaks(
+        computation.breaks, legacy_excess_flagged=policy.excess_break_behaviour != "IGNORE"
+    )
+    counter_excess = sum(
+        b.minutes if b.kind == "PUNCHED_GAP" else b.excess_minutes
+        for b in computation.breaks
+        if b.is_excess and (b.kind == "PUNCHED_GAP" or b.needs_review)
+    )
+    gross_elapsed = (
+        int((last_out - first_in).total_seconds() // 60)
+        if first_in is not None and last_out is not None
+        else 0
+    )
+    snapshot["presence"] = {
+        "first_in": first_in.isoformat() if first_in else None,
+        "last_out": last_out.isoformat() if last_out else None,
+        "gross_minutes": gross_minutes,
+        "unpaid_break_minutes": totals.unpaid_minutes,
+        "worked_minutes": worked_minutes,
+    }
+    snapshot["breaks"] = {
+        **computation.snapshot,
+        "credit_cutoff": cutoff.isoformat() if cutoff else None,
+        "v1_deducted_minutes": computation.v1_deducted_minutes,
+        "gross_elapsed_minutes": gross_elapsed,
+    }
+    return DayPresence(
+        first_in=first_in,
+        last_out=last_out,
+        gaps=gaps,
+        breaks=computation.breaks,
+        totals=totals,
+        gross_minutes=gross_minutes,
+        worked_minutes=worked_minutes,
+        gross_elapsed_minutes=gross_elapsed,
+        counter_excess_minutes=counter_excess,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1374,27 +2005,14 @@ def _evaluate_fixed_or_flex(
     policy = inputs.policy
     shift = inputs.shift
 
-    first_in, last_out, gross_minutes, gaps = presence_span(
-        pairing.pairs, mode=policy.multi_punch_mode
-    )
-    matched_breaks = match_breaks(gaps, shift.breaks, tz_name=inputs.timezone)
-    unpaid_minutes = sum(b.minutes for b in matched_breaks if not b.is_paid)
-    paid_minutes = sum(b.minutes for b in matched_breaks if b.is_paid)
-    excess_minutes = sum(b.minutes for b in matched_breaks if b.is_excess)
-    worked_minutes = worked_minutes_from_gross(
-        gross_minutes,
-        mode=policy.multi_punch_mode,
-        paid_break_minutes=paid_minutes,
-        unpaid_break_minutes=unpaid_minutes,
-    )
-
-    snapshot["presence"] = {
-        "first_in": first_in.isoformat() if first_in else None,
-        "last_out": last_out.isoformat() if last_out else None,
-        "gross_minutes": gross_minutes,
-        "unpaid_break_minutes": unpaid_minutes,
-        "worked_minutes": worked_minutes,
-    }
+    presence = evaluate_presence_and_breaks(inputs, pairing, snapshot)
+    first_in, last_out, gaps = presence.first_in, presence.last_out, presence.gaps
+    matched_breaks = presence.breaks
+    totals = presence.totals
+    unpaid_minutes = totals.unpaid_minutes
+    paid_minutes = totals.paid_minutes
+    excess_minutes = totals.excess_minutes
+    worked_minutes = presence.worked_minutes
 
     missing_punch = bool(pairing.orphans) or first_in is None
     auto_closed = False
@@ -1465,7 +2083,7 @@ def _evaluate_fixed_or_flex(
         cumulative_status_override = "HALF_DAY"
     if (
         policy.excess_break_days_to_half_day_count is not None
-        and excess_minutes > 0
+        and presence.counter_excess_minutes > 0
         and (inputs.prior_excess_break_days_in_window + 1)
         >= policy.excess_break_days_to_half_day_count
     ):
@@ -1485,28 +2103,60 @@ def _evaluate_fixed_or_flex(
         core_hours_status_override=core_hours_status_override,
         cumulative_status_override=cumulative_status_override,
     )
+    if totals.unresolved_count and not not_expected:
+        # An unresolved break is never silently turned into half-day/absent: the day waits for
+        # an authorised correction. INCOMPLETE is the existing "needs review" status — not paid,
+        # not LOP, and handled at period close by `incomplete_at_lock_behaviour`.
+        status = "INCOMPLETE"
 
     worked_on_holiday = day_type == "HOLIDAY" and worked_minutes > 0
     worked_on_weekly_off = day_type == "WEEKLY_OFF" and worked_minutes > 0
 
+    # FLEXIBLE: `scheduled_start`/`scheduled_end` are the *start-time window* (e.g. 09:00-10:00),
+    # not the working span, so the amount of work expected is `required_minutes` (net of unpaid
+    # breaks, like `worked_minutes`). Measuring against the window length made a normal 8-hour
+    # day look like 7 hours of overtime.
+    flexible_required = shift.required_minutes if shift.shift_type == "FLEXIBLE" else None
     scheduled_minutes = (
-        int((inputs.scheduled_end - inputs.scheduled_start).total_seconds() // 60)
+        flexible_required
+        if flexible_required is not None
+        else int((inputs.scheduled_end - inputs.scheduled_start).total_seconds() // 60)
         if inputs.scheduled_start and inputs.scheduled_end
         else shift.required_minutes
+    )
+    # Overtime compares net worked time against the net schedule (the shift less its V1 unpaid
+    # breaks), so a deducted lunch does not hide the first hour of overtime. A flexible shift's
+    # required minutes are already net of breaks, so nothing is subtracted from them.
+    ot_scheduled_minutes = (
+        flexible_required
+        if flexible_required is not None
+        else max(
+            0,
+            scheduled_minutes
+            - scheduled_unpaid_break_minutes(
+                shift,
+                attendance_date=inputs.attendance_date,
+                tz_name=inputs.timezone,
+                scheduled_start=inputs.scheduled_start,
+            ),
+        )
+        if scheduled_minutes is not None
+        else None
     )
 
     is_night = resolve_is_night_ot(
         shift=shift,
         policy=inputs.ot_policy,
         timezone=inputs.timezone,
-        scheduled_end=inputs.scheduled_end,
+        # The window end is not the end of a flexible working day; the trailing excess is.
+        scheduled_end=None if flexible_required is not None else inputs.scheduled_end,
         last_out=last_out,
         worked_minutes=worked_minutes,
-        scheduled_minutes=scheduled_minutes,
+        scheduled_minutes=ot_scheduled_minutes,
     )
     ot_minutes, ot_classification, ot_eligible = detect_overtime(
         worked_minutes=worked_minutes,
-        scheduled_minutes=scheduled_minutes,
+        scheduled_minutes=ot_scheduled_minutes,
         is_shift_ot_eligible=shift.is_ot_eligible,
         is_holiday=worked_on_holiday,
         is_weekly_off=worked_on_weekly_off,
@@ -1566,6 +2216,13 @@ def _evaluate_fixed_or_flex(
         ot_day_class=ot_day_class,
         snapshot=snapshot,
         is_core_hours_breach=is_core_hours_breach,
+        actual_break_minutes=totals.actual_minutes,
+        auto_deducted_break_minutes=totals.auto_deducted_minutes,
+        unresolved_break_count=totals.unresolved_count,
+        has_unresolved_break=totals.unresolved_count > 0,
+        has_active_break=totals.has_active,
+        has_excess_break_exception=totals.has_excess_exception,
+        gross_elapsed_minutes=presence.gross_elapsed_minutes,
     )
 
 
@@ -1582,18 +2239,13 @@ def _evaluate_split(
     policy = inputs.policy
     shift = inputs.shift
 
-    first_in, last_out, gross_minutes, gaps = presence_span(
-        pairing.pairs, mode=policy.multi_punch_mode
-    )
-    matched_breaks = match_breaks(gaps, shift.breaks, tz_name=inputs.timezone)
-    unpaid_minutes = sum(b.minutes for b in matched_breaks if not b.is_paid)
-    paid_minutes = sum(b.minutes for b in matched_breaks if b.is_paid)
-    worked_minutes = worked_minutes_from_gross(
-        gross_minutes,
-        mode=policy.multi_punch_mode,
-        paid_break_minutes=paid_minutes,
-        unpaid_break_minutes=unpaid_minutes,
-    )
+    presence = evaluate_presence_and_breaks(inputs, pairing, snapshot)
+    first_in, last_out = presence.first_in, presence.last_out
+    matched_breaks = presence.breaks
+    totals = presence.totals
+    unpaid_minutes = totals.unpaid_minutes
+    paid_minutes = totals.paid_minutes
+    worked_minutes = presence.worked_minutes
 
     tz = ZoneInfo(inputs.timezone)
     missed_blocks = 0
@@ -1635,6 +2287,8 @@ def _evaluate_split(
             late_classification=None,
             early_classification=None,
         )
+    if totals.unresolved_count and not not_expected:
+        status = "INCOMPLETE"
 
     paid_fraction, lop_fraction = _paid_lop_fraction(status, hour_band_status)
 
@@ -1645,6 +2299,20 @@ def _evaluate_split(
     # is actually missing here: `scheduled_minutes=shift.required_minutes` is the same fallback
     # `_evaluate_fixed_or_flex` uses whenever no `scheduled_start`/`scheduled_end` is set, so the
     # detection call is wired in identically to that path.
+    ot_scheduled_minutes = (
+        max(
+            0,
+            shift.required_minutes
+            - scheduled_unpaid_break_minutes(
+                shift,
+                attendance_date=inputs.attendance_date,
+                tz_name=inputs.timezone,
+                scheduled_start=inputs.scheduled_start,
+            ),
+        )
+        if shift.required_minutes is not None
+        else None
+    )
     is_night = resolve_is_night_ot(
         shift=shift,
         policy=inputs.ot_policy,
@@ -1652,11 +2320,11 @@ def _evaluate_split(
         scheduled_end=inputs.scheduled_end,
         last_out=last_out,
         worked_minutes=worked_minutes,
-        scheduled_minutes=shift.required_minutes,
+        scheduled_minutes=ot_scheduled_minutes,
     )
     ot_minutes, ot_classification, ot_eligible = detect_overtime(
         worked_minutes=worked_minutes,
-        scheduled_minutes=shift.required_minutes,
+        scheduled_minutes=ot_scheduled_minutes,
         is_shift_ot_eligible=shift.is_ot_eligible,
         is_holiday=worked_on_holiday,
         is_weekly_off=worked_on_weekly_off,
@@ -1691,7 +2359,7 @@ def _evaluate_split(
         worked_minutes=worked_minutes,
         unpaid_break_minutes=unpaid_minutes,
         paid_break_minutes=paid_minutes,
-        excess_break_minutes=sum(b.minutes for b in matched_breaks if b.is_excess),
+        excess_break_minutes=totals.excess_minutes,
         breaks=matched_breaks,
         late_minutes=0,
         early_departure_minutes=0,
@@ -1713,6 +2381,13 @@ def _evaluate_split(
         comp_off_minutes_earned=comp_off_minutes,
         ot_day_class=ot_day_class,
         snapshot=snapshot,
+        actual_break_minutes=totals.actual_minutes,
+        auto_deducted_break_minutes=totals.auto_deducted_minutes,
+        unresolved_break_count=totals.unresolved_count,
+        has_unresolved_break=totals.unresolved_count > 0,
+        has_active_break=totals.has_active,
+        has_excess_break_exception=totals.has_excess_exception,
+        gross_elapsed_minutes=presence.gross_elapsed_minutes,
     )
 
 

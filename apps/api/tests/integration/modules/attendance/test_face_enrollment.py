@@ -29,6 +29,7 @@ from tests.integration.modules.organisation.test_registration_flow import _clean
 
 from hrms.core.db.session import get_session_factory, set_rls_company_id
 from hrms.modules.attendance.dependencies import get_face_provider
+from hrms.modules.attendance.email_templates import build_face_enrollment_requested_email
 from hrms.modules.attendance.face_verification import (
     FaceMatchResult,
     FaceProviderError,
@@ -101,7 +102,11 @@ async def enroll_and_approve(
     client: AsyncClient, admin: dict[str, str], company_id: UUID, employee_id: str
 ) -> dict[str, str]:
     """Drives the whole happy path; returns the employee's own headers."""
-    assert (await _open(client, admin, employee_id)).status_code == 201
+    opened = await _open(client, admin, employee_id)
+    # An already-open window (e.g. the employee started it themselves) is fine to reuse.
+    assert opened.status_code == 201 or (
+        opened.json()["error"]["code"] == "FACE_ENROLLMENT_WINDOW_ALREADY_OPEN"
+    )
     me = await _self_headers(company_id, employee_id)
     submitted = await _submit(client, me)
     assert submitted.status_code == 201, submitted.text
@@ -251,19 +256,32 @@ async def test_expired_window_is_unusable(
     assert [r[0] for r in statuses] == ["EXPIRED", "OPEN"]
 
 
-async def test_reopening_cancels_the_previous_window(
+async def test_hr_cannot_open_a_second_live_window(
     client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
     admin, company_id = face_tenant
     employee_id = await _employee(client, admin)
     first = (await _open(client, admin, employee_id)).json()["data"]
-    second = (await _open(client, admin, employee_id)).json()["data"]
+    dup = await _open(client, admin, employee_id)
+    assert dup.status_code == 409
+    assert dup.json()["error"]["code"] == "FACE_ENROLLMENT_WINDOW_ALREADY_OPEN"
+    assert (await _status(client, admin, employee_id))["open_window"]["id"] == first["id"]
 
-    assert (await _status(client, admin, employee_id))["open_window"]["id"] == second["id"]
+    # Cancelling first is the explicit path to a fresh window; audit carries previous/new state.
+    url = f"/v1/attendance/face-profiles/{employee_id}/enrollment-window"
+    assert (await client.delete(url, headers=admin)).status_code == 204
+    second = (await _open(client, admin, employee_id)).json()["data"]
     rows = await _sql(
         company_id, "SELECT id, status FROM face_enrollment_window WHERE company_id = :cid"
     )
     assert {str(r[0]): r[1] for r in rows} == {first["id"]: "CANCELLED", second["id"]: "OPEN"}
+    audit = await _sql(
+        company_id,
+        "SELECT before_json, after_json FROM audit_log WHERE company_id = :cid"
+        " AND action = 'FACE_ENROLLMENT_OPENED' ORDER BY occurred_at DESC LIMIT 1",
+    )
+    assert audit[0][0]["enrollment_state"] == "NOT_ENROLLED"
+    assert audit[0][1]["enrollment_state"] == "ENROLLMENT_AVAILABLE"
 
 
 async def test_hr_can_cancel_an_open_window(
@@ -623,3 +641,154 @@ async def test_enrollee_cannot_approve_or_reject_their_own_enrollment(
         f"/v1/attendance/face-profiles/{employee_id}/approve", headers=admin
     )
     assert approved.status_code == 200, approved.text
+
+
+async def test_hr_window_audit_has_no_biometric_payload_and_expired_window_can_be_reinitiated(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    admin, company_id = face_tenant
+    employee_id = await _employee(client, admin)
+    await _open(client, admin, employee_id)
+    await _sql(
+        company_id,
+        "UPDATE face_enrollment_window SET opened_at = now() - interval '2 hours',"
+        " expires_at = now() - interval '1 minute'"
+        " WHERE company_id = :cid",
+    )
+    # An expired window is not "live": HR can initiate again, and the stale row is EXPIRED.
+    assert (await _open(client, admin, employee_id)).status_code == 201
+    audit = await _sql(
+        company_id,
+        "SELECT after_json::text FROM audit_log WHERE company_id = :cid"
+        " AND action = 'FACE_ENROLLMENT_OPENED'",
+    )
+    assert audit and all("embedding" not in r[0] and "photo" not in r[0] for r in audit)
+
+
+# --- HR-initiation notification (email via the transactional outbox) -------------------------
+
+
+async def _link_employee_user(company_id: UUID, employee_id: str) -> str:
+    """Gives the employee a login (the email target) and returns that user's email."""
+    _, user_id = await _create_permission_scoped_user(
+        company_id=company_id,
+        permission_codes=[ATTENDANCE_PUNCH],
+        data_scope="SELF",
+        caller_employee_id=UUID(employee_id),
+    )
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        await session.execute(
+            text("UPDATE employee SET user_id = :u WHERE id = :e AND company_id = :c"),
+            {"u": user_id, "e": employee_id, "c": company_id},
+        )
+        email = (
+            await session.execute(text('SELECT email FROM "user" WHERE id = :u'), {"u": user_id})
+        ).scalar_one()
+        await session.commit()
+    return str(email)
+
+
+async def _outbox(company_id: UUID) -> list[Any]:
+    return await _sql(
+        company_id,
+        "SELECT company_id, recipient, subject, message_id, kind"
+        " FROM email_outbox WHERE company_id = :cid AND failure_kind = 'face_enrollment_requested'",
+    )
+
+
+async def test_initiation_queues_exactly_one_email_and_duplicates_add_none(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    admin, company_id = face_tenant
+    employee_id = await _employee(client, admin)
+    email = await _link_employee_user(company_id, employee_id)
+
+    opened = await _open(client, admin, employee_id)
+    assert opened.status_code == 201
+    data = opened.json()["data"]
+    assert data["notification_status"] == "QUEUED"  # in the outbox - not claimed as delivered
+
+    rows = await _outbox(company_id)
+    assert len(rows) == 1
+    assert rows[0].company_id == company_id and rows[0].recipient == email
+    assert rows[0].message_id == f"face_enrollment_requested:{data['id']}"
+    assert rows[0].subject == "Face Enrollment Requested"
+    # (The outbox blanks bodies once sent, so the copy is checked on the template itself.)
+    _, html, text_body = build_face_enrollment_requested_email(
+        first_name="Asha", company_name="Acme", expires_at="soon", app_url="https://app.test"
+    )
+    for forbidden in ("token", "embedding", "liveness", "score", "photo"):
+        assert forbidden not in (html + text_body).lower()
+
+    # A second initiate is a 409 and queues nothing.
+    assert (await _open(client, admin, employee_id)).status_code == 409
+    assert len(await _outbox(company_id)) == 1
+    # The employee's own start never mails anyone.
+    me = await _self_headers(company_id, employee_id)
+    await client.post("/v1/attendance/face-enrollment/me/window", headers=me)
+    assert len(await _outbox(company_id)) == 1
+
+
+async def test_no_login_email_reports_not_supported_and_still_opens_the_window(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    admin, company_id = face_tenant
+    employee_id = await _employee(client, admin)
+    opened = await _open(client, admin, employee_id)
+    assert opened.status_code == 201
+    assert opened.json()["data"]["notification_status"] == "NOT_SUPPORTED"
+    assert await _outbox(company_id) == []
+    assert (await _status(client, admin, employee_id))["enrollment_state"] == "ENROLLMENT_AVAILABLE"
+
+
+async def test_notification_failure_never_undoes_the_window(
+    client: AsyncClient,
+    face_tenant: Tenant,
+    fake_face_provider: FakeFaceProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin, company_id = face_tenant
+    employee_id = await _employee(client, admin)
+    await _link_employee_user(company_id, employee_id)
+
+    async def boom(*args: Any, **kwargs: Any) -> bool:
+        raise RuntimeError("outbox unavailable")
+
+    monkeypatch.setattr("hrms.modules.onboarding.email_sender.queue_email_after_commit", boom)
+    opened = await _open(client, admin, employee_id)
+    assert opened.status_code == 201
+    assert opened.json()["data"]["notification_status"] == "FAILED"
+    status = await _status(client, admin, employee_id)
+    assert status["enrollment_state"] == "ENROLLMENT_AVAILABLE"
+    assert status["open_window"]["id"] == opened.json()["data"]["id"]
+    assert await _outbox(company_id) == []
+    # The employee can still enroll from the canonical status - no email needed.
+    me = await _self_headers(company_id, employee_id)
+    assert (await _submit(client, me)).status_code == 201
+
+
+async def test_refused_initiations_send_nothing(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    admin, company_id = face_tenant
+    employee_id = await _employee(client, admin)
+    await _link_employee_user(company_id, employee_id)
+    me = await _self_headers(company_id, employee_id)
+    other = await _employee(client, admin, "Other")
+
+    assert (await _open(client, me, other)).status_code == 403  # employee, someone else
+    assert (await _open(client, me, employee_id)).status_code == 403  # no manage permission
+    assert (
+        await client.post(f"/v1/attendance/face-profiles/{employee_id}/enrollment-window")
+    ).status_code in (401, 403)
+    headers_b, company_b, user_b = await _register_tenant(client)
+    try:
+        employee_b = await _employee(client, headers_b)
+        assert (await _open(client, admin, employee_b)).status_code == 404  # cross-tenant
+        assert await _outbox(company_b) == []
+    finally:
+        await _cleanup_attendance_day(company_id=company_b)
+        await _cleanup(company_id=company_b, user_id=user_b)
+    assert await _outbox(company_id) == []

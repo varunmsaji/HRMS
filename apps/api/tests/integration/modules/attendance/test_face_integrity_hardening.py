@@ -430,6 +430,11 @@ async def test_enrollment_is_limited_per_window_and_a_new_window_resets_it(
     assert len(await _enrollment_attempts(company_id)) == 5
 
     # Only HR reopening a window starts a fresh count.
+    assert (
+        await client.delete(
+            f"/v1/attendance/face-profiles/{employee_id}/enrollment-window", headers=admin
+        )
+    ).status_code == 204
     assert (await _open(client, admin, employee_id)).status_code == 201
     ok = await _submit(client, me)
     assert ok.status_code == 201, ok.text

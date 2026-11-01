@@ -28,6 +28,7 @@ from hrms.core.observability.operations import logged_operation
 from hrms.core.observability.security_events import security_event
 from hrms.core.rbac.types import DataScope, DataScopeLevel
 from hrms.modules.attendance import calculation as calc
+from hrms.modules.attendance.break_repository import BreakEventRepository
 from hrms.modules.attendance.exceptions import (
     AttendanceDayLockedError,
     AttendancePeriodClosedError,
@@ -2670,6 +2671,18 @@ async def _resolve_shift_schedule(
                         max_minutes=b.max_minutes,
                         is_paid=b.is_paid,
                         is_mandatory=b.is_mandatory,
+                        name=b.name,
+                        break_type=b.break_type,
+                        mode=b.mode,
+                        scheduled_minutes=b.scheduled_minutes,
+                        crosses_midnight=b.crosses_midnight,
+                        excess_outcome=b.excess_outcome,
+                        auto_deduct_full=b.auto_deduct_full,
+                        optional_recorded_deducts=b.optional_recorded_deducts,
+                        optional_scheduled_fallback=b.optional_scheduled_fallback,
+                        is_enabled=b.is_enabled,
+                        sort_order=b.sort_order,
+                        allows_split=b.allows_split,
                     )
                     for b in shift_version.breaks
                 ],
@@ -3371,6 +3384,7 @@ class AttendanceDayService:
         self._session = session
         self._day_repo = AttendanceDayRepository()
         self._break_repo = AttendanceBreakRepository()
+        self._break_event_repo = BreakEventRepository()
         self._attendance_policy_repo = AttendancePolicyRepository()
         self._overtime_repo = OvertimePolicyRepository()
         self._ot_record_repo = OvertimeRecordRepository()
@@ -3416,6 +3430,7 @@ class AttendanceDayService:
         date_from: date | None,
         date_to: date | None,
         status: str | None,
+        break_filter: str | None = None,
     ) -> tuple[list[AttendanceDayRead], int]:
         visible_ids = await _resolve_visible_employee_ids(
             self._session, company_id, scope, caller_employee_id
@@ -3429,6 +3444,7 @@ class AttendanceDayService:
             date_from=date_from,
             date_to=date_to,
             status=status,
+            break_filter=break_filter,
         )
         breaks_by_day = await self._break_repo.list_for_days(
             self._session, company_id=company_id, attendance_day_ids=[r.id for r in rows]
@@ -3659,6 +3675,17 @@ class AttendanceDayService:
                 "minutes": b.minutes,
                 "is_paid": b.is_paid,
                 "is_excess": b.is_excess,
+                "name": b.name,
+                "kind": b.kind,
+                "rule_source": b.rule_source,
+                "override_id": b.override_id,
+                "scheduled_minutes": b.scheduled_minutes,
+                "excess_minutes": b.excess_minutes,
+                "deducted_minutes": b.deducted_minutes,
+                "needs_review": b.needs_review,
+                "is_approved": b.is_approved,
+                "start_event_id": b.start_event_id,
+                "end_event_id": b.end_event_id,
                 "created_at": now,
                 "updated_at": now,
             }
@@ -3996,6 +4023,13 @@ class AttendanceDayService:
                 }
             ),
             "is_core_hours_breach": result.is_core_hours_breach,
+            "actual_break_minutes": result.actual_break_minutes,
+            "auto_deducted_break_minutes": result.auto_deducted_break_minutes,
+            "unresolved_break_count": result.unresolved_break_count,
+            "has_unresolved_break": result.has_unresolved_break,
+            "has_active_break": result.has_active_break,
+            "has_excess_break_exception": result.has_excess_break_exception,
+            "gross_elapsed_minutes": result.gross_elapsed_minutes,
             "on_duty": result.attendance_status == "ON_DUTY" or result.is_on_duty_flagged,
             "paid_day_fraction": Decimal(result.paid_day_fraction),
             "lop_fraction": Decimal(result.lop_fraction),
@@ -4084,6 +4118,22 @@ class AttendanceDayService:
             target_date=target_date,
             branch_timezone=branch_timezone,
             company_timezone=company.timezone,
+        )
+        # Break management V1 — the employee's in-force break overrides are layered over the
+        # shift version's breaks (deterministic, dated; the shift rows are never touched).
+        from hrms.modules.attendance.break_service import (
+            apply_break_overrides,
+            to_event_data,
+            utcnow,
+        )
+
+        schedule = await apply_break_overrides(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            target_date=target_date,
+            shift_id=shift_id,
+            schedule=schedule,
         )
         shift_inputs = schedule.shift_inputs
         shift_version_id = schedule.shift_version_id
@@ -4327,6 +4377,17 @@ class AttendanceDayService:
                 calc.PunchData(id=p.id, punch_time=p.punch_time, direction=p.direction)
                 for p in punch_rows
             ]
+        break_events = to_event_data(
+            await self._break_event_repo.list_for_date(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                attendance_date=target_date,
+            )
+        )
+        # An open break START is *active* only while the day can still receive its END; once the
+        # punch window has closed it is unresolved (and the sweep's recompute flips it).
+        day_open = utcnow() <= window.load_end
 
         # W9 (architecture §21) — active approved leave projections for this employee-date,
         # resolved here (DB access) exactly like the roster overrides above, then handed to the
@@ -4390,6 +4451,8 @@ class AttendanceDayService:
             prior_excess_break_days_in_window=prior_excess_break_days_in_window,
             early_departure_pre_approved=early_departure_pre_approved,
             on_duty_approved=on_duty_approved,
+            break_events=break_events,
+            day_open=day_open,
         )
         resolved_refs: dict[str, UUID | None] = {
             "shift_id": shift_id,
@@ -4740,6 +4803,25 @@ class RegularizationRequestService:
         )
 
     @logged_operation("attendance.regularization.submit")
+    async def _validate_break_correction_target(
+        self, company_id: UUID, employee_id: UUID, body: RegularizationRequestCreate
+    ) -> None:
+        assert body.break_start_event_id is not None  # guaranteed by the schema validator
+        start = await BreakEventRepository().get(
+            self._session, company_id=company_id, event_id=body.break_start_event_id
+        )
+        if (
+            start is None
+            or start.event_type != "START"
+            or start.employee_id != employee_id
+            or start.attendance_date != body.attendance_date
+        ):
+            raise ValidationError(
+                "break_start_event_id must be a break START of this employee on the attendance date"
+            )
+        if body.requested_break_end is not None and body.requested_break_end <= start.event_time:
+            raise ValidationError("The break must end after it starts")
+
     async def submit(
         self,
         company_id: UUID,
@@ -4910,6 +4992,13 @@ class RegularizationRequestService:
             approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
 
         await _ensure_shift_in_company(self._session, company_id, body.requested_shift_id)
+        if body.request_type == "BREAK_CORRECTION":
+            # A break correction is never self-approving: an AUTO chain would let the employee
+            # resolve their own break, so it is routed to HR instead.
+            if approval_chain == "AUTO":
+                approval_chain = "HR"
+                approval_stage = "HR"
+            await self._validate_break_correction_target(company_id, employee_id, body)
         request_id = uuid4()
         data = {
             "id": request_id,
@@ -4921,6 +5010,9 @@ class RegularizationRequestService:
             "reason": body.reason,
             "requested_shift_id": body.requested_shift_id,
             "attachment_reference": body.attachment_reference,
+            "break_start_event_id": body.break_start_event_id,
+            "requested_break_end": body.requested_break_end,
+            "requested_break_minutes": body.requested_break_minutes,
             "status": "SUBMITTED",
             "approval_chain": approval_chain,
             "approval_stage": approval_stage,
@@ -5336,6 +5428,16 @@ class RegularizationRequestService:
         a request is never left `APPROVED` without its correction actually applied."""
         now = datetime.now(UTC)
 
+        if row.request_type == "BREAK_CORRECTION":
+            return await self._apply_break_correction(
+                company_id,
+                row,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                now=now,
+            )
+
         if row.requested_shift_id is not None:
             existing_roster = await self._roster_repo.get_for_date(
                 self._session,
@@ -5462,6 +5564,82 @@ class RegularizationRequestService:
         applied_row = await self._repo.get(self._session, company_id=company_id, request_id=row.id)
         assert applied_row is not None  # status write above already succeeded uniquely
 
+        await self._record_action(
+            company_id=company_id,
+            request_id=row.id,
+            action="APPLIED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=None,
+            stage=None,
+            comment=None,
+        )
+        final_read = await self._read(applied_row, company_id=company_id)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="REGULARIZATION_APPLIED",
+            entity_type="attendance_regularization_request",
+            entity_id=row.id,
+            after=regularization_request_to_audit_dict(final_read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return final_read
+
+    async def _apply_break_correction(
+        self,
+        company_id: UUID,
+        row: AttendanceRegularizationRequest,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+        now: datetime,
+    ) -> RegularizationRequestRead:
+        """Applies an approved BREAK_CORRECTION through `BreakEventService` (append-only ADMIN
+        END event + recalculation). Same transaction as the approval, so a locked day or a
+        stale/superseded start rolls the whole approval back."""
+        from hrms.modules.attendance.break_service import BreakEventService
+
+        assert row.break_start_event_id is not None
+        start = await BreakEventRepository().get(
+            self._session, company_id=company_id, event_id=row.break_start_event_id
+        )
+        if start is None:
+            raise ValidationError("The break being corrected no longer exists")
+        await BreakEventService(self._session)._apply_correction(
+            company_id,
+            start=start,
+            corrected_end=row.requested_break_end,
+            approved_minutes=row.requested_break_minutes,
+            reason=row.reason or "Break correction",
+            actor_user_id=actor_user_id,
+            regularization_request_id=row.id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        day_row = await self._day_repo.get_by_employee_date(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            attendance_date=row.attendance_date,
+        )
+        if day_row is not None:
+            await self._day_repo.mark_regularized(
+                self._session, company_id=company_id, attendance_day_id=day_row.id, now=now
+            )
+        await self._repo.mark_applied(
+            self._session,
+            company_id=company_id,
+            request_id=row.id,
+            attendance_day_id=(
+                None if day_row is None or row.attendance_day_id == day_row.id else day_row.id
+            ),
+            now=now,
+        )
+        applied_row = await self._repo.get(self._session, company_id=company_id, request_id=row.id)
+        assert applied_row is not None
         await self._record_action(
             company_id=company_id,
             request_id=row.id,
@@ -6413,6 +6591,12 @@ class AttendancePeriodService:
                     "comp_off_minutes_earned": 0,
                     "late_count": 0,
                     "worked_minutes_total": 0,
+                    "paid_break_minutes_total": 0,
+                    "unpaid_break_minutes_total": 0,
+                    "auto_deducted_break_minutes_total": 0,
+                    "actual_break_minutes_total": 0,
+                    "excess_break_minutes_total": 0,
+                    "unresolved_break_days": 0,
                 },
             )
             status = row.attendance_status
@@ -6476,6 +6660,13 @@ class AttendancePeriodService:
             if row.is_late:
                 agg["late_count"] += 1
             agg["worked_minutes_total"] += row.worked_minutes
+            agg["paid_break_minutes_total"] += row.paid_break_minutes or 0
+            agg["unpaid_break_minutes_total"] += row.unpaid_break_minutes or 0
+            agg["auto_deducted_break_minutes_total"] += row.auto_deducted_break_minutes or 0
+            agg["actual_break_minutes_total"] += row.actual_break_minutes or 0
+            agg["excess_break_minutes_total"] += row.excess_break_minutes or 0
+            if row.has_unresolved_break:
+                agg["unresolved_break_days"] += 1
 
         if period_days is not None:
             for agg in by_employee.values():
@@ -6570,6 +6761,12 @@ class AttendancePeriodService:
                 comp_off_minutes_earned=agg["comp_off_minutes_earned"],
                 late_count=agg["late_count"],
                 worked_minutes_total=agg["worked_minutes_total"],
+                paid_break_minutes_total=agg["paid_break_minutes_total"],
+                unpaid_break_minutes_total=agg["unpaid_break_minutes_total"],
+                auto_deducted_break_minutes_total=agg["auto_deducted_break_minutes_total"],
+                actual_break_minutes_total=agg["actual_break_minutes_total"],
+                excess_break_minutes_total=agg["excess_break_minutes_total"],
+                unresolved_break_days=agg["unresolved_break_days"],
                 generated_at=now_str,
                 frozen=False,
             )

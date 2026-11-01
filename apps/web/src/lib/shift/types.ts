@@ -50,6 +50,11 @@ export interface ShiftWritableFields {
 export const SHIFT_VERSION_TYPES = ["FIXED", "FLEXIBLE", "SPLIT"] as const;
 export type ShiftVersionType = (typeof SHIFT_VERSION_TYPES)[number];
 
+/** Types a user may pick for a new or changed schedule. SPLIT stays a valid type everywhere else
+ * (API, stored data, display) but is withdrawn from configuration until its calculation rules
+ * are verified. */
+export const SELECTABLE_SHIFT_VERSION_TYPES = ["FIXED", "FLEXIBLE"] as const;
+
 export const SHIFT_BREAK_KINDS = ["FIXED_WINDOW", "FLEXIBLE_DURATION"] as const;
 export type ShiftBreakKind = (typeof SHIFT_BREAK_KINDS)[number];
 

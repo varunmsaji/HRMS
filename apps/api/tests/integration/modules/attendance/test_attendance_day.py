@@ -48,6 +48,7 @@ async def _build_wired_employee(
     headers: dict[str, str],
     *,
     joining_date: str = "2026-01-01",
+    breaks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Employee + employment + assignment (with `shift_id`) + a published FIXED 09:00-18:00
     shift + a COMPANY `WORK_CALENDAR` assignment + a published Attendance Policy (one hour band,
@@ -102,6 +103,7 @@ async def _build_wired_employee(
             "start_time": "09:00",
             "end_time": "18:00",
             "timezone": "UTC",
+            **({"breaks": breaks} if breaks is not None else {}),
         },
     )
     assert patched.status_code == 200, patched.text
@@ -221,6 +223,8 @@ async def _cleanup_attendance_day(*, company_id: UUID) -> None:
             "geofence_attempt",
             "employee_workplace_authorization",
             "attendance_break",
+            "attendance_break_event",
+            "employee_break_override",
             "attendance_day",
             "shift_roster",
             "punch",

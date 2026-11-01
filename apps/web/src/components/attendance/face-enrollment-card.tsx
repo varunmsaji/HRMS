@@ -49,6 +49,7 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
   const [busy, setBusy] = useState(false);
   const [reviewPhoto, setReviewPhoto] = useState<string | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
+  const [initiateOpen, setInitiateOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectNote, setRejectNote] = useState("");
 
@@ -92,27 +93,48 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
     };
   }, [base, pending, profile?.has_review_photo]);
 
-  async function act(run: () => Promise<unknown>, success: string, failure: string) {
+  async function act(
+    run: () => Promise<unknown>,
+    success: string,
+    failure: string,
+    describeSuccess?: (result: unknown) => string | undefined,
+  ) {
     setBusy(true);
     try {
-      await run();
-      toast({ title: success, variant: "success" });
+      const result = await run();
+      toast({ title: success, description: describeSuccess?.(result), variant: "success" });
       await load();
       return true;
     } catch (err) {
       toast({ title: failure, description: describeApiError(err), variant: "danger" });
+      // 409 (already open / pending / enrolled), 404 (window gone) and expiry all mean the screen
+      // is stale: re-read the canonical state instead of trusting what was last rendered.
+      await load();
       return false;
     } finally {
       setBusy(false);
     }
   }
 
-  const openWindow = () =>
-    act(
+  async function initiate() {
+    if (busy) return;
+    const ok = await act(
       () => apiClient.post<FaceEnrollmentWindow>(`${base}/enrollment-window`),
-      "Face enrollment opened",
-      "Could not open face enrollment",
+      "Enrollment initiated",
+      "Could not initiate face enrollment",
+      (result) => {
+        // Say only what is true: the window exists; the email is merely queued, never "sent".
+        switch ((result as FaceEnrollmentWindow | undefined)?.notification_status) {
+          case "QUEUED":
+            return `A notification email has been queued for ${employeeLabel}.`;
+          default:
+            return `${employeeLabel} can complete enrollment from their HRMS dashboard. A notification could not be sent.`;
+        }
+      },
     );
+    setInitiateOpen(false);
+    return ok;
+  }
   const cancelWindow = () =>
     act(() => apiClient.delete(`${base}/enrollment-window`), "Face enrollment cancelled", "Could not cancel");
   const approve = () =>
@@ -160,7 +182,11 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
     );
   } else if (openWindowRow) {
     badge = <Badge variant="info">Enrollment open</Badge>;
-    description = `${employeeLabel} can set up face attendance in the mobile app until ${formatDateTime(openWindowRow.expires_at, tz)}. The link closes once they finish.`;
+    const initiatedBy =
+      openWindowRow.opened_by_user_id && openWindowRow.opened_by_user_id === user?.id
+        ? "you"
+        : "HR";
+    description = `Enrollment is currently available for ${employeeLabel} in the mobile app. Initiated ${formatDateTime(openWindowRow.opened_at, tz)} by ${initiatedBy} · expires ${formatDateTime(openWindowRow.expires_at, tz)}. It closes once they finish.`;
     actions = (
       <Button type="button" variant="outline" disabled={busy} onClick={() => void cancelWindow()}>
         Cancel enrollment
@@ -169,17 +195,17 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
   } else {
     if (profile?.status === "REJECTED") {
       badge = <Badge variant="danger">Rejected</Badge>;
-      description = `Rejected ${formatDateTime(profile.reviewed_at, tz)}. Open enrollment again to let them retry.${profile.review_note ? ` Reason: ${profile.review_note}` : ""}`;
+      description = `Rejected ${formatDateTime(profile.reviewed_at, tz)}. Initiate enrollment again to let them retry.${profile.review_note ? ` Reason: ${profile.review_note}` : ""}`;
     } else if (profile?.status === "REVOKED") {
       badge = <Badge variant="warning">Revoked</Badge>;
       description = `Revoked ${formatDateTime(profile.revoked_at, tz)}. The face record was deleted from the verification service.`;
     } else {
       badge = <Badge variant="outline">Not enrolled</Badge>;
-      description = `Open a one-time enrollment so ${employeeLabel} can register their face from the mobile app.`;
+      description = `Face attendance has not been set up. Initiate enrollment so ${employeeLabel} can register their face from the mobile app.`;
     }
     actions = (
-      <Button type="button" disabled={busy} onClick={() => void openWindow()}>
-        Open face enrollment
+      <Button type="button" disabled={busy} onClick={() => setInitiateOpen(true)}>
+        Initiate face enrollment
       </Button>
     );
   }
@@ -216,6 +242,28 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
           <p className="text-sm text-foreground-muted">Loading submitted photo…</p>
         )
       ) : null}
+
+      <Dialog open={initiateOpen} onOpenChange={(next) => (!busy ? setInitiateOpen(next) : null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Initiate face enrollment?</DialogTitle>
+            <DialogDescription>
+              This will allow {employeeLabel} to securely enroll their face for face attendance.
+              They will need to give consent and complete the face capture, and the enrollment is
+              reviewed by HR before it takes effect. Access expires after the configured time
+              period.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={busy} onClick={() => setInitiateOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" disabled={busy} onClick={() => void initiate()}>
+              {busy ? "Initiating…" : "Initiate enrollment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={rejectOpen} onOpenChange={(next) => (!busy ? setRejectOpen(next) : null)}>
         <DialogContent className="max-w-md">

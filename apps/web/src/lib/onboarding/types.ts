@@ -209,6 +209,15 @@ export interface OnboardingCaseDetail extends OnboardingCase {
   section_reviews: OnboardingSectionReview[];
   token_status: "ACTIVE" | "EXPIRED" | "REVOKED" | null;
   token_expires_at: string | null;
+  /** Company policy: face enrollment is a required onboarding step. */
+  face_enrollment_required?: boolean;
+  /** Present once activated. `requirement_met` = not required, or HR-approved ENROLLED. */
+  face_enrollment?: {
+    required: boolean;
+    state: import("@/lib/attendance/types").FaceEnrollmentState;
+    requirement_met: boolean;
+  } | null;
+  onboarding_requirements_complete?: boolean;
 }
 
 // --- O5: documents ---------------------------------------------------------------------------

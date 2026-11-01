@@ -77,10 +77,10 @@ const _destinations = [
 
 /// Same four tabs on the employee surface: Home and Leave get their own glyphs (redesign §3.3).
 const _employeeDestinations = [
-  NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home_rounded), label: 'Home'),
+  NavigationDestination(icon: Icon(Icons.grid_view_outlined), selectedIcon: Icon(Icons.grid_view_rounded), label: 'Dashboard'),
   NavigationDestination(icon: Icon(Icons.fingerprint_rounded), selectedIcon: Icon(Icons.fingerprint_rounded), label: 'Attendance'),
   NavigationDestination(icon: Icon(Icons.event_available_outlined), selectedIcon: Icon(Icons.event_available_rounded), label: 'Leave'),
-  NavigationDestination(icon: Icon(Icons.person_outline_rounded), selectedIcon: Icon(Icons.person_rounded), label: 'Profile'),
+  NavigationDestination(icon: Icon(Icons.account_circle_outlined), selectedIcon: Icon(Icons.account_circle_rounded), label: 'Profile'),
 ];
 
 /// The shell branch indexes to show as tabs, in order. All four, for everyone: the Home tab is

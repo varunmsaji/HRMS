@@ -188,10 +188,15 @@ const shiftIdentitySpec = FormSpec(name: 'shift', label: 'Shift', fields: [
   _active,
 ]);
 
+/// Shift types a user may pick. SPLIT stays valid on the wire and in stored data (an existing split
+/// shift still displays; the dropdown keeps its current value), but it is not offered for new
+/// configuration until its calculation rules are verified.
+const shiftTypeOptions = ['FIXED', 'FLEXIBLE'];
+
 /// Built at first use: the timezone options come from the tz database.
 FormSpec shiftVersionSpec() => FormSpec(name: 'shift_version', label: 'Shift version', fields: [
       const FieldSpec('effective_from', 'Effective from', kind: FieldKind.date),
-      const FieldSpec('shift_type', 'Shift type', kind: FieldKind.select, options: ['FIXED', 'FLEXIBLE', 'SPLIT']),
+      const FieldSpec('shift_type', 'Shift type', kind: FieldKind.select, options: shiftTypeOptions),
       FieldSpec('timezone', 'Timezone', kind: FieldKind.select, options: allTimeZones()),
       const FieldSpec('start_time', 'Start time', kind: FieldKind.time),
       const FieldSpec('end_time', 'End time', kind: FieldKind.time),

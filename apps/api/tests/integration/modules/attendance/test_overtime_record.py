@@ -704,15 +704,16 @@ async def test_approved_overtime_frozen_across_later_recompute(
         )
         assert record["status"] == "AUTO_APPROVED"
 
-        # An additional, earlier IN/OUT pair (still inside the [07:00, 20:00) punch-load
-        # window) replaces nothing — punches are immutable — but gives the engine a longer
-        # total worked span to detect on recompute.
+        # An additional, later IN/OUT pair (still inside the [07:00, 20:00) punch-load window)
+        # replaces nothing — punches are immutable — but gives the engine a longer total worked
+        # span to detect on recompute. (A pre-shift pair would not do: time before the scheduled
+        # start is recorded but not credited, so it cannot raise detected overtime.)
         await _punch(
             client,
             headers,
             employee_id=employee_id,
-            hour=7,
-            minute=15,
+            hour=19,
+            minute=10,
             direction="IN",
             day="2026-08-10",
         )
@@ -720,8 +721,8 @@ async def test_approved_overtime_frozen_across_later_recompute(
             client,
             headers,
             employee_id=employee_id,
-            hour=8,
-            minute=15,
+            hour=19,
+            minute=50,
             direction="OUT",
             day="2026-08-10",
         )
@@ -730,8 +731,8 @@ async def test_approved_overtime_frozen_across_later_recompute(
         )
         assert recomputed.status_code == 200, recomputed.text
         recomputed_data = recomputed.json()["data"]
-        # Fresh detection now sees more OT (660m worked - 540m scheduled = 120m)...
-        assert recomputed_data["ot_minutes_detected"] == 120
+        # Fresh detection now sees more OT (640m worked - 540m scheduled = 100m)...
+        assert recomputed_data["ot_minutes_detected"] == 100
         # ...but the frozen, terminal decision survives unchanged.
         assert recomputed_data["ot_minutes_approved"] == 60
 
@@ -741,6 +742,68 @@ async def test_approved_overtime_frozen_across_later_recompute(
         assert record_after["id"] == record["id"]
         assert record_after["minutes_approved"] == 60
         assert record_after["status"] == "AUTO_APPROVED"
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_pre_shift_presence_is_recorded_but_not_credited_or_overtime(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """End to end: IN 08:00 against the 09:00-18:00 shift, OUT 19:00. The punch keeps 08:00 and
+    `actual_first_in` is 08:00, but credited work starts at 09:00 (600m), so overtime is the 60m
+    after shift end — not 120m from the raw 11h presence."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        await _create_overtime_policy(client, headers, approval_chain="AUTO")
+        await _punch(
+            client,
+            headers,
+            employee_id=employee_id,
+            hour=8,
+            minute=0,
+            direction="IN",
+            day="2026-08-10",
+        )
+        await _punch(
+            client,
+            headers,
+            employee_id=employee_id,
+            hour=19,
+            minute=0,
+            direction="OUT",
+            day="2026-08-10",
+        )
+        response = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-10"},
+        )
+        assert response.status_code == 200, response.text
+        day = response.json()["data"]
+        assert day["worked_minutes"] == 600
+        assert day["ot_minutes_detected"] == 60
+        assert day["actual_first_in"].startswith("2026-08-10T08:00:00")
+        assert day["scheduled_start"].startswith("2026-08-10T09:00:00")
+
+        punches = await client.get(
+            "/v1/attendance/punches",
+            headers=headers,
+            params={"employee_id": employee_id, "date_from": "2026-08-10", "date_to": "2026-08-10"},
+        )
+        assert punches.status_code == 200, punches.text
+        times = sorted(p["punch_time"] for p in punches.json()["data"])
+        assert times[0].startswith("2026-08-10T08:00:00")  # the stored punch is untouched
+
+        again = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-10"},
+        )
+        assert again.json()["data"]["worked_minutes"] == 600  # recalculation is reproducible
     finally:
         await _cleanup_overtime(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)

@@ -9,6 +9,24 @@ def _format_date(value: date) -> str:
     return value.strftime("%a %d %b %Y")
 
 
+def build_face_enrollment_requested_email(
+    *, first_name: str | None, company_name: str, expires_at: str, app_url: str
+) -> tuple[str, str, str]:
+    """HR opened a face-enrollment window for this employee. Carries no token, photo or score:
+    the employee signs in and the server decides whether enrollment is still available."""
+    greeting = f"Hi {first_name}," if first_name else "Hi,"
+    subject = "Face Enrollment Requested"
+    intro = f"{company_name} has requested that you complete face enrollment for face attendance."
+    when = f"Please complete it before {expires_at}."
+    how = "Sign in to your HRMS account and open Face Attendance Setup to get started."
+    text_body = f"{greeting}\n\n{intro}\n\n{when}\n\n{how}\n\n{app_url}"
+    html_body = (
+        f"<p>{escape(greeting)}</p><p>{escape(intro)}</p><p>{escape(when)}</p>"
+        f'<p>{escape(how)}</p><p><a href="{escape(app_url)}">{escape(app_url)}</a></p>'
+    )
+    return subject, html_body, text_body
+
+
 def build_incomplete_days_reminder_email(
     *,
     first_name: str | None,

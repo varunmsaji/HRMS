@@ -4,6 +4,7 @@ import { ClipboardList, Plus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { FaceEnrollmentPolicyCard } from "@/components/attendance/face-enrollment-policy-card";
 import { AttendancePolicyForm } from "@/components/attendance-policy/attendance-policy-form";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -29,6 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
+import { usePermissions } from "@/lib/auth/use-permissions";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { AttendancePolicy } from "@/lib/attendance-policy/types";
 import {
@@ -41,6 +43,7 @@ import {
 
 export default function AttendancePoliciesPage() {
   const { toast } = useToast();
+  const { can } = usePermissions();
   const [policies, setPolicies] = useState<AttendancePolicy[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -135,6 +138,8 @@ export default function AttendancePoliciesPage() {
           ) : null
         }
       />
+
+      {can("ATTENDANCE.FACE_ENROLLMENT_MANAGE") ? <FaceEnrollmentPolicyCard /> : null}
 
       <TableContainer>
         {loading ? <LoadingState label="Loading attendance policies…" /> : null}

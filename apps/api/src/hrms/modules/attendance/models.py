@@ -512,6 +512,23 @@ class FaceEnrollmentWindow(Base, TimestampMixin):
     )
 
 
+class CompanyFacePolicy(Base, TimestampMixin):
+    """Company policy only: whether face enrollment is a required onboarding step. Singleton per
+    company (unique `company_id`); no row means "not required". It never stores enrollment state -
+    that stays in `employee_face_profile` / `face_enrollment_window`."""
+
+    __tablename__ = "company_face_policy"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    require_enrollment_on_onboarding: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class EmployeeFaceProfile(Base, TimestampMixin):
     """An employee's enrollment with the face-verification provider. Stores the provider's person
     id; the only image ever kept is the straight-on capture awaiting HR review
@@ -803,6 +820,14 @@ class AttendanceDay(Base, TimestampMixin):
     unpaid_break_minutes: Mapped[int] = mapped_column(Integer, default=0)
     paid_break_minutes: Mapped[int] = mapped_column(Integer, default=0)
     excess_break_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    # Break management V1 — derived like the columns above, replaced on every recompute.
+    actual_break_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    auto_deducted_break_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    unresolved_break_count: Mapped[int] = mapped_column(Integer, default=0)
+    has_unresolved_break: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_active_break: Mapped[bool] = mapped_column(Boolean, default=False)
+    has_excess_break_exception: Mapped[bool] = mapped_column(Boolean, default=False)
+    gross_elapsed_minutes: Mapped[int] = mapped_column(Integer, default=0)
 
     attendance_status: Mapped[str] = mapped_column(String(20))
     late_minutes: Mapped[int] = mapped_column(Integer, default=0)
@@ -950,6 +975,14 @@ class AttendanceRegularizationRequest(Base, TimestampMixin):
     resolved_approver_manager_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("employee.id"), nullable=True
     )
+    # BREAK_CORRECTION only — the START event being corrected, and the corrected end / duration.
+    break_start_event_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_break_event.id"), nullable=True
+    )
+    requested_break_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    requested_break_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     submitted_by_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
@@ -1134,6 +1167,134 @@ class AttendanceBreak(Base, TimestampMixin):
     minutes: Mapped[int] = mapped_column(Integer, default=0)
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False)
     is_excess: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Break management V1. `kind`: PUNCHED_GAP (legacy, detected from a punch gap) | EVENT
+    # (explicit START/END events) | AUTO_DEDUCTED (scheduled deduction, no events) | UNRESOLVED
+    # (START with no END). `minutes` is the actual interval length (the deducted amount for
+    # AUTO_DEDUCTED); `deducted_minutes` is what was actually taken off working time.
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    kind: Mapped[str] = mapped_column(String(20), default="PUNCHED_GAP")
+    rule_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    override_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee_break_override.id"), nullable=True
+    )
+    scheduled_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    excess_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    deducted_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    start_event_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_break_event.id"), nullable=True
+    )
+    end_event_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_break_event.id"), nullable=True
+    )
+
+
+class AttendanceBreakEvent(Base):
+    """An immutable break START/END event (break management V1). Append-only like `Punch`: a
+    DB trigger rejects UPDATE, and a correction is a *new* event whose `supersedes_event_id`
+    names the one it replaces — the original row, its source and its timestamp stay forever.
+    `attendance_break` is derived from these on every recompute and never feeds back.
+    `attendance_date` is the shift-attributed date (the shift's start date for an overnight
+    shift), fixed when the event is written."""
+
+    __tablename__ = "attendance_break_event"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    attendance_date: Mapped[date] = mapped_column(Date)
+    attendance_day_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_day.id"), nullable=True
+    )
+    shift_break_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("shift_break.id"), nullable=True
+    )
+    break_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(10))
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str] = mapped_column(String(20))
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    recorded_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    supersedes_event_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("attendance_break_event.id"), nullable=True
+    )
+    regularization_request_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("attendance_regularization_request.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class EmployeeBreakOverride(Base, TimestampMixin):
+    """Effective-dated, per-employee override of the shift version's break rules (break
+    management V1). `REPLACE` swaps the named break's rule, `DISABLE` switches it off, `ADD`
+    contributes an extra break. The `shift_break` rows are never modified: resolution layers
+    these over the effective shift version at calculation time. Rows are never edited in place
+    — a change revokes (`revoked_at`) and inserts — so the history stays auditable.
+    Break rule columns mirror `ShiftBreak`; NULL on a REPLACE means "keep the shift's value"."""
+
+    __tablename__ = "employee_break_override"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id"), index=True
+    )
+    shift_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("shift.id"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(10))
+    target_break_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    shift_break_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("shift_break.id"), nullable=True
+    )
+    effective_from: Mapped[date] = mapped_column(Date)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reason: Mapped[str] = mapped_column(Text)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    break_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    break_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    start_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    end_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    window_start: Mapped[time | None] = mapped_column(Time, nullable=True)
+    window_end: Mapped[time | None] = mapped_column(Time, nullable=True)
+    min_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scheduled_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_paid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_mandatory: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    crosses_midnight: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    excess_outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    auto_deduct_full: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    optional_recorded_deducts: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    optional_scheduled_fallback: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    sort_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1436,14 @@ class AttendancePeriodSummary(Base, TimestampMixin):
 
     late_count: Mapped[int] = mapped_column(Integer, default=0)
     worked_minutes_total: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Break management V1 — NULL on summaries frozen before these columns existed.
+    paid_break_minutes_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    unpaid_break_minutes_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_deducted_break_minutes_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actual_break_minutes_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    excess_break_minutes_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    unresolved_break_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

@@ -5,7 +5,7 @@ import { ShiftDutyBlocksEditor } from "@/components/shift/shift-duty-blocks-edit
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { SHIFT_VERSION_TYPES } from "@/lib/shift/types";
+import { SELECTABLE_SHIFT_VERSION_TYPES } from "@/lib/shift/types";
 import type {
   ShiftVersionFormErrors,
   ShiftVersionFormValues,
@@ -23,8 +23,11 @@ interface ShiftVersionFormProps {
 const SHIFT_TYPE_LABELS: Record<string, string> = {
   FIXED: "Fixed (e.g. 09:00–18:00)",
   FLEXIBLE: "Flexible (e.g. 8-hour flex window)",
-  SPLIT: "Split (e.g. 09:00–13:00 + 17:00–21:00)",
+  SPLIT: "Split (legacy, not available for new configuration)",
 };
+
+const SPLIT_UNAVAILABLE_MESSAGE =
+  "Split shifts are temporarily unavailable for new configuration while attendance calculation support is being finalised. This schedule is shown for reference and can't be changed here.";
 
 /** Draft-only editor for a `ShiftVersion` — the actual schedule (type, timing, breaks, duty
  * blocks). Deliberately separate from `ShiftForm` (identity) so it's obvious SHIFT = SCHEDULE,
@@ -47,8 +50,17 @@ export function ShiftVersionForm({
   // corresponding usability fix, sourced from the runtime IANA list rather than free text.
   const timezones = useMemo(() => listTimezones(), []);
 
+  // An existing SPLIT version stays visible but read-only: it is never offered as a choice, and
+  // never silently converted to another type.
+  const isLegacySplit = values.shiftType === "SPLIT";
+
   return (
-    <div className="space-y-6">
+    <fieldset disabled={isLegacySplit} className="m-0 min-w-0 space-y-6 border-0 p-0">
+      {isLegacySplit ? (
+        <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm text-foreground">
+          {SPLIT_UNAVAILABLE_MESSAGE}
+        </p>
+      ) : null}
       <section>
         <h3 className="text-sm font-medium text-foreground">Schedule type</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -68,11 +80,14 @@ export function ShiftVersionForm({
               }
             >
               <option value="">Select a schedule type…</option>
-              {SHIFT_VERSION_TYPES.map((type) => (
+              {SELECTABLE_SHIFT_VERSION_TYPES.map((type) => (
                 <option key={type} value={type}>
                   {SHIFT_TYPE_LABELS[type]}
                 </option>
               ))}
+              {isLegacySplit ? (
+                <option value="SPLIT">{SHIFT_TYPE_LABELS.SPLIT}</option>
+              ) : null}
             </NativeSelect>
           </FormField>
           <FormField
@@ -336,6 +351,6 @@ export function ShiftVersionForm({
           onChange={(breaks) => update("breaks", breaks)}
         />
       </section>
-    </div>
+    </fieldset>
   );
 }

@@ -22,6 +22,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
+from hrms.modules.attendance.face_policy import EmployeeFaceOnboardingRead
+
 if TYPE_CHECKING:
     from hrms.modules.onboarding.models import (
         OnboardingCase,
@@ -664,6 +666,15 @@ class OnboardingCaseDetailRead(OnboardingCaseRead):
     #: last link they sent is still usable. `None` when no token has ever been issued.
     token_status: Literal["ACTIVE", "EXPIRED", "REVOKED"] | None = None
     token_expires_at: str | None = None
+    #: Company policy: face enrollment is a required onboarding step. Known before activation.
+    face_enrollment_required: bool = False
+    #: Present once the case is ACTIVATED (there is an employee): the employee's enrollment
+    #: state from the attendance module (the single source of truth) and whether the
+    #: requirement is met (not required, or HR-approved ENROLLED).
+    face_enrollment: EmployeeFaceOnboardingRead | None = None
+    #: Activation does not wait for face enrollment (the chosen design); onboarding as a whole is
+    #: complete when the case is ACTIVATED and the face requirement is met.
+    onboarding_requirements_complete: bool = False
 
 
 def _token_status(

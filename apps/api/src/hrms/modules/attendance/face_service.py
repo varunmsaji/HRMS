@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.service import AuditService
@@ -32,6 +33,7 @@ from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
 from hrms.core.observability.security_events import security_event
 from hrms.core.rbac.types import DataScope
+from hrms.modules.attendance.email_templates import build_face_enrollment_requested_email
 from hrms.modules.attendance.exceptions import (
     DuplicatePunchIdempotencyKeyError,
     FaceCaptureReplayedError,
@@ -40,6 +42,7 @@ from hrms.modules.attendance.exceptions import (
     FaceEnrollmentAttemptsExceededError,
     FaceEnrollmentInProgressError,
     FaceEnrollmentSelfApprovalNotAllowedError,
+    FaceEnrollmentWindowAlreadyOpenError,
     FaceEnrollmentWindowNotFoundError,
     FaceEnrollmentWindowNotOpenError,
     FaceImageInvalidError,
@@ -71,6 +74,7 @@ from hrms.modules.attendance.face_comparison import (
     match_threshold,
     start_shadow,
 )
+from hrms.modules.attendance.face_policy import FacePolicyService, derive_enrollment_state
 from hrms.modules.attendance.face_verification import (
     FaceProviderError,
     FaceProviderMultipleFacesError,
@@ -115,6 +119,8 @@ from hrms.modules.attendance.service import (
     _ensure_employee_visible,
     _resolve_visible_employee_ids,
 )
+from hrms.modules.notification.service import NotificationService
+from hrms.modules.notification.types import FACE_ENROLLMENT_REQUESTED, FACE_SETUP_PATH
 from hrms.shared.pagination import PageParams
 
 _logger = get_logger(__name__)
@@ -307,6 +313,10 @@ class FaceEnrollmentService:
             ),
             open_window=face_window_to_read(window) if window is not None and usable else None,
             face_verification_required=profile is not None and profile.status == "ENROLLED",
+            enrollment_state=derive_enrollment_state(profile, window),
+            company_requires_enrollment=await FacePolicyService(self._session).is_required(
+                company_id
+            ),
         )
 
     async def get_review_photo(
@@ -371,6 +381,47 @@ class FaceEnrollmentService:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
+        return await self._open_window(
+            company_id,
+            employee_id,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            source="HR",
+        )
+
+    async def open_own_window(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> FaceEnrollmentWindowRead:
+        """Self-service "Start face enrollment". `employee_id` is always the caller's own (the
+        router passes the authenticated user's employee), never a request value. Same rules and
+        window as an HR-opened one: refused while ENROLLED or PENDING_APPROVAL, the capture still
+        needs server-side liveness, consent and HR approval."""
+        return await self._open_window(
+            company_id,
+            employee_id,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            source="SELF",
+        )
+
+    async def _open_window(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+        source: str,
+    ) -> FaceEnrollmentWindowRead:
         self._require_provider()
         profile = await self._profiles.get_for_employee(
             self._session, company_id=company_id, employee_id=employee_id, for_update=True
@@ -384,8 +435,13 @@ class FaceEnrollmentService:
         previous = await self._windows.get_open(
             self._session, company_id=company_id, employee_id=employee_id, for_update=True
         )
+        previous_window_live = previous is not None and previous.expires_at > now
+        if previous_window_live and source == "HR":
+            # HR must cancel a live window explicitly; initiating never silently replaces it.
+            # (The employee's own "Start/Continue" keeps refreshing their window.)
+            raise FaceEnrollmentWindowAlreadyOpenError()
         if previous is not None:
-            if previous.expires_at <= now:
+            if not previous_window_live:
                 previous.status = "EXPIRED"
             else:
                 previous.status = "CANCELLED"
@@ -393,19 +449,29 @@ class FaceEnrollmentService:
                 previous.cancelled_by_user_id = actor_user_id
             await self._session.flush()
 
-        window = await self._windows.insert(
-            self._session,
-            data={
-                "id": uuid4(),
-                "company_id": company_id,
-                "employee_id": employee_id,
-                "status": "OPEN",
-                "opened_by_user_id": actor_user_id,
-                "opened_at": now,
-                "expires_at": now + timedelta(hours=self._settings.face_enrollment_window_hours),
-            },
-        )
+        try:
+            # Savepoint: with no profile/window row to lock, two concurrent initiations race on
+            # the one-OPEN-window unique index; the loser is a 409, not a 500.
+            async with self._session.begin_nested():
+                window = await self._windows.insert(
+                    self._session,
+                    data={
+                        "id": uuid4(),
+                        "company_id": company_id,
+                        "employee_id": employee_id,
+                        "status": "OPEN",
+                        "opened_by_user_id": actor_user_id,
+                        "opened_at": now,
+                        "expires_at": now
+                        + timedelta(hours=self._settings.face_enrollment_window_hours),
+                    },
+                )
+        except IntegrityError as exc:
+            raise FaceEnrollmentWindowAlreadyOpenError() from exc
         read = face_window_to_read(window)
+        previous_state = derive_enrollment_state(
+            profile, previous if previous_window_live else None
+        )
         await self._audit.record(
             self._session,
             company_id=company_id,
@@ -413,11 +479,120 @@ class FaceEnrollmentService:
             action="FACE_ENROLLMENT_OPENED",
             entity_type="face_enrollment_window",
             entity_id=window.id,
-            after=read.model_dump(mode="json"),
+            before={"enrollment_state": previous_state},
+            after={
+                **read.model_dump(mode="json"),
+                "source": source,
+                "enrollment_state": "ENROLLMENT_AVAILABLE",
+            },
             ip=ip_address,
             user_agent=user_agent,
         )
+        if source == "HR":
+            await self._create_requested_notification(company_id, employee_id, window)
+            read = read.model_copy(
+                update={
+                    "notification_status": await self._queue_requested_email(
+                        company_id, employee_id, window
+                    )
+                }
+            )
         return read
+
+    async def _create_requested_notification(
+        self, company_id: UUID, employee_id: UUID, window: FaceEnrollmentWindow
+    ) -> None:
+        """In-app counterpart of the email: one FACE_ENROLLMENT_REQUESTED notification per window.
+
+        Same transaction as the window (committed with it, gone if it rolls back) but inside a
+        savepoint, so a notification problem can never undo or fail the enrollment window. The
+        dedupe key is the window id: a retry or the losing side of a race adds nothing. Only
+        non-sensitive ids and the expiry go into it - never anything biometric.
+        """
+        try:
+            async with self._session.begin_nested():
+                user_id = (
+                    await self._session.execute(
+                        text("SELECT user_id FROM employee WHERE id = :eid AND company_id = :cid"),
+                        {"eid": employee_id, "cid": company_id},
+                    )
+                ).scalar_one_or_none()
+                if user_id is None:
+                    return
+                await NotificationService(self._session).create_notification(
+                    company_id=company_id,
+                    recipient_user_id=user_id,
+                    type=FACE_ENROLLMENT_REQUESTED,
+                    title="Face Enrollment Required",
+                    body=(
+                        "Your HR team has requested you to complete face enrollment for attendance."
+                    ),
+                    entity_type="face_enrollment_window",
+                    entity_id=window.id,
+                    action_url=FACE_SETUP_PATH,
+                    action_label="Complete Face Enrollment",
+                    metadata={"expires_at": window.expires_at.isoformat()},
+                    dedupe_key=f"{FACE_ENROLLMENT_REQUESTED.code}:{window.id}",
+                    expires_at=window.expires_at,
+                )
+        except Exception as exc:  # noqa: BLE001 - the window is the source of truth
+            safe_log(_logger.warning, "face.enrollment.in_app_notify_failed", **safe_error(exc))
+
+    async def _queue_requested_email(
+        self, company_id: UUID, employee_id: UUID, window: FaceEnrollmentWindow
+    ) -> str:
+        """Tells the employee (email, via the transactional outbox) that HR requested enrollment.
+
+        Runs only after the window row exists, in the same transaction: the email commits with
+        the window and is dropped if it rolls back, one message per window id (so a retry or the
+        losing side of a race can never add a second). Nothing here can fail the initiation: any
+        error is swallowed and reported as FAILED. QUEUED means "in the outbox", not "delivered".
+        """
+        try:
+            async with self._session.begin_nested():
+                row = (
+                    await self._session.execute(
+                        text(
+                            "SELECT u.email, u.status, e.first_name FROM employee e"
+                            ' JOIN "user" u ON u.id = e.user_id'
+                            " WHERE e.id = :eid AND e.company_id = :cid"
+                        ),
+                        {"eid": employee_id, "cid": company_id},
+                    )
+                ).first()
+                if row is None or not row.email or row.status != "ACTIVE":
+                    return "NOT_SUPPORTED"
+                from hrms.modules.onboarding.email_sender import (
+                    get_email_sender,
+                    queue_email_after_commit,
+                )
+                from hrms.modules.organisation.service import OrganisationService
+
+                company = await OrganisationService(
+                    self._session, self._settings
+                ).get_company_profile(company_id)
+                subject, html_body, text_body = build_face_enrollment_requested_email(
+                    first_name=row.first_name,
+                    company_name=company.name,
+                    expires_at=window.expires_at.strftime("%d %b %Y, %H:%M UTC"),
+                    app_url=self._settings.web_app_base_url,
+                )
+                await queue_email_after_commit(
+                    self._session,
+                    get_email_sender(self._settings),
+                    to=row.email,
+                    subject=subject,
+                    html_body=html_body,
+                    text_body=text_body,
+                    failure_kind="face_enrollment_requested",
+                    message_key=f"face_enrollment_requested:{window.id}",
+                    company_id=str(company_id),
+                    employee_id=str(employee_id),
+                )
+                return "QUEUED"
+        except Exception as exc:  # noqa: BLE001 - the window is the source of truth
+            safe_log(_logger.warning, "face.enrollment.notify_failed", **safe_error(exc))
+            return "FAILED"
 
     async def cancel_window(
         self,

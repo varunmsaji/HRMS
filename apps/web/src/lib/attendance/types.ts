@@ -192,6 +192,9 @@ export interface FaceEnrollmentWindow {
   opened_by_user_id: string | null;
   opened_at: string;
   expires_at: string;
+  /** Only on the response to an HR initiation. QUEUED = an email is in the outbox (not proof of
+   * delivery); NOT_SUPPORTED = no usable email; FAILED = could not be queued. */
+  notification_status?: "QUEUED" | "NOT_SUPPORTED" | "FAILED" | null;
 }
 
 /** `GET /v1/attendance/face-profiles/{employee_id}/enrollment`. `open_window` is set only while
@@ -199,4 +202,29 @@ export interface FaceEnrollmentWindow {
 export interface FaceEnrollmentStatus {
   profile: FaceProfile | null;
   open_window: FaceEnrollmentWindow | null;
+  /** Derived server-side; the one answer to "where is this employee in enrollment". */
+  enrollment_state?: FaceEnrollmentState;
+  company_requires_enrollment?: boolean;
+}
+
+export type FaceEnrollmentState =
+  | "NOT_ENROLLED"
+  | "ENROLLMENT_AVAILABLE"
+  | "PENDING_APPROVAL"
+  | "ENROLLED"
+  | "REJECTED"
+  | "REVOKED";
+
+export const FACE_ENROLLMENT_STATE_LABEL: Record<FaceEnrollmentState, string> = {
+  NOT_ENROLLED: "Not enrolled",
+  ENROLLMENT_AVAILABLE: "Enrollment open",
+  PENDING_APPROVAL: "Awaiting approval",
+  ENROLLED: "Enrolled",
+  REJECTED: "Rejected",
+  REVOKED: "Revoked",
+};
+
+/** `GET/PUT /v1/attendance/face-enrollment-policy`. */
+export interface FaceEnrollmentPolicy {
+  require_enrollment_on_onboarding: boolean;
 }
