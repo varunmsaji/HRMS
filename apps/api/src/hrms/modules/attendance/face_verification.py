@@ -44,6 +44,10 @@ from hrms.core.observability.metrics import (
 
 PROVIDER_FACEPP = "FACEPP"
 
+#: Reference faces compared per verification when falling back from `search` (an enrollment
+#: holds the front photo plus four angles).
+_MAX_COMPARE_REFERENCES = 8
+
 MatchDecision = Literal["MATCHED", "NO_MATCH", "NO_FACE", "MULTIPLE_FACES"]
 
 
@@ -322,7 +326,12 @@ class FaceppFaceVerificationProvider:
             raise self._unrecognised("verify", body)
         request_id = _request_id(body)
         if not results:
-            return FaceMatchResult("NO_MATCH", None, request_id)
+            # `search` over a non-empty FaceSet always answers with its best candidates, however
+            # poor. Empty means the endpoint is not actually searching (seen on trial keys, where
+            # it answers 200 with `results: []` for a FaceSet that holds the very face searched).
+            # Fall back to comparing against the FaceSet's own reference faces; the threshold
+            # that decides MATCHED is unchanged.
+            return await self._compare_against_faceset(person_id, token, request_id)
         # Every entry must be well formed; one malformed entry makes the whole response
         # untrustworthy rather than silently skipped. The best confidence decides.
         similarities: list[Decimal] = []
@@ -331,6 +340,41 @@ class FaceppFaceVerificationProvider:
             if similarity is None:
                 raise self._unrecognised("verify", body)
             similarities.append(similarity)
+        best = max(similarities)
+        decision: MatchDecision = "MATCHED" if best >= self._min_similarity else "NO_MATCH"
+        return FaceMatchResult(decision, best, request_id)
+
+    async def _compare_against_faceset(
+        self, person_id: str, token: str, request_id: str | None
+    ) -> FaceMatchResult:
+        """Best `compare` confidence between `token` and each face stored in the FaceSet."""
+        detail = await self._request(
+            "/facepp/v3/faceset/getdetail",
+            operation="verify",
+            data={"faceset_token": person_id},
+        )
+        if "_error_message" in detail:
+            raise self._error("verify", detail)
+        stored = detail.get("face_tokens")
+        if not isinstance(stored, list):
+            raise self._unrecognised("verify", detail)
+        references = [t for t in stored if isinstance(t, str) and t][:_MAX_COMPARE_REFERENCES]
+        similarities: list[Decimal] = []
+        for reference in references:
+            body = await self._request(
+                "/facepp/v3/compare",
+                operation="verify",
+                data={"face_token1": token, "face_token2": reference},
+            )
+            if "_error_message" in body:
+                raise self._error("verify", body)
+            similarity = _similarity(body.get("confidence"))
+            if similarity is None:
+                raise self._unrecognised("verify", body)
+            similarities.append(similarity)
+            request_id = _request_id(body) or request_id
+        if not similarities:
+            return FaceMatchResult("NO_MATCH", None, request_id)
         best = max(similarities)
         decision: MatchDecision = "MATCHED" if best >= self._min_similarity else "NO_MATCH"
         return FaceMatchResult(decision, best, request_id)

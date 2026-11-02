@@ -183,15 +183,60 @@ async def test_verify_provider_match_below_our_threshold_is_no_match() -> None:
     assert result.similarity == Decimal("0.85")
 
 
-async def test_verify_empty_results_is_no_match() -> None:
+def _fallback_handler(
+    *, stored: list[str], confidence: float | None, calls: list[str] | None = None
+) -> Callable[[httpx.Request], httpx.Response]:
+    """`search` answers 200 with no results (what a trial key does); getdetail lists `stored`; every
+    `compare` answers `confidence`."""
+
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/facepp/v3/detect":
+        path = request.url.path
+        if calls is not None:
+            calls.append(path)
+        if path == "/facepp/v3/detect":
             return httpx.Response(200, json=_detect([_face()]))
-        return httpx.Response(200, json={"results": []})
+        if path == "/facepp/v3/search":
+            return httpx.Response(200, json={"results": []})
+        if path == "/facepp/v3/faceset/getdetail":
+            return httpx.Response(200, json={"face_tokens": stored, "face_count": len(stored)})
+        if path == "/facepp/v3/compare":
+            return httpx.Response(200, json={"confidence": confidence, "request_id": "req-c"})
+        raise AssertionError(path)
+
+    return handler
+
+
+async def test_verify_empty_search_falls_back_to_compare_and_matches() -> None:
+    calls: list[str] = []
+    handler = _fallback_handler(stored=["ft_a", "ft_b"], confidence=91.0, calls=calls)
 
     result = await _provider(handler).verify(
         person_id=_PERSON, image=_IMG, content_type="image/jpeg"
     )
+
+    assert result.decision == "MATCHED"
+    assert result.similarity == Decimal("0.91")
+    assert calls.count("/facepp/v3/compare") == 2
+
+
+async def test_verify_empty_search_fallback_below_threshold_is_no_match() -> None:
+    handler = _fallback_handler(stored=["ft_a"], confidence=12.0)
+
+    result = await _provider(handler).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
+
+    assert result.decision == "NO_MATCH"
+    assert result.similarity == Decimal("0.12")
+
+
+async def test_verify_empty_search_with_no_stored_faces_is_no_match() -> None:
+    handler = _fallback_handler(stored=[], confidence=99.0)
+
+    result = await _provider(handler).verify(
+        person_id=_PERSON, image=_IMG, content_type="image/jpeg"
+    )
+
     assert result.decision == "NO_MATCH"
     assert result.similarity is None
 
