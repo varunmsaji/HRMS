@@ -4,7 +4,7 @@ import { ArrowLeftRight, ArrowRight, Check, CheckCircle2, CircleAlert, Repeat } 
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { shortDate, timeRange, type SwapParty, type SwapRequest } from "@/lib/shift-roster/schedule";
+import { shortDate, timeRange, type SwapParty, type SwapRequest, type SwapResponse } from "@/lib/shift-roster/schedule";
 
 function Party({ party }: { party: SwapParty }) {
   return (
@@ -24,13 +24,17 @@ function Party({ party }: { party: SwapParty }) {
 function SwapCard({
   swap,
   canDecide,
+  meEmployeeId,
   onDecide,
+  onRespond,
 }: {
   swap: SwapRequest;
   canDecide: boolean;
+  meEmployeeId: string | null;
   onDecide: (swap: SwapRequest, approve: boolean) => Promise<void>;
+  onRespond: (swap: SwapRequest, response: SwapResponse) => Promise<void>;
 }) {
-  const [busy, setBusy] = useState<"approve" | "decline" | null>(null);
+  const [busy, setBusy] = useState<"approve" | "decline" | "consent" | "withdraw" | null>(null);
   async function run(approve: boolean) {
     setBusy(approve ? "approve" : "decline");
     try {
@@ -39,6 +43,17 @@ function SwapCard({
       setBusy(null);
     }
   }
+  async function respond(response: SwapResponse) {
+    setBusy(response);
+    try {
+      await onRespond(swap, response);
+    } finally {
+      setBusy(null);
+    }
+  }
+  const isRequester = meEmployeeId !== null && swap.requester.employee_id === meEmployeeId;
+  const isCounterpart = meEmployeeId !== null && swap.counterpart.employee_id === meEmployeeId;
+  const needsMyAnswer = isCounterpart && !swap.counterpart_consented;
   return (
     <article className="flex flex-col rounded-xl border border-border bg-surface">
       <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5 text-xs">
@@ -76,21 +91,43 @@ function SwapCard({
         ) : (
           <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         )}
-        {swap.counterpart_consented ? "Mutual consent verified" : "Counterpart consent not recorded"}
+        {swap.counterpart_consented
+          ? "Mutual consent verified"
+          : `Waiting for ${swap.counterpart.name.split(" ")[0]} to agree`}
         {" · "}
         {swap.coverage_ok ? "Shift coverage targets intact" : "A shift is already below its coverage target"}
       </p>
+      {isRequester || isCounterpart ? (
+        <footer className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3">
+          {needsMyAnswer ? (
+            <Button type="button" size="sm" disabled={busy !== null} onClick={() => void respond("consent")} loading={busy === "consent"}>
+              <Check className="h-4 w-4" aria-hidden="true" />
+              Agree to swap
+            </Button>
+          ) : null}
+          <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={() => void respond("withdraw")} loading={busy === "withdraw"}>
+            {isRequester ? "Withdraw request" : "Turn down"}
+          </Button>
+        </footer>
+      ) : null}
       {canDecide ? (
         <footer className="mt-4 flex justify-end gap-2 border-t border-border px-4 py-3">
           <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={() => void run(false)} loading={busy === "decline"}>
             Decline
           </Button>
-          <Button type="button" size="sm" disabled={busy !== null} onClick={() => void run(true)} loading={busy === "approve"}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy !== null || !swap.counterpart_consented}
+            title={swap.counterpart_consented ? undefined : "The colleague has not agreed yet"}
+            onClick={() => void run(true)}
+            loading={busy === "approve"}
+          >
             <Check className="h-4 w-4" aria-hidden="true" />
             Approve Swap
           </Button>
         </footer>
-      ) : (
+      ) : isRequester || isCounterpart ? null : (
         <div className="h-4" />
       )}
     </article>
@@ -100,11 +137,16 @@ function SwapCard({
 export function SwapRequests({
   swaps,
   canDecide,
+  meEmployeeId = null,
   onDecide,
+  onRespond,
 }: {
   swaps: SwapRequest[];
   canDecide: boolean;
+  /** The signed-in employee, so their own requests get Agree / Withdraw actions. */
+  meEmployeeId?: string | null;
   onDecide: (swap: SwapRequest, approve: boolean) => Promise<void>;
+  onRespond: (swap: SwapRequest, response: SwapResponse) => Promise<void>;
 }) {
   return (
     <section
@@ -133,7 +175,7 @@ export function SwapRequests({
       ) : (
         <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
           {swaps.map((s) => (
-            <SwapCard key={s.id} swap={s} canDecide={canDecide} onDecide={onDecide} />
+            <SwapCard key={s.id} swap={s} canDecide={canDecide} meEmployeeId={meEmployeeId} onDecide={onDecide} onRespond={onRespond} />
           ))}
         </div>
       )}

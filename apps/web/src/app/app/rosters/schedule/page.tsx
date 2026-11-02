@@ -1,7 +1,7 @@
 "use client";
 
 import { RosterTabs } from "@/components/shift-roster/roster-tabs";
-import { ChevronLeft, ChevronRight, Plus, Users } from "lucide-react";
+import { ArrowLeftRight, ChevronLeft, ChevronRight, Plus, Users } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { useToast } from "@/components/common/toast";
 import { RosterEntryDialog } from "@/components/shift-roster/roster-entry-dialog";
+import { RequestSwapDialog } from "@/components/shift-roster/request-swap-dialog";
 import { SwapRequests } from "@/components/shift-roster/swap-requests";
 import { WeeklyOperationalSchedule } from "@/components/shift-roster/weekly-operational-schedule";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import {
   mondayOf,
   weekLabel,
   type SwapRequest,
+  type SwapResponse,
   type WeeklySchedule,
 } from "@/lib/shift-roster/schedule";
 import { cn } from "@/lib/utils";
@@ -94,6 +96,8 @@ export default function ShiftSchedulePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [swapOpen, setSwapOpen] = useState(false);
+  const meEmployeeId = user?.employee_id ?? null;
   const beginRequest = useLatestRequest();
 
   useEffect(() => {
@@ -146,6 +150,22 @@ export default function ShiftSchedulePage() {
       await load();
     } catch (err) {
       toast({ title: "Could not save the decision", description: describeApiError(err), variant: "danger" });
+    }
+  }
+
+  async function respond(swap: SwapRequest, response: SwapResponse) {
+    try {
+      await apiClient.post<SwapRequest>(`/rosters/swap-requests/${swap.id}/${response}`, {});
+      toast({
+        title:
+          response === "consent"
+            ? `You agreed to swap ${swap.reference}`
+            : `Swap ${swap.reference} ${swap.requester.employee_id === meEmployeeId ? "withdrawn" : "turned down"}`,
+        variant: "success",
+      });
+      await load();
+    } catch (err) {
+      toast({ title: "Could not update the swap", description: describeApiError(err), variant: "danger" });
     }
   }
 
@@ -207,6 +227,12 @@ export default function ShiftSchedulePage() {
               </option>
             ))}
           </NativeSelect>
+          {meEmployeeId ? (
+            <Button type="button" variant="outline" onClick={() => setSwapOpen(true)}>
+              <ArrowLeftRight className="h-4 w-4" aria-hidden="true" />
+              Request a swap
+            </Button>
+          ) : null}
           {canManage ? (
             <Button type="button" onClick={() => setAssignOpen(true)}>
               <Plus className="h-4 w-4" aria-hidden="true" />
@@ -308,7 +334,7 @@ export default function ShiftSchedulePage() {
             <WeeklyOperationalSchedule schedule={schedule} today={today} />
           )}
 
-          <SwapRequests swaps={swaps} canDecide={canManage} onDecide={decide} />
+          <SwapRequests swaps={swaps} canDecide={canManage} meEmployeeId={meEmployeeId} onDecide={decide} onRespond={respond} />
         </>
       ) : null}
 
@@ -318,6 +344,7 @@ export default function ShiftSchedulePage() {
         roster={null}
         onSaved={() => void load()}
       />
+      <RequestSwapDialog open={swapOpen} onOpenChange={setSwapOpen} today={today} onRequested={() => void load()} />
     </div>
   );
 }

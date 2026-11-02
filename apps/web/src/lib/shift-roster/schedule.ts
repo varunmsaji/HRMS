@@ -64,6 +64,18 @@ export interface SwapParty {
   shift_end: string | null;
 }
 
+/** A colleague the caller could swap with (`GET /v1/rosters/swap-candidates`). */
+export interface SwapCandidate {
+  employee_id: string;
+  name: string;
+  code: string;
+  department: string | null;
+  shift_id: string;
+  shift_name: string;
+}
+
+export type SwapResponse = "consent" | "withdraw";
+
 export interface SwapRequest {
   id: string;
   reference: string;
