@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { PageHeader } from "@/components/common/page-header";
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
@@ -105,6 +105,18 @@ describe("Design System Shared Primitives", () => {
       </Badge>,
     );
     expect(screen.getByText("Approved")).toBeInTheDocument();
+  });
+
+  it("renders Badge as an inline element so it can sit inside a paragraph without a hydration error", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <p>
+        <Badge variant="secondary">Casual Leave</Badge>
+      </p>,
+    );
+    expect(screen.getByText("Casual Leave").tagName).toBe("SPAN");
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 
   it("hints at horizontal scrolling only when the table is wider than its container", () => {
