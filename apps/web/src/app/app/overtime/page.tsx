@@ -257,7 +257,11 @@ export default function OvertimePage() {
                   <TableCell align="right" numeric className="text-foreground-secondary">
                     {formatMinutes(record.minutes_detected)}
                   </TableCell>
-                  <TableCell align="right" numeric className="font-medium text-foreground">
+                  <TableCell
+                    align="right"
+                    numeric
+                    className={record.minutes_approved > 0 ? "font-medium text-foreground" : "text-foreground-disabled"}
+                  >
                     {formatMinutes(record.minutes_approved)}
                   </TableCell>
                   <TableCell>
