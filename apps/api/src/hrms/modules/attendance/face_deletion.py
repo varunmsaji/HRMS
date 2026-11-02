@@ -68,7 +68,9 @@ class DeletionReport:
 
 
 def _configured_name(settings: Settings) -> str | None:
-    return {"facepp": "FACEPP", "opensource": "OPENSOURCE"}.get(settings.face_verification_provider)
+    return {"facepp": "FACEPP", "opensource": "OPENSOURCE", "azure": "AZURE"}.get(
+        settings.face_verification_provider
+    )
 
 
 def _backoff(attempts: int) -> timedelta:

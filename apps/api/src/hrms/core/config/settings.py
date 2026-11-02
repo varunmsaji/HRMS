@@ -245,7 +245,7 @@ class Settings(BaseSettings):
     # Face attendance (`attendance/face_verification.py`). `"disabled"` (the default) rejects every
     # face punch/enrollment as unavailable — there is deliberately no fake always-match provider,
     # since one leaking into a real deployment would let anyone punch as anyone.
-    face_verification_provider: Literal["disabled", "facepp", "opensource"] = "disabled"
+    face_verification_provider: Literal["disabled", "facepp", "opensource", "azure"] = "disabled"
     # Shadow comparison (`attendance/face_comparison.py`). The provider above is the ONLY one that
     # decides a punch. When `face_provider_comparison_enabled` is true the shadow provider is run
     # on the same frames purely for observation (timeout-bounded, errors swallowed) and its result
@@ -258,6 +258,12 @@ class Settings(BaseSettings):
     facepp_api_key: str = ""
     facepp_api_secret: str = ""
     facepp_api_base_url: str = "https://api-us.faceplusplus.com"
+    # Azure AI Face (`attendance/azure_face_provider.py`), used when
+    # `face_verification_provider="azure"`. Set via AZURE_ENDPOINT / AZURE_FACE_API_KEY. The person
+    # group is created on first enrollment. Use a Free (F0) resource: no feature used here is paid.
+    azure_endpoint: str = ""
+    azure_face_api_key: str = ""
+    azure_face_person_group_id: str = "hrms-employees"
     # Applied on top of the provider's own verified/not-verified verdict.
     face_match_min_similarity: float = Field(default=0.90, ge=0.0, le=1.0)
     face_provider_timeout_seconds: float = Field(default=15.0, gt=0.0)
@@ -579,6 +585,13 @@ class Settings(BaseSettings):
                 "facepp_api_key and facepp_api_secret must both be set explicitly when "
                 "face_verification_provider='facepp' — refusing to boot without credentials to "
                 "authenticate with."
+            )
+        if self.face_verification_provider == "azure" and not (
+            self.azure_endpoint.startswith("https://") and self.azure_face_api_key
+        ):
+            raise ValueError(
+                "azure_endpoint (https URL) and azure_face_api_key must both be set when "
+                "face_verification_provider='azure' — refusing to boot without credentials."
             )
         if self.face_verification_provider == "opensource":
             if not self.face_os_enabled:

@@ -24,7 +24,6 @@ from tests.integration.modules.attendance.conftest import (
 )
 from tests.integration.modules.attendance.test_face_enrollment import (
     ANGLES,
-    IMAGES,
     _employee,
     _open,
     _self_headers,
@@ -500,7 +499,7 @@ async def test_failed_angle_is_recorded_with_its_name_and_provider_person_discar
 
 
 @pytest.mark.parametrize("angle", ["left", "right", "up", "down"])
-async def test_every_extra_angle_must_pass_server_side_liveness(
+async def test_spoof_verdict_on_a_turned_capture_is_not_a_liveness_rejection(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
@@ -508,23 +507,16 @@ async def test_every_extra_angle_must_pass_server_side_liveness(
     fake_photo_storage: FakePhotoStorage,
     angle: str,
 ) -> None:
-    admin, me, employee_id, company_id = await _enrolling(client, face_tenant)
-    # A genuine front, then a spoof on exactly one turned angle.
+    """The anti-spoofing model cannot judge turned or tilted heads (genuine ones score as spoof),
+    so only the front capture is liveness-gated; the provider same-person check covers the rest."""
+    _, me, _, _ = await _enrolling(client, face_tenant)
     fake_liveness_engine.per_call = [[SPOOF_PROBS] if a == angle else [LIVE_PROBS] for a in ANGLES]
 
     response = await _submit(client, me)
 
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "FACE_SPOOF_SUSPECTED"
-    (row,) = await _enrollment_attempts(company_id)
-    assert (row["decision"], row["angle"]) == ("SPOOF_SUSPECTED", angle)
-    # Nothing was enrolled at the vendor or stored, and the window stays open to retry.
-    assert fake_face_provider.names() == []
-    assert fake_photo_storage.objects == {}
-    assert (await _status(client, admin, employee_id))["profile"] is None
-    assert [call for call in fake_liveness_engine.calls] == [
-        [IMAGES[a]] for a in ANGLES[: ANGLES.index(angle) + 1]
-    ]
+    assert response.status_code == 201, response.text
+    # Every capture was still scored (diagnostics), but only the front decides.
+    assert len(fake_liveness_engine.calls) == len(ANGLES)
 
 
 async def test_faceless_front_capture_is_a_rejection(

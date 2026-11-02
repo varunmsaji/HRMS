@@ -155,12 +155,13 @@ def sniff_face_image(
 
 def _dump_debug_captures(settings: Any, employee_id: UUID, images: dict[str, bytes]) -> None:
     """Development only: when HRMS_DEBUG_FACE_DUMP_DIR is set, writes the received enrollment
-    photos there so a failing capture can be inspected. Never active outside development."""
+    photos to `<dir>/<employee_id>/<angle>.jpg` so a capture can be inspected. A later enrollment
+    of the same employee replaces the previous files. Never active outside development."""
     directory = os.environ.get("HRMS_DEBUG_FACE_DUMP_DIR")
     if not directory or settings.environment != "development":
         return
     try:
-        target = Path(directory) / f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{str(employee_id)[:8]}"
+        target = Path(directory) / str(employee_id)
         target.mkdir(parents=True, exist_ok=True)
         for angle, data in images.items():
             (target / f"{angle}.jpg").write_bytes(data)
@@ -817,10 +818,12 @@ class FaceEnrollmentService:
                 raise
             rejection = liveness_rejection(assessment)
             # The single-frame anti-spoofing model is trained on frontal faces: on a head that is
-            # turned or tilted it answers NO_FACE / LOW_CONFIDENCE for genuine people. So the
-            # strict gate applies to the front capture; the angled ones are rejected only on an
-            # actual spoof verdict, and Face++ still has to match each of them to the front person.
-            if rejection is not None and angle != "front" and rejection[0] != "SPOOF_SUSPECTED":
+            # turned or tilted it answers NO_FACE, LOW_CONFIDENCE and even SPOOF_SUSPECTED for
+            # genuine people (measured: real turned captures scoring 0.31-0.36 live). So the
+            # liveness gate applies to the front capture, the one HR reviews and the identity is
+            # enrolled from. Turned/tilted captures are scored for diagnostics only; the
+            # provider's same-person check still has to pass for every angle.
+            if angle != "front":
                 rejection = None
             if rejection is not None:
                 await self._reject_enrollment(
