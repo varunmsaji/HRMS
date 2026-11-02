@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export function computeInitials(name?: string | null, fallbackCode?: string | null): string {
-  const cleaned = (name ?? "").trim();
+  // Pickers and queues label people "Name (EMP-0030)"; the code is not part of the name.
+  const cleaned = (name ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim();
   if (cleaned) {
     const parts = cleaned.split(/\s+/).filter(Boolean);
     if (parts.length >= 2) {
