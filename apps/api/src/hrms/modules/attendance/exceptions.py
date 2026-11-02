@@ -988,6 +988,69 @@ class FaceNotEnrolledForPunchError(ConflictError):
         super().__init__(message)
 
 
+class PunchTooSoonError(ConflictError):
+    """A self-service punch within the minimum gap of the employee's previous punch (a
+    double-tap, a retry, or rapid in/out toggling). `details[0].context` carries the previous
+    punch and the wait, so the app can explain exactly what happened."""
+
+    code = "PUNCH_TOO_SOON"
+
+    def __init__(
+        self,
+        *,
+        retry_after_seconds: int,
+        min_gap_seconds: int,
+        last_punch_time: datetime,
+        last_direction: str,
+    ) -> None:
+        message = (
+            f"You punched a moment ago. Please wait {retry_after_seconds} seconds "
+            "before punching again."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "punch_time",
+                    "code": "PUNCH_TOO_SOON",
+                    "message": message,
+                    "context": {
+                        "retry_after_seconds": retry_after_seconds,
+                        "min_gap_seconds": min_gap_seconds,
+                        "last_punch_time": last_punch_time.isoformat(),
+                        "last_direction": last_direction,
+                    },
+                }
+            ],
+        )
+
+
+class PunchAlreadyRecordedError(ConflictError):
+    """A self-service punch in the same direction as the employee's latest punch (punch in
+    while already in, or punch out while already out)."""
+
+    code = "PUNCH_ALREADY_RECORDED"
+
+    def __init__(self, *, direction: str, last_punch_time: datetime) -> None:
+        message = (
+            "You are already punched in." if direction == "IN" else "You are already punched out."
+        )
+        super().__init__(
+            message,
+            details=[
+                {
+                    "field": "direction",
+                    "code": "PUNCH_ALREADY_RECORDED",
+                    "message": message,
+                    "context": {
+                        "last_direction": direction,
+                        "last_punch_time": last_punch_time.isoformat(),
+                    },
+                }
+            ],
+        )
+
+
 class FaceVerificationRequiredError(PermissionDeniedError):
     """A plain self-service punch from an employee whose face is ENROLLED. The only way such an
     employee punches themselves is `POST /attendance/face-punches/me`; recovery when that fails

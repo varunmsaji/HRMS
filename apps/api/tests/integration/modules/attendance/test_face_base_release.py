@@ -950,16 +950,13 @@ async def test_rate_limited_requests_do_no_provider_work(
 async def test_plain_punch_is_refused_for_a_face_enrolled_employee(
     client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
-    """An ENROLLED employee can only self-punch through `POST /attendance/face-punches/me`;
-    `POST /attendance/punches/me` is a 403 for both directions and writes nothing."""
+    """An ENROLLED employee can only self-punch IN through `POST /attendance/face-punches/me`;
+    `POST /attendance/punches/me` is a 403 for IN and writes nothing. Check-out is plain."""
     me, _ = await _enrolled_self(client, face_tenant)
 
-    for direction in ("IN", "OUT"):
-        plain = await client.post(
-            "/v1/attendance/punches/me", headers=me, json={"direction": direction}
-        )
-        assert plain.status_code == 403, plain.text
-        assert plain.json()["error"]["code"] == "FACE_VERIFICATION_REQUIRED"
+    plain = await client.post("/v1/attendance/punches/me", headers=me, json={"direction": "IN"})
+    assert plain.status_code == 403, plain.text
+    assert plain.json()["error"]["code"] == "FACE_VERIFICATION_REQUIRED"
     face = await face_punch(client, me, "OUT")
 
     assert face.status_code == 201, face.text

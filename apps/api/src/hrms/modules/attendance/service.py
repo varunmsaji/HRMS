@@ -66,7 +66,9 @@ from hrms.modules.attendance.exceptions import (
     PolicyVersionNotFoundForDateError,
     PolicyVersionOverlapError,
     PolicyVersionPreviousVersionRequiredError,
+    PunchAlreadyRecordedError,
     PunchTimeBeforeEmploymentError,
+    PunchTooSoonError,
     RegularizationApproverMismatchError,
     RegularizationAttachmentRequiredError,
     RegularizationBlockedByLockError,
@@ -2823,7 +2825,8 @@ class PunchService:
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
-        if source == "WEB":
+        if source == "WEB" and direction == "IN":
+            # Face verification gates check-in only; a plain check-out is always allowed.
             await self._ensure_plain_punch_allowed(
                 company_id,
                 employee_id,
@@ -2844,6 +2847,9 @@ class PunchService:
                     raise DuplicatePunchIdempotencyKeyError()
                 _ensure_same_logical_punch(existing, direction=direction, source=source)
                 return punch_to_read(existing), True
+
+        if source in GEOFENCED_SOURCES:
+            await self._ensure_punch_sequence_and_gap(company_id, employee_id, direction)
 
         # Geofence — after the idempotency replay (an already-recorded punch is returned as it
         # was, never re-judged against a new location) and before anything is written. Only
@@ -3205,6 +3211,35 @@ class PunchService:
             earliest_punch_in=decision.earliest_punch_in,
         )
 
+    async def _ensure_punch_sequence_and_gap(
+        self, company_id: UUID, employee_id: UUID, direction: str
+    ) -> None:
+        """Self-service punches only (HR corrections and regularizations are exempt): no two
+        punches closer than the minimum gap, and no repeat of the latest punch's direction
+        (in after in, out after out). Only a recent latest punch counts, so a forgotten
+        punch-out from a previous day never locks the employee out of today's punch-in."""
+        settings = get_settings()
+        now = datetime.now(UTC)
+        latest = await PunchRepository().latest_for_employee_since(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            since=now - timedelta(hours=settings.attendance_punch_order_lookback_hours),
+        )
+        if latest is None:
+            return
+        gap = settings.attendance_punch_min_gap_seconds
+        elapsed = (now - latest.punch_time).total_seconds()
+        if gap and 0 <= elapsed < gap:
+            raise PunchTooSoonError(
+                retry_after_seconds=int(gap - elapsed) + 1,
+                min_gap_seconds=gap,
+                last_punch_time=latest.punch_time,
+                last_direction=latest.direction,
+            )
+        if settings.attendance_punch_order_check_enabled and latest.direction == direction:
+            raise PunchAlreadyRecordedError(direction=direction, last_punch_time=latest.punch_time)
+
     async def _ensure_plain_punch_allowed(
         self,
         company_id: UUID,
@@ -3214,12 +3249,13 @@ class PunchService:
         ip_address: str | None,
         user_agent: str | None,
     ) -> None:
-        """Mandatory face verification: an employee whose face profile is ENROLLED may not
-        self-punch without it. `WEB` is the source only the plain self-service route assigns;
-        face punches (`FACE`) have already been verified and HR corrections (`ADMIN`) are the
-        approved recovery path. Employees with no profile, PENDING_APPROVAL or a rejected /
-        revoked profile keep the plain punch. The profile is read in the caller's tenant
-        (RLS + explicit company filter), and the refusal is audited in its own transaction
+        """Mandatory face verification (check-in only; the caller skips check-outs): an
+        employee whose face profile is ENROLLED may not self-punch in without it. `WEB` is the
+        source only the plain self-service route assigns; face punches (`FACE`) have already
+        been verified and HR corrections (`ADMIN`) are the approved recovery path. Employees with
+        no profile, PENDING_APPROVAL or a rejected / revoked profile keep the plain punch. The
+        profile is read in the caller's tenant (RLS + explicit company filter), and the refusal
+        is audited in its own transaction
         because the request transaction rolls back with the error."""
         profile = await FaceProfileRepository().get_for_employee(
             self._session, company_id=company_id, employee_id=employee_id

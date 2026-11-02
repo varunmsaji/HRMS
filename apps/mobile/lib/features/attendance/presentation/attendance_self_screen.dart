@@ -90,7 +90,8 @@ class _AttendanceSelfScreenState extends ConsumerState<AttendanceSelfScreen> {
     }
 
     final controller = ref.read(punchControllerProvider.notifier);
-    if (ref.read(punchControllerProvider).faceRequired) {
+    // Face verification is for check-in only; check-out is a plain punch.
+    if (ref.read(punchControllerProvider).faceRequired && direction == 'IN') {
       controller.punchFace(direction, ContextPunchUi(context, ref, onPunchedCallback: refresh, onFaceNotEnrolledCallback: () => setState(() => _faceReload++), snackBarClearance: _barHeight));
     } else {
       controller.punchPlain(direction, ContextPunchUi(context, ref, onPunchedCallback: refresh, snackBarClearance: _barHeight));

@@ -7,6 +7,7 @@ import 'package:hrms_mobile/core/api/envelope.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/domain/face_liveness_capture.dart';
 import 'package:hrms_mobile/features/attendance/domain/outside_shift_window.dart';
+import 'package:hrms_mobile/features/attendance/domain/punch_warning.dart';
 import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/presentation/punch_location_flow.dart';
 import 'package:hrms_mobile/features/attendance/state/punch_controller.dart';
@@ -32,6 +33,8 @@ class _Ui implements PunchUi {
   Future<bool> showGeofenceRejected(String code, String message) async => false;
   @override
   Future<void> showOutsideShiftWindow(OutsideShiftWindow window) async => shiftWindows.add(window);
+  @override
+  Future<void> showPunchWarning(PunchWarning warning) async {}
   @override
   Future<FaceCaptureOutcome> captureFace(FaceLivenessSession session) async => const FaceCaptureCancelled();
   @override

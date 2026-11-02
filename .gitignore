@@ -60,3 +60,4 @@ docker-compose.override.yml
 # Local dev process logs
 .dev-logs/
 backups/
+apps/api/.debug-face-captures/

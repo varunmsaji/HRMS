@@ -42,7 +42,7 @@ class CheckInAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = ready && !busy;
-    String label(String direction) => '${faceRequired ? 'Face punch' : 'Punch'} ${direction == 'IN' ? 'in' : 'out'}';
+    String label(String direction) => '${faceRequired && direction == 'IN' ? 'Face punch' : 'Punch'} ${direction == 'IN' ? 'in' : 'out'}';
 
     // Minimum, not fixed, heights: at large text the label wraps and the button grows with it.
     Widget primary(String direction) => ConstrainedBox(

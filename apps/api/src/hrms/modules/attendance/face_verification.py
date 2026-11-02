@@ -186,6 +186,7 @@ class FaceppFaceVerificationProvider:
         operation: str,
         data: dict[str, str] | None = None,
         files: dict[str, tuple[str, bytes, str]] | None = None,
+        _attempt: int = 0,
     ) -> dict[str, Any]:
         payload = {"api_key": self._api_key, "api_secret": self._api_secret, **(data or {})}
         client, gate = self._pooled()
@@ -219,6 +220,14 @@ class FaceppFaceVerificationProvider:
             raise FaceProviderError(f"Face provider {operation} returned an unexpected payload.")
         error_message = body.get("error_message")
         if error_message:
+            # Face++ trial/free keys allow very few simultaneous requests and answer the surplus
+            # with CONCURRENCY_LIMIT_EXCEEDED. That is momentary, so back off and try again
+            # rather than failing the whole enrollment or punch.
+            if _error_code(str(error_message)) == "CONCURRENCY_LIMIT_EXCEEDED" and _attempt < 4:
+                await asyncio.sleep(0.8 * (_attempt + 1))
+                return await self._request(
+                    path, operation=operation, data=data, files=files, _attempt=_attempt + 1
+                )
             return {**body, "_error_message": str(error_message)}
         return body
 

@@ -987,6 +987,22 @@ class PunchRepository:
         await session.flush()
         return row
 
+    async def latest_for_employee_since(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, since: datetime
+    ) -> Punch | None:
+        """The employee's most recent punch at or after `since`, or None."""
+        stmt = (
+            select(Punch)
+            .where(
+                Punch.company_id == company_id,
+                Punch.employee_id == employee_id,
+                Punch.punch_time >= since,
+            )
+            .order_by(Punch.punch_time.desc())
+            .limit(1)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
     async def get_by_idempotency_key(
         self, session: AsyncSession, *, company_id: UUID, idempotency_key: str
     ) -> Punch | None:

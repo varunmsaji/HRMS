@@ -81,7 +81,8 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
   void _punch(String direction, TodayKey key) {
     final ui = ContextPunchUi(context, ref, onPunchedCallback: () => ref.invalidate(todayDataProvider(key)), onFaceNotEnrolledCallback: () => ref.invalidate(homeFaceStatusProvider(key.employeeId)));
     final controller = ref.read(punchControllerProvider.notifier);
-    if (ref.read(punchControllerProvider).faceRequired) {
+    // Face verification is for check-in only; check-out is a plain punch.
+    if (ref.read(punchControllerProvider).faceRequired && direction == 'IN') {
       controller.punchFace(direction, ui);
     } else {
       controller.punchPlain(direction, ui);
@@ -653,7 +654,7 @@ class _PunchCard extends StatelessWidget {
             final punch = ref.watch(punchControllerProvider);
             final busy = punch.plainBusy || punch.faceBusy;
             final enabled = faceKnown && !busy && !loading;
-            final label = '${punch.faceRequired ? 'Face punch' : 'Punch'} ${dir == 'IN' ? 'in' : 'out'}';
+            final label = '${punch.faceRequired && dir == 'IN' ? 'Face punch' : 'Punch'} ${dir == 'IN' ? 'in' : 'out'}';
             return Column(children: [
               SizedBox(
                 width: double.infinity,

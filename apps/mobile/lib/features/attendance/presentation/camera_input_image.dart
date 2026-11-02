@@ -28,6 +28,30 @@ InputImage? cameraFrameToInputImage(CameraImage image, CameraDescription camera,
     rotation = InputImageRotationValue.fromRawValue(compensation);
   }
   if (rotation == null) return null;
+  // Many Android phones ignore the NV21 request and deliver the camera's native 3-plane YUV_420_888
+  // frame instead. ML Kit reads NV21, so convert it rather than dropping every frame (which made
+  // automatic capture silently never start).
+  if (Platform.isAndroid && image.planes.length == 3) {
+    final nv21 = yuv420ToNv21(
+      width: image.width,
+      height: image.height,
+      yBytes: image.planes[0].bytes,
+      yRowStride: image.planes[0].bytesPerRow,
+      uBytes: image.planes[1].bytes,
+      vBytes: image.planes[2].bytes,
+      uvRowStride: image.planes[1].bytesPerRow,
+      uvPixelStride: image.planes[1].bytesPerPixel ?? 1,
+    );
+    return InputImage.fromBytes(
+      bytes: nv21,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: rotation,
+        format: InputImageFormat.nv21,
+        bytesPerRow: image.width,
+      ),
+    );
+  }
   final format = InputImageFormatValue.fromRawValue(image.format.raw);
   if (format == null ||
       (Platform.isAndroid && format != InputImageFormat.nv21) ||
@@ -45,6 +69,35 @@ InputImage? cameraFrameToInputImage(CameraImage image, CameraDescription camera,
       bytesPerRow: plane.bytesPerRow,
     ),
   );
+}
+
+/// Packs separate Y, U and V planes (any row/pixel stride) into one NV21 buffer: all Y bytes, then
+/// interleaved V,U pairs at half resolution. Pure, so it is unit-tested without a camera.
+Uint8List yuv420ToNv21({
+  required int width,
+  required int height,
+  required Uint8List yBytes,
+  required int yRowStride,
+  required Uint8List uBytes,
+  required Uint8List vBytes,
+  required int uvRowStride,
+  required int uvPixelStride,
+}) {
+  final out = Uint8List(width * height + 2 * ((width + 1) ~/ 2) * ((height + 1) ~/ 2));
+  var o = 0;
+  for (var row = 0; row < height; row++) {
+    final start = row * yRowStride;
+    out.setRange(o, o + width, yBytes, start);
+    o += width;
+  }
+  for (var row = 0; row < (height + 1) ~/ 2; row++) {
+    for (var col = 0; col < (width + 1) ~/ 2; col++) {
+      final i = row * uvRowStride + col * uvPixelStride;
+      out[o++] = vBytes[i];
+      out[o++] = uBytes[i];
+    }
+  }
+  return out;
 }
 
 /// The frame's width as ML Kit sees it once rotated upright (face boxes are in that space).

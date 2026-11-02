@@ -323,6 +323,15 @@ class Settings(BaseSettings):
     # from the vendor (docs/operations/FACE_ATTENDANCE_BASE_RELEASE_RUNBOOK.md §9).
     face_provider_connect_timeout_seconds: float = Field(default=5.0, gt=0.0)
     face_provider_max_concurrency: int = Field(default=4, ge=1, le=64)
+
+    # Self-service punches (plain and face): the minimum gap between two punches by the same
+    # employee, and how far back the latest punch is looked at for the in/out order check
+    # (long enough for an overnight shift, short enough that a forgotten punch-out from
+    # yesterday never blocks today's punch-in). 0 disables the gap.
+    attendance_punch_min_gap_seconds: int = Field(default=120, ge=0, le=3600)
+    attendance_punch_order_lookback_hours: int = Field(default=18, ge=1, le=48)
+    # False skips the in/out order check (a repeat of the latest punch's direction).
+    attendance_punch_order_check_enabled: bool = True
     # Wall-clock ceiling for ALL provider calls of one self-enrollment (about 18 sequential
     # requests). Past it the submission is abandoned and any provider person created is removed.
     face_enrollment_provider_budget_seconds: float = Field(default=120.0, gt=0.0)

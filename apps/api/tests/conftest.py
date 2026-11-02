@@ -39,6 +39,10 @@ os.environ["EMAIL_OUTBOX_DISPATCH"] = "inline"
 #   HRMS_TEST_LOG_TO_FILES=true LOG_DIR=/tmp/hrms-test-logs pytest tests/integration/...
 os.environ["LOG_TO_FILES"] = os.environ.get("HRMS_TEST_LOG_TO_FILES", "false")
 os.environ["FACE_VERIFICATION_PROVIDER"] = "disabled"
+# The self-service punch gap / in-out order rules are off by default: most tests punch repeatedly
+# for the same employee. `test_punch_sequence_and_gap.py` switches them on explicitly.
+os.environ["ATTENDANCE_PUNCH_MIN_GAP_SECONDS"] = "0"
+os.environ["ATTENDANCE_PUNCH_ORDER_CHECK_ENABLED"] = "false"
 os.environ["CELERY_BROKER_URL"] = urlunsplit(
     urlsplit(os.environ["REDIS_URL"])._replace(
         path="/" + os.environ.get("HRMS_TEST_CELERY_DB", "15")

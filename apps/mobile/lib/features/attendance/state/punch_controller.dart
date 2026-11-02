@@ -8,6 +8,7 @@ import '../data/location_provider.dart';
 import '../domain/face_liveness_capture.dart';
 import '../domain/outside_shift_window.dart';
 import '../domain/punch_location.dart';
+import '../domain/punch_warning.dart';
 import '../presentation/punch_location_flow.dart';
 import 'active_liveness_config.dart';
 
@@ -62,6 +63,9 @@ abstract class PunchUi {
 
   /// "Too early to punch in" warning; nothing was recorded and there is nothing to retry.
   Future<void> showOutsideShiftWindow(OutsideShiftWindow window);
+
+  /// "Slow down" / "already punched" warning card; nothing was recorded and there is nothing to retry.
+  Future<void> showPunchWarning(PunchWarning warning);
 
   /// Opens the camera for the server's challenge.
   Future<FaceCaptureOutcome> captureFace(FaceLivenessSession session);
@@ -152,6 +156,11 @@ class PunchController extends StateNotifier<PunchState> {
       if (error is ApiError && isGeofenceError(error) && ui.active) {
         // A refused location is a real answer: nothing was recorded, so retrying is safe.
         return ui.showGeofenceRejected(error.code, error.message);
+      }
+      final warning = PunchWarning.fromError(error);
+      if (warning != null) {
+        if (ui.active) await ui.showPunchWarning(warning);
+        return false;
       }
       final shiftWindow = OutsideShiftWindow.fromError(error);
       if (shiftWindow != null) {
@@ -260,6 +269,10 @@ class PunchController extends StateNotifier<PunchState> {
           // the whole punch starts again once this attempt has been cleaned up.
           _facePending = null;
           if (ui.active) retryAfter = await ui.showGeofenceRejected(error.code, error.message);
+        } else if (PunchWarning.fromError(error) case final warning?) {
+          // Refused as a repeat of the previous punch: nothing was recorded, and retrying cannot help.
+          _facePending = null;
+          if (ui.active) await ui.showPunchWarning(warning);
         } else if (OutsideShiftWindow.fromError(error) case final shiftWindow?) {
           // Refused as too early for the shift: nothing was recorded, and retrying cannot help.
           _facePending = null;

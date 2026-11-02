@@ -55,12 +55,12 @@ void main() {
     expect(tracker.current.angle, 'front');
   });
 
-  test('turns outside 20-45 degrees do not count', () {
+  test('turns outside 15-30 degrees do not count', () {
     final tracker = FacePoseTracker();
     hold(tracker, face(0, 0));
-    expect(hold(tracker, face(12, 0)), isFalse, reason: 'too little');
-    expect(hold(tracker, face(70, 0)), isFalse, reason: 'too far — face no longer matchable');
-    expect(hold(tracker, face(35, 0)), isTrue);
+    expect(hold(tracker, face(8, 0)), isFalse, reason: 'too little');
+    expect(hold(tracker, face(50, 0)), isFalse, reason: 'too far — face no longer matchable');
+    expect(hold(tracker, face(22, 0)), isTrue);
   });
 
   test('needs several consecutive qualifying readings', () {

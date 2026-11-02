@@ -13,11 +13,13 @@ action can be retried (provider deletion is idempotent)."""
 
 import asyncio
 import hashlib
+import os
 import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -149,6 +151,36 @@ def sniff_face_image(
     if image.startswith(_PNG_MAGIC):
         return "image/png"
     raise FaceImageInvalidError(f"The {field} photo must be a JPEG or PNG image", field=target)
+
+
+def _dump_debug_captures(settings: Any, employee_id: UUID, images: dict[str, bytes]) -> None:
+    """Development only: when HRMS_DEBUG_FACE_DUMP_DIR is set, writes the received enrollment
+    photos there so a failing capture can be inspected. Never active outside development."""
+    directory = os.environ.get("HRMS_DEBUG_FACE_DUMP_DIR")
+    if not directory or settings.environment != "development":
+        return
+    try:
+        target = Path(directory) / f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{str(employee_id)[:8]}"
+        target.mkdir(parents=True, exist_ok=True)
+        for angle, data in images.items():
+            (target / f"{angle}.jpg").write_bytes(data)
+    except OSError:
+        pass
+
+
+def _log_debug_liveness(settings: Any, angle: str, assessment: LivenessAssessment) -> None:
+    if settings.environment != "development":
+        return
+    frame = assessment.frames[0] if assessment.frames else None
+    safe_log(
+        _logger.info,
+        "face_liveness_debug_score",
+        angle=angle,
+        decision=assessment.decision,
+        reason=assessment.reason,
+        live=str(frame.live_score if frame else None),
+        spoof=str(frame.spoof_score if frame else None),
+    )
 
 
 async def assess_liveness(
@@ -768,9 +800,11 @@ class FaceEnrollmentService:
         # frame, no challenge: enrollment is gated by the HR-opened window, the attempt limit and
         # HR's own review, so this is one layer among several. Client-side checks are never
         # substituted for this.
+        _dump_debug_captures(self._settings, employee_id, images)
         for angle in FACE_ENROLLMENT_ANGLES:
             try:
                 assessment = await assess_liveness(liveness_engine, [images[angle]], field=angle)
+                _log_debug_liveness(self._settings, angle, assessment)
             except FaceImageInvalidError:
                 await self._reject_enrollment(
                     company_id, employee_id, window_id, "INVALID_IMAGE", angle, actor_user_id
@@ -782,6 +816,12 @@ class FaceEnrollmentService:
                 )
                 raise
             rejection = liveness_rejection(assessment)
+            # The single-frame anti-spoofing model is trained on frontal faces: on a head that is
+            # turned or tilted it answers NO_FACE / LOW_CONFIDENCE for genuine people. So the
+            # strict gate applies to the front capture; the angled ones are rejected only on an
+            # actual spoof verdict, and Face++ still has to match each of them to the front person.
+            if rejection is not None and angle != "front" and rejection[0] != "SPOOF_SUSPECTED":
+                rejection = None
             if rejection is not None:
                 await self._reject_enrollment(
                     company_id, employee_id, window_id, rejection[0], angle, actor_user_id
@@ -999,6 +1039,14 @@ class FaceEnrollmentService:
         for angle in others:
             match = await provider.verify(
                 person_id=person_id, image=images[angle], content_type=content_types[angle]
+            )
+            safe_log(
+                _logger.info,
+                "face_enrollment_angle_similarity",
+                angle=angle,
+                decision=match.decision,
+                similarity=str(match.similarity),
+                minimum=str(minimum),
             )
             if match.similarity is None or match.similarity < minimum:
                 raise FaceEnrollmentAngleMismatchError(angle)

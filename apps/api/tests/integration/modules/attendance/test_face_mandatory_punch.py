@@ -56,17 +56,24 @@ async def _audit_actions(company_id: UUID, employee_id: str) -> list[str]:
 # --- enforcement ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("direction", ["IN", "OUT"])
-async def test_enrolled_employee_plain_punch_is_403_and_audited(
-    client: AsyncClient,
-    face_tenant: Tenant,
-    fake_face_provider: FakeFaceProvider,
-    direction: str,
+async def test_enrolled_employee_plain_punch_out_is_allowed(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+) -> None:
+    """Face verification gates check-in only; a plain check-out always works."""
+    me, _ = await _enrolled_self(client, face_tenant)
+
+    response = await client.post(PLAIN, headers=me, json={"direction": "OUT"})
+
+    assert response.status_code == 201, response.text
+
+
+async def test_enrolled_employee_plain_punch_in_is_403_and_audited(
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
     _, company_id = face_tenant
     me, employee_id = await _enrolled_self(client, face_tenant)
 
-    response = await client.post(PLAIN, headers=me, json={"direction": direction})
+    response = await client.post(PLAIN, headers=me, json={"direction": "IN"})
 
     assert response.status_code == 403, response.text
     assert response.json()["error"]["code"] == "FACE_VERIFICATION_REQUIRED"

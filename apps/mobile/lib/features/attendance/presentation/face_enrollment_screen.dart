@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -36,9 +39,22 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
   bool _processingFrame = false;
   bool _capturing = false;
   String? _hint;
+  int _unreadableFrames = 0;
+  String? _debugReading;
+
+  /// Seconds left before the automatic photo (null = not counting down). The countdown only runs
+  /// while the pose stays right; moving away cancels it so the photo is never taken mid-movement.
+  int? _countdown;
+  Timer? _countdownTimer;
+  bool _faceDetected = false;
+  bool _poseGood = false;
+  bool _flash = false;
+  String? _captureNotice;
+
 
   @override
   void dispose() {
+    _cancelCountdown();
     _stopCamera();
     super.dispose();
   }
@@ -50,7 +66,11 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
       _hint = null;
       _photos.clear();
       _tracker = FacePoseTracker();
+      _captureNotice = null;
+      _faceDetected = false;
+      _poseGood = false;
     });
+    _cancelCountdown();
     try {
       final cameras = await availableCameras();
       _cameraDescription = cameras.firstWhere(
@@ -106,7 +126,14 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
     if (_processingFrame || _capturing || _tracker.isDone) return;
     final input = _toInputImage(image);
     final detector = _detector;
-    if (input == null || detector == null) return;
+    if (input == null || detector == null) {
+      // Never silently ignore every frame: after a few, say so instead of "hold still" forever.
+      if (++_unreadableFrames == 15 && mounted) {
+        setState(() => _hint = "This phone's camera could not be read for automatic photos. Please contact support.");
+      }
+      return;
+    }
+    _unreadableFrames = 0;
     _processingFrame = true;
     try {
       final faces = await detector.processImage(input);
@@ -116,8 +143,22 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
         pitch: faces.length == 1 ? faces.first.headEulerAngleX : null,
       );
       final ready = _tracker.accept(reading);
-      if (mounted) setState(() => _hint = _tracker.hintFor(reading));
-      if (ready) await _captureCurrentStep();
+      if (ready) {
+        _startCountdown();
+      } else {
+        _cancelCountdown();
+      }
+      if (mounted) {
+        setState(() {
+          _faceDetected = reading.faceCount > 0;
+          _poseGood = ready;
+          if (_captureNotice != null && reading.faceCount > 0 && !ready) _captureNotice = null;
+          _hint = _tracker.hintFor(reading) ?? (ready ? null : _poseHint(reading));
+          if (kDebugMode) {
+            _debugReading = reading.yaw == null ? 'faces: ${reading.faceCount}' : 'yaw ${reading.yaw!.toStringAsFixed(0)}°  pitch ${reading.pitch!.toStringAsFixed(0)}°';
+          }
+        });
+      }
     } catch (_) {
       // A dropped frame is harmless; the next one is analysed instead.
     } finally {
@@ -125,22 +166,68 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
     }
   }
 
+  void _startCountdown() {
+    if (_countdownTimer != null || _capturing) return;
+    // Short for the turned/tilted poses (they are hard to hold), a bit longer for the front shot.
+    var seconds = _tracker.current.angle == 'front' ? 3 : 2;
+    setState(() => _countdown = seconds);
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      seconds--;
+      if (seconds > 0) {
+        if (mounted) setState(() => _countdown = seconds);
+        return;
+      }
+      timer.cancel();
+      _countdownTimer = null;
+      if (mounted) setState(() => _countdown = null);
+      unawaited(_captureCurrentStep());
+    });
+  }
+
+  void _cancelCountdown() {
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    if (_countdown != null && mounted) setState(() => _countdown = null);
+  }
+
+  /// Why a visible face is not being captured yet. The 'front' photo needs the head within 10 degrees
+  /// of straight both sideways and up/down; a phone held low or high is the usual reason it never
+  /// triggers, and the screen used to give no clue.
+  String? _poseHint(FacePoseReading r) {
+    if (_tracker.isDone || r.faceCount != 1 || r.yaw == null || r.pitch == null) return null;
+    if (_tracker.current.angle != 'front') return null;
+    if (r.pitch!.abs() > 10) return 'Hold the phone at eye level, then look straight at the camera';
+    if (r.yaw!.abs() > 10) return 'Turn your face straight toward the camera';
+    return null;
+  }
+
   Future<void> _captureCurrentStep() async {
     final controller = _camera;
     if (controller == null) return;
     _capturing = true;
     try {
-      await controller.stopImageStream();
+      if (controller.value.isStreamingImages) await controller.stopImageStream();
       final file = await controller.takePicture();
       _photos[_tracker.current.angle] = await readAndDeleteCapture(file);
       HapticFeedback.mediumImpact();
       _tracker.advance();
+      if (mounted) {
+        setState(() {
+          _flash = true;
+          _poseGood = false;
+          _captureNotice = 'Photo ${_photos.length} of ${facePoseSteps.length} captured ✓';
+        });
+        Future.delayed(const Duration(milliseconds: 220), () {
+          if (mounted) setState(() => _flash = false);
+        });
+      }
       if (_tracker.isDone) {
         await _stopCamera();
         if (mounted) setState(() => _stage = _Stage.review);
       } else {
-        if (mounted) setState(() {});
-        await controller.startImageStream(_onFrame);
+        // Give the person a moment to read the confirmation and the next instruction.
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        if (_camera == controller) await controller.startImageStream(_onFrame);
       }
     } catch (_) {
       _fail('Could not take the photo. Please try again.');
@@ -243,10 +330,11 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              _hint ?? 'Hold still — the photo is taken automatically',
+              _captureNotice ?? _hint ?? (_countdown != null ? 'Hold still…' : 'Hold still — the photo is taken automatically'),
               style: TextStyle(color: scheme.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
+            if (kDebugMode && _debugReading != null) Text(_debugReading!, style: TextStyle(fontSize: 12, color: scheme.outline)),
           ]),
         ),
         Expanded(
@@ -257,7 +345,49 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
                     aspectRatio: 3 / 4,
                     child: Stack(fit: StackFit.expand, children: [
                       ClipRRect(borderRadius: BorderRadius.circular(16), child: CameraPreview(controller)),
-                      IgnorePointer(child: CustomPaint(painter: _FaceGuidePainter(color: scheme.primary))),
+                      // Everything outside the circle is blurred and dimmed, so only the face area is sharp.
+                      IgnorePointer(
+                        child: ClipPath(
+                          clipper: _OutsideOvalClipper(),
+                          child: BackdropFilter(
+                            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                            child: const ColoredBox(color: Color(0x66000000)),
+                          ),
+                        ),
+                      ),
+                      IgnorePointer(
+                        child: CustomPaint(
+                          painter: _FaceGuidePainter(
+                            color: _poseGood
+                                ? Colors.greenAccent
+                                : _faceDetected
+                                    ? Colors.amberAccent
+                                    : Colors.white70,
+                          ),
+                        ),
+                      ),
+                      if (_countdown != null)
+                        IgnorePointer(
+                          child: Center(
+                            child: Container(
+                              width: 72,
+                              height: 72,
+                              alignment: Alignment.center,
+                              decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                              child: Text(
+                                '$_countdown',
+                                style: const TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ),
+                      IgnorePointer(
+                        child: AnimatedOpacity(
+                          opacity: _flash ? 0.85 : 0,
+                          duration: const Duration(milliseconds: 150),
+                          child: const ColoredBox(color: Colors.white),
+                        ),
+                      ),
                     ]),
                   ),
           ),
@@ -327,6 +457,26 @@ class _FaceEnrollmentScreenState extends ConsumerState<FaceEnrollmentScreen> {
   }
 }
 
+/// The fixed face oval, centred and slightly above the middle so the head sits naturally in it.
+Rect _guideOval(Size size) => Rect.fromCenter(
+      center: Offset(size.width / 2, size.height * 0.46),
+      width: size.width * 0.70,
+      height: size.height * 0.56,
+    );
+
+/// Everything except the face oval (used to blur the background).
+class _OutsideOvalClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) => Path.combine(
+        PathOperation.difference,
+        Path()..addRect(Offset.zero & size),
+        Path()..addOval(_guideOval(size)),
+      );
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+}
+
 /// An oval face guide over the camera preview.
 class _FaceGuidePainter extends CustomPainter {
   _FaceGuidePainter({required this.color});
@@ -335,17 +485,13 @@ class _FaceGuidePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final oval = Rect.fromCenter(
-      center: size.center(Offset.zero),
-      width: size.width * 0.62,
-      height: size.height * 0.62,
-    );
+    final oval = _guideOval(size);
     canvas.drawOval(
       oval,
       Paint()
         ..color = color
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 3,
+        ..strokeWidth = 4,
     );
   }
 

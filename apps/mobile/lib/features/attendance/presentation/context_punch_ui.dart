@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/attendance_repository.dart';
 import '../domain/outside_shift_window.dart';
 import '../domain/punch_location.dart';
+import '../domain/punch_warning.dart';
 import '../domain/face_liveness_capture.dart';
 import '../state/punch_controller.dart';
 import 'face_punch_card.dart';
+import 'punch_warning_card.dart';
 import 'punch_location_flow.dart';
 
 /// [PunchUi] backed by a widget's `BuildContext`: the dialogs, camera route and snackbars the
@@ -40,6 +42,9 @@ class ContextPunchUi implements PunchUi {
 
   @override
   Future<void> showOutsideShiftWindow(OutsideShiftWindow window) => showOutsideShiftWindowDialog(context, window);
+
+  @override
+  Future<void> showPunchWarning(PunchWarning warning) => showPunchWarningCard(context, warning);
 
   @override
   Future<FaceCaptureOutcome> captureFace(FaceLivenessSession session) => ref.read(faceLivenessCaptureProvider)(context, session);

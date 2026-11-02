@@ -43,10 +43,10 @@ class FacePoseTracker {
   final int requiredStableReadings;
 
   static const _frontMax = 10.0;
-  static const _turnMin = 20.0;
-  static const _turnMax = 45.0;
-  static const _tiltMin = 12.0;
-  static const _tiltMax = 35.0;
+  static const _turnMin = 15.0;
+  static const _turnMax = 30.0;
+  static const _tiltMin = 10.0;
+  static const _tiltMax = 25.0;
 
   int _index = 0;
   int _stable = 0;

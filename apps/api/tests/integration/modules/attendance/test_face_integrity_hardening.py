@@ -527,22 +527,40 @@ async def test_every_extra_angle_must_pass_server_side_liveness(
     ]
 
 
-async def test_inconclusive_or_faceless_extra_angle_is_a_rejection(
+async def test_faceless_front_capture_is_a_rejection(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
     fake_liveness_engine: FakeLivenessEngine,
 ) -> None:
+    """The front capture is the strict liveness gate: no face in it ends the submission."""
     _, me, _, company_id = await _enrolling(client, face_tenant)
-    fake_liveness_engine.per_call = [[LIVE_PROBS], "NO_FACE"]
+    fake_liveness_engine.per_call = ["NO_FACE"]
 
     response = await _submit(client, me)
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "FACE_NOT_DETECTED"
     (row,) = await _enrollment_attempts(company_id)
-    assert (row["decision"], row["angle"]) == ("NO_FACE", "left")
+    assert (row["decision"], row["angle"]) == ("NO_FACE", "front")
     assert fake_face_provider.calls == []
+
+
+async def test_faceless_turned_capture_is_tolerated(
+    client: AsyncClient,
+    face_tenant: Tenant,
+    fake_face_provider: FakeFaceProvider,
+    fake_liveness_engine: FakeLivenessEngine,
+) -> None:
+    """The anti-spoofing model cannot judge a turned or tilted head: a NO_FACE / inconclusive
+    answer on a non-front capture is not a rejection (only a spoof verdict is); the provider's
+    same-person check still has to pass for every angle."""
+    _, me, _, _ = await _enrolling(client, face_tenant)
+    fake_liveness_engine.per_call = [[LIVE_PROBS], "NO_FACE"]
+
+    response = await _submit(client, me)
+
+    assert response.status_code == 201, response.text
 
 
 async def test_engine_failure_during_enrollment_is_recorded_and_not_counted(
