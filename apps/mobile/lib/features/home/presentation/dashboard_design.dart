@@ -106,11 +106,11 @@ class DdStatTile extends StatelessWidget {
             const SizedBox(height: 14),
             Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
               Flexible(child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text(value, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: Dd.ink)))),
-              if (unit != null) ...[const SizedBox(width: 4), Text(unit!, style: const TextStyle(fontSize: 12, color: Dd.muted))],
+              if (unit != null) ...[const SizedBox(width: 4), Flexible(child: Text(unit!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Dd.muted)))],
             ]),
             const SizedBox(height: 6),
             Row(children: [
-              Expanded(child: Text(caption, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: captionColor))),
+              Expanded(child: Text(caption, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11.5, color: captionColor))),
               if (action != null) Text(action!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Dd.navy)),
             ]),
           ]),

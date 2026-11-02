@@ -88,7 +88,9 @@ void main() {
       await _pumpMonth(tester, _Repo([_row('d1', yesterdayish, 'PRESENT'), _row('d2', '${today.substring(0, 8)}02', 'LEAVE')]));
       expect(find.text('Present'), findsOneWidget);
       expect(find.text('On leave'), findsOneWidget);
-      expect(find.text('Present 1 · Absent 0 · Leave 1'), findsOneWidget);
+      expect(find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Present 1'), findsOneWidget);
+      expect(find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Absent 0'), findsOneWidget);
+      expect(find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Leave 1'), findsOneWidget);
     });
 
     testWidgets('today carries a ring', (tester) async {

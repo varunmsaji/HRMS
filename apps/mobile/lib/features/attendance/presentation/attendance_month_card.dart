@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -72,7 +74,6 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
     final leading = DateTime(_month.year, _month.month, 1).weekday - 1; // Monday-first
     final t = EmployeeTokens.of(context);
@@ -113,7 +114,7 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
             const SizedBox(height: 8),
             _Legend(statuses: [for (final d in _byDate.values) _statusOf(d)]),
             const SizedBox(height: 8),
-            Text('Present $present · Absent $absent · Leave $leave', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+            _SummaryTiles(present: present, absent: absent, leave: leave, total: _byDate.values.where((d) => attendanceBucketOf(d) != 'NOT_EMPLOYED').length),
           ],
         ]),
       ),
@@ -176,4 +177,105 @@ class _Legend extends StatelessWidget {
         ]),
     ]);
   }
+}
+
+/// Present / Absent / Leave tiles: an icon, the count, and a liquid fill whose level is that
+/// status's share of the month's tracked days.
+class _SummaryTiles extends StatelessWidget {
+  const _SummaryTiles({required this.present, required this.absent, required this.leave, required this.total});
+  final int present, absent, leave, total;
+
+  @override
+  Widget build(BuildContext context) {
+    final tiles = [
+      (label: 'Present', count: present, icon: Icons.check_circle_outline, kind: StatusKind.success),
+      (label: 'Absent', count: absent, icon: Icons.cancel_outlined, kind: StatusKind.danger),
+      (label: 'Leave', count: leave, icon: Icons.beach_access_outlined, kind: StatusKind.onLeave),
+    ];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(children: [
+        for (var i = 0; i < tiles.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(child: _LiquidTile(label: tiles[i].label, count: tiles[i].count, icon: tiles[i].icon, kind: tiles[i].kind, fraction: total == 0 ? 0 : tiles[i].count / total)),
+        ],
+      ]),
+    );
+  }
+}
+
+class _LiquidTile extends StatelessWidget {
+  const _LiquidTile({required this.label, required this.count, required this.icon, required this.kind, required this.fraction});
+  final String label;
+  final int count;
+  final IconData icon;
+  final StatusKind kind;
+  final double fraction;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = EmployeeTokens.of(context);
+    final c = statusColors(context, kind);
+    // A little liquid even for small counts so the tile never looks empty; none at zero.
+    final level = count == 0 ? 0.0 : (0.18 + fraction * 0.82).clamp(0.0, 1.0);
+    return Semantics(
+      label: '$label $count',
+      excludeSemantics: true,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          height: 78 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.6),
+          decoration: BoxDecoration(color: t.inset, borderRadius: BorderRadius.circular(14), border: Border.all(color: c.glyph.withValues(alpha: 0.25))),
+          child: Stack(fit: StackFit.expand, children: [
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: level),
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeOutCubic,
+              builder: (_, v, __) => CustomPaint(painter: _WavePainter(level: v, color: c.glyph.withValues(alpha: 0.28), back: c.glyph.withValues(alpha: 0.16))),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Icon(icon, size: 20, color: c.glyph),
+                Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                  Text('$count', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: c.text, height: 1)),
+                  const SizedBox(width: 6),
+                  Flexible(child: Text('$label days', overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.inkSecondary))),
+                ]),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// Two offset sine waves filling the tile up to [level] (0..1) from the bottom.
+class _WavePainter extends CustomPainter {
+  _WavePainter({required this.level, required this.color, required this.back});
+  final double level;
+  final Color color, back;
+
+  Path _wave(Size size, double phase, double amp) {
+    final base = size.height * (1 - level);
+    final path = Path()..moveTo(0, size.height);
+    path.lineTo(0, base);
+    for (double x = 0; x <= size.width; x += 2) {
+      path.lineTo(x, base + math.sin(x / size.width * 2 * math.pi + phase) * amp);
+    }
+    path.lineTo(size.width, size.height);
+    return path..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (level <= 0) return;
+    final amp = level >= 0.98 ? 0.0 : 3.5;
+    canvas.drawPath(_wave(size, 1.6, amp), Paint()..color = back);
+    canvas.drawPath(_wave(size, 0, amp), Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_WavePainter o) => o.level != level || o.color != color || o.back != back;
 }

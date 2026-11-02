@@ -108,17 +108,28 @@ class SubscriptionSummary {
 /// actually shows (id, name, status); `CompanyProfileRead` carries many more
 /// that don't have a mobile screen yet.
 class CompanyProfileSummary {
-  CompanyProfileSummary({required this.id, required this.name, required this.status});
+  CompanyProfileSummary({required this.id, required this.name, required this.status, this.logoUrl});
 
   final String id;
   final String name;
   final String status;
 
+  /// `branding.logo_url` from `GET /companies/current`; null when the company has not set one.
+  final String? logoUrl;
+
   factory CompanyProfileSummary.fromJson(Map<String, dynamic> json) => CompanyProfileSummary(
         id: json['id'] as String,
         name: json['name'] as String,
         status: json['status'] as String,
+        logoUrl: _logoUrlOf(json),
       );
+
+  static String? _logoUrlOf(Map<String, dynamic> json) {
+    final branding = json['branding'];
+    final raw = (branding is Map ? branding['logo_url'] : null) ?? json['logo_url'];
+    final url = raw is String ? raw.trim() : '';
+    return url.isEmpty ? null : url;
+  }
 }
 
 /// `GET /dashboards/company/attendance-overview` — today's mutually exclusive buckets, as the

@@ -124,10 +124,11 @@ void main() {
       expect(taps, ['OUT']);
     });
 
-    testWidgets('face required: only face labels', (tester) async {
+    testWidgets('face required: only check-in is a face punch; check-out stays plain', (tester) async {
       await pump(tester, likely: LikelyPunch.punchIn, face: true);
       expect(find.text('Face punch in'), findsOneWidget);
-      expect(find.text('Face punch out instead'), findsOneWidget);
+      expect(find.text('Punch out instead'), findsOneWidget);
+      expect(find.text('Face punch out instead'), findsNothing);
       expect(find.text('Punch in'), findsNothing);
     });
 

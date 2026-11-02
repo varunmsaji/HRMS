@@ -14,12 +14,15 @@ const dashCyan = Color(0xFF00C2FF);
 
 /// Gradient header with a title, a subtitle line and an optional trailing widget.
 class DashHeader extends StatelessWidget {
-  const DashHeader({super.key, required this.title, this.subtitle, this.detail, this.trailing});
+  const DashHeader({super.key, required this.title, this.subtitle, this.detail, this.trailing, this.leading});
 
   final String title;
   final String? subtitle;
   final String? detail;
   final Widget? trailing;
+
+  /// Shown before the title block, e.g. a [CompanyBadge].
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +39,7 @@ class DashHeader extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 16, 12, 20),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (leading != null) Padding(padding: const EdgeInsets.only(right: 12), child: leading!),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(title, style: theme.textTheme.headlineSmall?.copyWith(color: Colors.white, fontWeight: FontWeight.w700)),
@@ -47,6 +51,55 @@ class DashHeader extends StatelessWidget {
             ]),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The company's logo in a white rounded tile, for use on the dark [DashHeader]. Falls back to the
+/// company's initials when there is no logo URL, or it is not http(s), or the image fails to load.
+class CompanyBadge extends StatelessWidget {
+  const CompanyBadge({super.key, required this.name, this.logoUrl, this.size = 52});
+
+  final String name;
+  final String? logoUrl;
+  final double size;
+
+  String get _initials {
+    final words = name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.isEmpty) return '?';
+    if (words.length == 1) return words.first.substring(0, math.min(2, words.first.length)).toUpperCase();
+    return (words.first[0] + words[1][0]).toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = logoUrl;
+    final usable = url != null && (url.startsWith('https://') || url.startsWith('http://'));
+    final fallback = Center(
+      child: Text(_initials, style: TextStyle(color: dashNavy, fontWeight: FontWeight.w800, fontSize: size * 0.36, letterSpacing: 0.5)),
+    );
+    return Semantics(
+      label: '$name logo',
+      image: true,
+      child: Container(
+        width: size,
+        height: size,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(size * 0.28),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 1.5),
+        ),
+        padding: usable ? EdgeInsets.all(size * 0.12) : EdgeInsets.zero,
+        child: usable
+            ? Image.network(
+                url,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => fallback,
+                loadingBuilder: (context, child, progress) => progress == null ? child : fallback,
+              )
+            : fallback,
       ),
     );
   }

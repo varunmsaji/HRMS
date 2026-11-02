@@ -102,12 +102,12 @@ void main() {
 
   testWidgets('the More icon is gone on the employee surface', (tester) async {
     await _pump(tester, _Repo());
-    expect(find.byTooltip('More'), findsNothing);
+    expect(find.byTooltip('Settings & more'), findsNothing);
   });
 
   testWidgets('...and stays for an administrator', (tester) async {
     await _pump(tester, _Repo(), permissions: const [dashboardCompanyView, attendancePunch, attendanceView]);
-    expect(find.byTooltip('More'), findsOneWidget);
+    expect(find.byTooltip('Settings & more'), findsOneWidget);
   });
 
   testWidgets('at 320 px and 2x text the punch labels are not clipped (the buttons grow)', (tester) async {

@@ -131,8 +131,10 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     return Scaffold(
       backgroundColor: Dd.canvas,
       body: AnnotatedRegion<SystemUiOverlayStyle>(
-        value: SystemUiOverlayStyle.dark,
+        // The dark header runs behind the status bar, so its icons are light.
+        value: SystemUiOverlayStyle.light,
         child: SafeArea(
+          top: false,
           bottom: false,
           child: Column(children: [
             _Header(onBell: () => context.push('/app/notifications'), onProfile: () => context.push('/app/more')),
@@ -146,10 +148,12 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   children: [
-                    Row(children: [
-                      DdPill(label: _longDate(todayDate), background: const Color(0xFFE8EEF9), foreground: Dd.navy, icon: Icons.calendar_today_outlined),
-                      const Spacer(),
-                      if (face?.valueOrNull?.isEnrolled ?? false) const DdPill(label: 'AI Sync Active', background: Color(0xFFE0F2FE), foreground: Color(0xFF0369A1), icon: Icons.auto_awesome),
+                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                      Flexible(child: DdPill(label: _longDate(todayDate), background: const Color(0xFFE8EEF9), foreground: Dd.navy, icon: Icons.calendar_today_outlined)),
+                      if (face?.valueOrNull?.isEnrolled ?? false) ...[
+                        const SizedBox(width: 8),
+                        const Flexible(child: DdPill(label: 'AI Sync Active', background: Color(0xFFE0F2FE), foreground: Color(0xFF0369A1), icon: Icons.auto_awesome)),
+                      ],
                     ]),
                     const SizedBox(height: 12),
                     _Greeting(name: employee?.firstName, code: employee?.employeeCode, designation: profile?.designation, department: profile?.department),
@@ -299,15 +303,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           onTap: payslip == null ? () => context.push('/app/me/payslips') : () => _openPayslip(payslip),
         ),
     ];
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 1.32,
-      children: tiles,
-    );
+    return _TwoColumnGrid(children: tiles);
   }
 
   // ---- attendance this month ------------------------------------------------------------------
@@ -393,11 +389,11 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     ].take(3).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
-        const Text('Needs attention', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Dd.ink)),
+        const Flexible(child: Text('Needs attention', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Dd.ink))),
         const SizedBox(width: 8),
         Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: Dd.amberBg, borderRadius: BorderRadius.circular(10)), child: Text('$count', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Dd.amberFg))),
         const Spacer(),
-        GestureDetector(onTap: () => context.go('/app/leave-applications'), child: Text('View all ($count)', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Dd.navy))),
+        Flexible(child: GestureDetector(onTap: () => context.go('/app/leave-applications'), child: Text('View all ($count)', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Dd.navy)))),
       ]),
       const SizedBox(height: 10),
       for (final r in rows) Padding(padding: const EdgeInsets.only(bottom: 10), child: r),
@@ -413,7 +409,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
       if (permissions.contains(payrollPayslipViewOwn)) DdQuickAction(icon: Icons.receipt_long_outlined, iconColor: Dd.green, iconBackground: const Color(0xFFDCFCE7), title: 'Payslips', subtitle: payslip == null ? 'Download payslip' : 'Download ${_payMonth(payslip.month, withYear: false)} slip', onTap: () => context.push('/app/me/payslips')),
       if (permissions.contains(attendanceView)) DdQuickAction(icon: Icons.calendar_month_outlined, iconColor: Dd.navy, iconBackground: const Color(0xFFE8EEF9), title: 'My Shifts', subtitle: 'Upcoming roster', onTap: () => context.go('/app/attendance')),
     ];
-    return GridView.count(crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 2.15, children: items);
+    return _TwoColumnGrid(children: items);
   }
 
   void _openPayslip(PayslipSummary p) => Navigator.of(context).push(MaterialPageRoute(
@@ -475,34 +471,70 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
   }
 }
 
+/// Two equal columns whose rows are exactly as tall as their content. Unlike a [GridView] with a
+/// fixed `childAspectRatio`, the cell height follows the text (system font size, long captions), so
+/// nothing is clipped or overflows; the two cells in a row are stretched to the same height.
+class _TwoColumnGrid extends StatelessWidget {
+  const _TwoColumnGrid({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i += 2) {
+      if (rows.isNotEmpty) rows.add(const SizedBox(height: 12));
+      rows.add(IntrinsicHeight(
+        child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Expanded(child: children[i]),
+          const SizedBox(width: 12),
+          Expanded(child: i + 1 < children.length ? children[i + 1] : const SizedBox.shrink()),
+        ]),
+      ));
+    }
+    return Column(children: rows);
+  }
+}
+
 class _Header extends StatelessWidget {
   const _Header({required this.onBell, required this.onProfile});
   final VoidCallback onBell;
   final VoidCallback onProfile;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-        child: Row(children: [
-          Container(
-            width: 40,
-            height: 40,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Dd.line)),
-            child: const Image(image: AssetImage('assets/brand/krewoxa-mark.png'), semanticLabel: 'Krewoxa'),
+  Widget build(BuildContext context) => DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Dd.navy, Color(0xFF123A8F)]),
+          borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+          boxShadow: [BoxShadow(color: Color(0x330A1F5C), blurRadius: 12, offset: Offset(0, 4))],
+        ),
+        // Own SafeArea so the dark bar paints behind the status bar instead of leaving a light strip.
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+            child: Row(children: [
+              Container(
+                width: 40,
+                height: 40,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+                child: const Image(image: AssetImage('assets/brand/krewoxa-mark.png'), semanticLabel: 'Krewoxa'),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Krewoxa', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white, height: 1.1)),
+                  Text('ENTERPRISE', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF9CC2FF), letterSpacing: 1.1)),
+                ]),
+              ),
+              NotificationBell(onPressed: onBell, color: Colors.white),
+              GestureDetector(
+                onTap: onProfile,
+                child: const CircleAvatar(radius: 19, backgroundColor: Colors.white, child: Icon(Icons.person, size: 20, color: Dd.navy)),
+              ),
+            ]),
           ),
-          const SizedBox(width: 10),
-          const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Krewoxa', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Dd.ink, height: 1.1)),
-            Text('ENTERPRISE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Dd.blue, letterSpacing: 1.1)),
-          ]),
-          const Spacer(),
-          NotificationBell(onPressed: onBell, color: Dd.ink),
-          GestureDetector(
-            onTap: onProfile,
-            child: const CircleAvatar(radius: 19, backgroundColor: Dd.navy, child: Icon(Icons.person, size: 20, color: Colors.white)),
-          ),
-        ]),
+        ),
       );
 }
 
@@ -622,8 +654,8 @@ class _PunchCard extends StatelessWidget {
         Row(children: [
           Container(width: 9, height: 9, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
           const SizedBox(width: 8),
-          Expanded(child: Text(status, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Dd.green).copyWith(color: dot == Dd.green ? Dd.green : Dd.ink))),
-          if (shift != null) DdPill(label: 'Shift $shift', background: const Color(0xFFDCE8FB), foreground: Dd.navy),
+          Expanded(flex: 3, child: Text(status, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Dd.green).copyWith(color: dot == Dd.green ? Dd.green : Dd.ink))),
+          if (shift != null) Flexible(flex: 2, child: DdPill(label: 'Shift $shift', background: const Color(0xFFDCE8FB), foreground: Dd.navy)),
         ]),
         const SizedBox(height: 18),
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -631,11 +663,15 @@ class _PunchCard extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('WORKED TODAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Dd.muted, letterSpacing: 0.6)),
               const SizedBox(height: 4),
-              Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-                Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: Text(loading ? '--:--:--' : clock, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Dd.navy, fontFeatures: [FontFeature.tabularFigures()])))),
-                const SizedBox(width: 6),
-                const Text('hrs', style: TextStyle(fontSize: 13, color: Dd.blue, fontWeight: FontWeight.w600)),
-              ]),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                  Text(loading ? '--:--:--' : clock, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Dd.navy, fontFeatures: [FontFeature.tabularFigures()])),
+                  const SizedBox(width: 6),
+                  const Text('hrs', style: TextStyle(fontSize: 13, color: Dd.blue, fontWeight: FontWeight.w600)),
+                ]),
+              ),
             ]),
           ),
           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -740,10 +776,16 @@ class FaceSetupCardState extends ConsumerState<FaceSetupCard> {
             Text(body, style: const TextStyle(fontSize: 12, color: Dd.muted, height: 1.35)),
             if (!pending) ...[
               const SizedBox(height: 10),
+              // No fixed height: the label must fit whatever font size the phone uses.
               SizedBox(
-                height: 38,
+                width: double.infinity,
                 child: FilledButton(
-                  style: FilledButton.styleFrom(backgroundColor: Dd.navy, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Dd.navy,
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
                   onPressed: _busy ? null : _start,
                   child: _busy ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : Text(available ? 'Continue Enrollment' : 'Start Enrollment'),
                 ),

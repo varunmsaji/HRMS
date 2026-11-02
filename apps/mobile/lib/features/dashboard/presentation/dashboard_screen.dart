@@ -193,7 +193,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               title: 'Dashboard',
               subtitle: "Here's what's happening in $companyName today.",
               detail: _longDate(),
-              trailing: const MoreAction(),
+              leading: CompanyBadge(name: companyName, logoUrl: _profile?.logoUrl),
+              trailing: const MoreAction(onDark: true),
             ),
             const SizedBox(height: 16),
             if (!dashboard.setupProgress.isComplete)

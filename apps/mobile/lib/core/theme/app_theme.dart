@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:google_fonts/google_fonts.dart';
 
 import 'app_colors.dart';
@@ -367,15 +368,18 @@ class AppTheme {
       textTheme: text,
       primaryTextTheme: text,
       extensions: [AppStatusColors.light, t],
+      // A dark navy bar with light text and status-bar icons, so the top of every employee screen
+      // reads as a bar instead of blending into the pale page.
       appBarTheme: AppBarTheme(
-        backgroundColor: t.sheet,
-        foregroundColor: t.ink,
+        backgroundColor: const Color(0xFF0A1F5C),
+        foregroundColor: Colors.white,
         elevation: 0,
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
         centerTitle: false,
         titleSpacing: 16,
-        titleTextStyle: text.headlineSmall,
+        titleTextStyle: text.headlineSmall?.copyWith(color: Colors.white),
       ),
       cardTheme: CardThemeData(
         color: t.sheet,
