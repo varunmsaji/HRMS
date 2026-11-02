@@ -65,6 +65,10 @@ const config: Config = {
           subtle: withAlpha("--color-border-subtle"),
           strong: withAlpha("--color-border-strong"),
         },
+        sidebar: {
+          DEFAULT: withAlpha("--color-sidebar"),
+          border: withAlpha("--color-sidebar-border"),
+        },
         foreground: {
           DEFAULT: withAlpha("--color-foreground"),
           secondary: withAlpha("--color-foreground-secondary"),
