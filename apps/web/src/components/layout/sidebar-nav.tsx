@@ -84,7 +84,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
         return (
           <div key={group.label} className="space-y-1">
-            <p className="px-2.5 pb-1 text-2xs font-semibold uppercase tracking-wider text-slate-500">
+            <p className="px-2.5 pb-1 text-2xs font-semibold uppercase tracking-wider text-slate-400">
               {group.label}
             </p>
             <div className="space-y-0.5">
