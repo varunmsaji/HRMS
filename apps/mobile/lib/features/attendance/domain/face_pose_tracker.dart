@@ -20,19 +20,22 @@ class FacePoseReading {
 }
 
 class FacePoseStep {
-  const FacePoseStep(this.angle, this.instruction);
+  const FacePoseStep(this.angle, this.instruction, this.label);
 
   /// Form field name the capture is submitted under.
   final String angle;
   final String instruction;
+
+  /// Short name under the step's thumbnail ("Front", "Side 1"...).
+  final String label;
 }
 
 const facePoseSteps = [
-  FacePoseStep('front', 'Look straight at the camera'),
-  FacePoseStep('left', 'Slowly turn your head to one side'),
-  FacePoseStep('right', 'Now turn your head to the other side'),
-  FacePoseStep('up', 'Tilt your head up a little'),
-  FacePoseStep('down', 'Now tilt your head down a little'),
+  FacePoseStep('front', 'Look straight at the camera', 'Front'),
+  FacePoseStep('left', 'Slowly turn your head a little to one side', 'Side 1'),
+  FacePoseStep('right', 'Now turn a little to the other side', 'Side 2'),
+  FacePoseStep('up', 'Tilt your head up a little', 'Up'),
+  FacePoseStep('down', 'Now tilt your head down a little', 'Down'),
 ];
 
 class FacePoseTracker {

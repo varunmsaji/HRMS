@@ -57,13 +57,14 @@ void main() {
     expect(FaceEnrollmentStatus().faceVerificationRequired, isFalse);
   });
 
-  testWidgets('enrolled employee sees face punch controls and no plain Punch in/out', (tester) async {
+  testWidgets('enrolled employee punches in with their face and out with a plain Punch out', (tester) async {
     await _pump(tester, _Repo(FaceEnrollmentStatus(profileStatus: 'ENROLLED', faceVerificationRequired: true)));
 
+    // Face verification gates check-in only.
     expect(find.text('Face punch in'), findsOneWidget);
-    expect(find.text('Face punch out'), findsOneWidget);
+    expect(find.text('Punch out'), findsOneWidget);
     expect(find.text('Punch in'), findsNothing);
-    expect(find.text('Punch out'), findsNothing);
+    expect(find.text('Face punch out'), findsNothing);
   });
 
   testWidgets('unenrolled employee keeps the plain Punch in/out', (tester) async {
@@ -84,18 +85,19 @@ void main() {
     expect(find.text('Face punch in'), findsNothing);
   });
 
-  testWidgets('a FACE_VERIFICATION_REQUIRED answer removes the plain buttons without a fallback', (tester) async {
+  testWidgets('a FACE_VERIFICATION_REQUIRED answer turns Punch in into Face punch in, with no plain fallback', (tester) async {
     final repo = _Repo(
       FaceEnrollmentStatus(),
       punchError: ApiError(status: 403, code: 'FACE_VERIFICATION_REQUIRED', message: 'Face verification is required to punch.'),
     );
     await _pump(tester, repo);
 
-    await tester.tap(find.text('Punch out'));
+    await tester.tap(find.text('Punch in'));
     await tester.pumpAndSettle();
 
-    expect(repo.plainPunches, ['OUT']);
+    expect(repo.plainPunches, ['IN']);
     expect(find.text('Punch in'), findsNothing);
-    expect(find.text('Punch out'), findsNothing);
+    expect(find.text('Face punch in'), findsOneWidget);
+    expect(find.text('Punch out'), findsOneWidget);
   });
 }
