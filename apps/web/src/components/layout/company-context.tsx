@@ -35,8 +35,12 @@ export function CompanyContext() {
   }, [session]);
 
   return (
-    <div className="flex items-center gap-2 rounded-md border border-border bg-surface-secondary px-2.5 py-1 text-xs font-medium text-foreground">
-      <Building2 className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+    // A plain label, not a bordered chip: it only shows the active company and is not a control.
+    <div
+      className="flex shrink-0 items-center gap-2 text-sm font-semibold text-foreground"
+      title={company?.name}
+    >
+      <Building2 className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />
       <span className="max-w-[200px] truncate">{company?.name ?? "…"}</span>
     </div>
   );

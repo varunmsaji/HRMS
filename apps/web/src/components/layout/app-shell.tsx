@@ -121,7 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Menu className="h-4 w-4" aria-hidden="true" />
             </Button>
             <CompanyContext />
-            <div className="hidden h-4 w-px bg-border sm:block" aria-hidden="true" />
+            <div className="hidden h-4 w-px bg-border sm:block lg:hidden xl:block" aria-hidden="true" />
             <AppBreadcrumbs />
           </div>
           <CompanySearch />
