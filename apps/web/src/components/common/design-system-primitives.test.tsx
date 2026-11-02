@@ -10,10 +10,14 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellStack,
+  TableCode,
   TableContainer,
+  TableEmpty,
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
   tableNeedsHorizontalScroll,
 } from "@/components/ui/table";
@@ -221,5 +225,49 @@ describe("Design System Shared Primitives", () => {
       if (originalScroll) Object.defineProperty(HTMLElement.prototype, "scrollWidth", originalScroll);
       if (originalClient) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClient);
     }
+  });
+
+  it("stacks a primary and secondary value in one table cell", () => {
+    render(<TableCellStack primary="Engineering Manager" secondary="Engineering" />);
+    expect(screen.getByText("Engineering Manager")).toHaveClass("font-medium");
+    expect(screen.getByText("Engineering")).toHaveClass("text-foreground-muted");
+  });
+
+  it("omits the secondary line when there is none", () => {
+    const { container } = render(<TableCellStack primary="Director" />);
+    expect(container.firstElementChild?.children).toHaveLength(1);
+  });
+
+  it("shows a missing value as a quiet dash that screen readers announce as the given label", () => {
+    render(<TableEmpty label="No reporting manager" />);
+    expect(screen.getByText("—")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("No reporting manager")).toHaveClass("sr-only");
+  });
+
+  it("renders codes on one line in a monospace chip", () => {
+    render(<TableCode>EMP-0001</TableCode>);
+    expect(screen.getByText("EMP-0001")).toHaveClass("font-mono", "whitespace-nowrap");
+  });
+
+  it("renders a row action as a link named by its label, with the chevron hidden from assistive tech", () => {
+    render(<TableRowAction href="/app/things/1">Configure</TableRowAction>);
+    const link = screen.getByRole("link", { name: "Configure" });
+    expect(link).toHaveAttribute("href", "/app/things/1");
+    expect(link.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("keeps a table cell on one line when asked", () => {
+    render(
+      <Table>
+        <TableBody>
+          <TableRow>
+            <TableCell nowrap>General Shift</TableCell>
+            <TableCell>Free text</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>,
+    );
+    expect(screen.getByRole("cell", { name: "General Shift" })).toHaveClass("whitespace-nowrap");
+    expect(screen.getByRole("cell", { name: "Free text" })).not.toHaveClass("whitespace-nowrap");
   });
 });
