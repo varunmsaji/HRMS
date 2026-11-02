@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
   TableRowAction,
+  TableRowActionButton,
   TableToolbar,
   tableNeedsHorizontalScroll,
 } from "@/components/ui/table";
@@ -269,5 +270,21 @@ describe("Design System Shared Primitives", () => {
     );
     expect(screen.getByRole("cell", { name: "General Shift" })).toHaveClass("whitespace-nowrap");
     expect(screen.getByRole("cell", { name: "Free text" })).not.toHaveClass("whitespace-nowrap");
+  });
+
+  it("renders a dialog-opening row action as a button that fires its handler and can be disabled", () => {
+    const onClick = vi.fn();
+    const { rerender } = render(<TableRowActionButton onClick={onClick}>Correct days</TableRowActionButton>);
+    const button = screen.getByRole("button", { name: "Correct days" });
+    expect(button).toHaveAttribute("type", "button");
+    button.click();
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <TableRowActionButton onClick={onClick} disabled>
+        Correct days
+      </TableRowActionButton>,
+    );
+    expect(screen.getByRole("button", { name: "Correct days" })).toBeDisabled();
   });
 });

@@ -37,6 +37,7 @@ import {
   TableHeader,
   TableRow,
   TableRowAction,
+  TableRowActionButton,
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
@@ -598,23 +599,17 @@ export default function PayRunDetailPage() {
                     </div>
                   </TableCell>
                   <TableCell align="right">
-                    <div className="flex justify-end gap-3">
-                      <button
-                        type="button"
-                        className="text-xs font-medium text-primary hover:underline"
-                        onClick={() => setDetailEmployeeId(employee.employee_id)}
-                      >
+                    <div className="flex justify-end gap-1">
+                      <TableRowActionButton onClick={() => setDetailEmployeeId(employee.employee_id)}>
                         View
-                      </button>
+                      </TableRowActionButton>
                       {computed && employee.is_computed ? (
                         <TableRowAction href={`/app/payroll/pay-runs/${run.id}/payslips/${employee.employee_id}`}>Payslip</TableRowAction>
                       ) : null}
                       {canProcess &&
                       (run.status === "FINALISED" || run.status === "PAID") &&
                       employee.paid_days !== null ? (
-                        <button
-                          type="button"
-                          className="text-xs font-medium text-primary hover:underline"
+                        <TableRowActionButton
                           onClick={() => {
                             setCorrectEmployee(employee);
                             correctionKey.current = null;
@@ -624,7 +619,7 @@ export default function PayRunDetailPage() {
                           }}
                         >
                           Correct days
-                        </button>
+                        </TableRowActionButton>
                       ) : null}
                     </div>
                   </TableCell>

@@ -300,6 +300,24 @@ function TableRowAction({
   )
 }
 
+/** Row-end action that opens a dialog or runs in place (so no chevron): same pill as TableRowAction. */
+function TableRowActionButton({
+  className,
+  type = "button",
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type={type}
+      className={cn(
+        "inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
 export {
   TableContainer,
   TableToolbar,
@@ -315,4 +333,5 @@ export {
   TableCode,
   TableEmpty,
   TableRowAction,
+  TableRowActionButton,
 }
