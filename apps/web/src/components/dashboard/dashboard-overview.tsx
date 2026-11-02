@@ -48,6 +48,7 @@ import {
   type CompanyDashboardInsights,
   type Trend,
 } from "@/lib/dashboard/insights";
+import { splitEmployeeLabel } from "@/components/employee/employee-identity";
 import { useEmployeeNames } from "@/lib/employee/use-employee-names";
 import { cn } from "@/lib/utils";
 
@@ -125,9 +126,28 @@ const ATTENDANCE_SEGMENTS = [
   { key: "present", label: "Present", stroke: "stroke-success", dot: "bg-success" },
   { key: "on_leave", label: "On leave", stroke: "stroke-on-leave", dot: "bg-on-leave" },
   { key: "absent", label: "Absent", stroke: "stroke-danger", dot: "bg-danger" },
-  { key: "remote_work", label: "Work from home", stroke: "stroke-wfh", dot: "bg-wfh" },
+  { key: "remote_work", label: "WFH", stroke: "stroke-wfh", dot: "bg-wfh" },
   { key: "on_duty", label: "On duty", stroke: "stroke-info", dot: "bg-info" },
 ] as const;
+
+/** True when none of the tracked statuses has anyone in it, so a donut would be one grey ring. */
+function nobodyRecorded(d: AttendanceOverview): boolean {
+  return ATTENDANCE_SEGMENTS.every((s) => d[s.key] === 0);
+}
+
+function NoCheckIns({ data }: { data: AttendanceOverview }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-muted text-foreground-muted">
+        <Activity className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <p className="text-sm font-medium text-foreground">No check-ins recorded yet</p>
+      <p className="text-xs text-foreground-muted">
+        {data.total} employees · {data.expected_employees} expected to work today
+      </p>
+    </div>
+  );
+}
 
 function attendanceSegments(d: AttendanceOverview): DonutSegment[] {
   const known = ATTENDANCE_SEGMENTS.map((s) => ({ ...s, value: d[s.key] }));
@@ -157,12 +177,16 @@ function DepartmentBars({ data }: { data: AttendanceOverview }) {
   return (
     <ul className="space-y-4">
       {rows.map((d) => (
-        <li key={d.department_id ?? d.department_name} className="flex items-center gap-3 text-sm">
-          <span className="w-28 shrink-0 truncate text-foreground-secondary">{d.department_name}</span>
-          <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+        <li key={d.department_id ?? d.department_name}>
+          <div className="flex items-baseline justify-between gap-3 text-sm">
+            <span className="min-w-0 truncate text-foreground-secondary" title={d.department_name}>
+              {d.department_name}
+            </span>
+            <span className="shrink-0 font-semibold tabular-nums text-foreground">{d.total}</span>
+          </div>
+          <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-muted">
             <span className="block h-full rounded-full bg-primary" style={{ width: `${(d.total / max) * 100}%` }} />
           </span>
-          <span className="w-9 shrink-0 text-right font-semibold tabular-nums text-foreground">{d.total}</span>
         </li>
       ))}
     </ul>
@@ -233,10 +257,9 @@ function PendingList({ data }: { data: PendingApprovals | null }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold text-foreground">{r.title}</span>
                 <span className="block truncate text-xs text-foreground-muted">
-                  {names(r.employeeId) ?? "Employee"}
+                  {splitEmployeeLabel(names(r.employeeId) ?? "Employee").name} · {relativeTime(r.at)}
                 </span>
               </span>
-              <span className="shrink-0 text-2xs text-foreground-muted">{relativeTime(r.at)}</span>
               <ChevronRight className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />
             </Link>
           </li>
@@ -263,11 +286,12 @@ const TILES: Tile[] = [
   { href: "/app/attendance", title: "View Reports", body: "Access detailed reports and analytics.", icon: BarChart3, anyOf: ["ATTENDANCE.VIEW"] },
 ];
 
-const TILE_STYLE = [
-  "bg-gradient-to-br from-blue-600 to-blue-700 text-white",
-  "bg-gradient-to-br from-cyan-500 to-sky-500 text-white",
-  "border border-border bg-surface text-foreground",
-  "border border-border bg-surface text-foreground",
+// One treatment for all four shortcuts; the colour lives in the icon tile only.
+const TILE_TONE = [
+  "bg-primary-subtle text-primary",
+  "bg-info-subtle text-info",
+  "bg-success-subtle text-success",
+  "bg-warning-subtle text-warning",
 ];
 
 function ActionTiles() {
@@ -278,38 +302,23 @@ function ActionTiles() {
     <section aria-label="Shortcuts" className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
       {tiles.map((t, i) => {
         const Icon = t.icon;
-        const filled = i < 2;
         return (
           <Link
             key={t.title}
             href={t.href}
-            className={cn(
-              "flex items-center gap-4 rounded-2xl p-5 shadow-elevation-1 transition-shadow hover:shadow-elevation-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              TILE_STYLE[i],
-            )}
+            className="group flex items-center gap-4 rounded-2xl border border-border bg-surface p-5 shadow-elevation-1 transition-all duration-motion-base hover:-translate-y-0.5 hover:border-border-strong hover:shadow-elevation-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span
-              className={cn(
-                "flex h-12 w-12 shrink-0 items-center justify-center rounded-xl",
-                filled ? "bg-white/20" : "bg-primary-subtle text-primary",
-              )}
-            >
+            <span className={cn("flex h-12 w-12 shrink-0 items-center justify-center rounded-xl", TILE_TONE[i % TILE_TONE.length])}>
               <Icon className="h-5 w-5" aria-hidden="true" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold">{t.title}</span>
-              <span className={cn("mt-0.5 block text-xs", filled ? "text-white/80" : "text-foreground-muted")}>
-                {t.body}
-              </span>
+              <span className="block text-sm font-semibold text-foreground">{t.title}</span>
+              <span className="mt-0.5 block text-xs text-foreground-muted">{t.body}</span>
             </span>
-            <span
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                filled ? "bg-white/20" : "border border-border",
-              )}
-            >
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </span>
+            <ArrowRight
+              className="h-4 w-4 shrink-0 text-foreground-muted transition-transform duration-motion-fast group-hover:translate-x-0.5 group-hover:text-primary"
+              aria-hidden="true"
+            />
           </Link>
         );
       })}
@@ -422,7 +431,7 @@ export function DashboardOverview({ today }: Props) {
           </>
         ) : null}
         {canPending ? (
-          <KpiCard label="Pending Approvals" value={pendingTotal} icon={Clock} tile="bg-info-subtle text-info" hint={pendingHint} />
+          <KpiCard label="Pending Approvals" value={pendingTotal} icon={Clock} tile="bg-info-subtle text-info" href="/app/leave-applications?status=SUBMITTED" hint={pendingHint} />
         ) : null}
       </div>
 
@@ -447,7 +456,15 @@ export function DashboardOverview({ today }: Props) {
 
         {canAttendance ? (
           <Panel title="Attendance Overview" icon={<Activity className="h-4 w-4" aria-hidden="true" />} action={<ViewAll href="/app/attendance" />}>
-            {d ? <DonutChart segments={attendanceSegments(d)} total={d.total} ariaLabel="Attendance distribution" /> : <Empty>Loading…</Empty>}
+            {d ? (
+              nobodyRecorded(d) ? (
+                <NoCheckIns data={d} />
+              ) : (
+                <DonutChart segments={attendanceSegments(d)} total={d.total} ariaLabel="Attendance distribution" />
+              )
+            ) : (
+              <Empty>Loading…</Empty>
+            )}
           </Panel>
         ) : null}
 

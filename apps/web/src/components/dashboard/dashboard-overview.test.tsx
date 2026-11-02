@@ -97,7 +97,7 @@ describe("DashboardOverview", () => {
     expect(screen.getByText("Ganesh Bose")).toBeInTheDocument();
     expect(screen.getByText("Tomorrow")).toBeInTheDocument();
     expect(screen.getByText("New employee joined")).toBeInTheDocument();
-    expect(screen.getByText("Priya Nair")).toBeInTheDocument();
+    expect(screen.getByText(/Priya Nair/)).toBeInTheDocument();
     expect(screen.getByText("Leave Request")).toBeInTheDocument();
   });
 
