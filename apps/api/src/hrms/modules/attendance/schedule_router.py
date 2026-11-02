@@ -1,7 +1,8 @@
 """HTTP routes for the weekly operational schedule and shift-swap requests.
 
 Reads are `ATTENDANCE.VIEW` (data-scoped); creating and deciding swaps needs
-`ATTENDANCE.ROSTER_MANAGE`.
+`ATTENDANCE.ROSTER_MANAGE`. Employees raise their own swaps (`/mine`), colleagues consent or
+refuse, and a manager still approves; those need only `ATTENDANCE.VIEW`.
 """
 
 from datetime import date, timedelta
@@ -21,8 +22,10 @@ from hrms.core.tenancy.dependencies import get_tenant_context
 from hrms.modules.attendance.permissions import ATTENDANCE_ROSTER_MANAGE, ATTENDANCE_VIEW
 from hrms.modules.attendance.schedule_service import (
     RosterScheduleService,
+    SwapCandidate,
     SwapDecision,
     SwapRequestCreate,
+    SwapRequestMine,
     SwapRequestRead,
     WeeklySchedule,
 )
@@ -98,6 +101,73 @@ async def create_swap_request(
         tenant.company_id,
         body,
         scope=scope,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/rosters/swap-candidates")
+async def swap_candidates(
+    swap_date: Annotated[date, Query()],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[RosterScheduleService, Depends(_service)],
+) -> ListEnvelope[SwapCandidate]:
+    """Colleagues the caller could swap with on `swap_date`."""
+    data = await service.candidates(
+        tenant.company_id, swap_date=swap_date, caller_employee_id=user.employee_id
+    )
+    return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/rosters/swap-requests/mine", status_code=201)
+async def create_my_swap_request(
+    body: SwapRequestMine,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[RosterScheduleService, Depends(_service)],
+) -> DataEnvelope[SwapRequestRead]:
+    data = await service.create_my_swap(
+        tenant.company_id,
+        body,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/rosters/swap-requests/{swap_id}/consent")
+async def consent_swap_request(
+    swap_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[RosterScheduleService, Depends(_service)],
+) -> DataEnvelope[SwapRequestRead]:
+    data = await service.consent(
+        tenant.company_id,
+        swap_id,
+        caller_employee_id=user.employee_id,
+        actor_user_id=tenant.user_id,
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/rosters/swap-requests/{swap_id}/withdraw")
+async def withdraw_swap_request(
+    swap_id: UUID,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    _scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    service: Annotated[RosterScheduleService, Depends(_service)],
+) -> DataEnvelope[SwapRequestRead]:
+    """The requester withdraws, or the colleague turns the request down."""
+    data = await service.withdraw(
+        tenant.company_id,
+        swap_id,
         caller_employee_id=user.employee_id,
         actor_user_id=tenant.user_id,
     )

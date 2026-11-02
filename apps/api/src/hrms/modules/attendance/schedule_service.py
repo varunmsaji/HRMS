@@ -118,6 +118,23 @@ class SwapDecision(BaseModel):
     note: str | None = None
 
 
+class SwapRequestMine(BaseModel):
+    """An employee asks a colleague to swap shifts on one date. The requester is the caller."""
+
+    counterpart_employee_id: UUID
+    swap_date: date
+    reason: str | None = None
+
+
+class SwapCandidate(BaseModel):
+    employee_id: UUID
+    name: str
+    code: str
+    department: str | None
+    shift_id: UUID
+    shift_name: str
+
+
 def _initials(name: str) -> str:
     parts = [p for p in name.split() if p]
     return "".join(p[0] for p in parts[:2]).upper() or "?"
@@ -509,14 +526,148 @@ class RosterScheduleService:
             await _ensure_employee_visible(
                 self._session, company_id, emp_id, scope, caller_employee_id
             )
-        a = await self._published(company_id, body.requester_employee_id, body.swap_date)
-        b = await self._published(company_id, body.counterpart_employee_id, body.swap_date)
+        return await self._create(
+            company_id,
+            requester_id=body.requester_employee_id,
+            counterpart_id=body.counterpart_employee_id,
+            swap_date=body.swap_date,
+            reason=body.reason,
+            consented=body.counterpart_consented,
+            actor_user_id=actor_user_id,
+        )
+
+    async def create_my_swap(
+        self,
+        company_id: UUID,
+        body: SwapRequestMine,
+        *,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+    ) -> SwapRequestRead:
+        """An employee's own request: the requester is the caller, the colleague must still consent
+        and a manager still approves. The colleague need not be inside the caller's data scope."""
+        if caller_employee_id is None:
+            raise ValidationError("Your account is not linked to an employee record.")
+        if body.counterpart_employee_id == caller_employee_id:
+            raise ValidationError("Choose a colleague to swap with.")
+        if body.swap_date < date.today():
+            raise ValidationError("You can only swap shifts that have not happened yet.")
+        colleague = (
+            await self._session.execute(
+                select(Employee.id).where(
+                    Employee.id == body.counterpart_employee_id,
+                    Employee.company_id == company_id,
+                    Employee.status.in_(_LIVE_STATUSES),
+                )
+            )
+        ).scalar_one_or_none()
+        if colleague is None:
+            raise NotFoundError("Employee not found.")
+        return await self._create(
+            company_id,
+            requester_id=caller_employee_id,
+            counterpart_id=body.counterpart_employee_id,
+            swap_date=body.swap_date,
+            reason=body.reason,
+            consented=False,
+            actor_user_id=actor_user_id,
+        )
+
+    async def candidates(
+        self,
+        company_id: UUID,
+        *,
+        swap_date: date,
+        caller_employee_id: UUID | None,
+    ) -> list[SwapCandidate]:
+        """Colleagues in the caller's department who are on a different published shift that day."""
+        if caller_employee_id is None:
+            return []
+        mine = await self._published(company_id, caller_employee_id, swap_date)
+        if not (mine and mine.shift_id and not mine.is_week_off_override):
+            return []
+        my_department = (
+            await self._session.execute(
+                select(EmployeeAssignment.department_id).where(
+                    EmployeeAssignment.employee_id == caller_employee_id,
+                    EmployeeAssignment.effective_to.is_(None),
+                    EmployeeAssignment.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        stmt = (
+            select(Employee, Department.name, Shift.id, Shift.name)
+            .join(ShiftRoster, ShiftRoster.employee_id == Employee.id)
+            .join(Shift, Shift.id == ShiftRoster.shift_id)
+            .outerjoin(
+                EmployeeAssignment,
+                (EmployeeAssignment.employee_id == Employee.id)
+                & (EmployeeAssignment.effective_to.is_(None))
+                & (EmployeeAssignment.deleted_at.is_(None)),
+            )
+            .outerjoin(Department, Department.id == EmployeeAssignment.department_id)
+            .where(
+                Employee.company_id == company_id,
+                Employee.id != caller_employee_id,
+                Employee.status.in_(_LIVE_STATUSES),
+                ShiftRoster.roster_date == swap_date,
+                ShiftRoster.status == "PUBLISHED",
+                ShiftRoster.deleted_at.is_(None),
+                ShiftRoster.is_week_off_override.is_(False),
+                ShiftRoster.shift_id != mine.shift_id,
+            )
+            .order_by(Employee.first_name, Employee.employee_code)
+            .limit(200)
+        )
+        if my_department is not None:
+            stmt = stmt.where(EmployeeAssignment.department_id == my_department)
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            SwapCandidate(
+                employee_id=emp.id,
+                name=_full_name(emp),
+                code=emp.employee_code,
+                department=dept,
+                shift_id=shift_id,
+                shift_name=shift_name,
+            )
+            for emp, dept, shift_id, shift_name in rows
+        ]
+
+    async def _create(
+        self,
+        company_id: UUID,
+        *,
+        requester_id: UUID,
+        counterpart_id: UUID,
+        swap_date: date,
+        reason: str | None,
+        consented: bool,
+        actor_user_id: UUID | None,
+    ) -> SwapRequestRead:
+        a = await self._published(company_id, requester_id, swap_date)
+        b = await self._published(company_id, counterpart_id, swap_date)
         if not (a and a.shift_id and not a.is_week_off_override) or not (
             b and b.shift_id and not b.is_week_off_override
         ):
             raise ValidationError("Both employees need a published shift on that date to swap.")
         if a.shift_id == b.shift_id:
             raise ValidationError("Both employees are already on the same shift that day.")
+        already = (
+            await self._session.execute(
+                select(func.count())
+                .select_from(ShiftSwapRequest)
+                .where(
+                    ShiftSwapRequest.company_id == company_id,
+                    ShiftSwapRequest.swap_date == swap_date,
+                    ShiftSwapRequest.status == "PENDING",
+                    ShiftSwapRequest.requester_employee_id.in_([requester_id, counterpart_id])
+                    | ShiftSwapRequest.counterpart_employee_id.in_([requester_id, counterpart_id]),
+                )
+            )
+        ).scalar_one()
+        if already:
+            raise ConflictError("One of you already has a pending swap request for that day.")
         count = (
             await self._session.execute(
                 select(func.count())
@@ -528,14 +679,14 @@ class RosterScheduleService:
             id=uuid4(),
             company_id=company_id,
             reference=f"SW-{200 + count + 1}",
-            swap_date=body.swap_date,
-            requester_employee_id=body.requester_employee_id,
-            counterpart_employee_id=body.counterpart_employee_id,
+            swap_date=swap_date,
+            requester_employee_id=requester_id,
+            counterpart_employee_id=counterpart_id,
             requester_shift_id=a.shift_id,
             counterpart_shift_id=b.shift_id,
-            reason=body.reason,
+            reason=reason,
             status="PENDING",
-            counterpart_consented=body.counterpart_consented,
+            counterpart_consented=consented,
         )
         self._session.add(swap)
         await self._session.flush()
@@ -579,6 +730,8 @@ class RosterScheduleService:
 
         now = datetime.now(UTC)
         if approve:
+            if not swap.counterpart_consented:
+                raise ConflictError("The colleague has not agreed to this swap yet.")
             await _ensure_date_open(self._session, company_id, swap.swap_date, employee_id=None)
             a = await self._published(company_id, swap.requester_employee_id, swap.swap_date)
             b = await self._published(company_id, swap.counterpart_employee_id, swap.swap_date)
@@ -609,6 +762,80 @@ class RosterScheduleService:
             company_id=company_id,
             actor_user_id=actor_user_id,
             action="SHIFT_SWAP_APPROVED" if approve else "SHIFT_SWAP_DECLINED",
+            entity_type="shift_swap_request",
+            entity_id=swap.id,
+            after={"reference": swap.reference, "status": swap.status},
+        )
+        return await self._read(company_id, swap)
+
+    async def _own_pending(self, company_id: UUID, swap_id: UUID) -> ShiftSwapRequest:
+        swap = (
+            await self._session.execute(
+                select(ShiftSwapRequest)
+                .where(ShiftSwapRequest.id == swap_id, ShiftSwapRequest.company_id == company_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if swap is None:
+            raise NotFoundError("Swap request not found.")
+        if swap.status != "PENDING":
+            raise ConflictError("This swap request has already been decided.")
+        return swap
+
+    async def consent(
+        self,
+        company_id: UUID,
+        swap_id: UUID,
+        *,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+    ) -> SwapRequestRead:
+        """The colleague agrees to swap. Only the counterpart may do this."""
+        swap = await self._own_pending(company_id, swap_id)
+        if caller_employee_id is None or swap.counterpart_employee_id != caller_employee_id:
+            raise NotFoundError("Swap request not found.")
+        swap.counterpart_consented = True
+        swap.updated_at = datetime.now(UTC)
+        await self._session.flush()
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_SWAP_CONSENTED",
+            entity_type="shift_swap_request",
+            entity_id=swap.id,
+            after={"reference": swap.reference},
+        )
+        return await self._read(company_id, swap)
+
+    async def withdraw(
+        self,
+        company_id: UUID,
+        swap_id: UUID,
+        *,
+        caller_employee_id: UUID | None,
+        actor_user_id: UUID | None,
+    ) -> SwapRequestRead:
+        """The requester takes the request back, or the colleague turns it down."""
+        swap = await self._own_pending(company_id, swap_id)
+        is_requester = caller_employee_id == swap.requester_employee_id
+        is_counterpart = caller_employee_id == swap.counterpart_employee_id
+        if caller_employee_id is None or not (is_requester or is_counterpart):
+            raise NotFoundError("Swap request not found.")
+        now = datetime.now(UTC)
+        swap.status = "DECLINED"
+        swap.decided_by = actor_user_id
+        swap.decided_at = now
+        swap.decision_note = (
+            "Withdrawn by the requester" if is_requester else "Declined by colleague"
+        )
+        swap.updated_at = now
+        await self._session.flush()
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="SHIFT_SWAP_WITHDRAWN" if is_requester else "SHIFT_SWAP_REFUSED",
             entity_type="shift_swap_request",
             entity_id=swap.id,
             after={"reference": swap.reference, "status": swap.status},
