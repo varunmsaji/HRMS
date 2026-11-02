@@ -137,7 +137,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           tabIndex={-1}
           className="flex-1 px-4 py-6 outline-none sm:px-6 lg:px-8 print:p-0"
         >
-          <div className="mx-auto w-full max-w-[1440px]">
+          <div className="mx-auto w-full max-w-[1680px]">
             <CompanyStatusBanner />
             {children}
           </div>
