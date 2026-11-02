@@ -1,0 +1,27 @@
+{
+  "week_start": "2026-11-09",
+  "week_end": "2026-11-15",
+  "days": ["2026-11-09","2026-11-10","2026-11-11","2026-11-12","2026-11-13","2026-11-14","2026-11-15"],
+  "shifts": [
+    {
+      "id": "sh-day", "name": "General", "code": "GEN", "start_time": "09:00:00", "end_time": "17:00:00",
+      "is_night_shift": false, "daily_hours": 8.0, "weekly_hours": 40.0, "min_staff": 3, "peak_staff": 3,
+      "departments": ["Engineering"], "days_below_target": 1,
+      "cells": [
+        {"date": "2026-11-09", "count": 3, "met": true, "people": [{"id": "e1", "name": "Asha Rao", "initials": "AR"}, {"id": "e2", "name": "Ben Cole", "initials": "BC"}], "has_pending_swap": false},
+        {"date": "2026-11-10", "count": 1, "met": false, "people": [{"id": "e1", "name": "Asha Rao", "initials": "AR"}], "has_pending_swap": true},
+        {"date": "2026-11-11", "count": 0, "met": false, "people": [], "has_pending_swap": false}
+      ]
+    },
+    {
+      "id": "sh-night", "name": "Night", "code": "NGT", "start_time": "22:00:00", "end_time": "06:00:00",
+      "is_night_shift": true, "daily_hours": 8.0, "weekly_hours": 16.0, "min_staff": null, "peak_staff": 2,
+      "departments": [], "days_below_target": 0,
+      "cells": [
+        {"date": "2026-11-09", "count": 2, "met": null, "people": [{"id": "e3", "name": "Cy Dean", "initials": "CD"}], "has_pending_swap": false},
+        {"date": "2026-11-10", "count": 0, "met": null, "people": [], "has_pending_swap": false}
+      ]
+    }
+  ],
+  "totals": {"active_headcount": 5, "rostered_staff": 4, "coverage_pct": 66.7, "shifts_with_target": 1, "cells_below_target": 2, "night_staff": 2, "night_shift_count": 1, "pending_swaps": 1, "allocated_hours": 56.0, "last_roster_update": null}
+}

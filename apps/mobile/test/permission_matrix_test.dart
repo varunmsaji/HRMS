@@ -120,14 +120,14 @@ void main() {
   });
 
   group('employee', () {
-    test('menu is exactly the three request destinations (payslips unavailable in this release)', () {
-      expect([for (final e in visibleEmployeeEntries(_employeeRole)) e.route], ['/app/leave-balances', '/app/regularizations', '/app/overtime']);
+    test('menu is exactly the request destinations and shift swaps (payslips unavailable in this release)', () {
+      expect([for (final e in visibleEmployeeEntries(_employeeRole)) e.route], ['/app/leave-balances', '/app/regularizations', '/app/overtime', '/app/shift-swaps']);
     });
     test('every administrator destination lands on Home', () {
       expect(_reachable(_employeeRole, _allGuarded), isEmpty);
     });
     test('tabs, Home and the employee routes are reachable', () {
-      expect(_reachable(_employeeRole, ['/app/home', '/app/attendance', '/app/leave-applications', '/app/me', '/app/more', '/app/regularizations', '/app/overtime', '/app/leave-balances']).length, 8);
+      expect(_reachable(_employeeRole, ['/app/home', '/app/attendance', '/app/leave-applications', '/app/me', '/app/more', '/app/regularizations', '/app/overtime', '/app/leave-balances', '/app/shift-swaps']).length, 9);
     });
   });
 

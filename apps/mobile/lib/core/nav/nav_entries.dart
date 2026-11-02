@@ -54,6 +54,7 @@ const employeeNavEntries = [
       anyOf: [leaveBalanceView, leaveBalanceViewAll], employeeLabel: 'Leave balances', guarded: false),
   NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Attendance corrections', guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
+  NavEntry('Shift swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
   NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], employeeLabel: 'Payslips', guarded: false),
 ];
 
@@ -65,6 +66,8 @@ const navQuickLinks = NavGroup('Quick links', [
   NavEntry('Team Attendance', Icons.groups_outlined, '/app/team-attendance', anyOf: _teamView),
   NavEntry('Attendance Insights', Icons.insights_outlined, '/app/attendance-insights', anyOf: _teamView),
   NavEntry('Shift Rosters', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView]),
+  NavEntry('Schedule Coverage', Icons.stacked_bar_chart_outlined, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView]),
+  NavEntry('Shift Swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
   NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances', anyOf: [leaveBalanceView, leaveBalanceViewAll], guarded: false),

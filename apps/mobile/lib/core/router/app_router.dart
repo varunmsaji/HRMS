@@ -17,6 +17,8 @@ import '../../features/attendance/presentation/policy_assignments_screen.dart';
 import '../../features/attendance/presentation/policy_resolution_screen.dart';
 import '../../features/attendance/presentation/roster_calendar_screen.dart';
 import '../../features/attendance/presentation/rosters_screen.dart';
+import '../../features/attendance/presentation/shift_swaps_screen.dart';
+import '../../features/attendance/presentation/weekly_schedule_screen.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/auth/state/auth_state.dart';
 import '../../features/home/presentation/employee_home_screen.dart';
@@ -142,6 +144,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
       GoRoute(path: '/app/attendance-insights', builder: (context, state) => const AttendanceInsightsScreen()),
       GoRoute(path: '/app/rosters', builder: (context, state) => const RostersScreen()),
+      GoRoute(path: '/app/schedule', builder: (context, state) => const WeeklyScheduleScreen()),
+      GoRoute(path: '/app/shift-swaps', builder: (context, state) => const ShiftSwapsScreen()),
       GoRoute(path: '/app/roster-calendar', builder: (context, state) => const RosterCalendarScreen()),
       GoRoute(path: '/app/attendance-periods', builder: (context, state) => const AttendancePeriodsScreen()),
       GoRoute(path: '/app/policy-assignments', builder: (context, state) => const PolicyAssignmentsScreen()),
