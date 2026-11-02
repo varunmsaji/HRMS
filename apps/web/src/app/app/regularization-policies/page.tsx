@@ -27,6 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
@@ -200,12 +201,7 @@ export default function RegularizationPoliciesPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/regularization-policies/${policy.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Configure
-                    </Link>
+                    <TableRowAction href={`/app/regularization-policies/${policy.id}`}>Configure</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

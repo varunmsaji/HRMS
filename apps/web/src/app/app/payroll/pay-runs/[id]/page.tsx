@@ -36,6 +36,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
@@ -606,12 +607,7 @@ export default function PayRunDetailPage() {
                         View
                       </button>
                       {computed && employee.is_computed ? (
-                        <Link
-                          href={`/app/payroll/pay-runs/${run.id}/payslips/${employee.employee_id}`}
-                          className="text-xs font-medium text-primary hover:underline"
-                        >
-                          Payslip
-                        </Link>
+                        <TableRowAction href={`/app/payroll/pay-runs/${run.id}/payslips/${employee.employee_id}`}>Payslip</TableRowAction>
                       ) : null}
                       {canProcess &&
                       (run.status === "FINALISED" || run.status === "PAID") &&

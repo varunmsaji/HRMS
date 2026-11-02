@@ -28,6 +28,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { DEFAULT_TIMEZONE } from "@/lib/timezones";
@@ -306,12 +307,7 @@ export default function ShiftsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/shifts/${shift.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Configure
-                    </Link>
+                    <TableRowAction href={`/app/shifts/${shift.id}`}>Configure</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

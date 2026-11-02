@@ -1,7 +1,6 @@
 "use client";
 
 import { Search, UserPlus, X } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -34,6 +33,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
@@ -474,12 +474,7 @@ export default function OnboardingPage() {
                       <OnboardingStatusBadge status={onboardingCase.status} />
                     </TableCell>
                     <TableCell align="right">
-                      <Link
-                        href={`/app/onboarding/${onboardingCase.id}`}
-                        className="text-xs font-medium text-primary hover:underline"
-                      >
-                        Review case
-                      </Link>
+                      <TableRowAction href={`/app/onboarding/${onboardingCase.id}`}>Review case</TableRowAction>
                     </TableCell>
                   </TableRow>
                 ))}

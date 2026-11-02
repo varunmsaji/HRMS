@@ -27,6 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
@@ -222,12 +223,7 @@ export default function WorkCalendarsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/work-calendars/${calendar.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View calendar
-                    </Link>
+                    <TableRowAction href={`/app/work-calendars/${calendar.id}`}>View calendar</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

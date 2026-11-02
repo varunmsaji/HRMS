@@ -1,7 +1,6 @@
 "use client";
 
 import { FileClock, Plus } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
@@ -26,6 +25,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { EmployeeSelect } from "@/components/employee/employee-select";
@@ -327,12 +327,7 @@ export default function RegularizationsPage() {
                     {request.approval_stage ?? "—"}
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/regularizations/${request.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View
-                    </Link>
+                    <TableRowAction href={`/app/regularizations/${request.id}`}>View</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

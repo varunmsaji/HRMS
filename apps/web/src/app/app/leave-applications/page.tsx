@@ -1,7 +1,6 @@
 "use client";
 
 import { CalendarOff, Plus } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
@@ -26,6 +25,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/skeleton";
@@ -345,12 +345,7 @@ export default function LeaveApplicationsPage() {
                       {application.approval_stage ?? "—"}
                     </TableCell>
                     <TableCell align="right">
-                      <Link
-                        href={`/app/leave-applications/${application.id}`}
-                        className="text-xs font-medium text-primary hover:underline"
-                      >
-                        View
-                      </Link>
+                      <TableRowAction href={`/app/leave-applications/${application.id}`}>View</TableRowAction>
                     </TableCell>
                   </TableRow>
                 );
