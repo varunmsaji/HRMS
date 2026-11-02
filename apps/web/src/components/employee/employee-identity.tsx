@@ -19,6 +19,18 @@ export function computeInitials(name?: string | null, fallbackCode?: string | nu
   return "EM";
 }
 
+/** "Imran Shetty (EMP-0030)" → name + code. Only a code-looking suffix is split off: alphanumeric
+ * segments joined by - or _, containing at least one digit — so a name that merely ends in
+ * brackets ("Raj (Jr)") is left alone. */
+const CODE_SUFFIX = /\s*\(([A-Za-z0-9]{2,}(?:[-_][A-Za-z0-9]+)*)\)\s*$/;
+
+export function splitEmployeeLabel(label: string): { name: string; code: string | null } {
+  const match = CODE_SUFFIX.exec(label);
+  if (!match || !/\d/.test(match[1])) return { name: label, code: null };
+  const name = label.slice(0, match.index).trim();
+  return name ? { name, code: match[1] } : { name: label, code: null };
+}
+
 interface EmployeeAvatarProps {
   name?: string | null;
   code?: string | null;
@@ -73,20 +85,22 @@ export function EmployeeIdentityCell({
   size = "md",
   className,
 }: EmployeeIdentityCellProps) {
-  const displayName = name.trim() || "—";
+  const split = code ? { name: name.trim(), code } : splitEmployeeLabel(name.trim());
+  const displayName = split.name || "—";
+  const identityCode = split.code;
   const content = (
     <div className={cn("flex items-center gap-2.5 min-w-0", className)}>
-      <EmployeeAvatar name={displayName} code={code} size={size} />
+      <EmployeeAvatar name={displayName} code={identityCode} size={size} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate font-medium text-foreground group-hover/emp:text-primary group-hover/emp:underline">
             {displayName}
           </span>
         </div>
-        {subtitle || code ? (
+        {subtitle || identityCode ? (
           <div className="flex items-center gap-1.5 truncate text-xs text-foreground-muted">
-            {code ? <span className="font-mono text-2xs text-foreground-secondary">{code}</span> : null}
-            {code && subtitle ? <span aria-hidden="true">·</span> : null}
+            {identityCode ? <span className="font-mono text-2xs text-foreground-secondary">{identityCode}</span> : null}
+            {identityCode && subtitle ? <span aria-hidden="true">·</span> : null}
             {subtitle ? <span className="truncate">{subtitle}</span> : null}
           </div>
         ) : null}

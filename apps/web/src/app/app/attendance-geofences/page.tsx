@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "@/components/common/empty-state";
+import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
@@ -318,7 +319,9 @@ export default function AttendanceGeofencesPage() {
                     <TableBody>
                       {authorizations.map((a) => (
                         <TableRow key={a.id}>
-                          <TableCell>{employeeName(a.employee_id)}</TableCell>
+                          <TableCell>
+                          <EmployeeIdentityCell name={employeeName(a.employee_id)} size="sm" />
+                        </TableCell>
                           <TableCell>{branchById.get(a.branch_id)?.name ?? a.branch_id}</TableCell>
                           <TableCell className="text-right">
                             <Button
@@ -397,7 +400,9 @@ export default function AttendanceGeofencesPage() {
                     {attempts.map((a) => (
                       <TableRow key={a.id}>
                         <TableCell>{new Date(a.created_at).toLocaleString()}</TableCell>
-                        <TableCell>{employeeName(a.employee_id)}</TableCell>
+                        <TableCell>
+                          <EmployeeIdentityCell name={employeeName(a.employee_id)} size="sm" />
+                        </TableCell>
                         <TableCell>{a.direction}</TableCell>
                         <TableCell>
                           <Badge variant={a.accepted ? "success" : "danger"}>

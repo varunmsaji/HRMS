@@ -98,7 +98,9 @@ describe("RostersPage with more than one page of data", () => {
     await screen.findByText("130");
     await user.click(screen.getByRole("button", { name: /^next$/i }));
 
-    expect(await screen.findByText("Person205 (E205)")).toBeInTheDocument();
+    // The identity cell shows the name with the code on its own line.
+    expect(await screen.findByText("Person205")).toBeInTheDocument();
+    expect(screen.getByText("E205")).toBeInTheDocument();
     expect(screen.queryByText("emp-205")).not.toBeInTheDocument();
     expect(mockedGet).toHaveBeenCalledWith("/employees/emp-205");
   });
