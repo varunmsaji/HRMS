@@ -425,8 +425,12 @@ class EmployeeService:
         scope: DataScope | None = None,
         caller_employee_id: UUID | None = None,
         page: PageParams | None = None,
+        search: str | None = None,
     ) -> tuple[list[EmployeeRead], int]:
-        """`scope=None` (every caller except `GET /employees`) preserves this module's
+        """`search` narrows the result (inside the caller's data scope) by name/code/email/mobile
+        — applied in SQL, before pagination, so it spans every page.
+
+        `scope=None` (every caller except `GET /employees`) preserves this module's
         pre-data-scope behavior exactly — company-wide, no filter. `GET /employees` passes its
         resolved `DataScope` (`router.py`), narrowing the result per
         `resolve_visible_employee_ids`.
@@ -443,7 +447,10 @@ class EmployeeService:
         )
         if page is None:
             employees = await self._repo.list_employees(
-                self._session, company_id=company_id, visible_employee_ids=visible_ids
+                self._session,
+                company_id=company_id,
+                visible_employee_ids=visible_ids,
+                search=search,
             )
             employments = await self._employment_repo.list_latest_employments(
                 self._session,
@@ -463,9 +470,10 @@ class EmployeeService:
             visible_employee_ids=visible_ids,
             limit=page.limit,
             offset=page.offset,
+            search=search,
         )
         total = await self._repo.count_employees(
-            self._session, company_id=company_id, visible_employee_ids=visible_ids
+            self._session, company_id=company_id, visible_employee_ids=visible_ids, search=search
         )
         # F-1 remediation: one extra bulk query (never N+1) so `GET /employees`'s page of rows
         # carries each employee's current employment boundaries — see `EmployeeRead.

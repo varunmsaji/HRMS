@@ -188,9 +188,16 @@ async def list_employees(
     scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_ALL))],
     service: Annotated[EmployeeService, Depends(get_employee_service)],
     page: Annotated[PageParams, Depends(pagination_params)],
+    q: Annotated[
+        str | None, Query(max_length=100, description="Search name, code, email or mobile")
+    ] = None,
 ) -> ListEnvelope[EmployeeRead]:
     data, total = await service.list_employees(
-        tenant.company_id, scope=scope, caller_employee_id=user.employee_id, page=page
+        tenant.company_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        page=page,
+        search=q,
     )
     return ListEnvelope(
         data=data,

@@ -38,6 +38,31 @@ class EmployeeRepository:
         await session.flush()
         return row
 
+    @staticmethod
+    def _search_conditions(search: str | None) -> list[Any]:
+        """One predicate per whitespace-separated word, ANDed: every word must match the name
+        (first, middle, last or display), employee code, personal email or mobile,
+        case-insensitively and as a substring. LIKE wildcards in the input are escaped so
+        `%`/`_` search literally. Empty/blank `search` adds nothing."""
+        words = [w for w in (search or "").split() if w]
+        conditions: list[Any] = []
+        full_name = func.concat_ws(
+            " ", Employee.first_name, Employee.middle_name, Employee.last_name
+        )
+        for word in words[:8]:
+            escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{escaped}%"
+            conditions.append(
+                or_(
+                    full_name.ilike(pattern, escape="\\"),
+                    Employee.display_name.ilike(pattern, escape="\\"),
+                    Employee.employee_code.ilike(pattern, escape="\\"),
+                    Employee.personal_email.ilike(pattern, escape="\\"),
+                    Employee.personal_mobile.ilike(pattern, escape="\\"),
+                )
+            )
+        return conditions
+
     async def list_employees(
         self,
         session: AsyncSession,
@@ -46,6 +71,7 @@ class EmployeeRepository:
         visible_employee_ids: frozenset[UUID] | None = None,
         limit: int | None = None,
         offset: int = 0,
+        search: str | None = None,
     ) -> list[Employee]:
         """`visible_employee_ids=None` means `COMPANY` scope (or the caller didn't resolve a
         scope at all, e.g. non-data-scoped routes still calling this unchanged) — no extra
@@ -62,6 +88,7 @@ class EmployeeRepository:
         conditions = [Employee.company_id == company_id, Employee.deleted_at.is_(None)]
         if visible_employee_ids is not None:
             conditions.append(Employee.id.in_(visible_employee_ids))
+        conditions.extend(self._search_conditions(search))
         # `id` is a stable secondary key — `created_at` alone can tie for rows inserted in the
         # same transaction/batch import, which would make page boundaries non-deterministic.
         stmt = select(Employee).where(*conditions).order_by(Employee.created_at, Employee.id)
@@ -75,12 +102,14 @@ class EmployeeRepository:
         *,
         company_id: UUID,
         visible_employee_ids: frozenset[UUID] | None = None,
+        search: str | None = None,
     ) -> int:
         """Same predicates as `list_employees`, no `ORDER BY`/`LIMIT` — the paired COUNT query
         for `GET /employees`'s `pagination.total` (API-01)."""
         conditions = [Employee.company_id == company_id, Employee.deleted_at.is_(None)]
         if visible_employee_ids is not None:
             conditions.append(Employee.id.in_(visible_employee_ids))
+        conditions.extend(self._search_conditions(search))
         stmt = select(func.count()).select_from(Employee).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
 
