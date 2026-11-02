@@ -431,6 +431,43 @@ class ShiftRoster(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# ShiftSwapRequest — peer swap of two employees' shifts on one date
+# ---------------------------------------------------------------------------
+
+
+class ShiftSwapRequest(Base, TimestampMixin):
+    """Two employees exchange their rostered shifts on `swap_date`. Approving it rewrites both
+    `ShiftRoster` rows (published); declining leaves the roster untouched."""
+
+    __tablename__ = "shift_swap_request"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    company_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("company.id"), index=True
+    )
+    reference: Mapped[str] = mapped_column(String(20))
+    swap_date: Mapped[date] = mapped_column(Date)
+    requester_employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id")
+    )
+    counterpart_employee_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("employee.id")
+    )
+    requester_shift_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("shift.id"))
+    counterpart_shift_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("shift.id")
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default="PENDING")
+    counterpart_consented: Mapped[bool] = mapped_column(Boolean, default=False)
+    decided_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"), nullable=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ---------------------------------------------------------------------------
 # Punch — immutable, append-only raw event (W4, WD-11)
 # ---------------------------------------------------------------------------
 

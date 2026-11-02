@@ -260,6 +260,7 @@ class Shift(Base, TimestampMixin):
     is_night_shift: Mapped[bool] = mapped_column(Boolean, default=False)
     is_cross_midnight: Mapped[bool] = mapped_column(Boolean, default=False)
     is_ot_eligible: Mapped[bool] = mapped_column(Boolean, default=False)
+    min_staff: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
