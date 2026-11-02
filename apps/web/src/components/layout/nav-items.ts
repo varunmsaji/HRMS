@@ -51,6 +51,8 @@ export interface NavItem {
    * can't access yet are absent, not disabled) rather than per-permission filtering, which this
    * one item doesn't fit: it's gated on data (an Employee link), not a permission code. */
   requiresEmployeeId?: boolean;
+  /** Highlight this item for every path under this prefix, when it differs from `href` (the landing view). */
+  matchPrefix?: string;
 }
 
 export interface PrimaryNavGroup {
@@ -79,9 +81,7 @@ export const PRIMARY_NAV_GROUPS: PrimaryNavGroup[] = [
     label: "Time & Attendance",
     items: [
       { href: "/app/attendance", label: "Attendance", icon: CalendarClock },
-      { href: "/app/rosters", label: "Shift Rosters", icon: CalendarCheck },
-      { href: "/app/rosters/calendar", label: "Roster Calendar", icon: CalendarRange },
-      { href: "/app/rosters/grid", label: "Team Roster Grid", icon: LayoutList },
+      { href: "/app/rosters/schedule", label: "Shift Rosters", icon: CalendarCheck, matchPrefix: "/app/rosters" },
       { href: "/app/regularizations", label: "Regularizations", icon: ClipboardEdit },
       { href: "/app/overtime", label: "Overtime", icon: AlarmClock },
     ],

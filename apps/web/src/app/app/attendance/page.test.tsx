@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -81,6 +81,8 @@ interface Overrides {
   periods?: unknown[];
   regularizations?: unknown[];
   summary?: unknown[];
+  /** Department / branch rows from the employee directory; omitted = the request fails. */
+  directory?: unknown[] | Error;
 }
 
 function mockApi(o: Overrides = {}) {
@@ -100,6 +102,9 @@ function mockApi(o: Overrides = {}) {
       ]);
     }
     if (path === "/shifts") return Promise.resolve([{ id: "shift-1", name: "General" }]);
+    if (path.startsWith("/employees/directory/rows") && o.directory !== undefined) {
+      return o.directory instanceof Error ? Promise.reject(o.directory) : Promise.resolve(o.directory);
+    }
     return Promise.reject(new Error(`Unexpected GET ${path}`));
   });
   mockedGetList.mockImplementation((path: string) => {
@@ -114,6 +119,22 @@ function mockApi(o: Overrides = {}) {
     return Promise.reject(new Error(`Unexpected getList ${path}`));
   });
 }
+
+const dirRow = (employee_id: string, department: string | null, branch: string | null) => ({
+  employee_id,
+  designation: null,
+  department,
+  branch,
+  manager_name: null,
+  shift_name: null,
+});
+
+/** Asha and Ben in Engineering / Pune, Chitra in Sales / Mumbai. */
+const DIRECTORY = [
+  dirRow("emp-1", "Engineering", "Pune"),
+  dirRow("emp-2", "Engineering", "Pune"),
+  dirRow("emp-3", "Sales", "Mumbai"),
+];
 
 const sampleDays = (): AttendanceDay[] => [
   makeDay({ employee_id: "emp-1", attendance_date: TODAY, shift_id: "shift-1" }),
@@ -188,20 +209,25 @@ describe("AttendanceDashboardPage", () => {
 
     it("isolates a failing section: the rest of the dashboard still renders and offers a retry", async () => {
       mockApi({ days: sampleDays(), overtime: new ApiError({ status: 500, code: "BOOM", message: "x" }) });
+      searchParams = new URLSearchParams("view=trends");
+      const user = userEvent.setup();
       render(<AttendanceDashboardPage />);
       expect(await screen.findByText(/couldn't load overtime/i)).toBeInTheDocument();
-      expect(kpi(/^Present: 2\./)).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "Today" }));
+      expect(await findKpi(/^Present: 2\./)).toBeInTheDocument();
       expect(screen.getByText(/not included \(couldn't be loaded\): pending overtime/i)).toBeInTheDocument();
     });
 
     it("preserves a permission error on a secondary section", async () => {
       mockApi({ days: sampleDays(), overtime: new ApiError({ status: 403, code: "PERMISSION_DENIED", message: "x" }) });
+      searchParams = new URLSearchParams("view=trends");
       render(<AttendanceDashboardPage />);
       expect(await screen.findByText(/you do not have permission to view this section/i)).toBeInTheDocument();
     });
 
     it("shows an honest empty message for overtime instead of a bare zero", async () => {
       mockApi({ days: sampleDays(), overtime: [] });
+      searchParams = new URLSearchParams("view=trends");
       render(<AttendanceDashboardPage />);
       expect(await screen.findByText(/no overtime recorded for this period/i)).toBeInTheDocument();
     });
@@ -350,11 +376,14 @@ describe("AttendanceDashboardPage", () => {
     it("drills from a status-chart row", async () => {
       mockApi({ days: sampleDays() });
       const user = userEvent.setup();
+      searchParams = new URLSearchParams("view=trends");
       render(<AttendanceDashboardPage />);
       const chart = await screen.findByRole("heading", { name: /status distribution/i });
       const card = chart.closest("[id='att-status']") as HTMLElement;
       await user.click(within(card).getByRole("button", { name: /^Absent: 1\./ }));
       await waitFor(() => expect(inList().queryAllByText("Asha Rao")).toHaveLength(0));
+      // The list lives on the Today view, so a drill from Trends brings the user back to it.
+      expect(screen.getByRole("tab", { name: "Today" })).toHaveAttribute("aria-selected", "true");
     });
 
     // F5-1 regression: a KPI-card drill must stay scoped to the focus date even when a
@@ -405,6 +434,7 @@ describe("AttendanceDashboardPage", () => {
       const user = userEvent.setup();
       render(<AttendanceDashboardPage />);
       await findKpi(/^Absent: 1\./);
+      await user.click(screen.getByRole("button", { name: /more filters/i }));
       const shiftSelect = await screen.findByLabelText("Shift");
       await user.selectOptions(shiftSelect, "shift-1");
       await waitFor(() => expect(kpi(/^Total employees: 1\./)).toBeInTheDocument());
@@ -415,6 +445,7 @@ describe("AttendanceDashboardPage", () => {
       const user = userEvent.setup();
       render(<AttendanceDashboardPage />);
       await findKpi(/^Absent: 1\./);
+      await user.click(screen.getByRole("button", { name: /more filters/i }));
       await user.selectOptions(await screen.findByLabelText("Employment status"), "PROBATION");
       await waitFor(() => expect(kpi(/^Total employees: 1\./)).toBeInTheDocument());
       expect(kpi(/^Absent: 1\./)).toBeInTheDocument();
@@ -447,14 +478,154 @@ describe("AttendanceDashboardPage", () => {
       expect(screen.getByLabelText("To")).toBeInTheDocument();
     });
 
-    it("does not offer department / branch filters the data can't support, and says why", async () => {
+    it("does not offer department / branch filters the data can't support, and no longer shows placeholder cards for them", async () => {
       mockApi({ days: sampleDays() });
       render(<AttendanceDashboardPage />);
       await findKpi(/^Absent: 1\./);
       expect(screen.queryByRole("combobox", { name: /department|branch|designation|location|work mode/i })).not.toBeInTheDocument();
-      // Both the breakdown card and the coverage notice explain the gap.
-      expect(screen.getByText("Not shown on this dashboard")).toBeInTheDocument();
-      expect(screen.getAllByText(/one request per employee/i).length).toBeGreaterThanOrEqual(2);
+      // Unfinished features are hidden rather than shown as "not available yet" cards.
+      expect(screen.queryByText("Not shown on this dashboard")).not.toBeInTheDocument();
+      expect(screen.queryByText(/one request per employee/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("departments & branches", () => {
+    it("ranks departments by attendance, lowest first, on the Trends view", async () => {
+      searchParams = new URLSearchParams("view=trends");
+      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      render(<AttendanceDashboardPage />);
+      const card = (await screen.findByRole("heading", { name: /departments & branches/i })).closest("[id='att-breakdown']") as HTMLElement;
+      const rows = await within(card).findAllByRole("button", { name: /present, .* absent, .* late/i });
+      expect(rows[0]).toHaveAccessibleName(/^Sales: 0\.0% present, 1 absent, 0 late/);
+      expect(rows[1]).toHaveAccessibleName(/^Engineering: 100\.0% present, 0 absent, 1 late/);
+      await userEvent.setup().click(within(card).getByRole("button", { name: "branch" }));
+      expect(await within(card).findByRole("button", { name: /^Mumbai:/ })).toBeInTheDocument();
+    });
+
+    it("narrows the whole dashboard to a department when its row is clicked, and clears it on a second click", async () => {
+      searchParams = new URLSearchParams("view=trends");
+      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      const salesRow = await screen.findByRole("button", { name: /^Sales: .*Show only this department/ });
+      await user.click(salesRow);
+      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance?dept=Sales&view=trends", { scroll: false }));
+      expect(await screen.findByRole("button", { name: /remove filter department: sales/i })).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "Today" }));
+      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(kpi(/^Absent: 1\./)).toBeInTheDocument();
+
+      await user.click(screen.getByRole("tab", { name: "Trends" }));
+      await user.click(await screen.findByRole("button", { name: /^Sales: .*Clear department/ }));
+      await user.click(screen.getByRole("tab", { name: "Today" }));
+      expect(await findKpi(/^Total employees: 3\./)).toBeInTheDocument();
+    });
+
+    it("restores a department filter from a shared link", async () => {
+      searchParams = new URLSearchParams("dept=Engineering");
+      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      render(<AttendanceDashboardPage />);
+      expect(await findKpi(/^Total employees: 2\./)).toBeInTheDocument();
+      expect(kpi(/^Absent: 0\./)).toBeInTheDocument();
+    });
+
+    it("offers department and branch filters under More filters once the directory has loaded", async () => {
+      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      await findKpi(/^Absent: 1\./);
+      await user.click(screen.getByRole("button", { name: /more filters/i }));
+      await user.selectOptions(await screen.findByLabelText("Branch"), "Mumbai");
+      await waitFor(() => expect(kpi(/^Total employees: 1\./)).toBeInTheDocument());
+      expect(screen.getByRole("button", { name: /remove filter branch: mumbai/i })).toBeInTheDocument();
+    });
+
+    it("groups employees without a department under Unassigned", async () => {
+      searchParams = new URLSearchParams("view=trends");
+      mockApi({ days: sampleDays(), directory: [dirRow("emp-1", "Engineering", null), dirRow("emp-2", null, null)] });
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByRole("button", { name: /^Unassigned:/ })).toBeInTheDocument();
+    });
+
+    it("says so, and ignores the filter, when the directory can't be loaded", async () => {
+      searchParams = new URLSearchParams("dept=Sales");
+      mockApi({ days: sampleDays(), directory: new ApiError({ status: 500, code: "BOOM", message: "x" }) });
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByText(/department \/ branch filter isn't applied/i)).toBeInTheDocument();
+      expect(await findKpi(/^Total employees: 3\./)).toBeInTheDocument();
+    });
+
+    it("shows a department filter's loading skeleton, not unfiltered numbers, while the directory loads", async () => {
+      searchParams = new URLSearchParams("dept=Sales");
+      let release!: (rows: unknown) => void;
+      mockApi({ days: sampleDays(), directory: [] });
+      const base = mockedGet.getMockImplementation()!;
+      mockedGet.mockImplementation((path: string) =>
+        path.startsWith("/employees/directory/rows")
+          ? (new Promise((r) => {
+              release = r;
+            }) as never)
+          : base(path),
+      );
+      render(<AttendanceDashboardPage />);
+      await waitFor(() => expect(release).toBeDefined());
+      expect(screen.getByRole("status", { name: /loading attendance/i })).toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Attendance summary" })).not.toBeInTheDocument();
+      await act(async () => release(DIRECTORY));
+      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+    });
+
+    it("does not ask for departments without permission to list employees", async () => {
+      authUser = { ...authUser, permissions: ADMIN_PERMISSIONS.filter((p) => p !== "EMPLOYEE.VIEW_ALL") };
+      searchParams = new URLSearchParams("view=trends");
+      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      render(<AttendanceDashboardPage />);
+      await screen.findByRole("heading", { name: /attendance trend/i });
+      expect(screen.queryByRole("heading", { name: /departments & branches/i })).not.toBeInTheDocument();
+      expect(mockedGet.mock.calls.some((c) => String(c[0]).startsWith("/employees/directory"))).toBe(false);
+    });
+
+    it("shows the department under each name in the list", async () => {
+      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      render(<AttendanceDashboardPage />);
+      await findKpi(/^Absent: 1\./);
+      expect(await inList().findByText("EMP-003 · Sales")).toBeInTheDocument();
+    });
+  });
+
+  describe("views", () => {
+    it("opens on Today and shows only that view's sections", async () => {
+      mockApi({ days: sampleDays() });
+      render(<AttendanceDashboardPage />);
+      await findKpi(/^Absent: 1\./);
+      expect(screen.getByRole("tab", { name: "Today", selected: true })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /needs attention/i })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /attendance trend/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /attendance heatmap/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Reports" })).not.toBeInTheDocument();
+    });
+
+    it("switches view and keeps it in the URL, leaving Today out of it", async () => {
+      mockApi({ days: sampleDays() });
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      await findKpi(/^Absent: 1\./);
+      await user.click(screen.getByRole("tab", { name: "Muster" }));
+      expect(await screen.findByRole("heading", { name: /attendance heatmap/i })).toBeInTheDocument();
+      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance?view=muster", { scroll: false }));
+      await user.click(screen.getByRole("tab", { name: "Today" }));
+      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance", { scroll: false }));
+    });
+
+    it("restores the view from a shared URL and moves between views with the arrow keys", async () => {
+      searchParams = new URLSearchParams("view=trends");
+      mockApi({ days: sampleDays() });
+      const user = userEvent.setup();
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByRole("heading", { name: /attendance trend/i })).toBeInTheDocument();
+      screen.getByRole("tab", { name: "Trends" }).focus();
+      await user.keyboard("{ArrowRight}");
+      expect(screen.getByRole("tab", { name: "Muster", selected: true })).toHaveFocus();
     });
   });
 
@@ -462,6 +633,7 @@ describe("AttendanceDashboardPage", () => {
     it("scopes the attendance periods to the chosen company", async () => {
       mockApi({ days: sampleDays(), periods: [PERIOD_OPEN] });
       const user = userEvent.setup();
+      searchParams = new URLSearchParams("view=periods");
       render(<AttendanceDashboardPage />);
       const select = await screen.findByLabelText("Company (periods)");
       await user.selectOptions(select, "le-2");
@@ -473,13 +645,20 @@ describe("AttendanceDashboardPage", () => {
 
     it("shows period state with its entity, and surfaces a blocked period as a payroll blocker", async () => {
       mockApi({ days: sampleDays(), periods: [PERIOD_OPEN] });
+      searchParams = new URLSearchParams("view=periods");
       render(<AttendanceDashboardPage />);
       const section = (await screen.findByRole("heading", { name: /attendance periods/i })).closest("[id='att-periods']") as HTMLElement;
       expect(await within(section).findByText("Current month")).toBeInTheDocument();
-      expect(within(section).getByText(/ABC India Pvt Ltd/)).toBeInTheDocument();
+      expect(within(section).getByText(/ABC India Pvt Ltd ·/)).toBeInTheDocument();
       expect(within(section).getByText("Validation blocked")).toBeInTheDocument();
       expect(within(section).getByRole("link", { name: /current month/i })).toHaveAttribute("href", "/app/attendance-periods/per-1");
-      expect(await screen.findByText("Payroll period blocked")).toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole("tab", { name: "Today" }));
+      // The blocker shows in Needs attention and again in the payroll-readiness card beside it.
+      const attention = (await screen.findByRole("heading", { name: /needs attention/i })).closest("[id='att-attention']") as HTMLElement;
+      expect(within(attention).getByText("Payroll period blocked")).toBeInTheDocument();
+      const readiness = screen.getByRole("region", { name: "Payroll readiness" });
+      expect(within(readiness).getByText("Payroll period blocked")).toBeInTheDocument();
+      expect(within(readiness).getByText("Validation blocked")).toBeInTheDocument();
     });
 
     it("totals the period summary for the monthly view", async () => {
@@ -490,6 +669,7 @@ describe("AttendanceDashboardPage", () => {
           { employee_id: "emp-1", present_days: "20", absent_days: "1", leave_days: "2", holiday_days: "1", weekly_off_days: "4", half_days: "0", lop_days: "1", on_duty_days: "0", incomplete_days: "0", not_employed_days: "0", unpaid_off_days: "0", paid_days: "29", payable_days: "29", ot_minutes_normal: 60, ot_minutes_weekly_off: 0, ot_minutes_holiday: 0, ot_minutes_night: 0, comp_off_minutes_earned: 0, late_count: 2, worked_minutes_total: 9000, generated_at: "x", frozen: false },
         ],
       });
+      searchParams = new URLSearchParams("view=periods");
       render(<AttendanceDashboardPage />);
       const section = (await screen.findByRole("heading", { name: /monthly attendance summary/i })).closest("[id='att-monthly']") as HTMLElement;
       expect(await within(section).findByText("Live preview")).toBeInTheDocument();
@@ -622,9 +802,10 @@ describe("AttendanceDashboardPage", () => {
   });
 
   describe("reports", () => {
-    it("switches between reports built from existing data and states that export is unavailable", async () => {
+    it("switches between reports built from existing data and offers no export controls", async () => {
       mockApi({ days: sampleDays() });
       const user = userEvent.setup();
+      searchParams = new URLSearchParams("view=periods");
       render(<AttendanceDashboardPage />);
       const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
       expect(within(reports).getByRole("tab", { name: "Daily attendance", selected: true })).toBeInTheDocument();
@@ -635,12 +816,13 @@ describe("AttendanceDashboardPage", () => {
       expect(within(reports).queryByText("Asha Rao")).not.toBeInTheDocument();
 
       expect(within(reports).queryByRole("button", { name: /export|csv|pdf|excel/i })).not.toBeInTheDocument();
-      expect(within(reports).getByText(/export .* is not available yet/i)).toBeInTheDocument();
+      expect(within(reports).queryByText(/export .* is not available yet/i)).not.toBeInTheDocument();
     });
 
     it("searches within a report", async () => {
       mockApi({ days: sampleDays() });
       const user = userEvent.setup();
+      searchParams = new URLSearchParams("view=periods");
       render(<AttendanceDashboardPage />);
       const reports = (await screen.findByRole("heading", { name: "Reports" })).closest("[id='att-reports']") as HTMLElement;
       await user.type(within(reports).getByLabelText("Search report"), "chitra");
@@ -666,7 +848,7 @@ describe("AttendanceDashboardPage", () => {
       it("excludes an overtime row before the selected range even though it falls inside the wider trend window", async () => {
         const start = addDays(TODAY, -3);
         const outOfRange = addDays(TODAY, -10); // before `start`, but inside the ≥14-day trend window
-        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}`);
+        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}&view=periods`);
         mockApi({
           days: sampleDays(),
           overtime: [
@@ -685,7 +867,7 @@ describe("AttendanceDashboardPage", () => {
 
       it("includes both range boundary dates (inclusive start and end)", async () => {
         const start = addDays(TODAY, -3);
-        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}`);
+        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}&view=periods`);
         mockApi({
           days: sampleDays(),
           overtime: [
@@ -705,7 +887,7 @@ describe("AttendanceDashboardPage", () => {
       it("leaves the dashboard's own Overtime panel unaffected — it already scoped to the range before this fix", async () => {
         const start = addDays(TODAY, -3);
         const outOfRange = addDays(TODAY, -10);
-        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}`);
+        searchParams = new URLSearchParams(`range=custom&from=${start}&to=${TODAY}&view=trends`);
         mockApi({
           days: sampleDays(),
           overtime: [
@@ -728,6 +910,7 @@ describe("AttendanceDashboardPage", () => {
       mockApi({ days: sampleDays(), periods: [PERIOD_OPEN] });
       render(<AttendanceDashboardPage />);
       await findKpi(/^Present: 2\./);
+      await userEvent.setup().click(screen.getByRole("tab", { name: "Periods & reports" }));
       await screen.findByText("Current month");
       await waitFor(() => {
         const total = mockedGet.mock.calls.length + mockedGetList.mock.calls.length;

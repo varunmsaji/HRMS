@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,17 @@ vi.mock("@/lib/auth/auth-context", () => ({
 vi.mock("@/lib/attendance/format", async (orig) => ({
   ...(await orig<typeof import("@/lib/attendance/format")>()),
   businessToday: () => "2026-10-26", // a Monday
+}));
+vi.mock("@/lib/auth/use-permissions", () => ({
+  usePermissions: () => ({ can: () => true }),
+}));
+vi.mock("@/components/shift-roster/roster-entry-dialog", () => ({
+  RosterEntryDialog: (p: { open: boolean; employeeId?: string; rosterDate?: string; roster?: { id: string } | null }) =>
+    p.open ? (
+      <div role="dialog">
+        dialog:{p.employeeId}:{p.rosterDate}:{p.roster?.id ?? "new"}
+      </div>
+    ) : null,
 }));
 vi.mock("@/lib/api/client", () => ({ apiClient: { get: vi.fn(), getList: vi.fn() } }));
 
@@ -87,7 +98,7 @@ describe("RosterGridPage with datasets beyond the old limits", () => {
     render(<RosterGridPage />);
 
     await screen.findByText(/Person002/);
-    expect(await screen.findByText("NGT")).toBeInTheDocument();
+    expect(await within(await screen.findByRole("table")).findByText("NGT")).toBeInTheDocument();
     const rosterPages = mockedGetList.mock.calls
       .filter((c) => c[0] === "/rosters")
       .map((c) => (c[1] as { page: number }).page)
@@ -108,7 +119,7 @@ describe("RosterGridPage with datasets beyond the old limits", () => {
     await waitFor(() => expect(screen.getByText(/Person051/)).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /^next$/i }));
     expect(await screen.findByText(/Person120/)).toBeInTheDocument();
-    expect(await screen.findByText("NGT")).toBeInTheDocument();
+    expect(await within(await screen.findByRole("table")).findByText("NGT")).toBeInTheDocument();
   });
 
   it("warns instead of silently truncating when the range exceeds the safety bound", async () => {
@@ -127,5 +138,24 @@ describe("RosterGridPage with datasets beyond the old limits", () => {
     render(<RosterGridPage />);
     await screen.findByText(/Person001/);
     expect(screen.getByText(/searches the employees shown below/i)).toBeInTheDocument();
+  });
+
+  it("opens the entry dialog from a filled cell (edit) and from a blank cell (add)", async () => {
+    serve({ entriesTotal: 1, placed: { 1: ["emp-1", "s-night"] } });
+    const user = userEvent.setup();
+    render(<RosterGridPage />);
+    const table = await screen.findByRole("table");
+    await user.click(await within(table).findByRole("button", { name: /Person001.*Night/ }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("dialog:emp-1:2026-10-26:r-1");
+    const add = within(table).getAllByRole("button", { name: /Add roster entry for Person002/ })[0];
+    await user.click(add);
+    expect(screen.getByRole("dialog")).toHaveTextContent(/dialog:emp-2:2026-10-2\d:new/);
+  });
+
+  it("totals headcount per shift per day across all entries, not just the visible page", async () => {
+    serve({ entriesTotal: 3, placed: { 1: ["emp-1", "s-night"] } });
+    render(<RosterGridPage />);
+    const table = await screen.findByRole("table");
+    expect(await within(table).findByLabelText("Night on 2026-10-26: 3")).toHaveTextContent("3");
   });
 });

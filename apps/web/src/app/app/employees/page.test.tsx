@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -104,5 +104,90 @@ describe("EmployeesPage loading behaviour", () => {
 
     unmount();
     expect(signal.aborted).toBe(true);
+  });
+});
+
+describe("EmployeesPage search", () => {
+  afterEach(() => mockedGetList.mockReset());
+
+  it("searches every page on the server, and returns to page 1 for a new search", async () => {
+    mockedGetList.mockResolvedValue(envelope("alice", 1));
+    const user = userEvent.setup();
+    render(<EmployeesPage />);
+    expect(await screen.findByText("alice")).toBeInTheDocument();
+
+    // First request has no search term.
+    expect(mockedGetList.mock.calls[0]?.[1]).toEqual({ page: 1 });
+
+    await user.type(screen.getByRole("searchbox"), "varun m saji");
+
+    await waitFor(() => {
+      const params = mockedGetList.mock.calls.map((c) => c[1]);
+      expect(params).toContainEqual({ page: 1, q: "varun m saji" });
+    });
+    // Debounced: one request for the whole phrase, not one per keystroke.
+    const withQuery = mockedGetList.mock.calls.filter((c) => (c[1] as { q?: string }).q);
+    expect(withQuery).toHaveLength(1);
+  });
+});
+
+describe("EmployeesPage directory details", () => {
+  const mockedGet = vi.mocked(apiClient.get);
+  afterEach(() => {
+    mockedGetList.mockReset();
+    mockedGet.mockReset().mockRejectedValue(new Error("not under test"));
+  });
+
+  const placeholders = () => document.querySelectorAll("tbody .animate-pulse").length;
+
+  it("shows a placeholder, not a dash, until the designation and department arrive", async () => {
+    let resolveRows!: (rows: unknown) => void;
+    mockedGet.mockImplementation((path: string) =>
+      path.includes("/directory/rows")
+        ? (new Promise((r) => {
+            resolveRows = r;
+          }) as never)
+        : (Promise.reject(new Error("summary not under test")) as never),
+    );
+    mockedGetList.mockResolvedValueOnce(envelope("alice", 1));
+    render(<EmployeesPage />);
+
+    expect(await screen.findByText("alice")).toBeInTheDocument();
+    expect(placeholders()).toBeGreaterThan(0);
+    expect(screen.queryByText("Engineer")).not.toBeInTheDocument();
+
+    await act(async () =>
+      resolveRows([{ employee_id: "alice", designation: "Engineer", department: "Platform", branch: null, manager_name: "Meera", shift_name: "General" }]),
+    );
+    expect(await screen.findByText("Engineer")).toBeInTheDocument();
+    expect(screen.getByText("Platform")).toBeInTheDocument();
+    expect(placeholders()).toBe(0);
+  });
+
+  it("falls back to a dash, and stops showing placeholders, when the details can't be loaded", async () => {
+    mockedGetList.mockResolvedValueOnce(envelope("alice", 1));
+    render(<EmployeesPage />);
+    expect(await screen.findByText("alice")).toBeInTheDocument();
+    await waitFor(() => expect(placeholders()).toBe(0));
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("shows placeholders again for the next page instead of the previous page's details", async () => {
+    const next = deferredPage();
+    mockedGet.mockImplementation((path: string) =>
+      path.includes("/directory/rows")
+        ? (Promise.resolve([{ employee_id: path.includes("alice") ? "alice" : "bob", designation: path.includes("alice") ? "Engineer" : "Analyst", department: null, branch: null, manager_name: null, shift_name: null }]) as never)
+        : (Promise.reject(new Error("summary not under test")) as never),
+    );
+    mockedGetList.mockResolvedValueOnce(envelope("alice", 1));
+    mockedGetList.mockReturnValueOnce(next as never);
+    const user = userEvent.setup();
+    render(<EmployeesPage />);
+
+    expect(await screen.findByText("Engineer")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /next/i }));
+    await act(async () => next.resolve(2, "bob"));
+    expect(await screen.findByText("Analyst")).toBeInTheDocument();
+    expect(screen.queryByText("Engineer")).not.toBeInTheDocument();
   });
 });

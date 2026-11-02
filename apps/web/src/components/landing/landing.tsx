@@ -4,8 +4,6 @@ import { Fragment, useState, type ChangeEvent, type CSSProperties, type FormEven
 
 import Link from "next/link";
 
-import { Logo } from "@/components/brand/logo";
-
 import "./landing.css";
 
 // Self-hosted in /public/landing (Unsplash licence) — the app CSP only allows same-origin images.
@@ -156,7 +154,7 @@ export function Landing() {
       {/* HEADER */}
       <header style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.96)", borderBottom: "1px solid #E2E8EF" }}>
         <div style={{ ...wrap, height: "76px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "24px" }}>
-          <a href="#top" aria-label="Krewoxa home" style={{ display: "inline-flex" }}><Logo size={38} /></a>
+          <a href="#top" aria-label="Krewoxa home" style={{ fontSize: "25px", fontWeight: 700, letterSpacing: "-.03em", color: "#102A43" }}>Krewoxa<span style={{ color: "#2563EB" }}>.</span></a>
           <nav className="k-links" aria-label="Primary" style={{ display: "flex", gap: "32px" }}>
             <a href="#features" style={navLink}>Features</a>
             <a href="#solutions" style={navLink}>Solutions</a>
@@ -607,7 +605,7 @@ export function Landing() {
       <footer style={{ background: "#F7F9FB", borderTop: "1px solid #E2E8EF", padding: "clamp(40px,5vw,64px) 0 28px" }}>
         <div style={wrap}>
           <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: "32px" }}>
-            <div style={{ maxWidth: "340px" }}><Logo size={36} /><p style={{ margin: "10px 0 0", color: "#5D6B78", fontSize: "15px" }}>HR management for growing teams. Employee information and everyday workflows in one place.</p></div>
+            <div style={{ maxWidth: "340px" }}><div style={{ fontSize: "24px", fontWeight: 700, letterSpacing: "-.03em", color: "#102A43" }}>Krewoxa<span style={{ color: "#2563EB" }}>.</span></div><p style={{ margin: "10px 0 0", color: "#5D6B78", fontSize: "15px" }}>HR management for growing teams. Employee information and everyday workflows in one place.</p></div>
             <nav aria-label="Footer" style={{ display: "flex", flexWrap: "wrap", gap: "12px 32px", alignSelf: "flex-start" }}>
               <a href="#features" style={{ color: "#172B3A", fontWeight: 500 }}>Features</a><a href="#solutions" style={{ color: "#172B3A", fontWeight: 500 }}>Solutions</a><a href="#how" style={{ color: "#172B3A", fontWeight: 500 }}>How it works</a><a href="#faq" style={{ color: "#172B3A", fontWeight: 500 }}>FAQ</a><a href="#demo" style={{ color: "#172B3A", fontWeight: 500 }}>Book a demo</a><Link href="/login" style={{ color: "#172B3A", fontWeight: 500 }}>Log in</Link><Link href="/register" style={{ color: "#172B3A", fontWeight: 500 }}>Register</Link>
             </nav>

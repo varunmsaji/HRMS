@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KREWOXA | AI-Powered HRMS — People. Work. Simplified.</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/@phosphor-icons/web"></script>
+<script>
+tailwind.config = { theme: { extend: {
+  fontFamily: { sans: ['Inter','sans-serif'] },
+  colors: { krewoxa: { blue:'#0B3D91', cyan:'#00C6FF', dark:'#111827', light:'#F8FAFC' } },
+  backgroundImage: {
+    'kx-gradient':'linear-gradient(135deg,#0B3D91 0%,#00C6FF 100%)',
+    'hero-mesh':'radial-gradient(at 80% 20%,rgba(0,198,255,.14) 0,transparent 50%),radial-gradient(at 10% 60%,rgba(11,61,145,.08) 0,transparent 50%)'
+  },
+  boxShadow: { glow:'0 10px 35px -5px rgba(0,198,255,.35)', card:'0 20px 40px -15px rgba(17,24,39,.07)' }
+}}}
+</script>
+<style>
+body{font-family:'Inter',sans-serif;color:#111827;overflow-x:hidden}
+@keyframes floatSlow{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.animate-float{animation:floatSlow 4.5s ease-in-out infinite}
+/* Mascot sprite: kira-sheet.jpg is a 2x2 sheet of crops of the Kira artwork */
+.pose{background-image:url('kira-sheet.jpg');background-size:200% 200%;background-color:#F4F7FB;background-repeat:no-repeat}
+.pose-welcome{background-position:0 0}
+.pose-face{background-position:100% 0}
+.pose-tablet{background-position:0 100%}
+.pose-wave{background-position:100% 100%}
+</style>
+</head>
+<body class="bg-white antialiased selection:bg-krewoxa-cyan selection:text-white">
+
+<!-- Toast -->
+<div id="toast" class="fixed bottom-6 right-6 z-50 translate-y-24 opacity-0 transition-all duration-300 pointer-events-none max-w-sm w-[calc(100%-3rem)] bg-krewoxa-dark text-white px-5 py-4 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-3.5">
+  <div class="w-9 h-9 rounded-xl bg-kx-gradient flex items-center justify-center shrink-0"><i class="ph-bold ph-check text-white text-lg"></i></div>
+  <div><h4 id="toast-title" class="text-sm font-semibold">Success</h4><p id="toast-message" class="text-xs text-slate-300 mt-0.5"></p></div>
+</div>
+
+<!-- Demo modal -->
+<div id="modal" class="hidden fixed inset-0 z-50 bg-krewoxa-dark/60 backdrop-blur-sm items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-7 relative">
+    <button onclick="closeDemoModal()" class="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-slate-100" aria-label="Close"><i class="ph-bold ph-x"></i></button>
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-12 h-12 rounded-xl pose pose-face border border-blue-100"></div>
+      <h3 id="modal-title" class="text-lg font-extrabold text-krewoxa-dark">Get Started</h3>
+    </div>
+    <form onsubmit="submitDemo(event)" class="space-y-3">
+      <input required placeholder="Full name" class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-krewoxa-blue">
+      <input required type="email" placeholder="Work email" class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-krewoxa-blue">
+      <select class="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-600">
+        <option>1–50 employees</option><option>51–250 employees</option><option>251–1000 employees</option><option>1000+ employees</option>
+      </select>
+      <button class="w-full py-3 rounded-xl bg-kx-gradient text-white font-bold text-sm shadow-glow">Continue</button>
+    </form>
+  </div>
+</div>
+
+<!-- Announcement -->
+<div class="bg-krewoxa-dark text-white text-xs py-2.5 px-4 text-center border-b border-slate-800">
+  <div class="max-w-7xl mx-auto flex items-center justify-center gap-2 flex-wrap">
+    <span class="px-2 py-0.5 rounded-full bg-krewoxa-cyan/20 text-krewoxa-cyan font-semibold uppercase tracking-wider text-[10px]">New AI Release</span>
+    <span class="text-slate-300">Meet <strong>Kira</strong>, our White Ant AI HR assistant — automating payroll &amp; attendance in 1 click.</span>
+    <a href="#interactive-demo" class="text-krewoxa-cyan font-semibold hover:underline inline-flex items-center gap-1">Try live sandbox <i class="ph-bold ph-arrow-right"></i></a>
+  </div>
+</div>
+
+<!-- Header -->
+<header class="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-100">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+    <a href="#" class="flex items-center"><img src="../brand/krewoxa-logo-tagline.svg" alt="KREWOXA — People. Work. Simplified." class="h-11 w-auto"></a>
+    <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-600">
+      <a href="#features" class="hover:text-krewoxa-blue transition">Attendance &amp; Geo</a>
+      <a href="#interactive-demo" class="hover:text-krewoxa-blue transition">1-Click Payroll</a>
+      <a href="#mascot-section" class="hover:text-krewoxa-blue transition">Meet Kira AI</a>
+      <a href="#pricing" class="hover:text-krewoxa-blue transition">Pricing</a>
+    </nav>
+    <div class="hidden md:flex items-center gap-3">
+      <button onclick="openDemoModal('Sign In to KREWOXA')" class="px-4 py-2.5 text-sm font-semibold text-slate-700 hover:text-krewoxa-blue">Sign In</button>
+      <button onclick="openDemoModal('Book a Personalized Demo')" class="px-5 py-2.5 rounded-xl bg-kx-gradient text-white text-sm font-semibold shadow-glow hover:opacity-95 flex items-center gap-2"><span>Get Started</span><i class="ph-bold ph-arrow-right"></i></button>
+    </div>
+    <button id="mobile-menu-btn" class="md:hidden p-2.5 rounded-xl text-slate-700 hover:bg-slate-100" aria-label="Menu"><i class="ph-bold ph-list text-2xl"></i></button>
+  </div>
+  <div id="mobile-menu" class="hidden md:hidden bg-white border-b border-slate-100 px-6 py-5 space-y-4">
+    <div class="flex flex-col space-y-3 text-sm font-medium text-slate-700">
+      <a href="#features">Attendance &amp; Biometrics</a><a href="#interactive-demo">Automated Payroll</a>
+      <a href="#mascot-section">Meet Kira AI</a><a href="#pricing">Pricing Plans</a>
+    </div>
+    <div class="pt-3 border-t border-slate-100 flex flex-col gap-2.5">
+      <button onclick="openDemoModal('Sign In')" class="w-full py-2.5 rounded-xl border border-slate-200 font-semibold text-sm">Sign In</button>
+      <button onclick="openDemoModal('Get Started Free')" class="w-full py-2.5 rounded-xl bg-kx-gradient text-white font-semibold text-sm">Get Started →</button>
+    </div>
+  </div>
+</header>
+
+<!-- HERO -->
+<section class="relative bg-hero-mesh pt-10 pb-24 lg:pt-16 lg:pb-32 overflow-hidden">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+      <div class="lg:col-span-6 space-y-6 text-center lg:text-left">
+        <div class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-200/70">
+          <span class="w-2 h-2 rounded-full bg-krewoxa-cyan"></span>
+          <span class="text-xs font-bold uppercase tracking-wider text-krewoxa-blue">AI-Powered HRMS Platform</span>
+        </div>
+        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1]">People.<br class="hidden sm:inline"> Work. <span class="text-transparent bg-clip-text bg-gradient-to-r from-krewoxa-blue via-blue-500 to-krewoxa-cyan">Simplified.</span></h1>
+        <p class="text-base sm:text-lg text-slate-600 max-w-xl mx-auto lg:mx-0 leading-relaxed">Eliminate spreadsheet chaos with zero-touch <strong>attendance tracking</strong>, compliant <strong>1-click payroll</strong>, and instant <strong>leave workflows</strong> — guided by <span class="text-krewoxa-blue font-semibold">Kira</span>, your tireless AI HR assistant.</p>
+        <div class="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4 pt-2">
+          <button onclick="openDemoModal('Start 14-Day Free Trial')" class="w-full sm:w-auto px-7 py-4 rounded-xl bg-krewoxa-blue hover:bg-blue-800 text-white font-semibold shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2.5 group"><span>Get Started Free</span><i class="ph-bold ph-arrow-right group-hover:translate-x-1 transition-transform"></i></button>
+          <a href="#interactive-demo" class="w-full sm:w-auto px-6 py-4 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 font-semibold shadow-sm flex items-center justify-center gap-2.5"><i class="ph-fill ph-play-circle text-krewoxa-cyan text-xl"></i><span>Try Live Payroll Demo</span></a>
+        </div>
+        <div class="pt-6 border-t border-slate-200/80 grid grid-cols-3 gap-4 max-w-lg mx-auto lg:mx-0">
+          <div><p class="text-2xl font-extrabold">99.9%</p><p class="text-xs text-slate-500 font-medium">Payroll Accuracy</p></div>
+          <div><p class="text-2xl font-extrabold text-krewoxa-blue">&lt; 30 sec</p><p class="text-xs text-slate-500 font-medium">Salary Disbursal</p></div>
+          <div><p class="text-2xl font-extrabold">100%</p><p class="text-xs text-slate-500 font-medium">Statutory Ready</p></div>
+        </div>
+      </div>
+
+      <div class="lg:col-span-6 relative">
+        <div class="bg-white rounded-2xl border border-slate-200/90 shadow-2xl overflow-hidden">
+          <div class="bg-slate-900 px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+              <span class="ml-2 text-[11px] text-slate-400 font-medium">app.krewoxa.com/attendance-payroll</span>
+            </div>
+            <span class="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-semibold flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> Live Sync</span>
+          </div>
+          <div class="grid grid-cols-12 min-h-[380px]">
+            <div class="col-span-4 sm:col-span-3 bg-krewoxa-dark text-slate-300 p-3.5 flex flex-col justify-between">
+              <div class="space-y-4">
+                <div class="flex items-center gap-2 px-1"><div class="w-6 h-6 rounded bg-kx-gradient flex items-center justify-center font-black text-white text-xs">K</div><span class="text-xs font-extrabold text-white tracking-wider">KREWOXA</span></div>
+                <div class="space-y-1 text-xs">
+                  <div class="bg-krewoxa-blue text-white px-2.5 py-2 rounded-lg font-medium flex items-center gap-2"><i class="ph-fill ph-house text-krewoxa-cyan"></i> Home</div>
+                  <div class="px-2.5 py-2 flex items-center gap-2 text-slate-400"><i class="ph ph-clock-user"></i> Attendance</div>
+                  <div class="px-2.5 py-2 flex items-center gap-2 text-slate-400"><i class="ph ph-currency-circle-dollar"></i> Payroll</div>
+                  <div class="px-2.5 py-2 flex items-center gap-2 text-slate-400"><i class="ph ph-calendar-check"></i> Leaves</div>
+                  <div class="px-2.5 py-2 flex items-center gap-2 text-slate-400"><i class="ph ph-chart-bar"></i> Analytics</div>
+                </div>
+              </div>
+              <div class="p-2.5 rounded-xl bg-slate-800/90 border border-slate-700 text-[11px]">
+                <p class="text-krewoxa-cyan font-semibold">Payroll Cycle</p><p class="text-white font-bold mt-0.5">Nov 2026 Ready</p>
+                <div class="w-full bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden"><div class="bg-krewoxa-cyan h-full w-11/12"></div></div>
+              </div>
+            </div>
+            <div class="col-span-8 sm:col-span-9 p-5 bg-slate-50/70 space-y-4">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div><h3 class="text-sm sm:text-base font-bold">Good morning, Alex 👋</h3><p class="text-xs text-slate-500">Here's what's happening with your workforce today.</p></div>
+                <button id="hero-clock-btn" onclick="toggleHeroClockIn()" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm flex items-center gap-1.5"><i class="ph-bold ph-fingerprint text-sm"></i><span id="hero-clock-text">Clock In (09:00 AM)</span></button>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-sm">
+                  <div class="flex items-center justify-between text-xs text-slate-500"><span>Present Today</span><i class="ph-fill ph-users text-krewoxa-blue"></i></div>
+                  <div class="flex items-baseline gap-2 mt-1.5"><span id="hero-emp-count" class="text-2xl font-extrabold">842</span><span class="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">+98.4%</span></div>
+                </div>
+                <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-sm">
+                  <div class="flex items-center justify-between text-xs text-slate-500"><span>On Approved Leave</span><i class="ph-fill ph-airplane-tilt text-krewoxa-cyan"></i></div>
+                  <div class="flex items-baseline gap-2 mt-1.5"><span class="text-2xl font-extrabold">24</span><span class="text-[11px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">4 Pending</span></div>
+                </div>
+              </div>
+              <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm">
+                <div class="flex items-center justify-between mb-3"><span class="text-xs font-bold">On-Time Attendance &amp; Payroll Hours</span><span class="text-[10px] font-semibold text-krewoxa-blue bg-blue-50 px-2 py-0.5 rounded">This Month</span></div>
+                <div class="grid grid-cols-7 gap-2 items-end h-24 pt-2 px-1">
+                  <div class="flex flex-col items-center gap-1"><div class="w-full bg-krewoxa-blue/80 rounded-t-md h-12"></div><span class="text-[9px] text-slate-400">Mon</span></div>
+                  <div class="flex flex-col items-center gap-1"><div class="w-full bg-krewoxa-blue rounded-t-md h-16"></div><span class="text-[9px] text-slate-400">Tue</span></div>
+                  <div class="flex flex-col items-center gap-1"><div class="w-full bg-krewoxa-blue rounded-t-md h-14"></div><span class="text-[9px] text-slate-400">Wed</span></div>
+                  <div class="flex flex-col items-center gap-1"><div class="w-full bg-kx-gradient rounded-t-md h-20"></div><span class="text-[9px] text-krewoxa-blue font-bold">Thu</span></div>
+                  <div class="flex flex-col items-center gap-1"><div class="w-full bg-krewoxa-cyan rounded-t-md h-16"></div><span class="text-[9px] text-slate-400">Fri</span></div>
+                  <div class="flex flex-col items-center gap-1"><div class="w-full bg-slate-200 rounded-t-md h-6"></div><span class="text-[9px] text-slate-400">Sat</span></div>
+                  <div class="flex flex-col items-center gap-1"><div class="w-full bg-slate-200 rounded-t-md h-4"></div><span class="text-[9px] text-slate-400">Sun</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Kira badge -->
+        <div class="sm:absolute sm:-bottom-10 sm:-left-8 mt-4 sm:mt-0 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl border border-blue-200/90 shadow-2xl flex items-center gap-3.5 max-w-sm animate-float">
+          <div class="w-20 h-20 rounded-xl pose pose-face border border-blue-200/80 shrink-0 shadow-inner"></div>
+          <div>
+            <div class="flex items-center gap-1.5"><span class="text-xs font-extrabold">Kira — AI HR Assistant</span><span class="px-1.5 py-0.5 text-[9px] font-bold bg-cyan-100 text-krewoxa-blue rounded">ONLINE</span></div>
+            <p class="text-[11px] text-slate-600 leading-snug mt-1">"All 842 attendance logs synced! November payroll is ready for 1-click approval."</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features" class="py-20 bg-slate-50 border-y border-slate-200/70">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center max-w-3xl mx-auto space-y-3">
+      <span class="text-xs font-bold uppercase tracking-widest text-krewoxa-blue">Core HRMS Modules</span>
+      <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Built for Zero-Friction Attendance &amp; Payroll</h2>
+      <p class="text-slate-600">Every punch-in, shift swap, overtime hour, and tax deduction flows directly into your payroll ledger automatically.</p>
+    </div>
+    <div class="mt-14 grid grid-cols-1 md:grid-cols-3 gap-8">
+      <div class="bg-white rounded-2xl p-7 border border-slate-200/80 shadow-card hover:-translate-y-1 transition duration-300">
+        <div class="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-krewoxa-blue mb-6"><i class="ph-duotone ph-fingerprint text-2xl"></i></div>
+        <span class="text-[11px] font-bold uppercase tracking-wider text-krewoxa-cyan">Real-Time Tracking</span>
+        <h3 class="text-xl font-bold mt-1">Geo-Fenced &amp; Face-Verified Attendance</h3>
+        <p class="text-sm text-slate-600 mt-3 leading-relaxed">Capture selfie punch-ins with GPS coordinates, sync office devices in real time, and auto-detect late marks or overtime shifts.</p>
+        <ul class="mt-6 pt-5 border-t border-slate-100 space-y-2.5 text-xs font-medium text-slate-700">
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Mobile GPS &amp; geofence verification</li>
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Shift roster, swaps &amp; grace-period rules</li>
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Direct sync to payable days</li>
+        </ul>
+      </div>
+      <div class="bg-krewoxa-dark text-white rounded-2xl p-7 border border-slate-800 shadow-xl hover:-translate-y-1 transition duration-300 relative overflow-hidden">
+        <div class="absolute -right-10 -top-10 w-36 h-36 rounded-full bg-krewoxa-cyan/10 blur-2xl pointer-events-none"></div>
+        <div class="w-12 h-12 rounded-2xl bg-kx-gradient flex items-center justify-center mb-6 shadow-glow"><i class="ph-duotone ph-currency-circle-dollar text-2xl"></i></div>
+        <span class="text-[11px] font-bold uppercase tracking-wider text-krewoxa-cyan">Most Popular</span>
+        <h3 class="text-xl font-bold mt-1">1-Click Automated Payroll Engine</h3>
+        <p class="text-sm text-slate-300 mt-3 leading-relaxed">Run multi-location payroll in seconds. KREWOXA calculates LOP, overtime, PF, ESI and TDS, and generates digital payslips.</p>
+        <ul class="mt-6 pt-5 border-t border-slate-800 space-y-2.5 text-xs font-medium text-slate-200">
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Auto loss-of-pay &amp; arrears</li>
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Bank transfer files &amp; payslip delivery</li>
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Built-in statutory compliance</li>
+        </ul>
+      </div>
+      <div class="bg-white rounded-2xl p-7 border border-slate-200/80 shadow-card hover:-translate-y-1 transition duration-300">
+        <div class="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-krewoxa-blue mb-6"><i class="ph-duotone ph-calendar-check text-2xl"></i></div>
+        <span class="text-[11px] font-bold uppercase tracking-wider text-krewoxa-cyan">Self-Service Portal</span>
+        <h3 class="text-xl font-bold mt-1">Smart Leave &amp; Expense Claims</h3>
+        <p class="text-sm text-slate-600 mt-3 leading-relaxed">Employees request leave, regularize missed punches and submit reimbursements from their phone with automatic policy checks.</p>
+        <ul class="mt-6 pt-5 border-t border-slate-100 space-y-2.5 text-xs font-medium text-slate-700">
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Accrual, carry-forward &amp; encashment</li>
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Team availability collision alerts</li>
+          <li class="flex items-center gap-2"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-base"></i> Approved claims flow into payout</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SANDBOX -->
+<section id="interactive-demo" class="py-20 bg-white">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex flex-col lg:flex-row lg:items-end justify-between mb-10 gap-6">
+      <div>
+        <span class="text-xs font-bold uppercase tracking-widest text-krewoxa-blue">Interactive Product Sandbox</span>
+        <h2 class="text-3xl sm:text-4xl font-extrabold mt-1">See How Attendance Flows Into Payroll</h2>
+      </div>
+      <div class="inline-flex p-1.5 rounded-2xl bg-slate-100 border border-slate-200 self-start">
+        <button onclick="switchSandboxTab('payroll')" id="tab-btn-payroll" class="px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-krewoxa-blue text-white shadow-sm">1. Payroll Calculator</button>
+        <button onclick="switchSandboxTab('attendance')" id="tab-btn-attendance" class="px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold text-slate-600 hover:text-krewoxa-dark">2. Attendance &amp; Leave Desk</button>
+      </div>
+    </div>
+
+    <!-- Payroll -->
+    <div id="sandbox-payroll" class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
+      <div class="lg:col-span-5 bg-slate-50 rounded-2xl p-6 sm:p-8 border border-slate-200/80 flex flex-col justify-between space-y-6">
+        <div class="space-y-5">
+          <div class="flex items-center justify-between"><h3 class="text-lg font-bold">Configure Monthly Variables</h3><span class="text-xs font-semibold text-krewoxa-blue bg-blue-100/80 px-2.5 py-1 rounded-lg">Nov 2026</span></div>
+          <div>
+            <label class="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Employee</label>
+            <select id="sim-employee" onchange="updatePayrollSimulation()" class="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-sm font-semibold focus:outline-none focus:border-krewoxa-blue">
+              <option value="8500|Sarah Jenkins • ID #KX-204">Sarah Jenkins — Senior Product Designer ($8,500/mo)</option>
+              <option value="11000|Rahul Verma • ID #KX-118">Rahul Verma — Lead Engineer ($11,000/mo)</option>
+              <option value="6200|Elena Rostova • ID #KX-342">Elena Rostova — People Ops Specialist ($6,200/mo)</option>
+            </select>
+          </div>
+          <div>
+            <div class="flex justify-between text-xs font-semibold mb-1.5"><span class="text-slate-600">Unpaid Leave / LOP Days</span><span id="lop-label" class="text-krewoxa-blue font-bold">0 Days</span></div>
+            <input id="sim-lop" type="range" min="0" max="10" value="0" oninput="updatePayrollSimulation()" class="w-full accent-krewoxa-blue cursor-pointer">
+            <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>0 (full attendance)</span><span>10 days</span></div>
+          </div>
+          <div>
+            <div class="flex justify-between text-xs font-semibold mb-1.5"><span class="text-slate-600">Approved Overtime</span><span id="ot-label" class="text-emerald-600 font-bold">6 Hours</span></div>
+            <input id="sim-ot" type="range" min="0" max="40" value="6" oninput="updatePayrollSimulation()" class="w-full accent-krewoxa-cyan cursor-pointer">
+            <div class="flex justify-between text-[10px] text-slate-400 mt-1"><span>0 hrs</span><span>40 hrs ($45/hr)</span></div>
+          </div>
+        </div>
+        <div class="p-3.5 rounded-xl bg-white border border-blue-100 flex items-center gap-3.5 shadow-sm">
+          <div class="w-14 h-14 rounded-xl pose pose-tablet border border-slate-200 shrink-0"></div>
+          <p class="text-xs text-slate-600 leading-relaxed"><strong class="text-krewoxa-dark block">Kira AI Audit:</strong>Zero compliance anomalies detected. TDS &amp; PF auto-balanced.</p>
+        </div>
+      </div>
+      <div class="lg:col-span-7 bg-krewoxa-dark text-white rounded-2xl p-6 sm:p-8 border border-slate-800 shadow-2xl flex flex-col justify-between">
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-800">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-kx-gradient flex items-center justify-center font-black text-lg">K</div>
+              <div><h4 class="text-base font-bold">Live Auto-Generated Payslip</h4><p id="payslip-emp-name" class="text-xs text-slate-400">Sarah Jenkins • ID #KX-204</p></div>
+            </div>
+            <span class="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">Auto-Synced with Attendance</span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 py-6">
+            <div class="bg-slate-800/60 rounded-xl p-4 border border-slate-700/70 space-y-3">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-krewoxa-cyan">Earnings</span>
+              <div class="flex justify-between text-xs"><span class="text-slate-300">Base Monthly Salary</span><span id="pay-base" class="font-semibold">$8,500.00</span></div>
+              <div class="flex justify-between text-xs"><span class="text-slate-300">Overtime (<span id="pay-ot-hrs">6</span>h)</span><span id="pay-ot" class="font-semibold text-emerald-400">+$270.00</span></div>
+              <div class="flex justify-between text-xs"><span class="text-slate-300">HRA &amp; Allowances</span><span class="font-semibold">$450.00</span></div>
+            </div>
+            <div class="bg-slate-800/60 rounded-xl p-4 border border-slate-700/70 space-y-3">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-rose-400">Deductions &amp; Taxes</span>
+              <div class="flex justify-between text-xs"><span class="text-slate-300">Loss of Pay</span><span id="pay-lop" class="font-semibold text-rose-400">-$0.00</span></div>
+              <div class="flex justify-between text-xs"><span class="text-slate-300">TDS (10%)</span><span id="pay-tax" class="font-semibold text-slate-200">-$850.00</span></div>
+              <div class="flex justify-between text-xs"><span class="text-slate-300">PF Contribution (12% of base)</span><span id="pay-pf" class="font-semibold text-slate-200">-$1,020.00</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="pt-5 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div><span class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Net Take-Home Pay</span><div id="pay-net" class="text-3xl sm:text-4xl font-extrabold text-krewoxa-cyan mt-0.5">$0</div></div>
+          <button onclick="showToast('Payroll Disbursed!','Payslip sent to the employee in 1 click.')" class="px-6 py-3.5 rounded-xl bg-kx-gradient text-white font-bold text-sm shadow-glow hover:opacity-95 flex items-center justify-center gap-2"><i class="ph-bold ph-paper-plane-tilt"></i><span>Approve &amp; Disburse Salary</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Attendance -->
+    <div id="sandbox-attendance" class="hidden grid-cols-1 lg:grid-cols-12 gap-8">
+      <div class="lg:col-span-7 bg-slate-50 rounded-2xl p-6 border border-slate-200">
+        <div class="flex items-center justify-between mb-4"><h3 class="text-base font-bold">Real-Time Geo-Selfie Feed</h3><span class="text-xs text-emerald-600 font-semibold flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Live</span></div>
+        <div class="space-y-3" id="attendance-log-list">
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 flex items-center justify-between">
+            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-blue-100 text-krewoxa-blue font-bold text-xs flex items-center justify-center">SJ</div><div><p class="text-xs font-bold">Sarah Jenkins</p><p class="text-[11px] text-slate-500">Geo-selfie verified • HQ Floor 4</p></div></div>
+            <span class="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-semibold text-xs">08:56 (On Time)</span>
+          </div>
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 flex items-center justify-between">
+            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-cyan-100 text-krewoxa-blue font-bold text-xs flex items-center justify-center">RV</div><div><p class="text-xs font-bold">Rahul Verma</p><p class="text-[11px] text-slate-500">Mobile punch • Kochi</p></div></div>
+            <span class="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-semibold text-xs">09:02 (On Time)</span>
+          </div>
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 flex items-center justify-between">
+            <div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-amber-100 text-amber-800 font-bold text-xs flex items-center justify-center">MV</div><div><p class="text-xs font-bold">Marcus Vance</p><p class="text-[11px] text-slate-500">Biometric terminal #2</p></div></div>
+            <span class="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 font-semibold text-xs">09:24 (Grace Used)</span>
+          </div>
+        </div>
+        <button onclick="addPunch()" class="mt-4 w-full py-3 rounded-xl border border-dashed border-krewoxa-blue/40 text-krewoxa-blue text-sm font-semibold hover:bg-blue-50 flex items-center justify-center gap-2"><i class="ph-bold ph-plus"></i> Simulate a new punch-in</button>
+      </div>
+      <div class="lg:col-span-5 bg-slate-50 rounded-2xl p-6 border border-slate-200">
+        <div class="flex items-center justify-between mb-4"><h3 class="text-base font-bold">Leave Approval Desk</h3><span id="leave-count" class="text-xs font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg">3 pending</span></div>
+        <div class="space-y-3" id="leave-list">
+          <div class="leave-item bg-white p-3.5 rounded-xl border border-slate-200/80"><p class="text-xs font-bold">Anjali Menon — Casual Leave</p><p class="text-[11px] text-slate-500">Nov 12–13 • 2 days • Balance 7</p>
+            <div class="flex gap-2 mt-3"><button onclick="decideLeave(this,true)" class="flex-1 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold">Approve</button><button onclick="decideLeave(this,false)" class="flex-1 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold">Decline</button></div></div>
+          <div class="leave-item bg-white p-3.5 rounded-xl border border-slate-200/80"><p class="text-xs font-bold">Joseph Thomas — Sick Leave</p><p class="text-[11px] text-slate-500">Nov 8 • 1 day • Balance 4</p>
+            <div class="flex gap-2 mt-3"><button onclick="decideLeave(this,true)" class="flex-1 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold">Approve</button><button onclick="decideLeave(this,false)" class="flex-1 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold">Decline</button></div></div>
+          <div class="leave-item bg-white p-3.5 rounded-xl border border-slate-200/80"><p class="text-xs font-bold">Meera Pillai — Earned Leave</p><p class="text-[11px] text-slate-500">Nov 20–24 • 5 days • Balance 12</p>
+            <div class="flex gap-2 mt-3"><button onclick="decideLeave(this,true)" class="flex-1 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold">Approve</button><button onclick="decideLeave(this,false)" class="flex-1 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold">Decline</button></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MASCOT -->
+<section id="mascot-section" class="py-20 bg-slate-50 border-y border-slate-200/70">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid lg:grid-cols-2 gap-12 items-center">
+    <div class="order-2 lg:order-1 space-y-5">
+      <span class="text-xs font-bold uppercase tracking-widest text-krewoxa-blue">Meet Kira</span>
+      <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Your AI HR assistant, always on shift.</h2>
+      <p class="text-slate-600 leading-relaxed">White ants build entire colonies without a spreadsheet in sight. Kira brings the same teamwork to your workforce — flagging missed punches, auditing payroll before you approve it, and answering "how many leaves do I have?" in seconds.</p>
+      <ul class="space-y-3 text-sm text-slate-700">
+        <li class="flex gap-3"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-xl shrink-0"></i> Welcomes new joiners and walks them through onboarding</li>
+        <li class="flex gap-3"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-xl shrink-0"></i> Audits payroll for anomalies before disbursal</li>
+        <li class="flex gap-3"><i class="ph-bold ph-check-circle text-krewoxa-cyan text-xl shrink-0"></i> Nudges managers about pending approvals</li>
+      </ul>
+      <div class="grid grid-cols-4 gap-3 pt-2 max-w-md">
+        <button onclick="setPose('welcome')" class="aspect-square rounded-xl pose pose-welcome border-2 border-transparent hover:border-krewoxa-cyan" aria-label="Welcome pose"></button>
+        <button onclick="setPose('face')" class="aspect-square rounded-xl pose pose-face border-2 border-transparent hover:border-krewoxa-cyan" aria-label="Portrait"></button>
+        <button onclick="setPose('tablet')" class="aspect-square rounded-xl pose pose-tablet border-2 border-transparent hover:border-krewoxa-cyan" aria-label="Tablet"></button>
+        <button onclick="setPose('wave')" class="aspect-square rounded-xl pose pose-wave border-2 border-transparent hover:border-krewoxa-cyan" aria-label="Wave"></button>
+      </div>
+    </div>
+    <div class="order-1 lg:order-2 flex justify-center">
+      <div class="relative">
+        <div class="absolute inset-0 bg-kx-gradient opacity-20 blur-3xl rounded-full"></div>
+        <div class="relative w-full max-w-sm rounded-3xl shadow-2xl border border-white animate-float overflow-hidden aspect-[3/4]">
+          <img id="kira-main" src="kira.jpg" alt="Kira, the KREWOXA white ant HR assistant, waving in a navy suit" class="w-full h-full object-cover transition-transform duration-500">
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section id="pricing" class="py-20 bg-white">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="text-center max-w-2xl mx-auto space-y-3">
+      <span class="text-xs font-bold uppercase tracking-widest text-krewoxa-blue">Pricing</span>
+      <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight">Simple, per-employee pricing</h2>
+      <p class="text-slate-600">Start free for 14 days. No card required.</p>
+    </div>
+    <div class="mt-12 grid md:grid-cols-3 gap-8">
+      <div class="rounded-2xl border border-slate-200 p-7 flex flex-col">
+        <h3 class="font-bold text-lg">Starter</h3><p class="text-sm text-slate-500 mt-1">Small teams getting off spreadsheets</p>
+        <p class="mt-5"><span class="text-4xl font-extrabold">$2</span><span class="text-sm text-slate-500"> /employee/mo</span></p>
+        <ul class="mt-6 space-y-2.5 text-sm text-slate-700 flex-1"><li>✓ Attendance &amp; shifts</li><li>✓ Leave management</li><li>✓ Payslips</li></ul>
+        <button onclick="openDemoModal('Start with Starter')" class="mt-7 py-3 rounded-xl border border-slate-200 font-semibold text-sm hover:bg-slate-50">Start free trial</button>
+      </div>
+      <div class="rounded-2xl bg-krewoxa-dark text-white p-7 flex flex-col shadow-2xl md:scale-105 relative">
+        <span class="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-kx-gradient text-[11px] font-bold">MOST POPULAR</span>
+        <h3 class="font-bold text-lg">Growth</h3><p class="text-sm text-slate-400 mt-1">Full payroll &amp; compliance</p>
+        <p class="mt-5"><span class="text-4xl font-extrabold text-krewoxa-cyan">$4</span><span class="text-sm text-slate-400"> /employee/mo</span></p>
+        <ul class="mt-6 space-y-2.5 text-sm text-slate-200 flex-1"><li>✓ Everything in Starter</li><li>✓ 1-click payroll &amp; statutory</li><li>✓ Geo-fence &amp; face verification</li><li>✓ Kira AI assistant</li></ul>
+        <button onclick="openDemoModal('Start with Growth')" class="mt-7 py-3 rounded-xl bg-kx-gradient font-bold text-sm shadow-glow">Start free trial</button>
+      </div>
+      <div class="rounded-2xl border border-slate-200 p-7 flex flex-col">
+        <h3 class="font-bold text-lg">Enterprise</h3><p class="text-sm text-slate-500 mt-1">Multi-entity, custom workflows</p>
+        <p class="mt-5"><span class="text-4xl font-extrabold">Custom</span></p>
+        <ul class="mt-6 space-y-2.5 text-sm text-slate-700 flex-1"><li>✓ Everything in Growth</li><li>✓ SSO &amp; audit logs</li><li>✓ Dedicated success manager</li></ul>
+        <button onclick="openDemoModal('Talk to Sales')" class="mt-7 py-3 rounded-xl border border-slate-200 font-semibold text-sm hover:bg-slate-50">Talk to sales</button>
+      </div>
+    </div>
+    <p class="text-center text-xs text-slate-400 mt-6">Prices are illustrative placeholders.</p>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="px-4 pb-20">
+  <div class="max-w-5xl mx-auto bg-kx-gradient rounded-3xl p-10 sm:p-14 text-center text-white shadow-glow">
+    <h2 class="text-3xl sm:text-4xl font-extrabold">Ready to simplify people &amp; work?</h2>
+    <p class="mt-3 text-white/85">Join teams running payroll in under a minute.</p>
+    <button onclick="openDemoModal('Book a Personalized Demo')" class="mt-7 px-8 py-4 rounded-xl bg-white text-krewoxa-blue font-bold shadow-lg hover:bg-slate-50">Book a demo</button>
+  </div>
+</section>
+
+<footer class="bg-krewoxa-dark text-slate-400 py-10 text-sm">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+    <img src="../brand/krewoxa-wordmark-white.svg" alt="KREWOXA" class="h-8 w-auto">
+    <p>© 2026 KREWOXA. People. Work. Simplified.</p>
+  </div>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => '$' + n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+function showToast(title,msg){
+  $('toast-title').textContent=title; $('toast-message').textContent=msg;
+  const t=$('toast'); t.classList.remove('translate-y-24','opacity-0');
+  clearTimeout(showToast._t);
+  showToast._t=setTimeout(()=>t.classList.add('translate-y-24','opacity-0'),3200);
+}
+function openDemoModal(title){ $('modal-title').textContent=title; $('modal').classList.replace('hidden','flex'); }
+function closeDemoModal(){ $('modal').classList.replace('flex','hidden'); }
+$('modal').addEventListener('click',e=>{ if(e.target===$('modal')) closeDemoModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDemoModal(); });
+function submitDemo(e){ e.preventDefault(); closeDemoModal(); e.target.reset(); showToast('Request received','Kira will be in touch within one business day.'); }
+
+$('mobile-menu-btn').addEventListener('click',()=>$('mobile-menu').classList.toggle('hidden'));
+document.querySelectorAll('#mobile-menu a').forEach(a=>a.addEventListener('click',()=>$('mobile-menu').classList.add('hidden')));
+
+let clockedIn=false;
+function toggleHeroClockIn(){
+  clockedIn=!clockedIn;
+  const b=$('hero-clock-btn');
+  $('hero-clock-text').textContent = clockedIn ? 'Clocked In ✓ Clock Out' : 'Clock In (09:00 AM)';
+  b.classList.toggle('bg-emerald-600',!clockedIn); b.classList.toggle('bg-rose-600',clockedIn);
+  $('hero-emp-count').textContent = clockedIn ? 843 : 842;
+  showToast(clockedIn?'Punched in':'Punched out', clockedIn?'Geo-fence verified. Have a great day!':'Hours synced to payroll.');
+}
+
+function switchSandboxTab(t){
+  const p=t==='payroll';
+  $('sandbox-payroll').classList.toggle('hidden',!p);
+  $('sandbox-attendance').classList.toggle('hidden',p);
+  $('sandbox-attendance').classList.toggle('grid',!p);
+  const on=['bg-krewoxa-blue','text-white','shadow-sm'], off=['text-slate-600'];
+  const a=$('tab-btn-payroll'), b=$('tab-btn-attendance');
+  [[a,p],[b,!p]].forEach(([el,act])=>{ on.forEach(c=>el.classList.toggle(c,act)); off.forEach(c=>el.classList.toggle(c,!act)); });
+}
+
+function updatePayrollSimulation(){
+  const [salaryStr,label]=$('sim-employee').value.split('|');
+  const base=+salaryStr, lop=+$('sim-lop').value, ot=+$('sim-ot').value;
+  const allowances=450, lopAmt=base/30*lop, otAmt=ot*45;
+  const gross=base+otAmt+allowances-lopAmt;
+  const tax=gross*0.10, pf=base*0.12;
+  $('payslip-emp-name').textContent=label;
+  $('lop-label').textContent=lop+(lop===1?' Day':' Days');
+  $('ot-label').textContent=ot+(ot===1?' Hour':' Hours');
+  $('pay-base').textContent=fmt(base);
+  $('pay-ot-hrs').textContent=ot; $('pay-ot').textContent='+'+fmt(otAmt);
+  $('pay-lop').textContent='-'+fmt(lopAmt);
+  $('pay-tax').textContent='-'+fmt(tax); $('pay-pf').textContent='-'+fmt(pf);
+  $('pay-net').textContent=fmt(gross-tax-pf);
+}
+updatePayrollSimulation();
+
+const people=[['Anjali Menon','AM','HQ Floor 2'],['Fathima Rasheed','FR','Kochi Branch'],['Joseph Thomas','JT','HQ Floor 4'],['Meera Pillai','MP','Remote • Geo-selfie']];
+let punchIdx=0;
+function addPunch(){
+  const [n,i,loc]=people[punchIdx++%people.length];
+  const d=new Date(), t=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const el=document.createElement('div');
+  el.className='bg-white p-3.5 rounded-xl border border-krewoxa-cyan/50 flex items-center justify-between';
+  el.innerHTML=`<div class="flex items-center gap-3"><div class="w-9 h-9 rounded-full bg-blue-100 text-krewoxa-blue font-bold text-xs flex items-center justify-center">${i}</div><div><p class="text-xs font-bold">${n}</p><p class="text-[11px] text-slate-500">Face verified • ${loc}</p></div></div><span class="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-semibold text-xs">${t} (Just now)</span>`;
+  $('attendance-log-list').prepend(el);
+  showToast('New punch-in',n+' checked in.');
+}
+function decideLeave(btn,ok){
+  const item=btn.closest('.leave-item');
+  item.innerHTML=`<p class="text-xs font-bold">${item.querySelector('p').textContent}</p><p class="text-[11px] mt-1 font-semibold ${ok?'text-emerald-600':'text-rose-600'}">${ok?'Approved — synced to payroll':'Declined — employee notified'}</p>`;
+  const left=document.querySelectorAll('#leave-list button').length/2;
+  $('leave-count').textContent=left+' pending';
+  showToast(ok?'Leave approved':'Leave declined','Kira updated the team calendar.');
+}
+
+const poseCrop={welcome:'0% 0%',face:'100% 0%',tablet:'0% 100%',wave:'100% 100%'};
+function setPose(p){
+  const img=$('kira-main');
+  // full artwork for "welcome"; otherwise zoom into the matching region
+  const z={welcome:['50% 50%',1],face:['50% 22%',2],tablet:['78% 62%',2.2],wave:['12% 38%',2.2]}[p];
+  img.style.transformOrigin=z[0]; img.style.transform='scale('+z[1]+')';
+}
+</script>
+</body>
+</html>

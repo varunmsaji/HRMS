@@ -2,7 +2,7 @@
 
 import { LogOut, Menu } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { Logo } from "@/components/brand/logo";
@@ -77,6 +77,8 @@ const SIDEBAR_BG = "bg-[#0b1530] text-slate-300";
 /** Desktop (≥768px): persistent left sidebar + top bar, per docs/design/03_Navigation_System.md §2.
  * Below that, the sidebar collapses into a Sheet drawer opened from the top bar (§3–4). */
 export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const isDashboard = pathname === "/app/dashboard";
   const employeeMode = useEmployeeMode();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
@@ -139,7 +141,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <div className="mx-auto w-full max-w-[1440px]">
             <CompanyStatusBanner />
-            {children}
+            {/* Keyed so arriving on the dashboard from any page replays the entrance; other routes
+             * share one key and behave exactly as before. */}
+            <div key={isDashboard ? "dashboard" : "page"} className={isDashboard ? "dashboard-enter" : undefined}>
+              {children}
+            </div>
           </div>
         </main>
       </div>

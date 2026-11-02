@@ -36,7 +36,7 @@ import {
   TableRow,
   TableToolbar,
 } from "@/components/ui/table";
-import { TableSkeleton } from "@/components/ui/skeleton";
+import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
 import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
@@ -64,6 +64,11 @@ function employeeName(employee: Employee): string {
   );
 }
 
+/** Stands in for a directory detail (designation, department…) that is still being fetched. */
+function DetailPlaceholder() {
+  return <Skeleton className="h-4 w-20" aria-hidden="true" />;
+}
+
 export default function EmployeesPage() {
   const { toast } = useToast();
   const { can } = usePermissions();
@@ -88,7 +93,20 @@ export default function EmployeesPage() {
 
   const beginRequest = useLatestRequest();
 
-  const loadEmployees = useCallback(async (targetPage: number) => {
+  // The text search runs on the server so it spans every page, not just the one on screen. Typing
+  // is debounced so one request goes out per pause, not per keystroke.
+  const [serverQuery, setServerQuery] = useState(() => searchQuery.trim());
+  useEffect(() => {
+    const next = searchQuery.trim();
+    if (next === serverQuery) return;
+    const timer = window.setTimeout(() => {
+      setServerQuery(next);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery, serverQuery]);
+
+  const loadEmployees = useCallback(async (targetPage: number, query: string) => {
     const request = beginRequest();
     setLoading(true);
     setError(null);
@@ -96,7 +114,7 @@ export default function EmployeesPage() {
       // GET /v1/employees is paginated (API-01) — data-scope-filtered, then paged server-side.
       const { data, pagination: meta } = await apiClient.getList<Employee>(
         "/employees",
-        { page: targetPage },
+        query ? { page: targetPage, q: query } : { page: targetPage },
         { signal: request.signal },
       );
       if (!request.isCurrent()) return;
@@ -118,8 +136,8 @@ export default function EmployeesPage() {
   }, [beginRequest]);
 
   useEffect(() => {
-    void loadEmployees(page);
-  }, [loadEmployees, page]);
+    void loadEmployees(page, serverQuery);
+  }, [loadEmployees, page, serverQuery]);
 
   // Headline counts, and designation / department / manager / shift for the rows on this page.
   const [summary, setSummary] = useState<DirectorySummary | null>(null);
@@ -135,38 +153,56 @@ export default function EmployeesPage() {
     };
   }, []);
   const pageIds = useMemo(() => (employees ?? []).map((e) => e.id), [employees]);
+  // Which page of rows `details` belongs to, so the cells can show a placeholder — not a "—" that
+  // looks like missing data — until this page's details have arrived (or failed to).
+  const pageKey = useMemo(() => pageIds.join(","), [pageIds]);
+  const [detailsFor, setDetailsFor] = useState("");
+  const detailsReady = pageIds.length === 0 || detailsFor === pageKey;
   useEffect(() => {
     if (pageIds.length === 0) return;
     let cancelled = false;
     apiClient
       .get<DirectoryRow[]>(directoryRowsPath(pageIds))
-      .then((rows) => !cancelled && setDetails(new Map(rows.map((r) => [r.employee_id, r]))))
-      .catch(() => {});
+      .then((rows) => {
+        if (cancelled) return;
+        setDetails(new Map(rows.map((r) => [r.employee_id, r])));
+        setDetailsFor(pageKey);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDetails(new Map());
+        setDetailsFor(pageKey);
+      });
     return () => {
       cancelled = true;
     };
-  }, [pageIds]);
+  }, [pageIds, pageKey]);
+
+  // A new `employees` array (next page, new search) or a changed filter means different rows: count
+  // those so the table can fade in fresh instead of snapping (adjusting state during render).
+  const [seenEmployees, setSeenEmployees] = useState(employees);
+  const [rowsGeneration, setRowsGeneration] = useState(0);
+  if (seenEmployees !== employees) {
+    setSeenEmployees(employees);
+    setRowsGeneration((g) => g + 1);
+  }
 
   const availableStatuses = useMemo(() => {
     if (!employees) return [];
     return Array.from(new Set(employees.map((e) => e.status).filter(Boolean))).sort();
   }, [employees]);
 
+  // Text search is done by the server (it spans every page); only the status dropdowns filter here,
+  // and those apply to the rows on the current page.
   const filteredEmployees = useMemo(() => {
     if (!employees) return null;
-    const q = searchQuery.trim().toLowerCase();
     return employees.filter((employee) => {
       if (statusFilter && employee.status !== statusFilter) return false;
       if (stateFilter === "ACTIVE" && !employee.is_active) return false;
       if (stateFilter === "INACTIVE" && employee.is_active) return false;
-      if (!q) return true;
-      const name = employeeName(employee).toLowerCase();
-      const code = (employee.employee_code ?? "").toLowerCase();
-      const email = (employee.personal_email ?? "").toLowerCase();
-      const mobile = (employee.personal_mobile ?? "").toLowerCase();
-      return name.includes(q) || code.includes(q) || email.includes(q) || mobile.includes(q);
+      return true;
     });
-  }, [employees, searchQuery, statusFilter, stateFilter]);
+  }, [employees, statusFilter, stateFilter]);
 
   function exportCsv() {
     const csv = employeesToCsv(
@@ -315,7 +351,7 @@ export default function EmployeesPage() {
               </div>
               {pagination && pagination.total_pages > 1 ? (
                 <span className="text-xs text-foreground-muted">
-                  Filtering page {pagination.page} of {pagination.total_pages}
+                  Page {pagination.page} of {pagination.total_pages}
                 </span>
               ) : null}
             </div>
@@ -349,7 +385,13 @@ export default function EmployeesPage() {
               </NativeSelect>
 
               {hasFilters ? (
-                <Button type="button" variant="ghost" size="sm" onClick={resetFilters}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetFilters}
+                  className="animate-in fade-in-0 zoom-in-95 duration-motion-fast"
+                >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
                   Clear
                 </Button>
@@ -373,13 +415,13 @@ export default function EmployeesPage() {
                   ? "You do not have permission to view the employee directory."
                   : error.message
               }
-              onRetry={() => void loadEmployees(page)}
+              onRetry={() => void loadEmployees(page, serverQuery)}
             />
           </div>
         ) : null}
 
         {!error && employees && employees.length === 0 ? (
-          <div className="p-6">
+          <div className="animate-in fade-in-0 p-6 duration-motion-slow">
             <EmptyState
               icon={Users}
               title="No employees yet."
@@ -397,7 +439,7 @@ export default function EmployeesPage() {
 
         {!error && employees && employees.length > 0 && filteredEmployees ? (
           filteredEmployees.length === 0 ? (
-            <div className="p-6">
+            <div className="animate-in fade-in-0 p-6 duration-motion-slow">
               <EmptyState
                 icon={Search}
                 title="No employees match your filter."
@@ -411,6 +453,10 @@ export default function EmployeesPage() {
             </div>
           ) : (
             <BusyRegion busy={loading} label="Refreshing employees…">
+            <div
+              key={`${rowsGeneration}-${statusFilter}-${stateFilter}`}
+              className="animate-in fade-in-0 duration-motion-base"
+            >
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
@@ -444,20 +490,22 @@ export default function EmployeesPage() {
                       {employee.employee_code}
                     </TableCell>
                     <TableCell className="hidden text-foreground-secondary md:table-cell">
-                      {details.get(employee.id)?.designation ?? "—"}
+                      {detailsReady ? (details.get(employee.id)?.designation ?? "—") : <DetailPlaceholder />}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      {details.get(employee.id)?.department ? (
+                      {!detailsReady ? (
+                        <DetailPlaceholder />
+                      ) : details.get(employee.id)?.department ? (
                         <Badge variant="secondary">{details.get(employee.id)?.department}</Badge>
                       ) : (
                         "—"
                       )}
                     </TableCell>
                     <TableCell className="hidden text-foreground-secondary lg:table-cell">
-                      {details.get(employee.id)?.manager_name ?? "—"}
+                      {detailsReady ? (details.get(employee.id)?.manager_name ?? "—") : <DetailPlaceholder />}
                     </TableCell>
                     <TableCell className="hidden text-foreground-secondary lg:table-cell">
-                      {details.get(employee.id)?.shift_name ?? "—"}
+                      {detailsReady ? (details.get(employee.id)?.shift_name ?? "—") : <DetailPlaceholder />}
                     </TableCell>
                     <TableCell>
                       <EmployeeStatusBadge status={employee.status} />
@@ -479,6 +527,7 @@ export default function EmployeesPage() {
                 ))}
               </TableBody>
             </Table>
+            </div>
             </BusyRegion>
           )
         ) : null}

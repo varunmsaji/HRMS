@@ -68,7 +68,9 @@ export default function LeaveBalancesPage() {
   const canViewAll = can("LEAVE.BALANCE_VIEW_ALL");
   const canAdjust = can("LEAVE.BALANCE_ADJUST");
 
-  const [view, setView] = useState<ViewMode>(canViewAll ? "TEAM" : "MINE");
+  // The company account has no employee record, so it has no balance of its own to show.
+  const hasOwnRecord = Boolean(user?.employee_id);
+  const [view, setView] = useState<ViewMode>(canViewAll || !hasOwnRecord ? "TEAM" : "MINE");
   const directory = useEmployeeDirectory({ enabled: view === "TEAM" });
   const beginRequest = useLatestRequest();
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
@@ -201,6 +203,7 @@ export default function LeaveBalancesPage() {
           aria-label="Balance scope"
           className="inline-flex rounded-md border border-border bg-surface p-0.5"
         >
+          {hasOwnRecord ? (
           <button
             type="button"
             onClick={() => setView("MINE")}
@@ -213,6 +216,7 @@ export default function LeaveBalancesPage() {
           >
             My balance
           </button>
+          ) : null}
           {canViewAll ? (
             <button
               type="button"

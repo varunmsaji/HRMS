@@ -1,8 +1,11 @@
+"use client";
+
 import type { LucideIcon } from "lucide-react";
 import {
   AlarmClock,
   AlertTriangle,
   CalendarOff,
+  ChevronDown,
   CircleCheck,
   CircleDashed,
   CircleX,
@@ -11,6 +14,7 @@ import {
   Palmtree,
   Users,
 } from "lucide-react";
+import { useState } from "react";
 
 import {
   formatPct,
@@ -21,6 +25,8 @@ import {
   type DayFlag,
   type KpiSet,
 } from "@/lib/attendance/dashboard";
+import { DeltaChip, type DeltaGood } from "@/components/attendance/dashboard/delta-chip";
+import { Collapse } from "@/components/common/collapse";
 import { formatMinutes } from "@/lib/attendance/format";
 import { cn } from "@/lib/utils";
 
@@ -72,12 +78,22 @@ interface Kpi {
   active: boolean;
   /** The raw count behind the card (0 = quiet card). */
   count: number;
+  /** Change against the comparison day, when the card has one worth showing. */
+  delta?: { value: number | null; good: DeltaGood; versus: string };
+}
+
+/** The day the headline cards are compared with (normally the same weekday a week earlier). */
+export interface KpiComparison {
+  kpi: KpiSet;
+  /** Short name for the comparison day, e.g. "last Mon". */
+  label: string;
 }
 
 export function buildKpis(
   kpi: KpiSet,
   filters: DashboardFilters,
   focusLabel: string,
+  compare?: KpiComparison | null,
 ): { primary: Kpi[]; secondary: Kpi[] } {
   const present = presentTotal(kpi);
   const total = kpi.totalEmployees;
@@ -89,6 +105,8 @@ export function buildKpis(
     ...k,
     active: k.drill ? isActive(k.drill) : false,
   });
+  const change = (now: number, before: number | undefined, good: DeltaGood): Kpi["delta"] =>
+    compare ? { value: before === undefined ? null : now - before, good, versus: compare.label } : undefined;
   const ofWorkforce = (n: number) =>
     total > 0 ? `${formatPct(pct(n, total))} of workforce` : "No employees in scope";
 
@@ -115,6 +133,7 @@ export function buildKpis(
       tone: "success",
       drill: { bucket: "PRESENT" },
       count: present,
+      delta: change(present, compare ? presentTotal(compare.kpi) : undefined, "up"),
     }),
     mk({
       key: "absent",
@@ -125,6 +144,7 @@ export function buildKpis(
       tone: "danger",
       drill: { bucket: "ABSENT" },
       count: kpi.absent,
+      delta: change(kpi.absent, compare?.kpi.absent, "down"),
     }),
     mk({
       key: "leave",
@@ -135,6 +155,7 @@ export function buildKpis(
       tone: "leave",
       drill: { bucket: "LEAVE" },
       count: kpi.leave,
+      delta: change(kpi.leave, compare?.kpi.leave, "neutral"),
     }),
     mk({
       key: "late",
@@ -148,6 +169,7 @@ export function buildKpis(
       tone: "warning",
       drill: { flag: "late" },
       count: kpi.late,
+      delta: change(kpi.late, compare?.kpi.late, "down"),
     }),
     mk({
       key: "not_checked_in",
@@ -253,7 +275,14 @@ interface KpiGridProps {
   kpi: KpiSet;
   filters: DashboardFilters;
   focusLabel: string;
+  compare?: KpiComparison | null;
   onDrill: (target: { bucket?: DayBucket; flag?: DayFlag; clear?: boolean }) => void;
+}
+
+function deltaSpeech(item: Kpi): string {
+  if (!item.delta || item.delta.value === null) return "";
+  const { value, versus } = item.delta;
+  return value === 0 ? ` No change versus ${versus}.` : ` ${value > 0 ? "Up" : "Down"} ${Math.abs(value)} versus ${versus}.`;
 }
 
 function KpiCard({
@@ -297,6 +326,11 @@ function KpiCard({
       <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-foreground-secondary">
         {item.context}
       </p>
+      {item.delta ? (
+        <div className="mt-2">
+          <DeltaChip delta={item.delta.value} good={item.delta.good} versus={item.delta.versus} />
+        </div>
+      ) : null}
     </>
   );
 
@@ -315,10 +349,10 @@ function KpiCard({
       type="button"
       onClick={() => onDrill(drill)}
       aria-pressed={item.active}
-      aria-label={`${item.label}: ${item.value}. ${item.context}. Show these employees.`}
+      aria-label={`${item.label}: ${item.value}. ${item.context}.${deltaSpeech(item)} Show these employees.`}
       className={cn(
         frame,
-        "transition-colors duration-motion-instant hover:border-border-strong hover:bg-surface-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "transition-[transform,box-shadow,colors] duration-motion-fast hover:-translate-y-px hover:border-border-strong hover:bg-surface-secondary/60 hover:shadow-elevation-1 active:translate-y-0 active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transform-none",
       )}
     >
       {body}
@@ -326,24 +360,47 @@ function KpiCard({
   );
 }
 
+/** How many tiles are always visible; the rest sit behind "More". */
+const ALWAYS_VISIBLE = 6;
+
 /** KPI summary row. Each card is a drill-down button — it narrows the Who's In list below (and
- * the URL) to the matching employees; clicking the active card again clears the drill. */
-export function KpiGrid({ kpi, filters, focusLabel, onDrill }: KpiGridProps) {
-  const { primary, secondary } = buildKpis(kpi, filters, focusLabel);
+ * the URL) to the matching employees; clicking the active card again clears the drill. Only the
+ * six everyday figures are shown by default; the rarer ones (remote, overtime, half day, holiday…)
+ * are one click away, and open by themselves while one of them is the active drill. */
+export function KpiGrid({ kpi, filters, focusLabel, compare, onDrill }: KpiGridProps) {
+  const { primary, secondary } = buildKpis(kpi, filters, focusLabel, compare);
+  const visible = primary.slice(0, ALWAYS_VISIBLE);
+  const more = [...primary.slice(ALWAYS_VISIBLE), ...secondary];
+  const [expanded, setExpanded] = useState(false);
+  const hasActiveMore = more.some((item) => item.active);
+  const showMore = expanded || hasActiveMore;
+  const moreWithData = more.filter((item) => item.count > 0).length;
   return (
     <section aria-label="Attendance summary" className="space-y-2.5">
-      <div className="-mx-4 flex snap-x gap-2.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 xl:grid-cols-8">
-        {primary.map((item) => (
+      <div className="-mx-4 flex snap-x gap-2.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-3 sm:overflow-visible sm:px-0 xl:grid-cols-6">
+        {visible.map((item) => (
           <div key={item.key} className="min-w-[10rem] snap-start sm:min-w-0">
             <KpiCard item={item} onDrill={onDrill} />
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-        {secondary.map((item) => (
-          <KpiCard key={item.key} item={item} onDrill={onDrill} compact />
-        ))}
-      </div>
+      <button
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={showMore}
+        disabled={hasActiveMore}
+        className="inline-flex items-center gap-1 text-xs font-medium text-foreground-secondary hover:text-foreground disabled:cursor-default disabled:opacity-100"
+      >
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showMore && "rotate-180")} aria-hidden="true" />
+        {showMore ? "Fewer statuses" : `More statuses${moreWithData > 0 ? ` (${moreWithData} with data)` : ""}`}
+      </button>
+      <Collapse open={showMore}>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">
+          {more.map((item) => (
+            <KpiCard key={item.key} item={item} onDrill={onDrill} compact />
+          ))}
+        </div>
+      </Collapse>
     </section>
   );
 }

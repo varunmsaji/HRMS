@@ -6,6 +6,7 @@
  * rows, a sum is a sum of the backend's own minutes. Percentages are always derived from the rows
  * in hand, never invented, and are `null` when the denominator is zero. */
 
+import type { DirectoryRow } from "@/lib/employee/directory";
 import type { AttendancePeriod, AttendancePeriodSummaryRow } from "@/lib/attendance-period/types";
 import type { OvertimeRecord } from "@/lib/overtime/types";
 import type { RegularizationRequest } from "@/lib/regularization/types";
@@ -108,6 +109,10 @@ export interface DashboardFilters {
   employeeStatus: string;
   /** Scopes the attendance-period panels only — attendance days carry no company. */
   legalEntityId: string;
+  /** Department / branch *names* from the employee directory (attendance days carry neither).
+   * "Unassigned" matches employees with no department / branch. */
+  department: string;
+  branch: string;
 }
 
 export const DEFAULT_FILTERS: DashboardFilters = {
@@ -121,6 +126,8 @@ export const DEFAULT_FILTERS: DashboardFilters = {
   shiftId: "",
   employeeStatus: "",
   legalEntityId: "",
+  department: "",
+  branch: "",
 };
 
 /** The effective [from, to] for the filters. `to` is the *focus date* — headcount sections (KPIs,
@@ -164,6 +171,8 @@ export function parseFilters(params: ParamReader): DashboardFilters {
     shiftId: params.get("shift") ?? "",
     employeeStatus: params.get("estatus") ?? "",
     legalEntityId: params.get("entity") ?? "",
+    department: params.get("dept") ?? "",
+    branch: params.get("branch") ?? "",
   };
 }
 
@@ -181,6 +190,8 @@ export function serializeFilters(filters: DashboardFilters): URLSearchParams {
   if (filters.shiftId) out.set("shift", filters.shiftId);
   if (filters.employeeStatus) out.set("estatus", filters.employeeStatus);
   if (filters.legalEntityId) out.set("entity", filters.legalEntityId);
+  if (filters.department) out.set("dept", filters.department);
+  if (filters.branch) out.set("branch", filters.branch);
   return out;
 }
 
@@ -310,6 +321,11 @@ export function isAttending(bucket: DayBucket): boolean {
   return ATTENDING.has(bucket);
 }
 
+/** Whether the employee was expected to work — the denominator for every rate. */
+export function isExpectedBucket(bucket: DayBucket): boolean {
+  return !NOT_EXPECTED_BUCKETS.has(bucket);
+}
+
 export const DAY_FLAGS = [
   "late",
   "early_out",
@@ -434,14 +450,26 @@ export function indexEmployees(employees: EmployeeLite[]): Map<string, EmployeeL
   return map;
 }
 
+/** The label for employees with no department / branch recorded. */
+export const UNASSIGNED = "Unassigned";
+
+export function groupName(value: string | null | undefined): string {
+  return value && value.trim() ? value.trim() : UNASSIGNED;
+}
+
 /** Population filters (who is in scope). Drill-down filters (`bucket`/`flag`) are applied
  * separately, so KPIs and charts keep describing the whole population while a list narrows. */
 export function applyPopulationFilters(
   days: AttendanceDay[],
   filters: DashboardFilters,
   employeesById: Map<string, EmployeeLite>,
+  /** Department / branch per employee. Pass it only once it has loaded — without it the
+   * department and branch filters are skipped rather than guessed at. */
+  directory?: Map<string, Pick<DirectoryRow, "department" | "branch">>,
 ): AttendanceDay[] {
   return days.filter((day) => {
+    if (directory && filters.department && groupName(directory.get(day.employee_id)?.department) !== filters.department) return false;
+    if (directory && filters.branch && groupName(directory.get(day.employee_id)?.branch) !== filters.branch) return false;
     if (filters.employeeId && day.employee_id !== filters.employeeId) return false;
     if (filters.shiftId && day.shift_id !== filters.shiftId) return false;
     if (filters.employeeStatus) {
@@ -490,6 +518,8 @@ export function employeesWithoutRecord(
   employees: EmployeeLite[],
   filters: DashboardFilters,
   date: string,
+  /** Department / branch per employee — the same map the population filter used. */
+  directory?: Map<string, Pick<DirectoryRow, "department" | "branch">>,
 ): EmployeeLite[] {
   const seen = new Set(rowsOnFocus.map((day) => day.employee_id));
   return employees.filter((employee) => {
@@ -500,6 +530,10 @@ export function employeesWithoutRecord(
     if (filters.employeeStatus && employee.status !== filters.employeeStatus) return false;
     // A shift filter cannot be evaluated for an employee with no row.
     if (filters.shiftId) return false;
+    // Without this, everyone the department / branch filter just removed from the list would
+    // come straight back as "no record yet".
+    if (directory && filters.department && groupName(directory.get(employee.id)?.department) !== filters.department) return false;
+    if (directory && filters.branch && groupName(directory.get(employee.id)?.branch) !== filters.branch) return false;
     return true;
   });
 }

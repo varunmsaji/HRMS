@@ -66,7 +66,11 @@ export default function LeaveApplicationsPage() {
   const canSubmitSelf = can("LEAVE.APPLICATION_SUBMIT");
   const canSubmitOnBehalf = can("LEAVE.APPLICATION_SUBMIT_ON_BEHALF");
 
-  const [view, setView] = useState<ViewMode>(canApprove ? "DECISIONS" : "MINE");
+  // The company account has no employee record, so it has no applications of its own.
+  const hasOwnRecord = Boolean(user?.employee_id);
+  const [view, setView] = useState<ViewMode>(
+    canApprove ? "DECISIONS" : hasOwnRecord ? "MINE" : "TEAM",
+  );
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [dateFrom, setDateFrom] = useState(addDays(today, -30));
   const [dateTo, setDateTo] = useState(addDays(today, 90));
@@ -181,6 +185,7 @@ export default function LeaveApplicationsPage() {
           aria-label="Application scope"
           className="inline-flex rounded-md border border-border bg-surface p-0.5"
         >
+          {hasOwnRecord ? (
           <button
             type="button"
             onClick={() => setView("MINE")}
@@ -193,6 +198,7 @@ export default function LeaveApplicationsPage() {
           >
             My applications
           </button>
+          ) : null}
           {canApprove ? (
             <button
               type="button"

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { CoverageGrid } from "@/components/shift-roster/coverage-grid";
+import { RosterEntryDialog } from "@/components/shift-roster/roster-entry-dialog";
+import { RosterTabs } from "@/components/shift-roster/roster-tabs";
 import { BusyRegion } from "@/components/common/busy-region";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -21,6 +22,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
+import { usePermissions } from "@/lib/auth/use-permissions";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
 import { buildCoverage } from "@/lib/shift-roster/coverage";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
@@ -29,6 +31,46 @@ interface ShiftOption {
   id: string;
   name: string;
   code: string | null;
+  start_time?: string;
+  end_time?: string;
+  is_night_shift?: boolean;
+}
+
+const SHIFT_TONES = [
+  "bg-primary-subtle text-primary",
+  "bg-success-subtle text-success",
+  "bg-warning-subtle text-warning",
+  "bg-info-subtle text-info",
+  "bg-danger-subtle text-danger",
+] as const;
+const NIGHT_TONE = "bg-foreground text-surface";
+const OFF_TONE = "bg-surface-secondary text-foreground-secondary";
+
+/** A stable colour per shift, so a pattern (all mornings, then nights) reads at a glance. Night
+ * shifts are always dark, matching the Schedule coverage tab. */
+function shiftTone(shift: ShiftOption | undefined): string {
+  if (!shift) return SHIFT_TONES[0];
+  if (shift.is_night_shift) return NIGHT_TONE;
+  let h = 0;
+  for (const ch of shift.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return SHIFT_TONES[h % SHIFT_TONES.length];
+}
+
+function hhmm(t: string | undefined): string {
+  return t ? t.slice(0, 5) : "";
+}
+
+function cellTitle(roster: ShiftRoster, shift: ShiftOption | undefined, name: string, date: string): string {
+  const what = roster.is_week_off_override
+    ? "Week off"
+    : shift
+      ? `${shift.name}${shift.start_time ? ` ${hhmm(shift.start_time)}–${hhmm(shift.end_time)}` : ""}`
+      : "No shift";
+  const extras = [
+    roster.is_holiday_working_override ? "working holiday" : null,
+    roster.status === "DRAFT" ? "draft, not live" : "published",
+  ].filter(Boolean);
+  return `${name} · ${date} · ${what} (${extras.join(", ")})`;
 }
 
 const DAY_OPTIONS = [7, 14, 31] as const;
@@ -91,6 +133,8 @@ async function fetchRosterRange(from: string, to: string, signal: AbortSignal): 
  * safety bound the grid shows a warning rather than a silently partial view. */
 export default function RosterGridPage() {
   const { user } = useAuth();
+  const { can } = usePermissions();
+  const canManage = can("ATTENDANCE.ROSTER_MANAGE");
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [start, setStart] = useState(() => mondayOf(today));
   const [days, setDays] = useState<number>(14);
@@ -106,6 +150,12 @@ export default function RosterGridPage() {
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [employeesError, setEmployeesError] = useState<ApiError | null>(null);
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
+  const [editTarget, setEditTarget] = useState<{
+    roster: ShiftRoster | null;
+    employeeId: string;
+    employeeName: string;
+    date: string;
+  } | null>(null);
   const beginRosterRequest = useLatestRequest();
   const beginEmployeeRequest = useLatestRequest();
 
@@ -190,10 +240,40 @@ export default function RosterGridPage() {
     });
   }, [employees, rosteredIds, search, onlyRostered]);
 
+  function handleSaved(saved: ShiftRoster) {
+    setRange((current) => {
+      if (!current) return current;
+      const exists = current.entries.some((r) => r.id === saved.id);
+      return {
+        total: exists ? current.total : current.total + 1,
+        entries: exists
+          ? current.entries.map((r) => (r.id === saved.id ? saved : r))
+          : [...current.entries, saved],
+      };
+    });
+  }
+
   const coverage = useMemo(
     () => buildCoverage(range?.entries ?? [], dates, (id) => shiftById.get(id)?.name),
     [range, dates, shiftById],
   );
+
+  const legend = useMemo(() => {
+    const used = new Set((range?.entries ?? []).map((r) => r.shift_id).filter(Boolean) as string[]);
+    return shifts.filter((s) => used.has(s.id));
+  }, [range, shifts]);
+
+  const rangeLabel = useMemo(() => {
+    const fmt = (iso: string) =>
+      new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+    return `${fmt(start)} – ${fmt(end)}`;
+  }, [start, end]);
+  const onThisWeek = start === mondayOf(today);
 
   const truncated = range !== null && range.total > range.entries.length;
   const loading = employeesLoading || rosterLoading;
@@ -202,11 +282,7 @@ export default function RosterGridPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/rosters" className="text-sm text-foreground-secondary hover:underline">
-          ← Shift Rosters
-        </Link>
-      </div>
+      <RosterTabs active="grid" />
       <PageHeader
         title="Team Roster Grid"
         description="Who is on which shift, by date. Employees are listed a page at a time; a blank cell means no roster entry, so their default shift applies."
@@ -243,8 +319,19 @@ export default function RosterGridPage() {
           <Button type="button" variant="outline" onClick={() => setStart(addDays(start, days))}>
             Next →
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={onThisWeek}
+            onClick={() => setStart(mondayOf(today))}
+          >
+            Today
+          </Button>
         </div>
       </div>
+      <p className="text-sm font-medium text-foreground" aria-live="polite">
+        {rangeLabel}
+      </p>
 
       <label className="flex items-center gap-2 text-sm text-foreground-secondary">
         <Checkbox checked={onlyRostered} onChange={(e) => setOnlyRostered(e.target.checked)} />
@@ -267,16 +354,6 @@ export default function RosterGridPage() {
       ) : null}
       {error && !loading ? <ErrorState message={error.message} /> : null}
 
-      {range && !rosterError ? (
-        <CoverageGrid
-          coverage={coverage}
-          dates={dates}
-          today={today}
-          totalEmployees={employeePagination?.total ?? null}
-          truncated={truncated}
-        />
-      ) : null}
-
       {hasData && !error ? (
         rows.length === 0 ? (
           <EmptyState
@@ -289,11 +366,11 @@ export default function RosterGridPage() {
           />
         ) : (
           <BusyRegion busy={loading} label="Refreshing roster…">
-            <div className="overflow-x-auto rounded-md border border-border">
+            <div className="max-h-[70vh] overflow-auto rounded-md border border-border">
               <table className="min-w-full border-collapse text-xs">
                 <thead>
                   <tr className="bg-surface-secondary">
-                    <th className="sticky left-0 z-10 min-w-44 bg-surface-secondary px-3 py-2 text-left font-medium">
+                    <th className="sticky left-0 top-0 z-30 min-w-44 bg-surface-secondary px-3 py-2 text-left font-medium">
                       Employee
                     </th>
                     {dates.map((d) => {
@@ -302,7 +379,14 @@ export default function RosterGridPage() {
                       return (
                         <th
                           key={d}
-                          className={`px-2 py-2 text-center font-medium ${weekend ? "text-foreground-muted" : ""} ${d === today ? "text-primary" : ""}`}
+                          className={`sticky top-0 z-20 px-2 py-2 text-center font-medium ${
+                            d === today
+                              ? "border-x-2 border-t-2 border-primary bg-primary-subtle text-primary"
+                              : weekend
+                                ? "bg-muted text-foreground-muted"
+                                : "bg-surface-secondary"
+                          }`}
+                          aria-current={d === today ? "date" : undefined}
                         >
                           <div>
                             {dt.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" })}
@@ -327,19 +411,47 @@ export default function RosterGridPage() {
                       {dates.map((d) => {
                         const r = cells.get(`${e.id}|${d}`);
                         const off = r?.is_week_off_override;
+                        const dow = new Date(`${d}T00:00:00Z`).getUTCDay();
+                        const shift = r?.shift_id ? shiftById.get(r.shift_id) : undefined;
                         return (
-                          <td key={d} className="px-1 py-1 text-center">
+                          <td
+                            key={d}
+                            className={`px-1 py-1 text-center ${
+                              d === today
+                                ? "border-x-2 border-primary bg-primary-subtle/30"
+                                : dow === 0 || dow === 6
+                                  ? "bg-muted/40"
+                                  : ""
+                            }`}
+                          >
                             {r ? (
-                              <span
-                                title={r.status === "DRAFT" ? "Draft (not live)" : "Published"}
-                                className={`inline-block min-w-10 rounded px-1.5 py-1 ${
-                                  off
-                                    ? "bg-surface-secondary text-foreground-secondary"
-                                    : "bg-primary-subtle text-primary"
-                                } ${r.status === "DRAFT" ? "border border-dashed border-border" : ""}`}
+                              <button
+                                type="button"
+                                disabled={!canManage}
+                                onClick={() =>
+                                  setEditTarget({ roster: r, employeeId: e.id, employeeName: employeeLabel(e), date: d })
+                                }
+                                title={cellTitle(r, shift, employeeLabel(e), d)}
+                                aria-label={cellTitle(r, shift, employeeLabel(e), d)}
+                                className={`inline-block min-w-10 rounded px-1.5 py-1 font-medium ${
+                                  off ? OFF_TONE : shiftTone(shift)
+                                } ${r.status === "DRAFT" ? "border border-dashed border-foreground-muted" : ""} ${
+                                  canManage ? "cursor-pointer hover:ring-2 hover:ring-primary" : "cursor-default"
+                                }`}
                               >
                                 {cellLabel(r, shiftById)}
-                              </span>
+                              </button>
+                            ) : canManage ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditTarget({ roster: null, employeeId: e.id, employeeName: employeeLabel(e), date: d })
+                                }
+                                aria-label={`Add roster entry for ${employeeLabel(e)} on ${d}`}
+                                className="inline-block min-w-10 rounded px-1.5 py-1 text-foreground-muted opacity-0 hover:bg-muted hover:opacity-100 focus-visible:opacity-100"
+                              >
+                                +
+                              </button>
                             ) : null}
                           </td>
                         );
@@ -347,6 +459,44 @@ export default function RosterGridPage() {
                     </tr>
                   ))}
                 </tbody>
+                {coverage.rows.length > 0 ? (
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-surface-secondary">
+                      <th
+                        scope="rowgroup"
+                        colSpan={dates.length + 1}
+                        className="sticky left-0 px-3 py-1.5 text-left text-2xs font-semibold uppercase tracking-wider text-foreground-muted"
+                      >
+                        Rostered per day — all employees, not just this page
+                      </th>
+                    </tr>
+                    {coverage.rows.map((row) => (
+                      <tr key={row.key} className="border-t border-border">
+                        <th
+                          scope="row"
+                          className="sticky left-0 z-10 bg-background px-3 py-1.5 text-left text-xs font-medium"
+                        >
+                          {row.label}
+                          <span className="ml-1 font-normal text-foreground-muted">({row.people})</span>
+                        </th>
+                        {dates.map((d) => {
+                          const n = row.byDate.get(d) ?? 0;
+                          return (
+                            <td
+                              key={d}
+                              className={`px-1 py-1.5 text-center tabular-nums ${
+                                d === today ? "border-x-2 border-primary bg-primary-subtle/30" : ""
+                              } ${n === 0 ? "text-foreground-muted" : "font-semibold"}`}
+                              aria-label={`${row.label} on ${d}: ${n}`}
+                            >
+                              {n === 0 ? "–" : n}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tfoot>
+                ) : null}
               </table>
             </div>
           </BusyRegion>
@@ -361,8 +511,30 @@ export default function RosterGridPage() {
           className="rounded-md border"
         />
       ) : null}
+      {legend.length > 0 ? (
+        <ul className="flex flex-wrap items-center gap-2 text-xs" aria-label="Shift colour legend">
+          {legend.map((s) => (
+            <li key={s.id} className={`rounded px-2 py-1 font-medium ${shiftTone(s)}`}>
+              {s.code ?? s.name}
+              {s.code ? <span className="ml-1 font-normal opacity-80">{s.name}</span> : null}
+            </li>
+          ))}
+          <li className={`rounded px-2 py-1 font-medium ${OFF_TONE}`}>OFF</li>
+        </ul>
+      ) : null}
+      <RosterEntryDialog
+        open={editTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditTarget(null);
+        }}
+        roster={editTarget?.roster ?? null}
+        employeeId={editTarget?.employeeId}
+        employeeLabel={editTarget?.employeeName}
+        rosterDate={editTarget?.date}
+        onSaved={handleSaved}
+      />
       <p className="text-xs text-foreground-muted">
-        OFF = week off · * = working holiday · dashed = draft (not live).
+        {canManage ? "Click a cell to edit it, or the + on a blank cell to add an entry. " : ""}OFF = week off · * = working holiday · dashed = draft (not live).
       </p>
     </div>
   );

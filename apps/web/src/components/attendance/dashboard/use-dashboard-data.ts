@@ -7,6 +7,7 @@ import { ApiError } from "@/lib/api/errors";
 import type { AttendancePeriod, AttendancePeriodSummaryRow } from "@/lib/attendance-period/types";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import type { DateRange, EmployeeLite } from "@/lib/attendance/dashboard";
+import { directoryRowsPath, type DirectoryRow } from "@/lib/employee/directory";
 import type { LegalEntity } from "@/lib/legal-entity/types";
 import type { OvertimeRecord } from "@/lib/overtime/types";
 import type { RegularizationRequest } from "@/lib/regularization/types";
@@ -175,5 +176,54 @@ export function usePeriodSummary(periodId: string | null): Section<AttendancePer
     () => apiClient.get<AttendancePeriodSummaryRow[]>(`/attendance-periods/${periodId}/summary`),
     `summary|${periodId}`,
     periodId !== null,
+  );
+}
+
+/** The directory endpoint takes at most 200 ids per request. */
+const DIRECTORY_CHUNK = 200;
+/** A hard ceiling on requests (2,000 employees); beyond it the result says it is partial. */
+const DIRECTORY_MAX_CHUNKS = 10;
+
+export interface DirectoryDetails {
+  /** Department, branch, designation… keyed by employee id. */
+  byEmployee: Map<string, DirectoryRow>;
+  /** True when there were more employees than the ceiling allows — figures cover only some. */
+  truncated: boolean;
+  /** How many employees the figures cover, and how many there were. */
+  covered: number;
+  total: number;
+}
+
+async function loadDirectoryDetails(ids: string[]): Promise<DirectoryDetails> {
+  const limit = DIRECTORY_CHUNK * DIRECTORY_MAX_CHUNKS;
+  const wanted = ids.slice(0, limit);
+  const chunks: string[][] = [];
+  for (let i = 0; i < wanted.length; i += DIRECTORY_CHUNK) chunks.push(wanted.slice(i, i + DIRECTORY_CHUNK));
+  const pages = await Promise.all(chunks.map((chunk) => apiClient.get<DirectoryRow[]>(directoryRowsPath(chunk))));
+  const byEmployee = new Map<string, DirectoryRow>();
+  for (const rows of pages) for (const row of rows) byEmployee.set(row.employee_id, row);
+  return { byEmployee, truncated: ids.length > limit, covered: wanted.length, total: ids.length };
+}
+
+/** A short stable fingerprint of a set of ids, so the section reloads when the people change but
+ * not when the same people are listed in another order. */
+function fingerprint(ids: string[]): string {
+  let hash = 2166136261;
+  for (const id of [...ids].sort()) {
+    for (let i = 0; i < id.length; i += 1) {
+      hash ^= id.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+  }
+  return `${ids.length}:${(hash >>> 0).toString(16)}`;
+}
+
+/** Department / branch for the given employees, from the employee directory. Requests are batched
+ * (never one per employee) and run in parallel. Needs the same permission as the employee list. */
+export function useDirectoryDetails(employeeIds: string[], enabled: boolean): Section<DirectoryDetails> {
+  return useSection<DirectoryDetails>(
+    () => loadDirectoryDetails(employeeIds),
+    `directory|${fingerprint(employeeIds)}`,
+    enabled && employeeIds.length > 0,
   );
 }

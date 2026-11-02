@@ -341,9 +341,6 @@ export function ReportsPanel(props: ReportsPanelProps) {
         ))}
       </div>
       <div role="tabpanel">{body}</div>
-      <p className="text-xs text-foreground-muted">
-        Export (CSV / Excel / PDF) is not available yet — the backend has no attendance export endpoint.
-      </p>
     </SectionCard>
   );
 }

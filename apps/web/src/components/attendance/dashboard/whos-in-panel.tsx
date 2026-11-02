@@ -37,6 +37,8 @@ interface WhosInPanelProps {
   /** True when `rows` can span more than one day (a whole-range Needs Attention drill) — shows
    * which date each row belongs to, since the same employee can appear more than once. */
   showDate?: boolean;
+  /** Department per employee, when it has loaded — shown under the name. */
+  directory?: Map<string, { department: string | null }>;
 }
 
 function Avatar({ name }: { name: string }) {
@@ -64,10 +66,18 @@ function flagBadges(day: AttendanceDay) {
 
 /** The employee list behind every drill-down: search, sort and paging over the rows the page
  * already holds. Desktop shows a table; small screens show the same rows as compact cards. */
-export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDate = false }: WhosInPanelProps) {
+export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDate = false, directory }: WhosInPanelProps) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "name", dir: 1 });
   const [page, setPage] = useState(1);
+  // A new `rows` array means the drill-down, range or filters changed. Count those changes so the
+  // list can fade in fresh instead of snapping (adjusting state during render, not in an effect).
+  const [seenRows, setSeenRows] = useState(rows);
+  const [generation, setGeneration] = useState(0);
+  if (seenRows !== rows) {
+    setSeenRows(rows);
+    setGeneration((g) => g + 1);
+  }
 
   const view = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -138,7 +148,7 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
         </p>
       ) : (
         <>
-          <div className="hidden overflow-x-auto rounded-md border border-border md:block">
+          <div key={`t-${generation}-${current}-${sort.key}-${sort.dir}`} className="hidden animate-in fade-in-0 overflow-x-auto rounded-md border border-border duration-motion-base md:block">
             <table className="w-full text-sm">
               <thead className="bg-surface-secondary text-xs uppercase tracking-wide text-foreground-muted">
                 <tr>
@@ -161,7 +171,6 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
                     </button>
                   </th>
                   <th scope="col" className="px-3 py-2 text-left font-medium">Status</th>
-                  <th scope="col" className="px-3 py-2 text-left font-medium">Presence</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -176,8 +185,10 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
                             <Link href={`/app/attendance/employee/${d.row.employeeId}`} className="font-medium text-foreground hover:underline">
                               {d.name}
                             </Link>
-                            {d.employee?.employee_code ? (
-                              <p className="text-xs text-foreground-muted">{d.employee.employee_code}</p>
+                            {d.employee?.employee_code || directory?.get(d.row.employeeId)?.department ? (
+                              <p className="text-xs text-foreground-muted">
+                                {[d.employee?.employee_code, directory?.get(d.row.employeeId)?.department].filter(Boolean).join(" · ")}
+                              </p>
                             ) : null}
                           </div>
                         </div>
@@ -189,15 +200,17 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
                       <td className="px-3 py-2 text-foreground-secondary">{c.hours}</td>
                       <td className="px-3 py-2">
                         {d.row.day ? (
-                          <div className="flex flex-wrap items-center gap-1">
-                            <AttendanceStatusBadge status={d.row.day.attendance_status} />
-                            {flagBadges(d.row.day)}
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-1">
+                              <AttendanceStatusBadge status={d.row.day.attendance_status} />
+                              {flagBadges(d.row.day)}
+                            </div>
+                            {c.presence !== "—" ? <p className="text-xs text-foreground-muted">{c.presence}</p> : null}
                           </div>
                         ) : (
                           <Badge variant="outline">No record</Badge>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-foreground-secondary">{c.presence}</td>
                     </tr>
                   );
                 })}
@@ -205,7 +218,7 @@ export function WhosInPanel({ rows, employeesById, shiftNames, timezone, showDat
             </table>
           </div>
 
-          <ul className="space-y-2 md:hidden">
+          <ul key={`l-${generation}-${current}-${sort.key}-${sort.dir}`} className="animate-in fade-in-0 space-y-2 duration-motion-base md:hidden">
             {slice.map((d) => {
               const c = cells(d);
               return (

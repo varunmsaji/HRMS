@@ -1,28 +1,32 @@
 "use client";
 
 import { CalendarClock } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AbsenceInsights } from "@/components/attendance/dashboard/absence-insights";
-import { CoverageNotice } from "@/components/attendance/dashboard/coverage-notice";
+import { BreakdownPanel } from "@/components/attendance/dashboard/breakdown-panel";
+import { AttendanceDashboardSkeleton } from "@/components/attendance/dashboard/dashboard-skeleton";
+import { PunctualityPanel, WeekdayPanel } from "@/components/attendance/dashboard/insight-panels";
 import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
 import { MusterHeatmap } from "@/components/attendance/dashboard/muster-heatmap";
 import { NeedsAttention } from "@/components/attendance/dashboard/needs-attention";
 import { OvertimePanel } from "@/components/attendance/dashboard/overtime-panel";
+import { PayrollReadiness } from "@/components/attendance/dashboard/payroll-readiness";
 import { MonthlySummary, PeriodStatus } from "@/components/attendance/dashboard/period-status";
 import { ReportsPanel } from "@/components/attendance/dashboard/reports-panel";
 import { SectionCard } from "@/components/attendance/dashboard/section-card";
 import { SelfView } from "@/components/attendance/dashboard/self-view";
 import { StatusChart } from "@/components/attendance/dashboard/status-chart";
 import { AttendanceToolbar } from "@/components/attendance/dashboard/toolbar";
+import { TodayPulse } from "@/components/attendance/dashboard/today-pulse";
 import { TrendChart } from "@/components/attendance/dashboard/trend-chart";
-import { useDashboardData } from "@/components/attendance/dashboard/use-dashboard-data";
+import { useDashboardData, useDirectoryDetails } from "@/components/attendance/dashboard/use-dashboard-data";
 import { WhosInPanel, type WhosInRow } from "@/components/attendance/dashboard/whos-in-panel";
 import { WorkHoursPanel } from "@/components/attendance/dashboard/work-hours-panel";
 import { PunchEntryDialog } from "@/components/attendance/punch-entry-dialog";
 import { ErrorState } from "@/components/common/error-state";
-import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +44,7 @@ import {
   indexEmployees,
   musterDates,
   parseFilters,
+  pickDefaultPeriod,
   repeatAbsences,
   resolveRange,
   rowsInRange,
@@ -55,8 +60,34 @@ import {
   type DayFlag,
 } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
+import {
+  breakdownBy,
+  compareRates,
+  dailyAttendanceRate,
+  frequentLateArrivals,
+  groupNames,
+  punctualitySummary,
+  sameWeekdayLastWeek,
+  weekdayAbsence,
+  weekdayShort,
+} from "@/lib/attendance/insights";
 import { useAuth } from "@/lib/auth/auth-context";
+import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/auth/use-permissions";
+
+type DashboardView = "today" | "trends" | "muster" | "periods";
+const VIEWS: DashboardView[] = ["today", "trends", "muster", "periods"];
+
+const VIEW_LABELS: Record<DashboardView, string> = {
+  today: "Today",
+  trends: "Trends",
+  muster: "Muster",
+  periods: "Periods & reports",
+};
+
+function parseView(value: string | null): DashboardView {
+  return (VIEWS as string[]).includes(value ?? "") ? (value as DashboardView) : "today";
+}
 
 /** Attendance command centre. Every number comes from `GET /v1/attendance/days` (and the
  * overtime / regularization / period endpoints), which are DataScope-filtered server-side — the
@@ -76,6 +107,9 @@ function AttendanceDashboard() {
 
   const [filters, setFilters] = useState<DashboardFilters>(() => parseFilters(searchParams ?? new URLSearchParams()));
   const [punchOpen, setPunchOpen] = useState(false);
+  // Which part of the dashboard is on screen. "today" (the default) is omitted from the URL.
+  const [view, setView] = useState<DashboardView>(() => parseView(searchParams?.get("view") ?? null));
+  const scrollToListRef = useRef(false);
 
   const updateFilters = useCallback(
     (patch: Partial<DashboardFilters>) => {
@@ -87,9 +121,20 @@ function AttendanceDashboard() {
 
   // State is the source of truth; the URL mirrors it (shareable, survives reload).
   useEffect(() => {
-    const qs = serializeFilters(filters).toString();
+    const params = serializeFilters(filters);
+    if (view !== "today") params.set("view", view);
+    const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  }, [filters, pathname, router]);
+  }, [filters, view, pathname, router]);
+
+  // A drill-down opens the employee list, which lives on the Today view: switch to it first, then
+  // scroll once it has rendered.
+  useEffect(() => {
+    if (view === "today" && scrollToListRef.current) {
+      scrollToListRef.current = false;
+      document.getElementById("att-whos-in")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    }
+  }, [view, filters]);
 
   const range = useMemo(() => resolveRange(filters, today), [filters, today]);
   const win = useMemo(() => windowRange(range), [range]);
@@ -109,6 +154,13 @@ function AttendanceDashboard() {
   });
 
   const allDays = data.days.data;
+  // Department / branch come from the employee directory (attendance days carry neither). Only the
+  // people who actually appear in the days are looked up, in a few batched requests.
+  const canListEmployees = can("EMPLOYEE.VIEW_ALL");
+  const employeeIds = useMemo(() => Array.from(new Set((allDays ?? []).map((d) => d.employee_id))), [allDays]);
+  const directory = useDirectoryDetails(employeeIds, canListEmployees);
+  const directoryMap = directory.status === "ready" ? directory.data?.byEmployee : undefined;
+  const directoryPending = canListEmployees && employeeIds.length > 0 && directory.status !== "ready" && directory.status !== "error";
   const mode: "org" | "team" | "self" | "pending" = canViewAll
     ? "org"
     : !allDays
@@ -127,20 +179,32 @@ function AttendanceDashboard() {
       shifts: (data.shifts.data ?? []).map((s) => ({ id: s.id, name: s.name })),
       entities: (data.entities.data ?? []).map((e) => ({ id: e.id, name: e.name })),
       employeeStatuses: Array.from(new Set((employees ?? []).map((e) => e.status).filter((s): s is string => !!s))).sort(),
+      departments: directoryMap ? groupNames(directoryMap, "department") : [],
+      branches: directoryMap ? groupNames(directoryMap, "branch") : [],
     }),
-    [employees, data.shifts.data, data.entities.data],
+    [employees, data.shifts.data, data.entities.data, directoryMap],
   );
 
   const population = useMemo(
-    () => applyPopulationFilters(allDays ?? [], filters, employeesById),
-    [allDays, filters, employeesById],
+    () => applyPopulationFilters(allDays ?? [], filters, employeesById, directoryMap),
+    [allDays, filters, employeesById, directoryMap],
   );
+  // The breakdown compares departments / branches with each other, so it ignores the department
+  // and branch filters themselves (otherwise picking one would leave nothing to compare).
+  const peerFocusRows = useMemo(() => {
+    if (!directoryMap) return [];
+    const peers = applyPopulationFilters(allDays ?? [], { ...filters, department: "", branch: "" }, employeesById, directoryMap);
+    return rowsOn(peers, range.to);
+  }, [allDays, filters, employeesById, directoryMap, range.to]);
+  const byDepartment = useMemo(() => (directoryMap ? breakdownBy(peerFocusRows, directoryMap, "department") : []), [peerFocusRows, directoryMap]);
+  const byBranch = useMemo(() => (directoryMap ? breakdownBy(peerFocusRows, directoryMap, "branch") : []), [peerFocusRows, directoryMap]);
+  const hasDirectoryFilter = Boolean(filters.department || filters.branch);
   const rangeRows = useMemo(() => rowsInRange(population, range), [population, range]);
   const focusRows = useMemo(() => rowsOn(population, range.to), [population, range.to]);
   const noRecord = useMemo(
     () =>
-      focusIsToday && employees ? employeesWithoutRecord(focusRows, employees, filters, range.to) : [],
-    [focusIsToday, employees, focusRows, filters, range.to],
+      focusIsToday && employees ? employeesWithoutRecord(focusRows, employees, filters, range.to, directoryMap) : [],
+    [focusIsToday, employees, focusRows, filters, range.to, directoryMap],
   );
   const kpi = useMemo(() => computeKpis(focusRows, noRecord.length), [focusRows, noRecord.length]);
   const distribution = useMemo(() => statusDistribution(focusRows), [focusRows]);
@@ -217,6 +281,30 @@ function AttendanceDashboard() {
     [population, win, employeesById],
   );
 
+  // --- insight panels (all derived from the days already loaded) ------------------------------
+  const ratePoints = useMemo(() => dailyAttendanceRate(population, win), [population, win]);
+  const compareDate = sameWeekdayLastWeek(range.to);
+  const rateComparison = useMemo(() => compareRates(ratePoints, range.to, compareDate), [ratePoints, range.to, compareDate]);
+  const kpiCompare = useMemo(() => {
+    const rows = rowsOn(population, compareDate);
+    return rows.length > 0 ? { kpi: computeKpis(rows, 0), label: `last ${weekdayShort(compareDate)}` } : null;
+  }, [population, compareDate]);
+  // Punctuality and weekday patterns need more than one day to mean anything, so they read the
+  // whole trend window (never shorter than two weeks) rather than a single-day range.
+  const windowRows = useMemo(() => rowsInRange(population, win), [population, win]);
+  const winLabel = `${formatShortDate(win.from)} – ${formatShortDate(win.to)}`;
+  const punctuality = useMemo(() => punctualitySummary(windowRows), [windowRows]);
+  const frequentLate = useMemo(() => frequentLateArrivals(windowRows), [windowRows]);
+  const weekdayStats = useMemo(() => weekdayAbsence(windowRows), [windowRows]);
+  const readinessPeriod = useMemo(
+    () => pickDefaultPeriod((data.periods.data ?? []).filter((p) => p.status === "OPEN"), today),
+    [data.periods.data, today],
+  );
+  const payrollBlockers = useMemo(
+    () => attention.filter((item) => item.severity === "critical" || item.severity === "high"),
+    [attention],
+  );
+
   function drill(target: { bucket?: DayBucket; flag?: DayFlag; scope?: "range"; clear?: boolean }) {
     setFilters((prev) => {
       if (target.clear) return { ...prev, bucket: "", flag: "", scope: "" };
@@ -229,16 +317,24 @@ function AttendanceDashboard() {
       if (prev.bucket === bucket && prev.flag === flag && prev.scope === scope) return { ...prev, bucket: "", flag: "", scope: "" };
       return { ...prev, bucket, flag, scope };
     });
-    if (typeof document !== "undefined") {
-      document.getElementById("att-whos-in")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-    }
+    scrollToListRef.current = true;
+    setView("today");
   }
 
   const actions =
-    mode !== "self" && (can("ATTENDANCE.PUNCH") || can("ATTENDANCE.PUNCH_ON_BEHALF")) ? (
-      <Button type="button" onClick={() => setPunchOpen(true)}>
-        Record punch
-      </Button>
+    mode !== "self" ? (
+      <div className="flex flex-wrap items-center gap-2">
+        {can("ATTENDANCE.VIEW_ALL") ? (
+          <Button asChild variant="outline">
+            <Link href="/app/attendance/calendar">Calendar view</Link>
+          </Button>
+        ) : null}
+        {can("ATTENDANCE.PUNCH") || can("ATTENDANCE.PUNCH_ON_BEHALF") ? (
+          <Button type="button" onClick={() => setPunchOpen(true)}>
+            Record punch
+          </Button>
+        ) : null}
+      </div>
     ) : null;
 
   const header = (
@@ -281,10 +377,15 @@ function AttendanceDashboard() {
         range={range}
         today={today}
         lookups={lookups}
-        showEntity={canViewAll}
         onChange={updateFilters}
         onReset={resetFilters}
       />
+
+      {hasDirectoryFilter && !directoryMap && (directory.status === "error" || !canListEmployees) ? (
+        <p role="note" className="text-xs text-foreground-muted">
+          The department / branch filter isn&apos;t applied: department data couldn&apos;t be loaded for your account.
+        </p>
+      ) : null}
 
       {!allDays && data.days.status === "error" ? (
         <ErrorState
@@ -295,8 +396,8 @@ function AttendanceDashboard() {
           }
           onRetry={data.days.error?.status === 403 ? undefined : data.days.retry}
         />
-      ) : !allDays ? (
-        <LoadingState label="Loading attendance…" />
+      ) : !allDays || (hasDirectoryFilter && directoryPending) ? (
+        <AttendanceDashboardSkeleton />
       ) : (
         <>
           {data.employees.status === "error" || (data.employees.data?.truncated ?? false) ? (
@@ -307,27 +408,72 @@ function AttendanceDashboard() {
             </p>
           ) : null}
 
-          <KpiGrid kpi={kpi} filters={filters} focusLabel={focusLabel} onDrill={drill} />
+          <div role="tablist" aria-label="Attendance views" className="flex gap-1 overflow-x-auto border-b border-border">
+            {VIEWS.map((key) => (
+              <button
+                key={key}
+                id={`att-tab-${key}`}
+                type="button"
+                role="tab"
+                aria-selected={view === key}
+                aria-controls={`att-panel-${key}`}
+                tabIndex={view === key ? 0 : -1}
+                onClick={() => setView(key)}
+                onKeyDown={(event) => {
+                  const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                  if (!step) return;
+                  event.preventDefault();
+                  const next = VIEWS[(VIEWS.indexOf(key) + step + VIEWS.length) % VIEWS.length];
+                  setView(next);
+                  document.getElementById(`att-tab-${next}`)?.focus();
+                }}
+                className={cn(
+                  "relative whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-[transform,colors] duration-motion-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  // The underline grows out from the centre of the selected tab and shrinks away from the old one.
+                  "after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-center after:scale-x-0 after:rounded-full after:bg-primary after:transition-transform after:duration-motion-base active:scale-[0.97] motion-reduce:transform-none motion-reduce:after:transition-none",
+                  view === key
+                    ? "text-primary after:scale-x-100"
+                    : "text-foreground-secondary hover:text-foreground",
+                )}
+              >
+                {key === "periods" && mode !== "org" ? "Reports" : VIEW_LABELS[key]}
+              </button>
+            ))}
+          </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
+          {view === "today" ? (
+            <div role="tabpanel" id="att-panel-today" aria-labelledby="att-tab-today" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
+          <TodayPulse
+            points={ratePoints}
+            focusDate={range.to}
+            focusLabel={focusLabel}
+            comparison={rateComparison}
+            distribution={distribution}
+            filters={filters}
+            onDrill={(bucket) => drill({ bucket })}
+          />
+
+          <KpiGrid kpi={kpi} filters={filters} focusLabel={focusLabel} compare={kpiCompare} onDrill={drill} />
+
+          <div className="grid items-start gap-6 lg:grid-cols-3">
             <SectionCard
               id="att-attention"
               title="Needs attention"
               description={`${rangeLabel} — what HR should act on.`}
               status="ready"
-              className="lg:col-span-2"
+              className={mode === "org" && readinessPeriod ? "lg:col-span-2" : "lg:col-span-3"}
             >
               <NeedsAttention items={attention} unavailableSources={unavailableSources} rangeLabel={rangeLabel} onDrill={drill} />
             </SectionCard>
-            <SectionCard
-              id="att-status"
-              title="Status distribution"
-              description={`${focusIsToday ? "Today" : formatShortDate(range.to)} — click a status to list those employees.`}
-              status="ready"
-              empty={focusRows.length === 0 ? { title: "No attendance records for this date.", icon: CalendarClock } : null}
-            >
-              <StatusChart distribution={distribution} filters={filters} onDrill={(bucket) => drill({ bucket })} />
-            </SectionCard>
+            {mode === "org" && readinessPeriod ? (
+              <PayrollReadiness
+                period={readinessPeriod}
+                companyName={entityNames.get(readinessPeriod.legal_entity_id) ?? "Company"}
+                today={today}
+                blockers={payrollBlockers}
+                rangeLabel={rangeLabel}
+              />
+            ) : null}
           </div>
 
           <SectionCard
@@ -349,8 +495,37 @@ function AttendanceDashboard() {
               shiftNames={shiftNames}
               timezone={timezone}
               showDate={rangeScoped}
+              directory={directoryMap}
             />
           </SectionCard>
+            </div>
+          ) : null}
+
+          {view === "trends" ? (
+            <div role="tabpanel" id="att-panel-trends" aria-labelledby="att-tab-trends" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
+          {canListEmployees ? (
+            <SectionCard
+              id="att-breakdown"
+              title="Departments & branches"
+              description="Who is in, and who is missing, in each part of the company. Click a row to filter the whole dashboard."
+              status={directory.status === "idle" ? "loading" : directory.status}
+              error={directory.error}
+              onRetry={directory.retry}
+            >
+              <BreakdownPanel
+                byDepartment={byDepartment}
+                byBranch={byBranch}
+                active={{ department: filters.department, branch: filters.branch }}
+                onSelect={(key, name) => updateFilters({ [key]: filters[key] === name ? "" : name })}
+                focusLabel={focusLabel}
+                partialNote={
+                  directory.data?.truncated
+                    ? `Department and branch figures cover the first ${directory.data.covered.toLocaleString()} of ${directory.data.total.toLocaleString()} employees.`
+                    : null
+                }
+              />
+            </SectionCard>
+          ) : null}
 
           <div className="grid gap-6 lg:grid-cols-3">
             <SectionCard
@@ -363,24 +538,41 @@ function AttendanceDashboard() {
               <TrendChart rows={population} range={win} />
             </SectionCard>
             <SectionCard
-              id="att-absence"
-              title="Leave & absence"
-              description="Operational view — Leave stays the system of record."
+              id="att-status"
+              title="Status distribution"
+              description={`${focusIsToday ? "Today" : formatShortDate(range.to)} — click a status to list those employees.`}
               status="ready"
+              empty={focusRows.length === 0 ? { title: "No attendance records for this date.", icon: CalendarClock } : null}
             >
-              <AbsenceInsights
-                kpi={kpi}
-                focusLabel={focusLabel}
-                rangeAbsentDays={absentRangeDays}
-                rangeLeaveDays={leaveRangeDays}
-                repeat={repeat}
-                employeesById={employeesById}
-                onDrillEmployee={(id) => updateFilters({ employeeId: id })}
-              />
+              <StatusChart distribution={distribution} filters={filters} onDrill={(bucket) => drill({ bucket })} />
             </SectionCard>
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
+            <SectionCard
+              id="att-punctuality"
+              title="Punctuality"
+              description={`${winLabel} — how punctual people are, and who is late again and again.`}
+              status="ready"
+            >
+              <PunctualityPanel
+                summary={punctuality}
+                frequent={frequentLate}
+                employeesById={employeesById}
+                onViewLate={() => drill({ flag: "late", scope: "range" })}
+              />
+            </SectionCard>
+            <SectionCard
+              id="att-weekday"
+              title="Absence by weekday"
+              description={`${winLabel} — share of expected days missed, per weekday.`}
+              status="ready"
+            >
+              <WeekdayPanel stats={weekdayStats} />
+            </SectionCard>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-3">
             <SectionCard
               id="att-hours"
               title="Work hours"
@@ -402,15 +594,28 @@ function AttendanceDashboard() {
             >
               {overtimeSummary ? <OvertimePanel summary={overtimeSummary} /> : null}
             </SectionCard>
+            <SectionCard
+              id="att-absence"
+              title="Leave & absence"
+              description="Operational view — Leave stays the system of record."
+              status="ready"
+            >
+              <AbsenceInsights
+                kpi={kpi}
+                focusLabel={focusLabel}
+                rangeAbsentDays={absentRangeDays}
+                rangeLeaveDays={leaveRangeDays}
+                repeat={repeat}
+                employeesById={employeesById}
+                onDrillEmployee={(id) => updateFilters({ employeeId: id })}
+              />
+            </SectionCard>
           </div>
+            </div>
+          ) : null}
 
-          <SectionCard
-            id="att-breakdowns"
-            title="Department, location & work-mode breakdowns"
-            status="ready"
-            unavailable="Not available yet: attendance days carry no department, branch, designation or work-mode, so these breakdowns can't be built without one request per employee. See “Not shown on this dashboard” below."
-          />
-
+          {view === "muster" ? (
+            <div role="tabpanel" id="att-panel-muster" aria-labelledby="att-tab-muster" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
           <SectionCard
             id="att-muster"
             title="Attendance heatmap"
@@ -420,10 +625,21 @@ function AttendanceDashboard() {
           >
             <MusterHeatmap muster={muster} />
           </SectionCard>
+            </div>
+          ) : null}
 
+          {view === "periods" ? (
+            <div role="tabpanel" id="att-panel-periods" aria-labelledby="att-tab-periods" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
           {mode === "org" ? (
             <div className="grid gap-6 lg:grid-cols-2">
-              <PeriodStatus periods={data.periods} entityNames={entityNames} today={today} />
+              <PeriodStatus
+                periods={data.periods}
+                entityNames={entityNames}
+                today={today}
+                entities={lookups.entities}
+                legalEntityId={filters.legalEntityId}
+                onEntityChange={(legalEntityId) => updateFilters({ legalEntityId })}
+              />
               <MonthlySummary periods={data.periods} today={today} />
             </div>
           ) : null}
@@ -437,8 +653,8 @@ function AttendanceDashboard() {
             today={today}
             rangeLabel={rangeLabel}
           />
-
-          <CoverageNotice />
+            </div>
+          ) : null}
         </>
       )}
 
@@ -449,7 +665,7 @@ function AttendanceDashboard() {
 
 export default function AttendanceDashboardPage() {
   return (
-    <Suspense fallback={<LoadingState label="Loading attendance…" />}>
+    <Suspense fallback={<AttendanceDashboardSkeleton />}>
       <AttendanceDashboard />
     </Suspense>
   );

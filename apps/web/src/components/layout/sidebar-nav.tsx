@@ -78,7 +78,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                 const active = isSettingsHub
                   ? matchesHref(pathname, item.href) ||
                     Array.from(SETTINGS_HREFS).some((href) => matchesHref(pathname, href))
-                  : matchesHref(pathname, item.href);
+                  : matchesHref(pathname, item.matchPrefix ?? item.href);
                 const Icon = item.icon;
 
                 return (

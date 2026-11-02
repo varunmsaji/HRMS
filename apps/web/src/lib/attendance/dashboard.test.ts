@@ -598,3 +598,54 @@ describe("absence, muster, month and period helpers", () => {
     expect(pickDefaultPeriod([], "2026-10-07")).toBeNull();
   });
 });
+
+describe("department and branch filters", () => {
+  const days = [
+    makeDay({ employee_id: "a", attendance_date: TODAY }),
+    makeDay({ employee_id: "b", attendance_date: TODAY }),
+    makeDay({ employee_id: "c", attendance_date: TODAY }),
+  ];
+  const directory = new Map([
+    ["a", { department: "Engineering", branch: "Pune" }],
+    ["b", { department: "Sales", branch: "Pune" }],
+    ["c", { department: null, branch: null }],
+  ]);
+  const none = new Map();
+
+  it("round-trips through the URL under short names", () => {
+    const filters = { ...DEFAULT_FILTERS, department: "Sales", branch: "Pune" };
+    const params = serializeFilters(filters);
+    expect(params.get("dept")).toBe("Sales");
+    expect(params.get("branch")).toBe("Pune");
+    expect(parseFilters(params)).toEqual(filters);
+    expect(parseFilters(new URLSearchParams())).toEqual(DEFAULT_FILTERS);
+  });
+
+  it("keeps only the employees in that department or branch", () => {
+    const ids = (f: Partial<typeof DEFAULT_FILTERS>) =>
+      applyPopulationFilters(days, { ...DEFAULT_FILTERS, ...f }, none, directory).map((d) => d.employee_id);
+    expect(ids({ department: "Engineering" })).toEqual(["a"]);
+    expect(ids({ branch: "Pune" })).toEqual(["a", "b"]);
+    expect(ids({ department: "Sales", branch: "Pune" })).toEqual(["b"]);
+    expect(ids({ department: "Unassigned" })).toEqual(["c"]);
+  });
+
+  it("skips the filter, rather than hiding everyone, when there is no directory yet", () => {
+    expect(applyPopulationFilters(days, { ...DEFAULT_FILTERS, department: "Sales" }, none)).toHaveLength(3);
+  });
+
+  it("counts as an active filter", () => {
+    expect(hasActiveFilters({ ...DEFAULT_FILTERS, department: "Sales" })).toBe(true);
+  });
+
+  it("does not bring filtered-out employees back as 'no record yet'", () => {
+    const employees = [
+      { id: "a", first_name: "A", last_name: null, employee_code: null, status: "ACTIVE", is_active: true, employment_joining_date: "2020-01-01", employment_last_working_day: null },
+      { id: "b", first_name: "B", last_name: null, employee_code: null, status: "ACTIVE", is_active: true, employment_joining_date: "2020-01-01", employment_last_working_day: null },
+    ];
+    const filters = { ...DEFAULT_FILTERS, department: "Engineering" };
+    // Neither has a row yet; only A is in Engineering.
+    const missing = employeesWithoutRecord([], employees, filters, TODAY, directory);
+    expect(missing.map((e) => e.id)).toEqual(["a"]);
+  });
+});

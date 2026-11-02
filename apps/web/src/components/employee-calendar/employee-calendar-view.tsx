@@ -150,7 +150,7 @@ export function EmployeeCalendarMonth({
   const weeks = weeksBetween(calendar.from_date, calendar.to_date);
 
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-[42rem] table-fixed border-separate border-spacing-1">
         <caption className="sr-only">Work calendar for {formatMonthLabel(month)}</caption>
         <thead>

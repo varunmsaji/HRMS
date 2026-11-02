@@ -1,4 +1,9 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
+
+import { Button } from "@/components/ui/button";
 
 import {
   BUCKET_GLYPHS,
@@ -11,12 +16,14 @@ import {
 } from "@/lib/attendance/dashboard";
 import { cn } from "@/lib/utils";
 
-const ROW_LIMIT = 100;
+const PAGE_ROWS = 25;
 
 /** Organisation heatmap / muster: one row per employee, one column per day, each cell the day's
  * status. Every cell carries a letter code and a text label as well as colour. */
 export function MusterHeatmap({ muster }: { muster: Muster }) {
-  const rows = muster.rows.slice(0, ROW_LIMIT);
+  // 25 employees × ~30 days is already 750 cells; render more only when asked.
+  const [visible, setVisible] = useState(PAGE_ROWS);
+  const rows = muster.rows.slice(0, visible);
   return (
     <div className="space-y-3">
       <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-foreground-secondary" aria-label="Legend">
@@ -29,7 +36,7 @@ export function MusterHeatmap({ muster }: { muster: Muster }) {
           </li>
         ))}
       </ul>
-      <div className="max-h-[28rem] overflow-auto rounded-md border border-border">
+      <div className="relative max-h-[28rem] overflow-auto rounded-md border border-border">
         <table className="border-separate border-spacing-0 text-xs">
           <caption className="sr-only">Attendance status by employee and day</caption>
           <thead>
@@ -84,10 +91,15 @@ export function MusterHeatmap({ muster }: { muster: Muster }) {
           </tbody>
         </table>
       </div>
-      {muster.rows.length > ROW_LIMIT ? (
-        <p className="text-xs text-foreground-muted">
-          Showing the first {ROW_LIMIT} of {muster.rows.length} employees — narrow the filters to see the rest.
-        </p>
+      {muster.rows.length > rows.length ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground-muted">
+          <span>
+            Showing {rows.length} of {muster.rows.length} employees — narrow the filters or show more.
+          </span>
+          <Button type="button" size="sm" variant="outline" onClick={() => setVisible((n) => n + PAGE_ROWS)}>
+            Show {Math.min(PAGE_ROWS, muster.rows.length - rows.length)} more
+          </Button>
+        </div>
       ) : null}
     </div>
   );

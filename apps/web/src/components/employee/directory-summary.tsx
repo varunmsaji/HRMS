@@ -2,6 +2,7 @@
 
 import { Building2, CalendarClock, LogOut, Users, type LucideIcon } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import type { DirectorySummary } from "@/lib/employee/directory";
 import { cn } from "@/lib/utils";
 
@@ -23,9 +24,13 @@ function Stat({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-2xs font-semibold uppercase tracking-wider text-foreground-muted">{label}</p>
-          <p className="mt-2 text-3xl font-bold tabular-nums tracking-tight text-foreground">
-            {value === null ? "—" : value.toLocaleString()}
-          </p>
+          {value === null ? (
+            <Skeleton className="mt-2.5 h-8 w-16" aria-label="Loading" />
+          ) : (
+            <p className="mt-2 animate-in fade-in-0 text-3xl font-bold tabular-nums tracking-tight text-foreground duration-motion-slow">
+              {value.toLocaleString()}
+            </p>
+          )}
         </div>
         <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", tile)}>
           <Icon className="h-5 w-5" aria-hidden="true" />

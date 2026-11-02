@@ -1,3 +1,7 @@
+"use client";
+
+import { useId } from "react";
+
 import { cn } from "@/lib/utils";
 
 /** Small dependency-free SVG/CSS charts. Every chart carries an accessible name and a visually
@@ -131,7 +135,7 @@ export function ColumnChart({ data, ariaLabel, format, valueLabel, referenceLabe
   return (
     <div>
       <div role="img" aria-label={ariaLabel} className="flex h-40 items-end gap-1">
-        {data.map((d) => (
+        {data.map((d, index) => (
           <div key={d.key} className="relative flex h-full min-w-0 flex-1 items-end" title={`${d.label}: ${format(d.value)}${d.reference !== undefined ? ` of ${format(d.reference)}` : ""}`}>
             {d.reference !== undefined ? (
               <div
@@ -140,8 +144,8 @@ export function ColumnChart({ data, ariaLabel, format, valueLabel, referenceLabe
               />
             ) : null}
             <div
-              className="relative w-full rounded-sm bg-primary"
-              style={{ height: `${(d.value / max) * 100}%` }}
+              className="relative w-full animate-grow-y rounded-sm bg-primary"
+              style={{ height: `${(d.value / max) * 100}%`, animationDelay: `${Math.min(index, 20) * 25}ms` }}
             />
           </div>
         ))}
@@ -201,7 +205,7 @@ export function ProportionBar({ segments, ariaLabel, className }: ProportionBarP
     <div
       role="img"
       aria-label={ariaLabel}
-      className={cn("flex h-3 w-full overflow-hidden rounded-full bg-muted", className)}
+      className={cn("flex h-3 w-full animate-reveal-x overflow-hidden rounded-full bg-muted", className)}
     >
       {total > 0
         ? segments
@@ -215,6 +219,90 @@ export function ProportionBar({ segments, ariaLabel, className }: ProportionBarP
               />
             ))
         : null}
+    </div>
+  );
+}
+
+interface SparklineProps {
+  /** One value per step; `null` leaves a gap (never interpolated). */
+  values: (number | null)[];
+  ariaLabel: string;
+  /** Fix the scale (e.g. 0–100 for a rate); otherwise it fits the data with some headroom. */
+  yMin?: number;
+  yMax?: number;
+  className?: string;
+}
+
+const SW = 240;
+const SH = 64;
+const SPAD = { x: 4, top: 8, bottom: 6 };
+
+/** A small trend line with a soft gradient fill and a dot on the latest value. Decorative-sized,
+ * but still labelled, and the hidden list carries the numbers. */
+export function Sparkline({ values, ariaLabel, yMin, yMax, className }: SparklineProps) {
+  const gradientId = useId();
+  const present = values.filter((v): v is number => v !== null);
+  if (present.length === 0) {
+    return <p className="text-xs text-foreground-muted">No data for this period yet.</p>;
+  }
+  const lo = yMin ?? Math.min(...present);
+  const hi = yMax ?? Math.max(...present);
+  const span = hi - lo || 1;
+  const innerW = SW - SPAD.x * 2;
+  const innerH = SH - SPAD.top - SPAD.bottom;
+  const x = (i: number) => SPAD.x + (values.length <= 1 ? innerW / 2 : (i / (values.length - 1)) * innerW);
+  const y = (v: number) => SPAD.top + innerH - ((Math.min(Math.max(v, lo), hi) - lo) / span) * innerH;
+
+  const runs: { i: number; v: number }[][] = [];
+  let run: { i: number; v: number }[] = [];
+  values.forEach((v, i) => {
+    if (v === null) {
+      if (run.length) runs.push(run);
+      run = [];
+      return;
+    }
+    run.push({ i, v });
+  });
+  if (run.length) runs.push(run);
+
+  const lastIndex = values.reduce<number>((acc, v, i) => (v === null ? acc : i), -1);
+  const baseline = SH - SPAD.bottom;
+
+  return (
+    <div className={className}>
+      <svg viewBox={`0 0 ${SW} ${SH}`} role="img" aria-label={ariaLabel} className="h-16 w-full overflow-visible">
+        <defs>
+          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <g className="text-primary">
+          {runs.map((points) => {
+            const line = points.map((p, n) => `${n ? "L" : "M"}${x(p.i).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+            const area = `${line}L${x(points[points.length - 1].i).toFixed(1)},${baseline}L${x(points[0].i).toFixed(1)},${baseline}Z`;
+            return (
+              <g key={points[0].i}>
+                {points.length > 1 ? (
+                  <path d={area} fill={`url(#${gradientId})`} className="animate-in fade-in-0 duration-[900ms] [animation-fill-mode:backwards]" />
+                ) : null}
+                <path d={line} pathLength={1} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="animate-draw-line" />
+              </g>
+            );
+          })}
+          {lastIndex >= 0 ? (
+            <g className="animate-in fade-in-0 zoom-in-50 delay-500 duration-motion-slow [animation-fill-mode:backwards] [transform-box:fill-box] [transform-origin:center]">
+              <circle cx={x(lastIndex)} cy={y(values[lastIndex] as number)} r={5} fill="currentColor" opacity={0.18} />
+              <circle cx={x(lastIndex)} cy={y(values[lastIndex] as number)} r={2.75} fill="currentColor" />
+            </g>
+          ) : null}
+        </g>
+      </svg>
+      <ul className="sr-only">
+        {values.map((v, i) => (
+          <li key={i}>{v === null ? "No data" : v.toFixed(1)}</li>
+        ))}
+      </ul>
     </div>
   );
 }

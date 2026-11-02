@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
+import { RosterTabs } from "@/components/shift-roster/roster-tabs";
 import { PageHeader } from "@/components/common/page-header";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
@@ -213,6 +214,7 @@ export default function RosterCalendarPage() {
 
   return (
     <div className="space-y-6">
+      <RosterTabs active="calendar" />
       <PageHeader
         title="Roster Calendar"
         description="Month view of one employee's shift roster."

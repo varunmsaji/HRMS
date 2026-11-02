@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
 import { EmployeeSelect } from "@/components/employee/employee-select";
+import { RosterTabs } from "@/components/shift-roster/roster-tabs";
 import { RosterEntryDialog } from "@/components/shift-roster/roster-entry-dialog";
 import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
@@ -190,6 +191,7 @@ export default function RostersPage() {
 
   return (
     <div className="space-y-6">
+      <RosterTabs active="entries" />
       <PageHeader
         title="Shift Rosters"
         description="Per-employee, per-date schedule overrides — outrank the default assignment shift for attendance."

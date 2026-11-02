@@ -3,6 +3,35 @@
 @tailwind utilities;
 
 /*
+ * Entrance animations for charts. They run once, when a chart first appears, and only touch
+ * transform / clip-path / stroke-dashoffset (no layout). The global reduced-motion rule at the
+ * bottom of this file collapses them to an instant jump for users who ask for less motion.
+ */
+@keyframes draw-line {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes grow-y {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+@keyframes reveal-x {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+@layer utilities {
+  /* Needs `pathLength="1"` on the path so one dash spans the whole line. */
+  .animate-draw-line { stroke-dasharray: 1; animation: draw-line 800ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-grow-x { transform-origin: left center; animation: grow-x 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-grow-y { transform-origin: center bottom; animation: grow-y 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-reveal-x { animation: reveal-x 700ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+}
+
+/*
  * Staff Spectrum (Krewoxa) Enterprise Design Tokens
  * Canonical implementation of docs/design/01_Design_System.md.
  *
@@ -231,4 +260,24 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Liquid fill for the attendance summary tiles: a translucent level with a gently drifting wave crest. */
+.liquid-fill { opacity: 0.2; transition: height 700ms cubic-bezier(0.22, 1, 0.36, 1); }
+.liquid-fill .liquid-wave { display: block; width: 200%; height: 8px; animation: liquid-drift 5s linear infinite; }
+@keyframes liquid-drift { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .liquid-fill .liquid-wave { animation: none; } }
+
+/* Dashboard entrance: the page eases in, then its top-level blocks follow one after another. */
+.dashboard-enter { animation: dashboard-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.dashboard-enter > * > * { animation: dashboard-block-in 560ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.dashboard-enter > * > *:nth-child(2) { animation-delay: 60ms; }
+.dashboard-enter > * > *:nth-child(3) { animation-delay: 120ms; }
+.dashboard-enter > * > *:nth-child(4) { animation-delay: 180ms; }
+.dashboard-enter > * > *:nth-child(5) { animation-delay: 240ms; }
+.dashboard-enter > * > *:nth-child(n + 6) { animation-delay: 300ms; }
+@keyframes dashboard-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes dashboard-block-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.99); }
+  to { opacity: 1; transform: none; }
 }
