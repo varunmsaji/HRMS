@@ -29,10 +29,10 @@ function DetailField({
   const hasValue = Boolean(value && value.trim());
   const display = hasValue ? value : "Not configured";
   return (
-    <div className="py-1">
+    <div className="min-w-0 py-1">
       <dt className="text-xs font-medium text-foreground-muted">{label}</dt>
       <dd
-        className={`mt-0.5 text-sm ${
+        className={`mt-0.5 break-words text-sm ${
           hasValue ? "font-medium text-foreground" : "text-foreground-disabled"
         } ${mono && hasValue ? "font-mono" : ""}`}
       >
@@ -196,7 +196,7 @@ export function EmployeeOverview({ employee }: { employee: Employee }) {
             <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">
               Personal contact
             </h3>
-            <dl className="mt-2.5 grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+            <dl className="mt-2.5 grid grid-cols-1 gap-y-3">
               <DetailField label="Personal email" value={employee.personal_email} />
               <DetailField label="Personal mobile" value={employee.personal_mobile} />
             </dl>

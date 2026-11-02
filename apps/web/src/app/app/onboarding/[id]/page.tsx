@@ -158,9 +158,9 @@ interface ReferenceData {
 function DetailField({ label, value }: { label: string; value: string | null | undefined }) {
   const display = value && value.trim() ? value : "Not set";
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="text-xs font-medium uppercase tracking-wide text-foreground-muted">{label}</dt>
-      <dd className={`mt-0.5 text-sm ${value && value.trim() ? "text-foreground" : "text-foreground-muted"}`}>
+      <dd className={`mt-0.5 break-words text-sm ${value && value.trim() ? "text-foreground" : "text-foreground-muted"}`}>
         {display}
       </dd>
     </div>
