@@ -8,6 +8,7 @@ import { EmployeeDashboard } from "@/components/dashboard/employee-dashboard";
 import { DashboardOverview } from "@/components/dashboard/dashboard-overview";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
+import { WelcomeSetupDialog } from "@/components/company/welcome-setup-dialog";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useApiResource } from "@/hooks/use-api-resource";
@@ -70,6 +71,8 @@ function CompanyDashboard() {
           Here&apos;s what&apos;s happening in {companyName} today.
         </p>
       </section>
+
+      <WelcomeSetupDialog companyName={companyName} />
 
       {loading ? <LoadingState label="Loading dashboard…" /> : null}
 

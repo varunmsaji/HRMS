@@ -14,6 +14,11 @@ vi.mock("@/components/dashboard/dashboard-overview", () => ({
   DashboardOverview: () => <div data-testid="overview" />,
 }));
 
+// Covered by welcome-setup-dialog.test.tsx; it needs the app router, which this page test lacks.
+vi.mock("@/components/company/welcome-setup-dialog", () => ({
+  WelcomeSetupDialog: () => null,
+}));
+
 import CompanyDashboardPage from "@/app/app/dashboard/page";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
