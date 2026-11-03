@@ -17,7 +17,7 @@ const WORDMARK_RATIO = 1640 / 260;
 export function Logo({ variant = "full", onDark = false, size = 32, className }: LogoProps) {
   const mark = (
     <Image
-      src="/brand/krewoxa-mark.svg"
+      src={onDark ? "/brand/krewoxa-mark-on-dark.svg" : "/brand/krewoxa-mark.svg"}
       alt={variant === "mark" ? "Krewoxa" : ""}
       width={Math.round(size * MARK_RATIO)}
       height={size}

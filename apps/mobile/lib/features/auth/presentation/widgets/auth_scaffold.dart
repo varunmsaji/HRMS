@@ -173,7 +173,7 @@ class _BrandHeader extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      const Image(image: AssetImage('assets/brand/krewoxa-mark.png'), height: 34),
+                      const Image(image: AssetImage('assets/brand/krewoxa-mark-on-dark.png'), height: 34),
                       const SizedBox(width: 10),
                       const Image(image: AssetImage('assets/brand/krewoxa-wordmark-white.png'), height: 20),
                       const SizedBox(width: 10),

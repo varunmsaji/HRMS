@@ -14,7 +14,7 @@ class SplashScreen extends StatelessWidget {
       backgroundColor: AppBrand.navy,
       body: Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: const [
-          Image(image: AssetImage('assets/brand/krewoxa-mark.png'), height: 72),
+          Image(image: AssetImage('assets/brand/krewoxa-mark-on-dark.png'), height: 72),
           SizedBox(height: 16),
           Image(image: AssetImage('assets/brand/krewoxa-wordmark-white.png'), height: 26),
           SizedBox(height: 6),
