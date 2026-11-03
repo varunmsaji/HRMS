@@ -70,24 +70,47 @@ const SCOPE_LIST_PATH: Partial<Record<ScopeType, string>> = {
 };
 
 interface CreateFormState {
-  policyKind: PolicyKind;
-  policyId: string;
-  leaveTypeId: string;
   scopeType: ScopeType;
   scopeId: string;
   effectiveFrom: string;
   reason: string;
+  /** Chosen policy id per row — keyed by `pickKey`; "" means "no change" (row skipped). */
+  picks: Record<string, string>;
 }
 
 const EMPTY_FORM: CreateFormState = {
-  policyKind: "ATTENDANCE_POLICY",
-  policyId: "",
-  leaveTypeId: "",
   scopeType: "COMPANY",
   scopeId: "",
   effectiveFrom: "",
   reason: "",
+  picks: {},
 };
+
+/** Policy kinds that get a single row in the form. Leave policies get one row per leave type. */
+const SINGLE_ROW_KINDS: PolicyKind[] = [
+  "ATTENDANCE_POLICY",
+  "OVERTIME_POLICY",
+  "REGULARIZATION_POLICY",
+  "WORK_CALENDAR",
+  "WEEKLY_OFF",
+];
+
+/** Work Calendar / Weekly-Off changes go through the impact preview, one at a time. */
+function needsImpactPreview(kind: PolicyKind): boolean {
+  return kind === "WORK_CALENDAR" || kind === "WEEKLY_OFF";
+}
+
+function pickKey(kind: PolicyKind, leaveTypeId?: string): string {
+  return leaveTypeId ? `${kind}:${leaveTypeId}` : kind;
+}
+
+interface PickRow {
+  key: string;
+  kind: PolicyKind;
+  leaveTypeId?: string;
+  label: string;
+  options: NamedOption[];
+}
 
 export default function PolicyAssignmentsPage() {
   const { toast } = useToast();
@@ -106,16 +129,32 @@ export default function PolicyAssignmentsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateFormState>(EMPTY_FORM);
-  const [policyOptions, setPolicyOptions] = useState<NamedOption[]>([]);
+  const [policyOptionsByKind, setPolicyOptionsByKind] = useState<
+    Partial<Record<PolicyKind, NamedOption[]>>
+  >({});
   const [leaveTypeOptions, setLeaveTypeOptions] = useState<NamedOption[]>([]);
   const [scopeOptions, setScopeOptions] = useState<NamedOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const isLeavePolicy = form.policyKind === "LEAVE_POLICY";
-  const visiblePolicyOptions = isLeavePolicy
-    ? policyOptions.filter((option) => option.leave_type_id === form.leaveTypeId)
-    : policyOptions;
+  const pickRows: PickRow[] = [
+    ...SINGLE_ROW_KINDS.map((kind) => ({
+      key: pickKey(kind),
+      kind,
+      label: POLICY_KIND_LABELS[kind],
+      options: policyOptionsByKind[kind] ?? [],
+    })),
+    ...leaveTypeOptions.map((leaveType) => ({
+      key: pickKey("LEAVE_POLICY", leaveType.id),
+      kind: "LEAVE_POLICY" as PolicyKind,
+      leaveTypeId: leaveType.id,
+      label: `Leave Policy — ${optionLabel(leaveType)}`,
+      options: (policyOptionsByKind.LEAVE_POLICY ?? []).filter(
+        (option) => option.leave_type_id === leaveType.id,
+      ),
+    })),
+  ];
+  const chosenCount = pickRows.filter((row) => form.picks[row.key]).length;
 
   const beginRequest = useLatestRequest();
 
@@ -156,19 +195,20 @@ export default function PolicyAssignmentsPage() {
 
   useEffect(() => {
     if (!createOpen) return;
-    void apiClient
-      .get<NamedOption[]>(POLICY_KIND_LIST_PATH[form.policyKind])
-      .then(setPolicyOptions)
-      .catch(() => setPolicyOptions([]));
-  }, [createOpen, form.policyKind]);
-
-  useEffect(() => {
-    if (!createOpen || !isLeavePolicy) return;
-    void apiClient
-      .get<NamedOption[]>("/leave-types")
-      .then(setLeaveTypeOptions)
-      .catch(() => setLeaveTypeOptions([]));
-  }, [createOpen, isLeavePolicy]);
+    void Promise.all([
+      ...POLICY_KINDS.map((kind) =>
+        apiClient.get<NamedOption[]>(POLICY_KIND_LIST_PATH[kind]).catch(() => [] as NamedOption[]),
+      ),
+      apiClient.get<NamedOption[]>("/leave-types").catch(() => [] as NamedOption[]),
+    ]).then((results) => {
+      const byKind: Partial<Record<PolicyKind, NamedOption[]>> = {};
+      POLICY_KINDS.forEach((kind, index) => {
+        byKind[kind] = results[index];
+      });
+      setPolicyOptionsByKind(byKind);
+      setLeaveTypeOptions(results[POLICY_KINDS.length]);
+    });
+  }, [createOpen]);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -189,13 +229,48 @@ export default function PolicyAssignmentsPage() {
     setCreateOpen(true);
   }
 
-  async function handleCreate() {
-    if (isLeavePolicy && !form.leaveTypeId) {
-      setFormError("Choose which leave type this policy is for.");
+  async function finishCreate(count: number) {
+    setCreateOpen(false);
+    toast({
+      title: count === 1 ? "Assignment created" : `${count} assignments created`,
+      variant: "success",
+    });
+    await loadAssignments(filterKind, page);
+  }
+
+  /** Work Calendar / Weekly-Off rows: each one is previewed and confirmed before it is applied. */
+  function runImpactQueue(
+    rows: PickRow[],
+    base: Record<string, unknown>,
+    createdSoFar: number,
+  ) {
+    const [row, ...rest] = rows;
+    if (!row) {
+      void finishCreate(createdSoFar);
       return;
     }
-    if (!form.policyId) {
-      setFormError("Choose which policy to assign.");
+    const body = { ...base, policy_kind: row.kind, policy_id: form.picks[row.key] };
+    const current = (assignments ?? []).find(
+      (a) =>
+        a.policy_kind === row.kind &&
+        a.scope_type === base.scope_type &&
+        (a.scope_id ?? null) === base.scope_id &&
+        a.effective_to === null,
+    );
+    setImpact({
+      change: { change_type: "ASSIGNMENT_CREATE", body, expected_version: current?.version },
+      title: `Create assignment — ${row.label}`,
+      onDone: () => {
+        setForm((f) => ({ ...f, picks: { ...f.picks, [row.key]: "" } }));
+        runImpactQueue(rest, base, createdSoFar + 1);
+      },
+    });
+  }
+
+  async function handleCreate() {
+    const chosen = pickRows.filter((row) => form.picks[row.key]);
+    if (chosen.length === 0) {
+      setFormError("Choose at least one policy to assign.");
       return;
     }
     if (form.scopeType !== "COMPANY" && !form.scopeId) {
@@ -206,67 +281,47 @@ export default function PolicyAssignmentsPage() {
       setFormError("Effective from is required.");
       return;
     }
-    const payload = {
-      policy_kind: form.policyKind,
-      policy_id: form.policyId,
-      leave_type_id: isLeavePolicy ? form.leaveTypeId : undefined,
+    const base = {
       scope_type: form.scopeType,
       scope_id: form.scopeType === "COMPANY" ? null : form.scopeId,
       effective_from: form.effectiveFrom,
       reason: form.reason.trim() || null,
     };
-    if (form.policyKind === "WORK_CALENDAR" || form.policyKind === "WEEKLY_OFF") {
-      const current = (assignments ?? []).find(
-        (a) =>
-          a.policy_kind === form.policyKind &&
-          a.scope_type === form.scopeType &&
-          (a.scope_id ?? null) === payload.scope_id &&
-          a.effective_to === null,
-      );
-      setFormError(null);
-      setImpact({
-        change: {
-          change_type: "ASSIGNMENT_CREATE",
-          body: payload,
-          expected_version: current?.version,
-        },
-        title: "Create assignment",
-        onDone: async () => {
-          setCreateOpen(false);
-          toast({ title: "Assignment created", variant: "success" });
-          await loadAssignments(filterKind, page);
-        },
-      });
-      return;
-    }
+
     setSaving(true);
     setFormError(null);
-    try {
-      await apiClient.post<PolicyAssignment>("/policy-assignments", {
-        policy_kind: form.policyKind,
-        policy_id: form.policyId,
-        leave_type_id: isLeavePolicy ? form.leaveTypeId : undefined,
-        scope_type: form.scopeType,
-        scope_id: form.scopeType === "COMPANY" ? null : form.scopeId,
-        effective_from: form.effectiveFrom,
-        reason: form.reason.trim() || null,
-      });
-      setCreateOpen(false);
-      toast({ title: "Assignment created", variant: "success" });
-      await loadAssignments(filterKind, page);
-    } catch (err) {
-      if (err instanceof ApiError && (err.status === 422 || err.status === 409)) {
-        setFormError(describeApiError(err));
-        return;
+    const remainingPicks = { ...form.picks };
+    const failures: string[] = [];
+    let created = 0;
+    for (const row of chosen.filter((r) => !needsImpactPreview(r.kind))) {
+      try {
+        await apiClient.post<PolicyAssignment>("/policy-assignments", {
+          ...base,
+          policy_kind: row.kind,
+          policy_id: form.picks[row.key],
+          leave_type_id: row.leaveTypeId,
+        });
+        created += 1;
+        remainingPicks[row.key] = "";
+      } catch (err) {
+        failures.push(`${row.label}: ${describeApiError(err)}`);
       }
-      toast({
-        title: "Could not create assignment",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
+    setForm((f) => ({ ...f, picks: remainingPicks }));
+    if (created > 0) await loadAssignments(filterKind, page);
+
+    if (failures.length > 0) {
+      setFormError(
+        `${created} created, ${failures.length} failed — fix and try again:\n${failures.join("\n")}`,
+      );
+      return;
+    }
+    runImpactQueue(
+      chosen.filter((r) => needsImpactPreview(r.kind)),
+      base,
+      created,
+    );
   }
 
   return (
@@ -399,72 +454,7 @@ export default function PolicyAssignmentsPage() {
             <DialogTitle>New Policy Assignment</DialogTitle>
           </DialogHeader>
           <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1">
-            <FormField id="assign-kind" label="Policy kind" required>
-              <NativeSelect
-                value={form.policyKind}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    policyKind: e.target.value as PolicyKind,
-                    policyId: "",
-                    leaveTypeId: "",
-                  }))
-                }
-              >
-                {POLICY_KINDS.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {POLICY_KIND_LABELS[kind]}
-                  </option>
-                ))}
-              </NativeSelect>
-            </FormField>
-
-            {isLeavePolicy ? (
-              <FormField
-                id="assign-leave-type"
-                label="Leave type"
-                required
-                description="A company may assign a different leave policy per leave type at the same scope (LD-11)."
-              >
-                <NativeSelect
-                  value={form.leaveTypeId}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, leaveTypeId: e.target.value, policyId: "" }))
-                  }
-                >
-                  <option value="">Choose…</option>
-                  {leaveTypeOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {optionLabel(option)}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </FormField>
-            ) : null}
-
-            <FormField
-              id="assign-policy"
-              label="Policy"
-              required
-              description={
-                isLeavePolicy && !form.leaveTypeId ? "Choose a leave type first." : undefined
-              }
-            >
-              <NativeSelect
-                value={form.policyId}
-                disabled={isLeavePolicy && !form.leaveTypeId}
-                onChange={(e) => setForm((f) => ({ ...f, policyId: e.target.value }))}
-              >
-                <option value="">Choose…</option>
-                {visiblePolicyOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {optionLabel(option)}
-                  </option>
-                ))}
-              </NativeSelect>
-            </FormField>
-
-            <FormField id="assign-scope-type" label="Scope" required>
+            <FormField id="assign-scope-type" label="Who does this apply to? (scope)" required>
               <NativeSelect
                 value={form.scopeType}
                 onChange={(e) =>
@@ -517,6 +507,34 @@ export default function PolicyAssignmentsPage() {
               />
             </FormField>
 
+            <section className="space-y-3">
+              <div>
+                <h3 className="text-sm font-medium text-foreground">Policies to assign</h3>
+                <p className="text-xs text-foreground-muted">
+                  Pick a policy for each kind you want to assign. Rows left on &quot;No change&quot;
+                  are skipped. A group follows one policy of each kind, so a new one replaces the
+                  current one from the effective date.
+                </p>
+              </div>
+              {pickRows.map((row) => (
+                <FormField key={row.key} id={`assign-pick-${row.key}`} label={row.label}>
+                  <NativeSelect
+                    value={form.picks[row.key] ?? ""}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, picks: { ...f.picks, [row.key]: e.target.value } }))
+                    }
+                  >
+                    <option value="">No change</option>
+                    {row.options.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {optionLabel(option)}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </FormField>
+              ))}
+            </section>
+
             <FormField id="assign-reason" label="Reason (optional)">
               <Input
                 value={form.reason}
@@ -524,7 +542,9 @@ export default function PolicyAssignmentsPage() {
               />
             </FormField>
 
-            {formError ? <p className="text-sm text-danger">{formError}</p> : null}
+            {formError ? (
+              <p className="whitespace-pre-line text-sm text-danger">{formError}</p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button
@@ -535,8 +555,16 @@ export default function PolicyAssignmentsPage() {
             >
               Cancel
             </Button>
-            <Button type="button" onClick={() => void handleCreate()} disabled={saving}>
-              {saving ? "Creating…" : "Create assignment"}
+            <Button
+              type="button"
+              onClick={() => void handleCreate()}
+              disabled={saving || chosenCount === 0}
+            >
+              {saving
+                ? "Creating…"
+                : chosenCount > 1
+                  ? `Create ${chosenCount} assignments`
+                  : "Create assignment"}
             </Button>
           </DialogFooter>
         </DialogContent>
