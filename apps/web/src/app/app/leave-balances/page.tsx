@@ -8,6 +8,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
+import { ScopeTabs } from "@/components/common/scope-tabs";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
@@ -198,40 +199,15 @@ export default function LeaveBalancesPage() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          role="group"
-          aria-label="Balance scope"
-          className="inline-flex rounded-md border border-border bg-surface p-0.5"
-        >
-          {hasOwnRecord ? (
-          <button
-            type="button"
-            onClick={() => setView("MINE")}
-            className={cn(
-              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-              view === "MINE"
-                ? "bg-primary text-on-primary"
-                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-            )}
-          >
-            My balance
-          </button>
-          ) : null}
-          {canViewAll ? (
-            <button
-              type="button"
-              onClick={() => setView("TEAM")}
-              className={cn(
-                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                view === "TEAM"
-                  ? "bg-primary text-on-primary"
-                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-              )}
-            >
-              Team balances
-            </button>
-          ) : null}
-        </div>
+        <ScopeTabs
+          label="Balance scope"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "MINE", label: "My balance", show: hasOwnRecord },
+            { value: "TEAM", label: "Team balances", show: canViewAll },
+          ]}
+        />
 
         {view === "TEAM" ? (
           <div className="w-full max-w-sm">

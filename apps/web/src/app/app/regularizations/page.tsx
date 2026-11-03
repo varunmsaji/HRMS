@@ -12,6 +12,7 @@ import { FormField } from "@/components/common/form-field";
 import { BusyRegion } from "@/components/common/busy-region";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { PageHeader } from "@/components/common/page-header";
+import { ScopeTabs } from "@/components/common/scope-tabs";
 import { RegularizationDecisionCenter } from "@/components/regularization/decision-center";
 import { RegularizationRequestDialog } from "@/components/regularization/regularization-request-dialog";
 import { RegularizationStatusBadge } from "@/components/regularization/regularization-status-badge";
@@ -68,7 +69,11 @@ export default function RegularizationsPage() {
   const canSubmitSelf = can("ATTENDANCE.REGULARIZATION_REQUEST");
   const canSubmitOnBehalf = can("ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF");
 
-  const [view, setView] = useState<ViewMode>(canApprove ? "DECISIONS" : "MINE");
+  // The company account has no employee record, so it has no requests of its own.
+  const hasOwnRecord = Boolean(user?.employee_id);
+  const [view, setView] = useState<ViewMode>(
+    canApprove ? "DECISIONS" : hasOwnRecord ? "MINE" : "TEAM",
+  );
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [dateFrom, setDateFrom] = useState(addDays(today, -30));
   const [dateTo, setDateTo] = useState(today);
@@ -153,52 +158,16 @@ export default function RegularizationsPage() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          role="group"
-          aria-label="Regularization scope"
-          className="inline-flex rounded-md border border-border bg-surface p-0.5"
-        >
-          <button
-            type="button"
-            onClick={() => setView("MINE")}
-            className={cn(
-              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-              view === "MINE"
-                ? "bg-primary text-on-primary"
-                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-            )}
-          >
-            My requests
-          </button>
-          {canApprove ? (
-            <button
-              type="button"
-              onClick={() => setView("DECISIONS")}
-              className={cn(
-                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                view === "DECISIONS"
-                  ? "bg-primary text-on-primary"
-                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-              )}
-            >
-              Decision center
-            </button>
-          ) : null}
-          {canApprove || canSubmitOnBehalf ? (
-            <button
-              type="button"
-              onClick={() => setView("TEAM")}
-              className={cn(
-                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                view === "TEAM"
-                  ? "bg-primary text-on-primary"
-                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-              )}
-            >
-              Team requests
-            </button>
-          ) : null}
-        </div>
+        <ScopeTabs
+          label="Regularization scope"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "MINE", label: "My requests", show: hasOwnRecord },
+            { value: "DECISIONS", label: "Decision center", show: canApprove },
+            { value: "TEAM", label: "Team requests", show: canApprove || canSubmitOnBehalf },
+          ]}
+        />
       </div>
 
       {view === "DECISIONS" ? <RegularizationDecisionCenter /> : null}

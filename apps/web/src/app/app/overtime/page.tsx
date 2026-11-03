@@ -12,6 +12,7 @@ import { FormField } from "@/components/common/form-field";
 import { BusyRegion } from "@/components/common/busy-region";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { PageHeader } from "@/components/common/page-header";
+import { ScopeTabs } from "@/components/common/scope-tabs";
 import { OvertimeStatusBadge } from "@/components/overtime/overtime-status-badge";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -62,7 +63,9 @@ export default function OvertimePage() {
   const { can } = usePermissions();
   const canApprove = can("ATTENDANCE.OVERTIME_APPROVE");
 
-  const [view, setView] = useState<ViewMode>(canApprove ? "TEAM" : "MINE");
+  // The company account has no employee record, so it has no overtime of its own.
+  const hasOwnRecord = Boolean(user?.employee_id);
+  const [view, setView] = useState<ViewMode>(canApprove || !hasOwnRecord ? "TEAM" : "MINE");
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [dateFrom, setDateFrom] = useState(addDays(today, -30));
   const [dateTo, setDateTo] = useState(today);
@@ -130,38 +133,15 @@ export default function OvertimePage() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          role="group"
-          aria-label="Overtime scope"
-          className="inline-flex rounded-md border border-border bg-surface p-0.5"
-        >
-          <button
-            type="button"
-            onClick={() => setView("MINE")}
-            className={cn(
-              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-              view === "MINE"
-                ? "bg-primary text-on-primary"
-                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-            )}
-          >
-            My overtime
-          </button>
-          {canApprove ? (
-            <button
-              type="button"
-              onClick={() => setView("TEAM")}
-              className={cn(
-                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                view === "TEAM"
-                  ? "bg-primary text-on-primary"
-                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-              )}
-            >
-              Team overtime
-            </button>
-          ) : null}
-        </div>
+        <ScopeTabs
+          label="Overtime scope"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "MINE", label: "My overtime", show: hasOwnRecord },
+            { value: "TEAM", label: "Team overtime", show: canApprove },
+          ]}
+        />
       </div>
 
       <TableContainer>

@@ -11,6 +11,7 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
+import { ScopeTabs } from "@/components/common/scope-tabs";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { LeaveApplicationDialog } from "@/components/leave-application/leave-application-dialog";
 import { LeaveDecisionCenter } from "@/components/leave-application/decision-center";
@@ -180,54 +181,16 @@ export default function LeaveApplicationsPage() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          role="group"
-          aria-label="Application scope"
-          className="inline-flex rounded-md border border-border bg-surface p-0.5"
-        >
-          {hasOwnRecord ? (
-          <button
-            type="button"
-            onClick={() => setView("MINE")}
-            className={cn(
-              "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-              view === "MINE"
-                ? "bg-primary text-on-primary"
-                : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-            )}
-          >
-            My applications
-          </button>
-          ) : null}
-          {canApprove ? (
-            <button
-              type="button"
-              onClick={() => setView("DECISIONS")}
-              className={cn(
-                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                view === "DECISIONS"
-                  ? "bg-primary text-on-primary"
-                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-              )}
-            >
-              Decision center
-            </button>
-          ) : null}
-          {canApprove || canSubmitOnBehalf ? (
-            <button
-              type="button"
-              onClick={() => setView("TEAM")}
-              className={cn(
-                "rounded-sm px-3 py-1.5 text-xs font-medium transition-colors",
-                view === "TEAM"
-                  ? "bg-primary text-on-primary"
-                  : "text-foreground-secondary hover:bg-muted hover:text-foreground",
-              )}
-            >
-              Team applications
-            </button>
-          ) : null}
-        </div>
+        <ScopeTabs
+          label="Application scope"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "MINE", label: "My applications", show: hasOwnRecord },
+            { value: "DECISIONS", label: "Decision center", show: canApprove },
+            { value: "TEAM", label: "Team applications", show: canApprove || canSubmitOnBehalf },
+          ]}
+        />
       </div>
 
       {view === "DECISIONS" ? <LeaveDecisionCenter /> : null}
