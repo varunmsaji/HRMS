@@ -2,7 +2,6 @@
  "address_line1": "x",
  "address_line2": "x",
  "city": "x",
- "code": "x",
  "geofence_radius_m": 1,
  "is_active": true,
  "latitude": "1.50",

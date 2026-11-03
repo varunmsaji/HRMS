@@ -10,7 +10,6 @@ const _active = FieldSpec('is_active', 'Active', kind: FieldKind.toggle, editOnl
 const leavePolicyIdentitySpec = FormSpec(name: 'leave_policy', label: 'Leave policy', fields: [
   FieldSpec('leave_type_id', 'Leave type', kind: FieldKind.choice, choiceKey: 'leave_types', required: true, readOnlyOnEdit: true),
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   _active,
 ]);
 

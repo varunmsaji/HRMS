@@ -2,7 +2,6 @@
  "address_line1": "x",
  "address_line2": "x",
  "city": "x",
- "code": "x",
  "geofence_radius_m": 1,
  "latitude": "1.50",
  "legal_entity_id": "00000000-0000-0000-0000-000000001234",

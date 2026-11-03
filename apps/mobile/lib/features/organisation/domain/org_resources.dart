@@ -46,7 +46,6 @@ final legalEntityResource = ResourceConfig(
 FormSpec branchSpec() => FormSpec(name: 'branch', label: 'Branch', fields: [
       const FieldSpec('legal_entity_id', 'Legal entity', kind: FieldKind.choice, choiceKey: 'legal_entities', required: true),
       const FieldSpec('name', 'Name', required: true),
-      const FieldSpec('code', 'Code'),
       const FieldSpec('address_line1', 'Address line 1'),
       const FieldSpec('address_line2', 'Address line 2'),
       const FieldSpec('city', 'City'),
@@ -71,7 +70,6 @@ ResourceConfig branchResource() => ResourceConfig(
 
 const departmentSpec = FormSpec(name: 'department', label: 'Department', fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   FieldSpec('branch_id', 'Branch', kind: FieldKind.choice, choiceKey: 'branches'),
   FieldSpec('parent_id', 'Parent department', kind: FieldKind.choice, choiceKey: 'departments'),
   FieldSpec('head_employee_id', 'Department head', kind: FieldKind.choice, choiceKey: 'employees'),
@@ -90,7 +88,6 @@ final departmentResource = ResourceConfig(
 
 const designationSpec = FormSpec(name: 'designation', label: 'Designation', fields: [
   FieldSpec('title', 'Title', required: true),
-  FieldSpec('code', 'Code'),
   FieldSpec('department_id', 'Department', kind: FieldKind.choice, choiceKey: 'departments'),
   FieldSpec('grade_id', 'Grade', kind: FieldKind.choice, choiceKey: 'grades'),
   _active,
@@ -107,7 +104,6 @@ final designationResource = ResourceConfig(
 );
 
 const gradeSpec = FormSpec(name: 'grade', label: 'Grade', fields: [
-  FieldSpec('code', 'Code', required: true),
   FieldSpec('name', 'Name', required: true),
   FieldSpec('level', 'Level', kind: FieldKind.integer),
   FieldSpec('min_ctc', 'Minimum CTC', kind: FieldKind.integer, hint: 'Whole rupees'),
@@ -132,7 +128,6 @@ final gradeResource = ResourceConfig(
 
 const holidayCalendarSpec = FormSpec(name: 'holiday_calendar', label: 'Holiday calendar', defaults: {'kind': 'COMPANY'}, fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   FieldSpec('kind', 'Kind', kind: FieldKind.select, required: true, options: ['NATIONAL', 'REGIONAL', 'COMPANY', 'LOCATION']),
   FieldSpec('state_code', 'State code'),
   FieldSpec('valid_from', 'Valid from', kind: FieldKind.date),
@@ -191,7 +186,6 @@ const calendarExceptionSpec = FormSpec(name: 'calendar_exception', label: 'Calen
 
 const workCalendarSpec = FormSpec(name: 'work_calendar', label: 'Work calendar', fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   FieldSpec('description', 'Description', kind: FieldKind.multiline),
   FieldSpec('weekly_off_pattern_id', 'Weekly-off pattern', kind: FieldKind.choice, choiceKey: 'weekly_off_patterns'),
   FieldSpec('restricted_holidays_are_off_by_default', 'Restricted holidays are off by default', kind: FieldKind.toggle),
@@ -237,7 +231,6 @@ const weeklyOffRuleSpec = FormSpec(name: 'weekly_off_rule', label: 'Rule', defau
 
 const weeklyOffPatternSpec = FormSpec(name: 'weekly_off_pattern', label: 'Weekly-off pattern', defaults: {'pattern_kind': 'FIXED_WEEKDAYS'}, fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   FieldSpec('pattern_kind', 'Pattern kind', kind: FieldKind.select, required: true, options: ['FIXED_WEEKDAYS', 'NTH_WEEKDAY', 'ALTERNATE', 'CUSTOM']),
   FieldSpec('rules', 'Rules', kind: FieldKind.rows, required: true, rowNoun: 'rule', rowSpec: weeklyOffRuleSpec),
   _active,

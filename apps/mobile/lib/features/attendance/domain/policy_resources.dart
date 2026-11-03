@@ -21,7 +21,6 @@ const _roundings = ['NONE', 'NEAREST', 'UP', 'DOWN'];
 
 const attendancePolicyIdentitySpec = FormSpec(name: 'attendance_policy', label: 'Attendance policy', fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   _active,
 ]);
 
@@ -94,7 +93,6 @@ final attendancePolicyResource = ResourceConfig(
 
 const overtimePolicyIdentitySpec = FormSpec(name: 'overtime_policy', label: 'Overtime policy', fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   _active,
 ]);
 
@@ -142,7 +140,6 @@ final overtimePolicyResource = ResourceConfig(
 
 const regularizationPolicyIdentitySpec = FormSpec(name: 'regularization_policy', label: 'Regularization policy', fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   _active,
 ]);
 
@@ -184,7 +181,6 @@ final regularizationPolicyResource = ResourceConfig(
 
 const shiftIdentitySpec = FormSpec(name: 'shift', label: 'Shift', fields: [
   FieldSpec('name', 'Name', required: true),
-  FieldSpec('code', 'Code'),
   _active,
 ]);
 
