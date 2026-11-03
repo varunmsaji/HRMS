@@ -8,7 +8,9 @@ import {
   ArrowRight,
   BarChart3,
   CalendarCheck,
+  CalendarDays,
   Check,
+  ClipboardPen,
   Clock,
   FileText,
   Fingerprint,
@@ -20,6 +22,8 @@ import {
   Minus,
   Play,
   Plus,
+  ScanFace,
+  Search,
   ShieldCheck,
   Smartphone,
   UserPlus,
@@ -36,8 +40,6 @@ import "./landing.css";
 // Display face for headings; self-hosted by next/font so the CSP is unaffected.
 const display = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-display", display: "swap" });
 
-// Self-hosted in /public/landing (Unsplash licence) — the app CSP only allows same-origin images.
-const IMG = (name: string) => `/landing/${name}.jpg`;
 const LOGO = "/brand/krewoxa-logo.svg";
 const LOGO_WHITE = "/brand/krewoxa-logo-white.svg";
 
@@ -49,34 +51,67 @@ function BrandLogo({ onDark = false }: { onDark?: boolean }) {
   );
 }
 
-/** Decorative/sample imagery. */
-function Img({ src, alt = "", className }: { src: string; alt?: string; className?: string }) {
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={src} alt={alt} loading="lazy" className={className} />;
+/** Initials avatar for the sample people, one fixed colour each. */
+const TONES: Record<string, string> = {
+  "Anjali Menon": "#0657E6",
+  "Rahul Nair": "#0E9F6E",
+  "Fathima Rasheed": "#D97706",
+  "Joseph Thomas": "#7C3AED",
+  "Meera Pillai": "#DB2777",
+};
+function Avatar({ name, sm = false }: { name: string; sm?: boolean }) {
+  const initials = name.split(" ").map((w) => w[0]).slice(0, 2).join("");
+  const tone = TONES[name] ?? "#0891B2";
+  return <span className={`av${sm ? " sm" : ""}`} style={{ background: tone }} aria-hidden="true">{initials}</span>;
 }
 
 const NAV: [string, string][] = [
   ["Platform", "#platform"],
   ["Payroll", "#payroll"],
   ["Workflows", "#workflows"],
+  ["Mobile", "#mobile"],
   ["Security", "#security"],
   ["FAQ", "#faq"],
 ];
 
 const DAYS: [string, number][] = [["Mon", 94], ["Tue", 96], ["Wed", 91], ["Thu", 95], ["Fri", 88]];
 
+// The chart axis starts at this rate so day-to-day differences are visible.
+const BAR_FLOOR = 80;
+
 const FEED: [string, string, string][] = [
-  ["rahul-nair", "Rahul Nair checked in", "9:02 AM · Operations"],
-  ["anjali-menon", "Leave request submitted", "Casual leave · 12–14 Nov"],
-  ["fathima-rasheed", "Payroll review started", "Manager review"],
+  ["Rahul Nair", "Rahul Nair checked in", "9:02 AM · Operations"],
+  ["Anjali Menon", "Leave request submitted", "Casual leave · 12–14 Nov"],
+  ["Fathima Rasheed", "Payroll review started", "Manager review"],
 ];
 
-const PAY: [string, string, string, string, string][] = [
-  ["anjali-menon", "Anjali Menon", "Design", "₹68,500", "ok"],
-  ["rahul-nair", "Rahul Nair", "Operations", "₹82,000", "ok"],
-  ["fathima-rasheed", "Fathima Rasheed", "People", "₹59,750", "wip"],
-  ["joseph-thomas", "Joseph Thomas", "Finance", "₹74,200", "wip"],
-  ["meera-pillai", "Meera Pillai", "Customer Care", "₹48,900", "wait"],
+const PAY: [string, string, string, string][] = [
+  ["Anjali Menon", "Design", "₹68,500", "ok"],
+  ["Rahul Nair", "Operations", "₹82,000", "ok"],
+  ["Fathima Rasheed", "People", "₹59,750", "wip"],
+  ["Joseph Thomas", "Finance", "₹74,200", "wip"],
+  ["Meera Pillai", "Customer Care", "₹48,900", "wait"],
+];
+
+const DIRECTORY: [string, string, string, "in" | "leave" | "out"][] = [
+  ["Anjali Menon", "Product Designer", "Design", "in"],
+  ["Rahul Nair", "Operations Manager", "Operations", "in"],
+  ["Fathima Rasheed", "HR Executive", "People", "leave"],
+  ["Joseph Thomas", "Accounts Lead", "Finance", "in"],
+  ["Meera Pillai", "Support Associate", "Customer Care", "out"],
+];
+const DIR_TAG = { in: "Checked in", leave: "On leave", out: "Not checked in" };
+
+const CORE: string[] = [
+  "Profiles, roles, departments and reporting lines",
+  "Documents stored against each employee",
+  "Live status: who is in, on leave or yet to check in",
+];
+
+const MOBILE: [LucideIcon, string, string][] = [
+  [ScanFace, "Face punch check-in", "Employees mark attendance from their phone in seconds."],
+  [CalendarDays, "Leave and shifts", "Apply for leave, track balances and see the upcoming roster."],
+  [ClipboardPen, "Corrections and payslips", "Fix a missed punch and download payslips without emailing HR."],
 ];
 const PAY_TAG: Record<string, string> = { ok: "Approved", wip: "In review", wait: "Waiting" };
 
@@ -131,12 +166,12 @@ const FAQS: [string, string][] = [
   ["What is Krewoxa?", "Krewoxa is a Human Resource Management System that helps businesses organize employee information and everyday HR workflows in one workspace."],
   ["Which HR workflows does it support?", "Employee records, attendance, and leave are core areas. Payroll workflows, recruitment and documents are discussed in the demo so we can confirm what applies to you."],
   ["Is it suitable for a small or growing business?", "Krewoxa is designed for growing teams that need more structure than spreadsheets. A demo is the best way to judge the fit for your size."],
-  ["Can employees and managers use it on mobile?", "Mobile access is part of our plans for employees and managers. Ask during a demo for what is available today."],
+  ["Can employees and managers use it on mobile?", "Yes. Employees use the Krewoxa mobile app to check in, apply for leave, request corrections and download payslips. Ask during a demo which manager features fit your team."],
   ["How does onboarding work?", "Typically you set up the organization, add employee information, then configure the workflows you need. We will outline your specific steps in the demo."],
   ["How can we arrange a demo?", "Use the form at the bottom of this page and tell us where to reach you."],
 ];
 
-const FOOT_PRODUCT: [string, string][] = [["Platform", "#platform"], ["Payroll", "#payroll"], ["Workflows", "#workflows"], ["Security", "#security"]];
+const FOOT_PRODUCT: [string, string][] = [["Platform", "#platform"], ["Payroll", "#payroll"], ["Workflows", "#workflows"], ["Mobile", "#mobile"], ["Security", "#security"]];
 
 export function Landing() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -187,7 +222,7 @@ export function Landing() {
         <section className="hero">
           <div className="wrap">
             <span className="pill up"><span className="dot" />People. Work. Simplified.</span>
-            <h1 className="up d1">Shift your enterprise into <span className="hl">perfect sync.</span></h1>
+            <h1 className="up d1">Attendance, leave and payroll, <span className="hl">finally in sync.</span></h1>
             <p className="lead up d2">Krewoxa brings employee records, attendance, leave and payroll prep into one connected workspace, so your HR team spends less time chasing and more time leading.</p>
             <div className="cta-row up d3">
               <a href="#demo" className="btn btn-dark">Book a demo <ArrowRight size={16} /></a>
@@ -198,7 +233,8 @@ export function Landing() {
               <div className="win-bar"><i /><i /><i /></div>
               <div className="win-body">
                 <div className="win-side">
-                  <Img src={LOGO_WHITE} />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={LOGO_WHITE} alt="" />
                   <span className="on"><LayoutDashboard size={15} /> Dashboard</span>
                   <span><Users size={15} /> Employees</span>
                   <span><Clock size={15} /> Attendance</span>
@@ -213,11 +249,12 @@ export function Landing() {
                     <div className="kpi"><small>Pending approvals</small><b>3</b></div>
                   </div>
                   <div className="chart">
-                    <small>Weekly attendance rate (%)</small>
+                    <small>Weekly attendance rate (%, axis from {BAR_FLOOR})</small>
                     <div className="bars">
                       {DAYS.map(([d, v], i) => (
                         <div key={d}>
-                          <span style={{ height: `${v}%`, animationDelay: `${i * 0.08}s` }} />
+                          <b>{v}</b>
+                          <span style={{ height: `${((v - BAR_FLOOR) / (100 - BAR_FLOOR)) * 100}%`, animationDelay: `${i * 0.08}s` }} />
                           {d}
                         </div>
                       ))}
@@ -226,9 +263,9 @@ export function Landing() {
                 </div>
                 <div className="feed">
                   <h3><span className="live" /> Live activity</h3>
-                  {FEED.map(([img, t, s]) => (
+                  {FEED.map(([name, t, s]) => (
                     <div className="feed-i" key={t}>
-                      <Img src={IMG(`avatar-${img}`)} />
+                      <Avatar name={name} sm />
                       <div>{t}<small>{s}</small></div>
                     </div>
                   ))}
@@ -239,19 +276,27 @@ export function Landing() {
         </section>
 
         {/* CORE HR */}
-        <section id="platform" className="collage">
-          <div className="ph ph1"><Img src={IMG("avatar-anjali-menon")} alt="Product designer" /></div>
-          <div className="ph ph2"><Img src={IMG("team")} alt="Team collaborating" /></div>
-          <div className="ph ph3"><Img src={IMG("avatar-rahul-nair")} alt="Operations manager" /></div>
-          <div className="ph ph4"><Img src={IMG("hero")} alt="HR workspace" /></div>
-          <div className="wrap">
-            <div className="collage-in">
-              <h2 className="h2">Core HR <span className="grad">solutions</span></h2>
-              <p className="lead" style={{ margin: "18px auto 0" }}>Profiles, roles and departments live together instead of across files and chats, so every team starts from the same source of truth.</p>
-              <div className="chips">
-                {["Employee records", "Attendance", "Leave", "Documents", "Recruitment"].map((c) => <span className="chip" key={c}>{c}</span>)}
-              </div>
-              <div className="cta-row"><a href="#demo" className="btn btn-blue">Explore the platform</a></div>
+        <section id="platform" className="cap">
+          <div className="wrap split">
+            <div>
+              <span className="pill"><Users size={14} /> CORE HR</span>
+              <h2 className="h2" style={{ margin: "18px 0 16px" }}>Every employee record, <span className="mute">in one place.</span></h2>
+              <p className="lead">Profiles, roles and departments live together instead of across files and chats, so every team starts from the same source of truth.</p>
+              <ul className="ticks">
+                {CORE.map((c) => <li key={c}><span className="tick"><Check size={12} /></span>{c}</li>)}
+              </ul>
+              <a href="#workflows" className="btn btn-dark">See how it works <ArrowRight size={16} /></a>
+            </div>
+            <div className="card dir" role="img" aria-label="Illustrative employee directory showing roles, departments and today's status, using sample data">
+              <div className="dir-h"><b>Employees</b><span>48 people · Sample data</span></div>
+              <div className="dir-search"><Search size={15} /> Search by name, role or department</div>
+              {DIRECTORY.map(([name, role, dept, st]) => (
+                <div className="dir-row" key={name}>
+                  <Avatar name={name} />
+                  <div><b>{name}</b><small>{role} · {dept}</small></div>
+                  <span className={`st ${st}`}>{DIR_TAG[st]}</span>
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -260,17 +305,17 @@ export function Landing() {
         <section id="payroll">
           <div className="wrap center">
             <span className="pill"><Wallet size={14} /> PAYROLL PREP</span>
-            <h2 className="h2" style={{ margin: "18px 0 16px" }}>Payroll prep at the speed of light.<br /><span className="grad">Zero spreadsheet friction.</span></h2>
-            <p className="lead">Attendance, leave and approvals are reconciled before payroll reaches finance. One review, one clean summary.</p>
+            <h2 className="h2" style={{ margin: "18px 0 16px" }}>Payroll inputs, reconciled<br /><span className="mute">before they reach finance.</span></h2>
+            <p className="lead">Attendance, leave and approvals come together in one summary. Managers review it once, and every change is on record.</p>
 
             <div className="card tbl" role="img" aria-label="Illustrative payroll review table using sample data" style={{ textAlign: "left" }}>
               <div className="tbl-h"><b>November payroll review</b><span>Sample data</span></div>
               <table>
                 <thead><tr><th>Employee</th><th>Department</th><th>Net pay</th><th>Status</th></tr></thead>
                 <tbody>
-                  {PAY.map(([img, name, dept, amt, st]) => (
+                  {PAY.map(([name, dept, amt, st]) => (
                     <tr key={name}>
-                      <td><span className="who"><Img src={IMG(`avatar-${img}`)} />{name}</span></td>
+                      <td><span className="who"><Avatar name={name} sm />{name}</span></td>
                       <td>{dept}</td>
                       <td>{amt}</td>
                       <td><span className={`tag ${st}`}>{PAY_TAG[st]}</span></td>
@@ -293,12 +338,12 @@ export function Landing() {
         </section>
 
         {/* CAPACITY */}
-        <section className="cap">
+        <section>
           <div className="wrap split">
             <div>
               <span className="pill"><Zap size={14} /> WORKFORCE VISIBILITY</span>
-              <h2 className="h2" style={{ margin: "18px 0 16px" }}>Dynamic capacity &amp; <span className="grad">headcount architecture.</span></h2>
-              <p className="lead">See who is in, who is away and where teams are stretched, without compiling reports by hand.</p>
+              <h2 className="h2" style={{ margin: "18px 0 16px" }}>Who&apos;s in, who&apos;s away, <span className="mute">at a glance.</span></h2>
+              <p className="lead">Headcount, attendance and approved leave by department, updated as people check in, so you can see where teams are stretched without compiling reports.</p>
               <div className="stats">
                 <div><b>48</b><span>Employees</span></div>
                 <div><b>41</b><span>Present today</span></div>
@@ -324,8 +369,8 @@ export function Landing() {
         <section id="workflows">
           <div className="wrap center">
             <span className="pill"><Workflow size={14} /> WORKFLOWS</span>
-            <h2 className="h2" style={{ margin: "18px 0 16px" }}>Autonomous HR workflows.<br /><span className="grad">Zero busywork.</span></h2>
-            <p className="lead">Define the path once. Krewoxa keeps requests moving and shows you exactly where each one stands.</p>
+            <h2 className="h2" style={{ margin: "18px 0 16px" }}>Set the approval path once.<br /><span className="mute">Krewoxa keeps it moving.</span></h2>
+            <p className="lead">Onboarding, leave and payroll prep follow a defined path, so nothing waits in an inbox and you can see where each request stands.</p>
             <div className="grid3" style={{ marginTop: 48, textAlign: "left" }}>
               {FLOWS.map(({ icon: Icon, title, text, items }) => (
                 <div className="card wf" key={title}>
@@ -345,14 +390,53 @@ export function Landing() {
           </div>
         </section>
 
+        {/* MOBILE */}
+        <section id="mobile" className="cap">
+          <div className="wrap split">
+            <div className="phone" role="img" aria-label="Illustrative Krewoxa mobile app home screen with a face punch check-in and quick actions, using sample data">
+              <div className="scr">
+                <div className="notch" />
+                <div className="ph-top"><span>Good morning,</span><b>Anjali</b></div>
+                <div className="today">
+                  <small>Today · Shift 9:30 AM – 6:30 PM</small>
+                  <b>Not punched in</b>
+                  <span className="punch"><ScanFace size={18} /> Face punch</span>
+                </div>
+                <div className="qa">
+                  {([[CalendarCheck, "Apply leave", "8 days left"], [ClipboardPen, "Correction", "Fix missed punch"], [FileText, "Payslip", "October"], [CalendarDays, "My shifts", "Upcoming roster"]] as [LucideIcon, string, string][]).map(([Icon, t, sub]) => (
+                    <div key={t}><Icon size={17} /><b>{t}</b><small>{sub}</small></div>
+                  ))}
+                </div>
+                <div className="month">
+                  <small>Attendance this month</small>
+                  <div><span><b>18</b>Present</span><span><b>1</b>Leave</span><span><b>2</b>Late</span></div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <span className="pill"><Smartphone size={14} /> MOBILE APP</span>
+              <h2 className="h2" style={{ margin: "18px 0 16px" }}>HR in every employee&apos;s pocket.</h2>
+              <p className="lead">The Krewoxa app gives employees the everyday self-service they need, so HR stops fielding the same questions.</p>
+              <div className="mfeat">
+                {MOBILE.map(([Icon, t, p]) => (
+                  <div key={t}>
+                    <div className="ico ico-soft"><Icon size={20} /></div>
+                    <div><h3>{t}</h3><p>{p}</p></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* MODULES */}
-        <section style={{ background: "var(--soft)" }}>
+        <section>
           <div className="wrap center">
-            <h2 className="h2">Connects every part of HR <span className="grad">in one workspace.</span></h2>
+            <h2 className="h2">Everything HR runs on, <span className="mute">in one workspace.</span></h2>
             <p className="lead" style={{ marginTop: 16 }}>No more switching between tools to answer a simple question about your people.</p>
             <div className="mods">
               {MODULES.map(([Icon, label]) => (
-                <div className="card mod" key={label}><div className="ico"><Icon size={22} /></div>{label}</div>
+                <div className="card mod" key={label}><div className="ico ico-soft"><Icon size={22} /></div>{label}</div>
               ))}
             </div>
           </div>
@@ -398,7 +482,7 @@ export function Landing() {
         <section id="demo" className="cta">
           <div className="wrap">
             <div className="cta-card">
-              <h2>Ready to shift your workforce into <span style={{ color: "#5CC8FF" }}>perfect sync?</span></h2>
+              <h2>Ready to bring your HR <span style={{ color: "#5CC8FF" }}>into sync?</span></h2>
               <p>Leave your work email and we&apos;ll show you whether Krewoxa fits how you work. No pressure, no obligation.</p>
               {sent ? (
                 <p role="status" className="cta-ok">Thanks. This form is a preview and isn&apos;t connected to a backend yet, so nothing was sent.</p>
@@ -437,8 +521,8 @@ export function Landing() {
             </div>
           </div>
           <div className="ftr-bot">
-            <span>© 2026 Krewoxa. Legal entity name to be confirmed.</span>
-            <span>Privacy policy and terms: links to be added once published.</span>
+            <span>© {new Date().getFullYear()} Krewoxa. All rights reserved.</span>
+            <span>People. Work. Simplified.</span>
           </div>
         </div>
       </footer>

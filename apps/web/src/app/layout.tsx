@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { connection } from "next/server";
 import { Inter } from "next/font/google";
 import "./globals.css";
@@ -31,10 +32,21 @@ const inter = Inter({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: "Krewoxa",
-  description: "Krewoxa — local development",
-};
+/**
+ * `metadataBase` turns the relative og:image URL (app/opengraph-image.png) into an absolute one,
+ * which link previews require. It comes from the request's host because the web app has no
+ * public-URL setting; without it Next.js would fall back to localhost in production.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? (host?.startsWith("localhost") ? "http" : "https");
+  return {
+    title: "Krewoxa",
+    description: "Krewoxa — local development",
+    metadataBase: host ? new URL(`${proto}://${host}`) : undefined,
+  };
+}
 
 /**
  * Every page is rendered per request, never prerendered at build time.
