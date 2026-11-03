@@ -22,9 +22,9 @@ Map<String, dynamic> _employee(int n, String first) => {
 
 /// A server that filters by `q` and serves two pages: the first holds [firstPage] rows.
 class _DirectoryApi extends FakeApiClient {
-  _DirectoryApi(this.all, {this.firstPage = 2});
+  _DirectoryApi(this.all);
   final List<Map<String, dynamic>> all;
-  final int firstPage;
+  static const firstPage = 2;
   final searches = <String?>[];
   final pages = <int?>[];
 
