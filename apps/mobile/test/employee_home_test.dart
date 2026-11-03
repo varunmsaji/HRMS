@@ -131,7 +131,7 @@ void main() {
   testWidgets('an account with no employee record sees that, with no punch control and no request', (tester) async {
     final api = _api();
     await _pump(tester, _Repo(), employeeId: null, api: api);
-    expect(find.text('No employee record'), findsOneWidget);
+    expect(find.text('No employee record is linked to your account.'), findsOneWidget);
     expect(find.text('Punch in'), findsNothing);
     expect(api.listCalls, isEmpty);
   });
@@ -139,15 +139,15 @@ void main() {
   group('today panel obeys the state table (no inventing a status)', () {
     testWidgets('nothing recorded: says so, offers Punch in, never says Absent', (tester) async {
       await _pump(tester, _Repo());
-      expect(find.text('No attendance recorded yet today.'), findsOneWidget);
+      expect(find.text('Not punched in'), findsOneWidget);
       expect(find.text('Punch in'), findsOneWidget);
-      expect(find.textContaining('Absent'), findsNothing);
+      expect(find.text('Absent'), findsNothing);
     });
 
-    testWidgets('the 09:30 sweep row (ABSENT, no punch) is provisional: "Not punched in yet", no Absent chip', (tester) async {
+    testWidgets('the 09:30 sweep row (ABSENT, no punch) is provisional: "Not punched in", no Absent chip', (tester) async {
       final repo = _Repo()..days = [AttendanceDay.fromJson(_day(status: 'ABSENT'))];
       await _pump(tester, repo);
-      expect(find.text('Not punched in yet.'), findsOneWidget);
+      expect(find.text('Not punched in'), findsOneWidget);
       expect(find.text('Absent'), findsNothing);
     });
 
@@ -157,40 +157,40 @@ void main() {
         ..punches = [Punch.fromJson(_punch('IN', at))]
         ..days = [AttendanceDay.fromJson(_day(status: 'INCOMPLETE', firstIn: at.toUtc().toIso8601String(), worked: 120, calculatedAt: DateTime.now().toUtc().toIso8601String()))];
       await _pump(tester, repo);
-      expect(find.textContaining('Punched in at'), findsOneWidget);
-      expect(find.text('Worked so far'), findsOneWidget);
-      expect(find.text('2h 0m'), findsOneWidget);
+      expect(find.textContaining('Punched in · Since'), findsOneWidget);
+      expect(find.text('WORKED TODAY'), findsOneWidget);
+      expect(find.textContaining('02:00:'), findsOneWidget);
       expect(find.text('Punch out'), findsOneWidget);
-      expect(find.text('Punch in instead'), findsOneWidget);
+      expect(find.text('Punch in'), findsNothing, reason: 'Punch out is the one offered action');
     });
 
     testWidgets('a punch the day calculation has not caught up with is "being calculated" and shows no status or worked time', (tester) async {
       final at = DateTime.now().subtract(const Duration(minutes: 5));
       final repo = _Repo()..punches = [Punch.fromJson(_punch('IN', at))];
       await _pump(tester, repo);
-      expect(find.text('Attendance is being calculated.'), findsOneWidget);
-      expect(find.textContaining('Worked'), findsNothing);
+      expect(find.text('Updating your day…'), findsOneWidget);
+      expect(find.text('00:00:00'), findsWidgets, reason: 'no worked time is invented before the day is calculated');
     });
 
-    testWidgets('both reads failing is "unavailable" with a reload, and the punch buttons stay', (tester) async {
+    testWidgets('both reads failing is "unavailable" and the punch button stays', (tester) async {
       final repo = _Repo()
         ..punches = null
         ..days = null;
       await _pump(tester, repo);
-      expect(find.text('Today\'s status is unavailable.'), findsOneWidget);
-      expect(find.text('Reload status'), findsOneWidget);
+      expect(find.text('Status unavailable'), findsOneWidget);
       expect(find.text('Punch in'), findsOneWidget);
-      expect(find.text('Punch out'), findsOneWidget);
     });
 
-    testWidgets('the assigned schedule comes from the day row, not a guess', (tester) async {
+    testWidgets('the shift shown on Home comes from the work-profile read', (tester) async {
       final repo = _Repo()
         ..days = [AttendanceDay.fromJson(_day(status: 'ABSENT', over: {'scheduled_start': '${_today}T04:00:00Z', 'scheduled_end': '${_today}T12:30:00Z'}))];
       await _pump(tester, repo);
-      expect(find.textContaining('Shift 09:30 – 18:00'), findsOneWidget);
+      expect(find.textContaining('Shift 09:30 - 18:30'), findsOneWidget);
     });
 
-    testWidgets('exceptions on a calculated day are listed', (tester) async {
+    // The redesigned Home no longer lists a day's exceptions (late, missing punch); they are shown
+    // on the attendance screens instead (see attendance_month_and_day_test.dart).
+    testWidgets('exceptions on a calculated day are listed', skip: true, (tester) async {
       final at = DateTime.now().subtract(const Duration(hours: 1));
       final repo = _Repo()
         ..punches = [Punch.fromJson(_punch('IN', at))]
@@ -223,8 +223,9 @@ void main() {
       await _pump(tester, repo);
       await tester.tap(find.text('Punch in'));
       await tester.pump();
-      await tester.tap(find.text('Punch in'), warnIfMissed: false);
-      await tester.tap(find.text('Punch out instead'), warnIfMissed: false);
+      // While the request is in flight the action is replaced by its progress label and disabled.
+      expect(find.text('Punch in'), findsNothing);
+      await tester.tap(find.byType(FilledButton).first, warnIfMissed: false);
       await tester.pump();
       expect(repo.punched, ['IN']);
       repo.punchGate!.complete();
@@ -249,7 +250,7 @@ void main() {
 
     testWidgets('a user without ATTENDANCE.PUNCH sees the status but no punch control', (tester) async {
       await _pump(tester, _Repo(), permissions: [attendanceView]);
-      expect(find.text('No attendance recorded yet today.'), findsOneWidget);
+      expect(find.text('Not punched in'), findsOneWidget);
       expect(find.text('Punch in'), findsNothing);
     });
   });
@@ -267,33 +268,31 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.byType(CircularProgressIndicator), findsNothing, reason: 'skeletons, not a spinner that replaces the screen');
-      expect(find.text('No attendance recorded yet today.'), findsNothing);
+      expect(find.text('Not punched in'), findsNothing);
+      expect(find.text('Checking today…'), findsOneWidget);
       repo.readGate!.complete();
       await tester.pumpAndSettle();
-      expect(find.text('No attendance recorded yet today.'), findsOneWidget);
+      expect(find.text('Not punched in'), findsOneWidget);
     });
 
-    testWidgets('a failing leave read never hides attendance; only its own section says so and offers Try again', (tester) async {
+    testWidgets('a failing leave read never hides attendance; only the leave tile falls back to a dash', (tester) async {
       final api = _api(failing: {'/leave-balances': ApiError(status: 500, code: 'X', message: 'Leave is down.')});
       await _pump(tester, _Repo(), api: api);
-      expect(find.text('No attendance recorded yet today.'), findsOneWidget);
+      expect(find.text('Not punched in'), findsOneWidget);
       expect(find.text('Punch in'), findsOneWidget);
-      expect(find.text('Leave balances are unavailable.'), findsOneWidget);
-      expect(find.text('Try again'), findsOneWidget);
+      expect(find.text('8.5'), findsNothing, reason: 'the failed read shows no balance');
+      expect(find.text('—'), findsWidgets);
     });
 
     testWidgets('shift and work location come from the work-profile read', (tester) async {
       await _pump(tester, _Repo());
-      expect(find.text('General Shift'), findsOneWidget);
-      expect(find.text('09:30 – 18:30'), findsOneWidget);
-      expect(find.text('Bengaluru HQ'), findsOneWidget);
-      expect(find.text('Bengaluru HQ Campus · Bengaluru'), findsOneWidget);
+      expect(find.text('Shift 09:30 - 18:30'), findsOneWidget);
     });
 
     testWidgets('a failing work-profile read leaves the cards out without hiding anything else', (tester) async {
       final api = _api(failing: {'/employee-work-profile/me': ApiError(status: 500, code: 'X', message: 'down')});
       await _pump(tester, _Repo(), api: api);
-      expect(find.text('General Shift'), findsNothing);
+      expect(find.textContaining('Shift 09:30'), findsNothing);
       expect(find.text('Punch in'), findsOneWidget);
     });
 
@@ -306,16 +305,16 @@ void main() {
         {'id': 'a-1', 'employee_id': 'e-1', 'leave_type_id': 'lt-1', 'start_date': '2026-11-02', 'end_date': '2026-11-03', 'total_days': '2', 'status': 'SUBMITTED', 'version': 1},
       ]);
       await _pump(tester, repo, api: api);
-      expect(find.text('Asha'), findsOneWidget);
-      expect(find.text('Casual leave'), findsWidgets);
-      expect(find.text('Requests'), findsOneWidget);
-      expect(find.text('2 Nov – 3 Nov'), findsOneWidget);
-      expect(find.text('Casual leave · 2 days'), findsOneWidget);
+      expect(find.textContaining('Asha'), findsOneWidget);
+      expect(find.text('Cas 8.5'), findsOneWidget);
+      expect(find.text('Needs attention'), findsOneWidget);
+      expect(find.text('Casual leave'), findsOneWidget);
+      expect(find.text('2–3 Nov · 2 days'), findsOneWidget);
     });
 
-    testWidgets('no requests: the "Requests" section is not drawn at all', (tester) async {
+    testWidgets('no requests: the "Needs attention" section is not drawn at all', (tester) async {
       await _pump(tester, _Repo());
-      expect(find.text('Requests'), findsNothing);
+      expect(find.text('Needs attention'), findsNothing);
     });
 
     testWidgets('the latest payslip shows its month and net pay', (tester) async {
@@ -324,15 +323,14 @@ void main() {
         {'pay_run_id': 'r-2', 'month': '2026-10', 'pay_date': '2026-10-31', 'net_minor': 4218000, 'status': 'FINALIZED'},
       ]);
       await _pump(tester, _Repo(), permissions: [..._full, payrollPayslipViewOwn], api: api);
-      expect(find.text('Payslip'), findsOneWidget);
-      expect(find.text('October 2026'), findsOneWidget);
+      expect(find.text('Oct 2026'), findsOneWidget);
       expect(find.text('₹42,180'), findsOneWidget);
     });
 
     testWidgets('without PAYROLL.PAYSLIP_VIEW_OWN there is no Payslip section and no request for it', (tester) async {
       final without = _api();
       await _pump(tester, _Repo(), api: without);
-      expect(find.text('Payslip'), findsNothing);
+      expect(find.text('₹42,180'), findsNothing);
       expect(without.listCalls.map((c) => c.path), isNot(contains('/me/payslips')));
     });
   });

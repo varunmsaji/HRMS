@@ -254,7 +254,7 @@ void main() {
       final container = ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
       final router = container.read(appRouterProvider);
       expect(router.routeInformationProvider.value.uri.path, '/app/home');
-      expect(find.text('No attendance recorded yet today.'), findsOneWidget, reason: 'the real employee Home, from the today-state resolver');
+      expect(find.text('Not punched in'), findsOneWidget, reason: 'the real employee Home, from the today-state resolver');
       expect(find.byType(NavigationBar), findsOneWidget);
       expect(find.text('Profile'), findsOneWidget);
 
@@ -262,11 +262,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(router.routeInformationProvider.value.uri.path, '/app/attendance');
 
-      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Home')));
+      await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('Dashboard')));
       await tester.pumpAndSettle();
       expect(router.routeInformationProvider.value.uri.path, '/app/home');
 
-      await tester.tap(find.text('More'));
+      // On the redesigned Home the profile avatar in the header opens the More hub.
+      await tester.tap(find.byIcon(Icons.person));
       await tester.pumpAndSettle();
       expect(find.byType(SettingsHubScreen), findsOneWidget);
     });

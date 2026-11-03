@@ -54,12 +54,12 @@ void main() {
   group('employee surface', () {
     const employee = [attendancePunch, attendanceView];
 
-    testWidgets('has the employee tab icons: Home, fingerprint, event_available, person', (tester) async {
+    testWidgets('has the employee tab icons: dashboard grid, fingerprint, event_available, account circle', (tester) async {
       await _pump(tester, employee);
       final icons = [for (final d in _bar(tester).destinations.cast<NavigationDestination>()) (d.icon as Icon).icon];
-      expect(icons, [Icons.home_outlined, Icons.fingerprint_rounded, Icons.event_available_outlined, Icons.person_outline_rounded]);
+      expect(icons, [Icons.grid_view_outlined, Icons.fingerprint_rounded, Icons.event_available_outlined, Icons.account_circle_outlined]);
       final selected = [for (final d in _bar(tester).destinations.cast<NavigationDestination>()) (d.selectedIcon as Icon).icon];
-      expect(selected, [Icons.home_rounded, Icons.fingerprint_rounded, Icons.event_available_rounded, Icons.person_rounded]);
+      expect(selected, [Icons.grid_view_rounded, Icons.fingerprint_rounded, Icons.event_available_rounded, Icons.account_circle_rounded]);
     });
 
     testWidgets('selected tab follows the branch', (tester) async {
@@ -70,7 +70,7 @@ void main() {
       expect(find.text('LEAVE PAGE'), findsOneWidget);
       await _tapTab(tester, 'Profile');
       expect(_bar(tester).selectedIndex, 3);
-      await _tapTab(tester, 'Home');
+      await _tapTab(tester, 'Dashboard');
       expect(_bar(tester).selectedIndex, 0);
     });
 
