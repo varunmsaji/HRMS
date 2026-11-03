@@ -73,7 +73,8 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
   @override
   void initState() {
     super.initState();
-    _team = _perms.contains(_c.approvePermission);
+    // The company account has no employee record, so "Mine" would mean nothing: it starts on Team.
+    _team = _perms.contains(_c.approvePermission) || ref.read(authControllerProvider).user?.employeeId == null;
     _from = businessDayOffset(_zone, -30);
     _to = businessToday(_zone);
     _loadEmployees();
@@ -174,7 +175,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(children: [
-            if (canApprove || onBehalf)
+            if (ref.read(authControllerProvider).user?.employeeId != null && (canApprove || onBehalf))
               SegmentedButton<bool>(
                 segments: const [ButtonSegment(value: false, label: Text('Mine')), ButtonSegment(value: true, label: Text('Team'))],
                 selected: {_team},

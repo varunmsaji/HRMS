@@ -141,6 +141,19 @@ class EmployeeRepository {
         },
       );
 
+  /// One page of the directory. [search] is matched on the server (name, code, email, mobile) before
+  /// paging, so it reaches every employee, not only the ones already loaded.
+  Future<({List<Employee> rows, bool hasNext})> listEmployeesPage({String? search, int page = 1, int perPage = 50}) async {
+    final q = search?.trim();
+    final env = await _client.getList<Employee>(
+      '/employees',
+      query: PageQuery(page: page, perPage: perPage),
+      filters: {if (q != null && q.isNotEmpty) 'q': q},
+      parseItem: (d) => Employee.fromJson(d as Map<String, dynamic>),
+    );
+    return (rows: env.data, hasNext: env.pagination?.hasNext ?? false);
+  }
+
   Future<List<Employee>> listEmployees() =>
       _client.getList('/employees', parseItem: (d) => Employee.fromJson(d as Map<String, dynamic>)).then((e) => e.data);
 

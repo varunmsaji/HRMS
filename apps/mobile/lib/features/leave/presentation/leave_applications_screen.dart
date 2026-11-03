@@ -40,12 +40,15 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   List<Choice> _employees = const [];
   Map<String, String> _typeNames = const {};
 
+  String? get _myEmployeeId => ref.read(authControllerProvider).user?.employeeId;
+
   List<String> get _permissions => ref.read(authControllerProvider).user?.permissions ?? const <String>[];
 
   @override
   void initState() {
     super.initState();
-    _team = _permissions.contains(leaveApplicationApprove);
+    // The company account has no employee record, so "Mine" would mean nothing: it starts on Team.
+    _team = _permissions.contains(leaveApplicationApprove) || _myEmployeeId == null;
     _loadLookups();
     _load();
   }
@@ -163,7 +166,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(children: [
-            if (canApprove || permissions.contains(leaveApplicationSubmitOnBehalf))
+            if (_myEmployeeId != null && (canApprove || permissions.contains(leaveApplicationSubmitOnBehalf)))
               SegmentedButton<bool>(
                 segments: const [ButtonSegment(value: false, label: Text('Mine')), ButtonSegment(value: true, label: Text('Team'))],
                 selected: {_team},

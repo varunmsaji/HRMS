@@ -150,6 +150,13 @@ void main() {
       expect(repo.calls.last, startsWith('list:emp-1:'));
     });
 
+    testWidgets('the company account (no employee record) starts on Team and has no Mine', (tester) async {
+      final repo = _FakeLeave([_app()]);
+      await _pump(tester, repo, [leaveApplicationApprove], const LeaveApplicationsScreen(), employeeId: null);
+      expect(repo.calls.first, startsWith('list:*:'));
+      expect(find.text('Mine'), findsNothing);
+    });
+
     testWidgets('the status filter is sent as application_status', (tester) async {
       final repo = _FakeLeave([_app()]);
       await _pump(tester, repo, [leaveApplicationSubmit], const LeaveApplicationsScreen());

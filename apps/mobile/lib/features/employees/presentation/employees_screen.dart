@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/spec_form_screen.dart';
-import '../../../core/widgets/async_list_screen.dart';
 import '../../attendance/presentation/employee_attendance_panel.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../payroll/presentation/employee_salary_panel.dart';
@@ -25,7 +26,75 @@ class EmployeesScreen extends ConsumerStatefulWidget {
 }
 
 class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
-  final _listKey = GlobalKey<AsyncListScreenState<Employee>>();
+  final _search = TextEditingController();
+  Timer? _debounce;
+  List<Employee> _items = const [];
+  bool _hasNext = false;
+  bool _loading = true;
+  bool _loadingMore = false;
+  ApiError? _error;
+  int _page = 1;
+  int _request = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Loads page 1 for the current search; a slower, older answer never overwrites a newer one.
+  Future<void> _load() async {
+    final mine = ++_request;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final page = await ref.read(employeeRepositoryProvider).listEmployeesPage(search: _search.text);
+      if (!mounted || mine != _request) return;
+      setState(() {
+        _items = page.rows;
+        _hasNext = page.hasNext;
+        _page = 1;
+      });
+    } catch (e) {
+      if (!mounted || mine != _request) return;
+      setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
+    } finally {
+      if (mounted && mine == _request) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasNext) return;
+    final mine = _request;
+    setState(() => _loadingMore = true);
+    try {
+      final page = await ref.read(employeeRepositoryProvider).listEmployeesPage(search: _search.text, page: _page + 1);
+      if (!mounted || mine != _request) return;
+      setState(() {
+        _items = [..._items, ...page.rows];
+        _hasNext = page.hasNext;
+        _page += 1;
+      });
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Something went wrong.')));
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  void _onSearchChanged(String _) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), _load);
+  }
 
   Future<void> _create() async {
     final repo = ref.read(employeeRepositoryProvider);
@@ -38,33 +107,68 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
           if (e.value != null) e.key: e.value,
       }),
     );
-    if (saved) _listKey.currentState?.reload();
+    if (saved) _load();
   }
 
   @override
   Widget build(BuildContext context) {
     final canCreate = (ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(employeeCreate);
-    return AsyncListScreen<Employee>(
-      key: _listKey,
-      title: 'Employees',
-      fetch: () => ref.read(employeeRepositoryProvider).listEmployees(),
-      createLabel: 'New employee',
-      onCreate: canCreate ? _create : null,
-      emptyLabel: 'No employees yet.',
-      searchText: (e) => '${e.fullName} ${e.employeeCode} ${e.status}',
-      itemBuilder: (context, employee) {
-        final name = employee.fullName.isEmpty ? employee.employeeCode : employee.fullName;
-        return ListRowCard(
-          title: name,
-          subtitle: employee.employeeCode,
-          leading: InitialsAvatar(name: name),
-          trailing: employee.isActive ? StatusChip.status(employee.status) : const StatusChip(label: 'Inactive'),
-          onTap: () async {
-            await Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee)));
-            _listKey.currentState?.reload();
-          },
-        );
-      },
+    final searching = _search.text.trim().isNotEmpty;
+    Widget body;
+    if (_loading && _items.isEmpty) {
+      body = const ListSkeleton();
+    } else if (_error != null) {
+      final forbidden = _error!.status == 403;
+      body = StateMessage(
+        icon: forbidden ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
+        tone: forbidden ? Tone.warning : Tone.danger,
+        title: forbidden ? 'No access' : 'Couldn\'t load this',
+        message: forbidden ? 'You do not have permission to view this.' : _error!.message,
+        actionLabel: forbidden ? null : 'Try again',
+        onAction: _load,
+      );
+    } else if (_items.isEmpty) {
+      body = StateMessage(
+        icon: searching ? Icons.search_off_rounded : Icons.inbox_outlined,
+        title: searching ? 'No matches' : 'No employees yet.',
+        message: searching ? 'Nothing matches "${_search.text.trim()}".' : (canCreate ? 'Tap "New employee" to add the first one.' : null),
+      );
+    } else {
+      body = ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+        itemCount: _items.length + (_hasNext ? 1 : 0),
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          if (index == _items.length) {
+            return Center(
+              child: _loadingMore ? const Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()) : TextButton(onPressed: _loadMore, child: const Text('Load more')),
+            );
+          }
+          final employee = _items[index];
+          final name = employee.fullName.isEmpty ? employee.employeeCode : employee.fullName;
+          return ListRowCard(
+            title: name,
+            subtitle: employee.employeeCode,
+            leading: InitialsAvatar(name: name),
+            trailing: employee.isActive ? StatusChip.status(employee.status) : const StatusChip(label: 'Inactive'),
+            onTap: () async {
+              await Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee)));
+              _load();
+            },
+          );
+        },
+      );
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('Employees')),
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+          child: AppSearchField(hint: 'Search name, code, email or mobile', controller: _search, onChanged: _onSearchChanged),
+        ),
+        Expanded(child: RefreshIndicator(onRefresh: _load, child: body)),
+      ]),
+      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add_rounded), label: const Text('New employee')) : null,
     );
   }
 }

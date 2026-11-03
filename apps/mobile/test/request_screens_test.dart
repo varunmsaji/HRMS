@@ -91,6 +91,14 @@ void main() {
       expect(api.listCalls.last.filters!['request_type'], 'WRONG_SHIFT');
     });
 
+    testWidgets('the company account (no employee record) sees Team only, never an unfiltered "Mine"', (tester) async {
+      final api = _api(rows: [_reg()]);
+      await _pump(tester, api, [attendanceRegularizationApprove, attendanceRegularizationRequestOnBehalf], RequestListScreen(config: regularizationConfig), employeeId: null);
+      expect(find.text('Mine'), findsNothing);
+      expect(find.text('Team'), findsNothing, reason: 'with one scope there is nothing to switch between');
+      expect(find.text('Ravi Iyer (E-2) · Missing punch · 2026-10-01'), findsOneWidget);
+    });
+
     testWidgets('Mine switches to the signed-in employee', (tester) async {
       final api = _api(rows: [_reg()]);
       await _pump(tester, api, [attendanceRegularizationApprove], RequestListScreen(config: regularizationConfig));
