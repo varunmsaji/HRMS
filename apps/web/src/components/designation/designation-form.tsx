@@ -36,9 +36,6 @@ export function DesignationForm({
           <FormField id={id("title")} label="Designation title" required error={errors.title}>
             <Input value={values.title} onChange={(e) => update("title", e.target.value)} />
           </FormField>
-          <FormField id={id("code")} label="Designation code" error={errors.code}>
-            <Input value={values.code} onChange={(e) => update("code", e.target.value)} />
-          </FormField>
         </div>
       </section>
 

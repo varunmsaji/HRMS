@@ -157,7 +157,6 @@ describe("ShiftsPage", () => {
     await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(2));
     expect(mockedPost).toHaveBeenNthCalledWith(1, "/shifts", {
       name: "General Shift",
-      code: null,
     });
     expect(mockedPatch).toHaveBeenCalledWith(
       "/shifts/shift-1/versions/ver-1",

@@ -1,7 +1,6 @@
 import type { Grade } from "@/lib/grade/types";
 
 export interface GradeFormValues {
-  code: string;
   name: string;
   level: string;
   minCtc: string;
@@ -14,7 +13,6 @@ export interface GradeFormValues {
 export type GradeFormErrors = Partial<Record<keyof GradeFormValues, string>>;
 
 export const EMPTY_GRADE_FORM_VALUES: GradeFormValues = {
-  code: "",
   name: "",
   level: "",
   minCtc: "",
@@ -49,7 +47,6 @@ function intOrNull(value: string): number | null {
 
 export function gradeToFormValues(grade: Grade): GradeFormValues {
   return {
-    code: grade.code,
     name: grade.name,
     level: grade.level === null ? "" : String(grade.level),
     minCtc: minorUnitsToRupees(grade.min_ctc),
@@ -63,7 +60,6 @@ export function gradeToFormValues(grade: Grade): GradeFormValues {
 /** Full payload for `POST /grades` — every field the form collects. */
 export function buildCreatePayload(values: GradeFormValues): Record<string, unknown> {
   return {
-    code: values.code.trim(),
     name: values.name.trim(),
     level: intOrNull(values.level),
     min_ctc: rupeesToMinorUnits(values.minCtc),
@@ -78,7 +74,6 @@ export function buildCreatePayload(values: GradeFormValues): Record<string, unkn
 export function buildUpdatePatch(values: GradeFormValues, grade: Grade): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
 
-  if (values.code.trim() !== grade.code) patch.code = values.code.trim();
   if (values.name.trim() !== grade.name) patch.name = values.name.trim();
 
   const level = intOrNull(values.level);
@@ -105,9 +100,6 @@ export function buildUpdatePatch(values: GradeFormValues, grade: Grade): Record<
 export function validateGradeForm(values: GradeFormValues): GradeFormErrors {
   const errors: GradeFormErrors = {};
 
-  if (!values.code.trim()) {
-    errors.code = "Grade code is required.";
-  }
   if (!values.name.trim()) {
     errors.name = "Grade name is required.";
   }

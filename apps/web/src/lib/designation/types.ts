@@ -17,5 +17,4 @@ export interface DesignationWritableFields {
   department_id?: string | null;
   grade_id?: string | null;
   title?: string;
-  code?: string | null;
 }

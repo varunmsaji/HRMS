@@ -334,7 +334,6 @@ export default function ShiftsPage() {
               errors={formErrors}
               onChange={setFormValues}
               idPrefix="create-"
-              hideCode
             />
             <div className="mt-6">
               <ShiftVersionForm

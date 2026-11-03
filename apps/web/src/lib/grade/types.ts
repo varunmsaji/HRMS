@@ -20,7 +20,6 @@ export interface Grade {
 
 /** Mirrors `GradeCreate` / `GradeUpdate` — both share the same editable field set. */
 export interface GradeWritableFields {
-  code?: string;
   name?: string;
   level?: number | null;
   min_ctc?: number | null;

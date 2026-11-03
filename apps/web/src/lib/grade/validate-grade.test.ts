@@ -27,21 +27,19 @@ const grade: Grade = {
 };
 
 describe("validateGradeForm", () => {
-  it("requires a code and a name", () => {
+  it("requires a name", () => {
     const errors = validateGradeForm(EMPTY_GRADE_FORM_VALUES);
-    expect(errors.code).toBeDefined();
     expect(errors.name).toBeDefined();
   });
 
   it("treats blank optional fields as valid", () => {
-    const errors = validateGradeForm({ ...EMPTY_GRADE_FORM_VALUES, code: "L5", name: "Senior Engineer" });
+    const errors = validateGradeForm({ ...EMPTY_GRADE_FORM_VALUES, name: "Senior Engineer" });
     expect(errors).toEqual({});
   });
 
   it("rejects max CTC below min CTC", () => {
     const errors = validateGradeForm({
       ...EMPTY_GRADE_FORM_VALUES,
-      code: "L5",
       name: "Senior Engineer",
       minCtc: "20000",
       maxCtc: "10000",
@@ -52,7 +50,6 @@ describe("validateGradeForm", () => {
   it("allows equal min and max CTC", () => {
     const errors = validateGradeForm({
       ...EMPTY_GRADE_FORM_VALUES,
-      code: "L5",
       name: "Senior Engineer",
       minCtc: "10000",
       maxCtc: "10000",
@@ -62,16 +59,14 @@ describe("validateGradeForm", () => {
 });
 
 describe("gradeToFormValues / buildCreatePayload", () => {
-  it("round-trips code/name and nulls other optional fields", () => {
+  it("round-trips name and nulls other optional fields", () => {
     const values = gradeToFormValues(grade);
-    expect(values.code).toBe("L5");
     expect(values.name).toBe("Senior Engineer");
     expect(values.level).toBe("5");
     expect(values.minCtc).toBe("");
 
     const payload = buildCreatePayload(values);
     expect(payload).toEqual({
-      code: "L5",
       name: "Senior Engineer",
       level: 5,
       min_ctc: null,

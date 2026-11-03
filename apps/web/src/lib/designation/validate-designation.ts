@@ -2,7 +2,6 @@ import type { Designation } from "@/lib/designation/types";
 
 export interface DesignationFormValues {
   title: string;
-  code: string;
   departmentId: string;
   gradeId: string;
 }
@@ -11,7 +10,6 @@ export type DesignationFormErrors = Partial<Record<keyof DesignationFormValues, 
 
 export const EMPTY_DESIGNATION_FORM_VALUES: DesignationFormValues = {
   title: "",
-  code: "",
   departmentId: "",
   gradeId: "",
 };
@@ -19,7 +17,6 @@ export const EMPTY_DESIGNATION_FORM_VALUES: DesignationFormValues = {
 export function designationToFormValues(designation: Designation): DesignationFormValues {
   return {
     title: designation.title,
-    code: designation.code ?? "",
     departmentId: designation.department_id ?? "",
     gradeId: designation.grade_id ?? "",
   };
@@ -29,7 +26,6 @@ export function designationToFormValues(designation: Designation): DesignationFo
 export function buildCreatePayload(values: DesignationFormValues): Record<string, unknown> {
   return {
     title: values.title.trim(),
-    code: values.code.trim() || null,
     department_id: values.departmentId || null,
     grade_id: values.gradeId || null,
   };
@@ -44,8 +40,6 @@ export function buildUpdatePatch(
 
   if (values.title.trim() !== designation.title) patch.title = values.title.trim();
 
-  const currentCode = designation.code ?? "";
-  if (values.code.trim() !== currentCode) patch.code = values.code.trim() || null;
 
   const currentDepartmentId = designation.department_id ?? "";
   if (values.departmentId !== currentDepartmentId) patch.department_id = values.departmentId || null;

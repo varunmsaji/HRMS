@@ -41,14 +41,12 @@ describe("designationToFormValues / buildCreatePayload", () => {
   it("round-trips title and nulls other optional fields", () => {
     const values = designationToFormValues(designation);
     expect(values.title).toBe("Software Engineer");
-    expect(values.code).toBe("");
     expect(values.departmentId).toBe("");
     expect(values.gradeId).toBe("");
 
     const payload = buildCreatePayload(values);
     expect(payload).toEqual({
       title: "Software Engineer",
-      code: null,
       department_id: null,
       grade_id: null,
     });
@@ -75,9 +73,9 @@ describe("buildUpdatePatch", () => {
 
   it("includes only changed fields", () => {
     const values = designationToFormValues(designation);
-    values.code = "SWE";
+    values.title = "Senior Software Engineer";
     const patch = buildUpdatePatch(values, designation);
-    expect(patch).toEqual({ code: "SWE" });
+    expect(patch).toEqual({ title: "Senior Software Engineer" });
   });
 
   it("nulls out a department that was cleared", () => {

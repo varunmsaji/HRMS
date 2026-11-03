@@ -201,10 +201,6 @@ export default function HolidayCalendarDetailPage() {
           setFormErrors({ name: getFieldError(err.details, "name") });
           return;
         }
-        if (err.status === 409) {
-          setFormErrors({ code: "A calendar with this code already exists." });
-          return;
-        }
       }
       toast({
         title: "Could not save holiday calendar",

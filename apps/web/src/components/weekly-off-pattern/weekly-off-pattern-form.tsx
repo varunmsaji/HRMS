@@ -61,12 +61,6 @@ export function WeeklyOffPatternForm({
             onChange={(e) => onChange({ ...values, name: e.target.value })}
           />
         </FormField>
-        <FormField id={id("code")} label="Code" error={errors.code}>
-          <Input
-            value={values.code}
-            onChange={(e) => onChange({ ...values, code: e.target.value })}
-          />
-        </FormField>
         <FormField id={id("patternKind")} label="Pattern kind" required>
           <NativeSelect
             value={values.patternKind}

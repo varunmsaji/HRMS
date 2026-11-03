@@ -95,7 +95,6 @@ export default function GradesPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 422) {
         setFormErrors({
-          code: getFieldError(err.details, "code"),
           name: getFieldError(err.details, "name"),
           maxCtc: getFieldError(err.details, "max_ctc"),
         });
@@ -104,14 +103,6 @@ export default function GradesPage() {
       if (err instanceof ApiError && err.status === 403) {
         setCreateOpen(false);
         toast({ title: "You don't have permission to add grades", variant: "danger" });
-        return;
-      }
-      if (
-        err instanceof ApiError &&
-        err.status === 409 &&
-        err.code === "GRADE_CODE_ALREADY_EXISTS"
-      ) {
-        setFormErrors({ code: "A grade with this code already exists." });
         return;
       }
       toast({

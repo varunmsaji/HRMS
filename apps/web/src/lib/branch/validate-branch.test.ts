@@ -131,7 +131,6 @@ describe("branchToFormValues / buildCreatePayload", () => {
     expect(payload).toEqual({
       legal_entity_id: "le-1",
       name: "HQ Branch",
-      code: null,
       address_line1: null,
       address_line2: null,
       city: null,

@@ -50,9 +50,6 @@ export function DepartmentForm({
           <FormField id={id("name")} label="Department name" required error={errors.name}>
             <Input value={values.name} onChange={(e) => update("name", e.target.value)} />
           </FormField>
-          <FormField id={id("code")} label="Department code" error={errors.code}>
-            <Input value={values.code} onChange={(e) => update("code", e.target.value)} />
-          </FormField>
         </div>
       </section>
 

@@ -21,9 +21,6 @@ export function GradeForm({ values, errors, onChange, idPrefix = "" }: GradeForm
       <section>
         <h3 className="text-sm font-medium text-foreground">Identity</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id={id("code")} label="Grade code" required error={errors.code}>
-            <Input value={values.code} onChange={(e) => update("code", e.target.value)} />
-          </FormField>
           <FormField id={id("name")} label="Grade name" required error={errors.name}>
             <Input value={values.name} onChange={(e) => update("name", e.target.value)} />
           </FormField>

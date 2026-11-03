@@ -4,20 +4,17 @@ import type { Shift } from "@/lib/shift/types";
  * (see `validate-shift-version.ts`). */
 export interface ShiftFormValues {
   name: string;
-  code: string;
 }
 
 export type ShiftFormErrors = Partial<Record<keyof ShiftFormValues, string>>;
 
 export const EMPTY_SHIFT_FORM_VALUES: ShiftFormValues = {
   name: "",
-  code: "",
 };
 
 export function shiftToFormValues(shift: Shift): ShiftFormValues {
   return {
     name: shift.name,
-    code: shift.code ?? "",
   };
 }
 
@@ -25,7 +22,6 @@ export function shiftToFormValues(shift: Shift): ShiftFormValues {
 export function buildCreatePayload(values: ShiftFormValues): Record<string, unknown> {
   return {
     name: values.name.trim(),
-    code: values.code.trim() || null,
   };
 }
 
@@ -35,8 +31,6 @@ export function buildUpdatePatch(values: ShiftFormValues, shift: Shift): Record<
 
   if (values.name.trim() !== shift.name) patch.name = values.name.trim();
 
-  const code = values.code.trim() || null;
-  if (code !== shift.code) patch.code = code;
 
   return patch;
 }

@@ -104,19 +104,18 @@ describe("GradesPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add grade/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText(/grade code/i), "L5");
     await user.type(within(dialog).getByLabelText(/grade name/i), "Senior Engineer");
     await user.click(within(dialog).getByRole("button", { name: /^add grade$/i }));
 
     await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
     expect(mockedPost).toHaveBeenCalledWith(
       "/grades",
-      expect.objectContaining({ code: "L5", name: "Senior Engineer" }),
+      expect.objectContaining({ name: "Senior Engineer" }),
     );
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
   });
 
-  it("shows validation errors when code and name are missing", async () => {
+  it("shows a validation error when the name is missing", async () => {
     mockLoad([]);
     const user = userEvent.setup();
     render(<GradesPage />);
@@ -125,8 +124,8 @@ describe("GradesPage", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /^add grade$/i }));
 
-    expect(await within(dialog).findByText(/grade code is required/i)).toBeInTheDocument();
-    expect(within(dialog).getByText(/grade name is required/i)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/grade name is required/i)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/grade code/i)).not.toBeInTheDocument();
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -137,7 +136,6 @@ describe("GradesPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add grade/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText(/grade code/i), "L5");
     await user.type(within(dialog).getByLabelText(/grade name/i), "Senior Engineer");
     await user.type(within(dialog).getByLabelText(/min ctc/i), "20000");
     await user.type(within(dialog).getByLabelText(/max ctc/i), "10000");
@@ -157,7 +155,6 @@ describe("GradesPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add grade/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText(/grade code/i), "L5");
     await user.type(within(dialog).getByLabelText(/grade name/i), "Senior Engineer");
     await user.click(within(dialog).getByRole("button", { name: /^add grade$/i }));
 
@@ -166,22 +163,5 @@ describe("GradesPage", () => {
         expect.objectContaining({ title: "Could not add grade", variant: "danger" }),
       ),
     );
-  });
-
-  it("shows a field error when the code already exists", async () => {
-    mockLoad([]);
-    mockedPost.mockRejectedValueOnce(
-      new ApiError({ status: 409, code: "GRADE_CODE_ALREADY_EXISTS", message: "Duplicate" }),
-    );
-    const user = userEvent.setup();
-    render(<GradesPage />);
-
-    await user.click(await screen.findByRole("button", { name: /add grade/i }));
-    const dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText(/grade code/i), "L5");
-    await user.type(within(dialog).getByLabelText(/grade name/i), "Senior Engineer");
-    await user.click(within(dialog).getByRole("button", { name: /^add grade$/i }));
-
-    expect(await within(dialog).findByText(/a grade with this code already exists/i)).toBeInTheDocument();
   });
 });

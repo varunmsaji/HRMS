@@ -61,7 +61,7 @@ describe("validateHolidayCalendarForm", () => {
 describe("buildCreatePayload", () => {
   it("nulls out blank optional fields", () => {
     const payload = buildCreatePayload(EMPTY_HOLIDAY_CALENDAR_FORM_VALUES);
-    expect(payload).toMatchObject({ code: null, state_code: null, valid_from: null, valid_to: null });
+    expect(payload).toMatchObject({ state_code: null, valid_from: null, valid_to: null });
   });
 });
 

@@ -3,7 +3,6 @@ import type { Branch } from "@/lib/branch/types";
 export interface BranchFormValues {
   legalEntityId: string;
   name: string;
-  code: string;
   addressLine1: string;
   addressLine2: string;
   city: string;
@@ -63,7 +62,6 @@ const PINCODE_PATTERN = /^[1-9][0-9]{5}$/;
 export const EMPTY_BRANCH_FORM_VALUES: BranchFormValues = {
   legalEntityId: "",
   name: "",
-  code: "",
   addressLine1: "",
   addressLine2: "",
   city: "",
@@ -79,7 +77,6 @@ export function branchToFormValues(branch: Branch): BranchFormValues {
   return {
     legalEntityId: branch.legal_entity_id,
     name: branch.name,
-    code: branch.code ?? "",
     addressLine1: branch.address_line1 ?? "",
     addressLine2: branch.address_line2 ?? "",
     city: branch.city ?? "",
@@ -97,7 +94,6 @@ export function buildCreatePayload(values: BranchFormValues): Record<string, unk
   return {
     legal_entity_id: values.legalEntityId,
     name: values.name.trim(),
-    code: values.code.trim() || null,
     address_line1: values.addressLine1.trim() || null,
     address_line2: values.addressLine2.trim() || null,
     city: values.city.trim() || null,
@@ -120,7 +116,6 @@ export function buildUpdatePatch(values: BranchFormValues, branch: Branch): Reco
   if (values.name.trim() !== branch.name) patch.name = values.name.trim();
 
   const stringFieldMap: Array<[keyof BranchFormValues, keyof Branch, string]> = [
-    ["code", "code", "code"],
     ["addressLine1", "address_line1", "address_line1"],
     ["addressLine2", "address_line2", "address_line2"],
     ["city", "city", "city"],

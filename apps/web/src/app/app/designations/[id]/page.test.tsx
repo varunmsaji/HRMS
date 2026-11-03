@@ -117,25 +117,24 @@ describe("DesignationDetailPage", () => {
     render(<DesignationDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    const codeInput = screen.getByLabelText(/designation code/i);
-    await user.type(codeInput, "SWE");
+    await user.type(screen.getByLabelText(/designation title/i), " II");
     await user.click(screen.getByRole("button", { name: /cancel/i }));
 
-    expect(screen.queryByLabelText(/designation code/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/designation title/i)).not.toBeInTheDocument();
   });
 
   it("saves changes with the current If-Match version", async () => {
     mockLoad(sampleDesignation);
-    mockedPatch.mockResolvedValueOnce({ ...sampleDesignation, code: "SWE", version: 2 });
+    mockedPatch.mockResolvedValueOnce({ ...sampleDesignation, title: "Software Engineer II", version: 2 });
     const user = userEvent.setup();
     render(<DesignationDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    await user.type(screen.getByLabelText(/designation code/i), "SWE");
+    await user.type(screen.getByLabelText(/designation title/i), " II");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
     await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
-    expect(mockedPatch).toHaveBeenCalledWith("/designations/desig-1", { code: "SWE" }, { ifMatch: "1" });
+    expect(mockedPatch).toHaveBeenCalledWith("/designations/desig-1", { title: "Software Engineer II" }, { ifMatch: "1" });
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
   });
 
@@ -146,7 +145,7 @@ describe("DesignationDetailPage", () => {
     render(<DesignationDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    await user.type(screen.getByLabelText(/designation code/i), "SWE");
+    await user.type(screen.getByLabelText(/designation title/i), " II");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
     expect(await screen.findByText(/changed by someone else/i)).toBeInTheDocument();

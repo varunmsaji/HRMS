@@ -129,25 +129,24 @@ describe("DepartmentDetailPage", () => {
     render(<DepartmentDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    const codeInput = screen.getByLabelText(/department code/i);
-    await user.type(codeInput, "ENG");
+    await user.type(screen.getByLabelText(/department name/i), " Team");
     await user.click(screen.getByRole("button", { name: /cancel/i }));
 
-    expect(screen.queryByLabelText(/department code/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/department name/i)).not.toBeInTheDocument();
   });
 
   it("saves changes with the current If-Match version", async () => {
     mockLoad(sampleDepartment);
-    mockedPatch.mockResolvedValueOnce({ ...sampleDepartment, code: "ENG", version: 2 });
+    mockedPatch.mockResolvedValueOnce({ ...sampleDepartment, name: "Engineering Team", version: 2 });
     const user = userEvent.setup();
     render(<DepartmentDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    await user.type(screen.getByLabelText(/department code/i), "ENG");
+    await user.type(screen.getByLabelText(/department name/i), " Team");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
     await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
-    expect(mockedPatch).toHaveBeenCalledWith("/departments/dept-1", { code: "ENG" }, { ifMatch: "1" });
+    expect(mockedPatch).toHaveBeenCalledWith("/departments/dept-1", { name: "Engineering Team" }, { ifMatch: "1" });
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
   });
 
@@ -158,7 +157,7 @@ describe("DepartmentDetailPage", () => {
     render(<DepartmentDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    await user.type(screen.getByLabelText(/department code/i), "ENG");
+    await user.type(screen.getByLabelText(/department name/i), " Team");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
     expect(await screen.findByText(/changed by someone else/i)).toBeInTheDocument();
@@ -174,7 +173,7 @@ describe("DepartmentDetailPage", () => {
     render(<DepartmentDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    await user.type(screen.getByLabelText(/department code/i), "ENG");
+    await user.type(screen.getByLabelText(/department name/i), " Team");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
     expect(await screen.findByText(/would create a cycle/i)).toBeInTheDocument();

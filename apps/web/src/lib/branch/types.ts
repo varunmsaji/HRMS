@@ -24,7 +24,6 @@ export interface Branch {
 export interface BranchWritableFields {
   legal_entity_id?: string;
   name?: string;
-  code?: string | null;
   address_line1?: string | null;
   address_line2?: string | null;
   city?: string | null;

@@ -19,6 +19,5 @@ export interface DepartmentWritableFields {
   branch_id?: string | null;
   parent_id?: string | null;
   name?: string;
-  code?: string | null;
   head_employee_id?: string | null;
 }

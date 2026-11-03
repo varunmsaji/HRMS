@@ -2,7 +2,6 @@ import type { HolidayCalendar } from "@/lib/holiday-calendar/types";
 
 export interface HolidayCalendarFormValues {
   name: string;
-  code: string;
   kind: "NATIONAL" | "REGIONAL" | "COMPANY" | "LOCATION";
   stateCode: string;
   validFrom: string;
@@ -13,7 +12,6 @@ export type HolidayCalendarFormErrors = Partial<Record<keyof HolidayCalendarForm
 
 export const EMPTY_HOLIDAY_CALENDAR_FORM_VALUES: HolidayCalendarFormValues = {
   name: "",
-  code: "",
   kind: "COMPANY",
   stateCode: "",
   validFrom: "",
@@ -23,7 +21,6 @@ export const EMPTY_HOLIDAY_CALENDAR_FORM_VALUES: HolidayCalendarFormValues = {
 export function holidayCalendarToFormValues(calendar: HolidayCalendar): HolidayCalendarFormValues {
   return {
     name: calendar.name,
-    code: calendar.code ?? "",
     kind: calendar.kind,
     stateCode: calendar.state_code ?? "",
     validFrom: calendar.valid_from ?? "",
@@ -34,7 +31,6 @@ export function holidayCalendarToFormValues(calendar: HolidayCalendar): HolidayC
 export function buildCreatePayload(values: HolidayCalendarFormValues): Record<string, unknown> {
   return {
     name: values.name.trim(),
-    code: values.code.trim() || null,
     kind: values.kind,
     state_code: values.stateCode.trim() || null,
     valid_from: values.validFrom.trim() || null,
@@ -48,8 +44,6 @@ export function buildUpdatePatch(
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (values.name.trim() !== calendar.name) patch.name = values.name.trim();
-  const code = values.code.trim() || null;
-  if (code !== calendar.code) patch.code = code;
   if (values.kind !== calendar.kind) patch.kind = values.kind;
   const stateCode = values.stateCode.trim() || null;
   if (stateCode !== calendar.state_code) patch.state_code = stateCode;

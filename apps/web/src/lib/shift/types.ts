@@ -43,7 +43,6 @@ export interface Shift {
 /** Mirrors `ShiftCreate` / `ShiftUpdate` — identity-only. */
 export interface ShiftWritableFields {
   name?: string;
-  code?: string | null;
   is_active?: boolean;
 }
 

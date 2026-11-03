@@ -35,9 +35,6 @@ export function HolidayCalendarForm({
         <FormField id={id("name")} label="Calendar name" required error={errors.name}>
           <Input value={values.name} onChange={(e) => update("name", e.target.value)} />
         </FormField>
-        <FormField id={id("code")} label="Code" error={errors.code}>
-          <Input value={values.code} onChange={(e) => update("code", e.target.value)} />
-        </FormField>
         <FormField id={id("kind")} label="Kind" required error={errors.kind}>
           <NativeSelect
             value={values.kind}

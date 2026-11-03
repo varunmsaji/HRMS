@@ -3,14 +3,12 @@ import type { OvertimePolicy, OvertimePolicyVersion } from "@/lib/overtime-polic
 
 export interface OvertimePolicyFormValues {
   name: string;
-  code: string;
 }
 
-export const EMPTY_OVERTIME_POLICY_FORM_VALUES: OvertimePolicyFormValues = { name: "", code: "" };
+export const EMPTY_OVERTIME_POLICY_FORM_VALUES: OvertimePolicyFormValues = { name: "" };
 
 export interface OvertimePolicyFormErrors {
   name?: string;
-  code?: string;
 }
 
 export function validateOvertimePolicyForm(
@@ -24,7 +22,7 @@ export function validateOvertimePolicyForm(
 export function buildOvertimePolicyCreatePayload(
   values: OvertimePolicyFormValues,
 ): Record<string, unknown> {
-  return { name: values.name.trim(), code: values.code.trim() || null };
+  return { name: values.name.trim() };
 }
 
 export function buildOvertimePolicyUpdatePatch(
@@ -33,8 +31,6 @@ export function buildOvertimePolicyUpdatePatch(
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (values.name.trim() !== current.name) patch.name = values.name.trim();
-  const code = values.code.trim() || null;
-  if (code !== current.code) patch.code = code;
   return patch;
 }
 

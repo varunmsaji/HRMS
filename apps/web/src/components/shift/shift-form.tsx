@@ -8,13 +8,12 @@ interface ShiftFormProps {
   onChange: (values: ShiftFormValues) => void;
   idPrefix?: string;
   /** Hide the code field (create flow — the server assigns one). */
-  hideCode?: boolean;
 }
 
 /** W2 — identity only (name/code). Schedule configuration (timings, breaks, duty blocks) lives
  * on the Versions tab (`ShiftVersionForm`) — deliberately kept separate so it's obvious SHIFT =
  * SCHEDULE, not an attendance-policy editor. */
-export function ShiftForm({ values, errors, onChange, idPrefix = "", hideCode = false }: ShiftFormProps) {
+export function ShiftForm({ values, errors, onChange, idPrefix = "" }: ShiftFormProps) {
   function update<K extends keyof ShiftFormValues>(key: K, value: ShiftFormValues[K]) {
     onChange({ ...values, [key]: value });
   }
@@ -29,11 +28,6 @@ export function ShiftForm({ values, errors, onChange, idPrefix = "", hideCode = 
           <FormField id={id("name")} label="Shift name" required error={errors.name}>
             <Input value={values.name} onChange={(e) => update("name", e.target.value)} />
           </FormField>
-          {hideCode ? null : (
-            <FormField id={id("code")} label="Shift code" error={errors.code}>
-              <Input value={values.code} onChange={(e) => update("code", e.target.value)} />
-            </FormField>
-          )}
         </div>
       </section>
     </div>

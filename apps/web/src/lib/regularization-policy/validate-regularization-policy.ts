@@ -6,17 +6,14 @@ import type {
 
 export interface RegularizationPolicyFormValues {
   name: string;
-  code: string;
 }
 
 export const EMPTY_REGULARIZATION_POLICY_FORM_VALUES: RegularizationPolicyFormValues = {
   name: "",
-  code: "",
 };
 
 export interface RegularizationPolicyFormErrors {
   name?: string;
-  code?: string;
 }
 
 export function validateRegularizationPolicyForm(
@@ -30,7 +27,7 @@ export function validateRegularizationPolicyForm(
 export function buildRegularizationPolicyCreatePayload(
   values: RegularizationPolicyFormValues,
 ): Record<string, unknown> {
-  return { name: values.name.trim(), code: values.code.trim() || null };
+  return { name: values.name.trim() };
 }
 
 export function buildRegularizationPolicyUpdatePatch(
@@ -39,8 +36,6 @@ export function buildRegularizationPolicyUpdatePatch(
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (values.name.trim() !== current.name) patch.name = values.name.trim();
-  const code = values.code.trim() || null;
-  if (code !== current.code) patch.code = code;
   return patch;
 }
 

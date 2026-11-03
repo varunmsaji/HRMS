@@ -10,13 +10,12 @@ export interface WeeklyOffRuleFormValues {
 
 export interface WeeklyOffPatternFormValues {
   name: string;
-  code: string;
   patternKind: "FIXED_WEEKDAYS" | "NTH_WEEKDAY" | "ALTERNATE" | "CUSTOM";
   rules: WeeklyOffRuleFormValues[];
 }
 
 export type WeeklyOffPatternFormErrors = Partial<
-  Record<"name" | "code" | "rules", string>
+  Record<"name" | "rules", string>
 >;
 
 export const EMPTY_RULE: WeeklyOffRuleFormValues = {
@@ -29,7 +28,6 @@ export const EMPTY_RULE: WeeklyOffRuleFormValues = {
 
 export const EMPTY_WEEKLY_OFF_PATTERN_FORM_VALUES: WeeklyOffPatternFormValues = {
   name: "",
-  code: "",
   patternKind: "FIXED_WEEKDAYS",
   rules: [{ ...EMPTY_RULE }],
 };
@@ -39,7 +37,6 @@ export function weeklyOffPatternToFormValues(
 ): WeeklyOffPatternFormValues {
   return {
     name: pattern.name,
-    code: pattern.code ?? "",
     patternKind: pattern.pattern_kind,
     rules: pattern.rules.map((rule) => ({
       weekday: rule.weekday,
@@ -64,7 +61,6 @@ function buildRulePayload(rule: WeeklyOffRuleFormValues): Record<string, unknown
 export function buildCreatePayload(values: WeeklyOffPatternFormValues): Record<string, unknown> {
   return {
     name: values.name.trim(),
-    code: values.code.trim() || null,
     pattern_kind: values.patternKind,
     rules: values.rules.map(buildRulePayload),
   };
@@ -79,8 +75,6 @@ export function buildUpdatePatch(
 ): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (values.name.trim() !== pattern.name) patch.name = values.name.trim();
-  const code = values.code.trim() || null;
-  if (code !== pattern.code) patch.code = code;
   if (values.patternKind !== pattern.pattern_kind) patch.pattern_kind = values.patternKind;
   patch.rules = values.rules.map(buildRulePayload);
   return patch;

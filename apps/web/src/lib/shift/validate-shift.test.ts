@@ -39,26 +39,19 @@ describe("validateShiftForm", () => {
     expect(errors.name).toBeDefined();
   });
 
-  it("treats a blank code as valid", () => {
+  it("accepts a name alone", () => {
     const errors = validateShiftForm({ ...EMPTY_SHIFT_FORM_VALUES, name: "General Shift" });
     expect(errors).toEqual({});
   });
 });
 
 describe("shiftToFormValues / buildCreatePayload", () => {
-  it("round-trips name/code", () => {
+  it("round-trips name", () => {
     const values = shiftToFormValues(shift);
     expect(values.name).toBe("General Shift");
-    expect(values.code).toBe("GEN");
 
     const payload = buildCreatePayload(values);
-    expect(payload).toEqual({ name: "General Shift", code: "GEN" });
-  });
-
-  it("converts an empty code to null", () => {
-    const values = { ...shiftToFormValues(shift), code: "" };
-    const payload = buildCreatePayload(values);
-    expect(payload.code).toBeNull();
+    expect(payload).toEqual({ name: "General Shift" });
   });
 });
 
@@ -73,12 +66,5 @@ describe("buildUpdatePatch", () => {
     values.name = "Renamed Shift";
     const patch = buildUpdatePatch(values, shift);
     expect(patch).toEqual({ name: "Renamed Shift" });
-  });
-
-  it("nulls out a cleared code", () => {
-    const values = shiftToFormValues(shift);
-    values.code = "";
-    const patch = buildUpdatePatch(values, shift);
-    expect(patch).toEqual({ code: null });
   });
 });

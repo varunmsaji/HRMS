@@ -46,7 +46,6 @@ describe("departmentToFormValues / buildCreatePayload", () => {
     const payload = buildCreatePayload(values);
     expect(payload).toEqual({
       name: "Engineering",
-      code: null,
       branch_id: null,
       parent_id: null,
       head_employee_id: null,
@@ -69,9 +68,9 @@ describe("buildUpdatePatch", () => {
 
   it("includes only changed fields", () => {
     const values = departmentToFormValues(department);
-    values.code = "ENG";
+    values.name = "Platform Engineering";
     const patch = buildUpdatePatch(values, department);
-    expect(patch).toEqual({ code: "ENG" });
+    expect(patch).toEqual({ name: "Platform Engineering" });
   });
 
   it("nulls out a branch that was cleared", () => {

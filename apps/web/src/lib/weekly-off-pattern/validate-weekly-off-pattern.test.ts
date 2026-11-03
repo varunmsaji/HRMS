@@ -16,7 +16,6 @@ describe("validateWeeklyOffPatternForm", () => {
   it("requires an occurrence on every rule for NTH_WEEKDAY", () => {
     const errors = validateWeeklyOffPatternForm({
       name: "2nd Saturday",
-      code: "",
       patternKind: "NTH_WEEKDAY",
       rules: [{ ...EMPTY_RULE, nthInMonth: "" }],
     });
@@ -26,7 +25,6 @@ describe("validateWeeklyOffPatternForm", () => {
   it("requires a starting date on every rule for ALTERNATE", () => {
     const errors = validateWeeklyOffPatternForm({
       name: "Alternate Saturday",
-      code: "",
       patternKind: "ALTERNATE",
       rules: [{ ...EMPTY_RULE, cycleStartDate: "" }],
     });
@@ -36,7 +34,6 @@ describe("validateWeeklyOffPatternForm", () => {
   it("rejects an occurrence set on a FIXED_WEEKDAYS rule", () => {
     const errors = validateWeeklyOffPatternForm({
       name: "Sunday",
-      code: "",
       patternKind: "FIXED_WEEKDAYS",
       rules: [{ ...EMPTY_RULE, nthInMonth: "2" }],
     });
@@ -46,7 +43,6 @@ describe("validateWeeklyOffPatternForm", () => {
   it("accepts a well-formed fixed-weekday pattern", () => {
     const errors = validateWeeklyOffPatternForm({
       name: "Sunday Off",
-      code: "",
       patternKind: "FIXED_WEEKDAYS",
       rules: [{ ...EMPTY_RULE }],
     });
@@ -58,7 +54,6 @@ describe("buildCreatePayload", () => {
   it("maps rule form values onto the wire shape", () => {
     const payload = buildCreatePayload({
       name: "2nd & 4th Saturday",
-      code: "",
       patternKind: "NTH_WEEKDAY",
       rules: [
         { weekday: 5, nthInMonth: "2", cycleStartDate: "", offFraction: "1.00", weekParity: "" },

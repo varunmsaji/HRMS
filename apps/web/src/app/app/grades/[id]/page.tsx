@@ -138,13 +138,8 @@ export default function GradeDetailPage() {
           setStaleMessage("This grade was changed by someone else.");
           return;
         }
-        if (err.status === 409 && err.code === "GRADE_CODE_ALREADY_EXISTS") {
-          setFormErrors({ code: "A grade with this code already exists." });
-          return;
-        }
         if (err.status === 422) {
           setFormErrors({
-            code: getFieldError(err.details, "code"),
             name: getFieldError(err.details, "name"),
             maxCtc: getFieldError(err.details, "max_ctc"),
           });

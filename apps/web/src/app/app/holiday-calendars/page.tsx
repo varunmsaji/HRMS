@@ -103,10 +103,6 @@ export default function HolidayCalendarsPage() {
         setFormErrors({ name: getFieldError(err.details, "name") });
         return;
       }
-      if (err instanceof ApiError && err.status === 409) {
-        setFormErrors({ code: "A calendar with this code already exists." });
-        return;
-      }
       if (err instanceof ApiError && err.status === 403) {
         setCreateOpen(false);
         toast({ title: "You don't have permission to add holiday calendars", variant: "danger" });

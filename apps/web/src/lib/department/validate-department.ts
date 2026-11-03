@@ -2,7 +2,6 @@ import type { Department } from "@/lib/department/types";
 
 export interface DepartmentFormValues {
   name: string;
-  code: string;
   branchId: string;
   parentId: string;
   headEmployeeId: string;
@@ -12,7 +11,6 @@ export type DepartmentFormErrors = Partial<Record<keyof DepartmentFormValues, st
 
 export const EMPTY_DEPARTMENT_FORM_VALUES: DepartmentFormValues = {
   name: "",
-  code: "",
   branchId: "",
   parentId: "",
   headEmployeeId: "",
@@ -21,7 +19,6 @@ export const EMPTY_DEPARTMENT_FORM_VALUES: DepartmentFormValues = {
 export function departmentToFormValues(department: Department): DepartmentFormValues {
   return {
     name: department.name,
-    code: department.code ?? "",
     branchId: department.branch_id ?? "",
     parentId: department.parent_id ?? "",
     headEmployeeId: department.head_employee_id ?? "",
@@ -32,7 +29,6 @@ export function departmentToFormValues(department: Department): DepartmentFormVa
 export function buildCreatePayload(values: DepartmentFormValues): Record<string, unknown> {
   return {
     name: values.name.trim(),
-    code: values.code.trim() || null,
     branch_id: values.branchId || null,
     parent_id: values.parentId || null,
     head_employee_id: values.headEmployeeId || null,
@@ -48,8 +44,6 @@ export function buildUpdatePatch(
 
   if (values.name.trim() !== department.name) patch.name = values.name.trim();
 
-  const currentCode = department.code ?? "";
-  if (values.code.trim() !== currentCode) patch.code = values.code.trim() || null;
 
   const currentBranchId = department.branch_id ?? "";
   if (values.branchId !== currentBranchId) patch.branch_id = values.branchId || null;
