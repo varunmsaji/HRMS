@@ -98,7 +98,7 @@ export default function AttendancePoliciesPage() {
       );
       setCreateOpen(false);
       toast({
-        title: "Attendance policy added — configure it on the Versions tab",
+        title: "Attendance policy added — open it and click Edit to set the rules",
         variant: "success",
       });
       await loadPolicies();
@@ -162,7 +162,7 @@ export default function AttendancePoliciesPage() {
             <EmptyState
               icon={ClipboardList}
               title="No attendance policies have been configured yet."
-              description="Add a policy, then define its grace/rounding/hour-band rules on its Versions tab."
+              description="Add a policy, then click Edit on it to set its grace, rounding and hour-band rules."
               action={
                 <Button type="button" onClick={openCreate}>
                   Add Policy

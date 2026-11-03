@@ -38,6 +38,7 @@ import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { AttendancePolicy, AttendancePolicyVersion } from "@/lib/attendance-policy/types";
 import {
+  EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES,
   buildAttendancePolicyUpdatePatch,
   buildAttendancePolicyVersionPayload,
   attendancePolicyVersionToFormValues,
@@ -74,6 +75,12 @@ export default function AttendancePolicyDetailPage() {
   const [formErrors, setFormErrors] = useState<AttendancePolicyFormErrors>({});
   const [saving, setSaving] = useState(false);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
+  // Rules edited alongside the name on the Overview tab; saved into the draft version.
+  const [editRules, setEditRules] = useState<AttendancePolicyVersionFormValues | null>(null);
+  const [editRuleErrors, setEditRuleErrors] = useState<AttendancePolicyVersionFormErrors>({});
+  const [startingEdit, setStartingEdit] = useState(false);
+  // Snapshot of the rules when Edit opened, so Save can tell whether they were touched.
+  const [editBaseline, setEditBaseline] = useState<string | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
@@ -149,48 +156,107 @@ export default function AttendancePolicyDetailPage() {
     }
   }, [tab, versions, loadVersions]);
 
-  function startEditing() {
+  /** Edit opens the name and every rule at once. The rules start from the open draft, else a copy
+   * of the published version, else the defaults — so there is no separate "create draft" step. */
+  async function startEditing() {
     if (!policy) return;
-    setFormValues({ name: policy.name, code: policy.code ?? "" });
-    setFormErrors({});
-    setStaleMessage(null);
-    setEditing(true);
+    setStartingEdit(true);
+    try {
+      const loaded = versions ?? (await loadVersions());
+      if (!loaded) return;
+      const openDraft = loaded.find((v) => v.status === "DRAFT") ?? null;
+      const published =
+        loaded.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
+      const source = openDraft ?? published;
+      const rules = source
+        ? attendancePolicyVersionToFormValues(source)
+        : EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES;
+      const initial = openDraft ? rules : { ...rules, effectiveFrom: "" };
+      setEditRules(initial);
+      setEditBaseline(JSON.stringify(initial));
+      setEditRuleErrors({});
+      setFormValues({ name: policy.name });
+      setFormErrors({});
+      setStaleMessage(null);
+      setEditing(true);
+    } finally {
+      setStartingEdit(false);
+    }
   }
 
   function cancelEditing() {
     setEditing(false);
     setFormValues(null);
+    setEditRules(null);
+    setEditBaseline(null);
     setFormErrors({});
+    setEditRuleErrors({});
     setStaleMessage(null);
   }
 
   async function handleSave() {
-    if (!policy || !formValues) return;
+    if (!policy || !formValues || !editRules) return;
     const clientErrors = validateAttendancePolicyForm(formValues);
-    if (Object.keys(clientErrors).length > 0) {
+    const rulesChanged = JSON.stringify(editRules) !== editBaseline;
+    const ruleErrors = rulesChanged ? validateAttendancePolicyVersionForm(editRules) : {};
+    if (Object.keys(clientErrors).length > 0 || Object.keys(ruleErrors).length > 0) {
       setFormErrors(clientErrors);
-      return;
-    }
-    const patch = buildAttendancePolicyUpdatePatch(formValues, policy);
-    if (Object.keys(patch).length === 0) {
-      setEditing(false);
-      setFormValues(null);
-      toast({ title: "No changes to save", variant: "default" });
+      setEditRuleErrors(ruleErrors);
+      toast({ title: "Fix the highlighted fields", variant: "danger" });
       return;
     }
     setSaving(true);
     setFormErrors({});
+    setEditRuleErrors({});
     setStaleMessage(null);
     try {
-      const updated = await apiClient.patch<AttendancePolicy>(
-        `/attendance-policies/${policy.id}`,
-        patch,
-        { ifMatch: String(policy.version) },
-      );
-      setPolicy(updated);
+      const patch = buildAttendancePolicyUpdatePatch(formValues, policy);
+      if (Object.keys(patch).length > 0) {
+        const updated = await apiClient.patch<AttendancePolicy>(
+          `/attendance-policies/${policy.id}`,
+          patch,
+          { ifMatch: String(policy.version) },
+        );
+        setPolicy(updated);
+      }
+
+      if (!rulesChanged) {
+        setEditing(false);
+        setFormValues(null);
+        setEditRules(null);
+        setEditBaseline(null);
+        toast(
+          Object.keys(patch).length > 0
+            ? { title: "Policy saved", variant: "success" }
+            : { title: "No changes to save", variant: "default" },
+        );
+        return;
+      }
+
+      const payload = buildAttendancePolicyVersionPayload(editRules);
+      let savedDraft: AttendancePolicyVersion;
+      if (draft) {
+        savedDraft = await apiClient.patch<AttendancePolicyVersion>(
+          `/attendance-policies/${params.id}/versions/${draft.id}`,
+          payload,
+          { ifMatch: String(draft.version) },
+        );
+      } else {
+        savedDraft = await apiClient.post<AttendancePolicyVersion>(
+          `/attendance-policies/${params.id}/versions`,
+          payload,
+        );
+      }
+      setVersions((prev) => {
+        const rest = (prev ?? []).filter((v) => v.id !== savedDraft.id);
+        return [...rest, savedDraft];
+      });
+      setDraftValues(attendancePolicyVersionToFormValues(savedDraft));
       setEditing(false);
       setFormValues(null);
-      toast({ title: "Policy saved", variant: "success" });
+      setEditRules(null);
+      setEditBaseline(null);
+      toast({ title: "Saved as a draft — publish it from the Versions tab", variant: "success" });
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409 && err.code === "STALE_RESOURCE") {
@@ -199,6 +265,7 @@ export default function AttendancePolicyDetailPage() {
         }
         if (err.status === 422) {
           setFormErrors({ name: getFieldError(err.details, "name") });
+          setEditRuleErrors(mapAttendancePolicyVersionApiErrors(err.details));
           return;
         }
         if (err.status === 403) {
@@ -218,10 +285,12 @@ export default function AttendancePolicyDetailPage() {
   }
 
   async function reloadLatest() {
-    const latest = await loadPolicy();
+    const [latest] = await Promise.all([loadPolicy(), loadVersions()]);
     if (latest) {
       setEditing(false);
       setFormValues(null);
+      setEditRules(null);
+      setDraftValues(null);
       setStaleMessage(null);
       toast({ title: "Reloaded", variant: "success" });
     }
@@ -368,7 +437,7 @@ export default function AttendancePolicyDetailPage() {
         backHref="/app/attendance-policies"
         backLabel="Attendance Policies"
         title={policy?.name ?? "Attendance Policy"}
-        description="Identity on the Overview tab; grace/rounding/band rules live on the Versions tab."
+        description="Edit the name and all attendance rules together; publish the saved draft from the Versions tab."
         badge={
           policy ? (
             <Badge variant={policy.is_active ? "secondary" : "outline"}>
@@ -382,8 +451,8 @@ export default function AttendancePolicyDetailPage() {
               <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)}>
                 {policy.is_active ? "Deactivate" : "Reactivate"}
               </Button>
-              <Button type="button" onClick={startEditing}>
-                Edit
+              <Button type="button" onClick={() => void startEditing()} disabled={startingEdit}>
+                {startingEdit ? "Loading…" : "Edit"}
               </Button>
             </div>
           ) : null
@@ -448,16 +517,21 @@ export default function AttendancePolicyDetailPage() {
                   />
                 ) : null}
 
-                {editing && formValues ? (
+                {editing && formValues && editRules ? (
                   <div className="space-y-6">
                     <AttendancePolicyForm
                       values={formValues}
                       errors={formErrors}
                       onChange={setFormValues}
                     />
+                    <AttendancePolicyVersionForm
+                      values={editRules}
+                      errors={editRuleErrors}
+                      onChange={setEditRules}
+                    />
                     <div className="flex flex-wrap gap-2 border-t border-border pt-4">
                       <Button type="button" onClick={() => void handleSave()} disabled={saving}>
-                        {saving ? "Saving…" : "Save changes"}
+                        {saving ? "Saving…" : "Save"}
                       </Button>
                       <Button
                         type="button"
@@ -486,7 +560,7 @@ export default function AttendancePolicyDetailPage() {
                       </div>
                     </dl>
                     <p className="text-xs text-foreground-muted">
-                      Configure grace, rounding, and bands on the{" "}
+                      Click Edit to set the name and all rules. Publish and history are on the{" "}
                       <button
                         type="button"
                         className="font-medium text-primary hover:underline"

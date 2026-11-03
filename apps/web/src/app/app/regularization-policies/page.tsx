@@ -95,7 +95,7 @@ export default function RegularizationPoliciesPage() {
       );
       setCreateOpen(false);
       toast({
-        title: "Regularization policy added — configure it on the Versions tab",
+        title: "Regularization policy added — open it and click Edit to set the rules",
         variant: "success",
       });
       await loadPolicies();
@@ -160,7 +160,7 @@ export default function RegularizationPoliciesPage() {
             <EmptyState
               icon={FileClock}
               title="No regularization policies have been configured yet."
-              description="Add a policy, then define its windows/caps/allowed-types on its Versions tab."
+              description="Add a policy, then click Edit on it to set its windows, caps and allowed types."
               action={
                 <Button type="button" onClick={openCreate}>
                   Add Policy

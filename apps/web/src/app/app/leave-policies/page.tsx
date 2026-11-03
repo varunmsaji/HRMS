@@ -108,7 +108,7 @@ export default function LeavePoliciesPage() {
       );
       setCreateOpen(false);
       toast({
-        title: "Leave policy added — configure it on the Versions tab",
+        title: "Leave policy added — open it and click Edit to set the rules",
         variant: "success",
       });
       await loadPolicies();
@@ -174,7 +174,7 @@ export default function LeavePoliciesPage() {
             <EmptyState
               icon={ClipboardList}
               title="No leave policies have been configured yet."
-              description="Add a policy for a leave type, then define its rules on its Versions tab."
+              description="Add a policy for a leave type, then click Edit on it to set its rules."
               action={
                 <Button type="button" onClick={openCreate}>
                   Add Policy

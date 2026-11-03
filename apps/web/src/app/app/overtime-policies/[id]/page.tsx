@@ -38,6 +38,7 @@ import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { OvertimePolicy, OvertimePolicyVersion } from "@/lib/overtime-policy/types";
 import {
+  EMPTY_OVERTIME_POLICY_VERSION_FORM_VALUES,
   buildOvertimePolicyUpdatePatch,
   buildOvertimePolicyVersionPayload,
   overtimePolicyVersionToFormValues,
@@ -73,6 +74,12 @@ export default function OvertimePolicyDetailPage() {
   const [formErrors, setFormErrors] = useState<OvertimePolicyFormErrors>({});
   const [saving, setSaving] = useState(false);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
+  // Rules edited alongside the name on the Overview tab; saved into the draft version.
+  const [editRules, setEditRules] = useState<OvertimePolicyVersionFormValues | null>(null);
+  const [editRuleErrors, setEditRuleErrors] = useState<OvertimePolicyVersionFormErrors>({});
+  const [startingEdit, setStartingEdit] = useState(false);
+  // Snapshot of the rules when Edit opened, so Save can tell whether they were touched.
+  const [editBaseline, setEditBaseline] = useState<string | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
@@ -146,48 +153,107 @@ export default function OvertimePolicyDetailPage() {
     if (tab === "versions" && versions === null) void loadVersions();
   }, [tab, versions, loadVersions]);
 
-  function startEditing() {
+  /** Edit opens the name and every rule at once. The rules start from the open draft, else a copy
+   * of the published version, else the defaults — so there is no separate "create draft" step. */
+  async function startEditing() {
     if (!policy) return;
-    setFormValues({ name: policy.name, code: policy.code ?? "" });
-    setFormErrors({});
-    setStaleMessage(null);
-    setEditing(true);
+    setStartingEdit(true);
+    try {
+      const loaded = versions ?? (await loadVersions());
+      if (!loaded) return;
+      const openDraft = loaded.find((v) => v.status === "DRAFT") ?? null;
+      const published =
+        loaded.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
+      const source = openDraft ?? published;
+      const rules = source
+        ? overtimePolicyVersionToFormValues(source)
+        : EMPTY_OVERTIME_POLICY_VERSION_FORM_VALUES;
+      const initial = openDraft ? rules : { ...rules, effectiveFrom: "" };
+      setEditRules(initial);
+      setEditBaseline(JSON.stringify(initial));
+      setEditRuleErrors({});
+      setFormValues({ name: policy.name });
+      setFormErrors({});
+      setStaleMessage(null);
+      setEditing(true);
+    } finally {
+      setStartingEdit(false);
+    }
   }
 
   function cancelEditing() {
     setEditing(false);
     setFormValues(null);
+    setEditRules(null);
+    setEditBaseline(null);
     setFormErrors({});
+    setEditRuleErrors({});
     setStaleMessage(null);
   }
 
   async function handleSave() {
-    if (!policy || !formValues) return;
+    if (!policy || !formValues || !editRules) return;
     const clientErrors = validateOvertimePolicyForm(formValues);
-    if (Object.keys(clientErrors).length > 0) {
+    const rulesChanged = JSON.stringify(editRules) !== editBaseline;
+    const ruleErrors = rulesChanged ? validateOvertimePolicyVersionForm(editRules) : {};
+    if (Object.keys(clientErrors).length > 0 || Object.keys(ruleErrors).length > 0) {
       setFormErrors(clientErrors);
-      return;
-    }
-    const patch = buildOvertimePolicyUpdatePatch(formValues, policy);
-    if (Object.keys(patch).length === 0) {
-      setEditing(false);
-      setFormValues(null);
-      toast({ title: "No changes to save", variant: "default" });
+      setEditRuleErrors(ruleErrors);
+      toast({ title: "Fix the highlighted fields", variant: "danger" });
       return;
     }
     setSaving(true);
     setFormErrors({});
+    setEditRuleErrors({});
     setStaleMessage(null);
     try {
-      const updated = await apiClient.patch<OvertimePolicy>(
-        `/overtime-policies/${policy.id}`,
-        patch,
-        { ifMatch: String(policy.version) },
-      );
-      setPolicy(updated);
+      const patch = buildOvertimePolicyUpdatePatch(formValues, policy);
+      if (Object.keys(patch).length > 0) {
+        const updated = await apiClient.patch<OvertimePolicy>(
+          `/overtime-policies/${policy.id}`,
+          patch,
+          { ifMatch: String(policy.version) },
+        );
+        setPolicy(updated);
+      }
+
+      if (!rulesChanged) {
+        setEditing(false);
+        setFormValues(null);
+        setEditRules(null);
+        setEditBaseline(null);
+        toast(
+          Object.keys(patch).length > 0
+            ? { title: "Policy saved", variant: "success" }
+            : { title: "No changes to save", variant: "default" },
+        );
+        return;
+      }
+
+      const payload = buildOvertimePolicyVersionPayload(editRules);
+      let savedDraft: OvertimePolicyVersion;
+      if (draft) {
+        savedDraft = await apiClient.patch<OvertimePolicyVersion>(
+          `/overtime-policies/${params.id}/versions/${draft.id}`,
+          payload,
+          { ifMatch: String(draft.version) },
+        );
+      } else {
+        savedDraft = await apiClient.post<OvertimePolicyVersion>(
+          `/overtime-policies/${params.id}/versions`,
+          payload,
+        );
+      }
+      setVersions((prev) => {
+        const rest = (prev ?? []).filter((v) => v.id !== savedDraft.id);
+        return [...rest, savedDraft];
+      });
+      setDraftValues(overtimePolicyVersionToFormValues(savedDraft));
       setEditing(false);
       setFormValues(null);
-      toast({ title: "Policy saved", variant: "success" });
+      setEditRules(null);
+      setEditBaseline(null);
+      toast({ title: "Saved as a draft — publish it from the Versions tab", variant: "success" });
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409 && err.code === "STALE_RESOURCE") {
@@ -196,6 +262,7 @@ export default function OvertimePolicyDetailPage() {
         }
         if (err.status === 422) {
           setFormErrors({ name: getFieldError(err.details, "name") });
+          setEditRuleErrors(mapOvertimePolicyVersionApiErrors(err.details));
           return;
         }
         if (err.status === 403) {
@@ -215,10 +282,12 @@ export default function OvertimePolicyDetailPage() {
   }
 
   async function reloadLatest() {
-    const latest = await loadPolicy();
+    const [latest] = await Promise.all([loadPolicy(), loadVersions()]);
     if (latest) {
       setEditing(false);
       setFormValues(null);
+      setEditRules(null);
+      setDraftValues(null);
       setStaleMessage(null);
       toast({ title: "Reloaded", variant: "success" });
     }
@@ -365,7 +434,7 @@ export default function OvertimePolicyDetailPage() {
         backHref="/app/overtime-policies"
         backLabel="Overtime Policies"
         title={policy?.name ?? "Overtime Policy"}
-        description="Identity on the Overview tab; eligibility/caps/approval rules live on the Versions tab."
+        description="Edit the name and all overtime rules together; publish the saved draft from the Versions tab."
         badge={
           policy ? (
             <Badge variant={policy.is_active ? "secondary" : "outline"}>
@@ -379,8 +448,8 @@ export default function OvertimePolicyDetailPage() {
               <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)}>
                 {policy.is_active ? "Deactivate" : "Reactivate"}
               </Button>
-              <Button type="button" onClick={startEditing}>
-                Edit
+              <Button type="button" onClick={() => void startEditing()} disabled={startingEdit}>
+                {startingEdit ? "Loading…" : "Edit"}
               </Button>
             </div>
           ) : null
@@ -444,16 +513,21 @@ export default function OvertimePolicyDetailPage() {
                     onCancel={cancelEditing}
                   />
                 ) : null}
-                {editing && formValues ? (
+                {editing && formValues && editRules ? (
                   <div className="space-y-6">
                     <OvertimePolicyForm
                       values={formValues}
                       errors={formErrors}
                       onChange={setFormValues}
                     />
+                    <OvertimePolicyVersionForm
+                      values={editRules}
+                      errors={editRuleErrors}
+                      onChange={setEditRules}
+                    />
                     <div className="flex flex-wrap gap-2 border-t border-border pt-4">
                       <Button type="button" onClick={() => void handleSave()} disabled={saving}>
-                        {saving ? "Saving…" : "Save changes"}
+                        {saving ? "Saving…" : "Save"}
                       </Button>
                       <Button
                         type="button"
@@ -482,7 +556,7 @@ export default function OvertimePolicyDetailPage() {
                       </div>
                     </dl>
                     <p className="text-xs text-foreground-muted">
-                      Configure eligibility, caps, and rate rows on the{" "}
+                      Click Edit to set the name and all rules. Publish and history are on the{" "}
                       <button
                         type="button"
                         className="font-medium text-primary hover:underline"

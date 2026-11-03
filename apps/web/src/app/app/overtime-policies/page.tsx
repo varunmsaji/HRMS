@@ -95,7 +95,7 @@ export default function OvertimePoliciesPage() {
       );
       setCreateOpen(false);
       toast({
-        title: "Overtime policy added — configure it on the Versions tab",
+        title: "Overtime policy added — open it and click Edit to set the rules",
         variant: "success",
       });
       await loadPolicies();
@@ -157,7 +157,7 @@ export default function OvertimePoliciesPage() {
             <EmptyState
               icon={Timer}
               title="No overtime policies have been configured yet."
-              description="Add a policy, then define its eligibility/caps/approval rules on its Versions tab."
+              description="Add a policy, then click Edit on it to set its eligibility, caps and approval rules."
               action={
                 <Button type="button" onClick={openCreate}>
                   Add Policy
