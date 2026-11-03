@@ -61,3 +61,8 @@ docker-compose.override.yml
 .dev-logs/
 backups/
 apps/api/.debug-face-captures/
+
+# Local working files that should not be committed
+.dev-logs-*.out
+documents/technobeala-import/
+stitch_hrms_employer_decision_dashboard*/
