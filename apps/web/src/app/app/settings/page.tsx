@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, Search } from "lucide-react";
+import { ArrowUpRight, BookOpen, Search } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
@@ -60,19 +60,28 @@ export default function SettingsPage() {
         title="Settings"
         description="Set up your organisation, time and leave rules, payroll, and who can access what."
         actions={
-          <div className="relative w-full sm:w-72">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
-              aria-hidden="true"
-            />
-            <Input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search settings…"
-              aria-label="Search settings"
-              className="pl-9"
-            />
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <Link
+              href="/app/settings/guide"
+              className="inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground-secondary transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <BookOpen className="h-4 w-4" aria-hidden="true" />
+              Settings guide
+            </Link>
+            <div className="relative w-full sm:w-72">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
+                aria-hidden="true"
+              />
+              <Input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search settings…"
+                aria-label="Search settings"
+                className="pl-9"
+              />
+            </div>
           </div>
         }
       />
@@ -121,7 +130,9 @@ export default function SettingsPage() {
                   {group.label}
                 </h2>
                 {group.description ? (
-                  <p className="mt-0.5 text-sm text-foreground-secondary">{group.description}</p>
+                  <p className="mt-0.5 text-sm text-foreground-secondary">
+                    {group.description}
+                  </p>
                 ) : null}
               </div>
 

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "guide:docs": "node scripts/generate-settings-guide.mjs",
     "dev": "next dev --port 3000 --webpack",
     "build": "next build --webpack",
     "start": "next start --port 3000",

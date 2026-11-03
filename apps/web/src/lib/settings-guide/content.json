@@ -1,0 +1,1270 @@
+{
+  "overview": {
+    "title": "How the settings fit together",
+    "paragraphs": [
+      "Think of the settings as three layers. First you describe your company and its calendar: who works where, when, and which days are holidays. Next you write the rulebooks: how attendance is judged, how overtime is paid, how leave is earned and used. Last, you tell the system which people follow which rulebook.",
+      "A rulebook does nothing until it is published and assigned to people. Most of the confusion in a new set-up comes from skipping one of those two steps, so this guide repeats the point wherever it matters."
+    ],
+    "stepsTitle": "A sensible order to set things up",
+    "steps": [
+      "Set up your organisation: company, branches, departments, designations and grades (these are in the Organisation group of Settings).",
+      "Create your Shifts and publish each shift's schedule.",
+      "Create Holiday Calendars, a Weekly-Off Pattern, and then a Work Calendar that combines them.",
+      "Create an Attendance Policy, an Overtime Policy and a Regularization Policy, and publish each.",
+      "Create your Leave Types, then a Leave Policy for each, then publish them. Set the Leave Year first, and add Statutory Minimums if the law in your state requires them.",
+      "Open Policy Assignments and assign one policy of each kind to the whole Company. This is the safety net so that nobody is left without rules.",
+      "Add narrower assignments only where a group is different, such as one department or one grade.",
+      "Use Policy Resolution to check a few real employees and confirm they get what you expect.",
+      "At the end of each month, use Attendance Periods to check and lock the month before payroll."
+    ],
+    "glossary": [
+      {
+        "term": "Draft and publish",
+        "text": "Shifts and all policies are saved as a draft first. A draft is a working copy that nobody is affected by. When you publish it with an effective date it becomes the rule people actually follow. Older versions are kept as history."
+      },
+      {
+        "term": "Effective date",
+        "text": "The date a published version starts to apply. Days before it keep following the older version, so changing a policy never rewrites the past."
+      },
+      {
+        "term": "Scope",
+        "text": "The group a policy is assigned to: the whole company, a branch, a department, a grade, a designation, a shift, or one employee."
+      },
+      {
+        "term": "Most specific wins",
+        "text": "If someone belongs to several groups that each have a policy, the smallest, most specific group wins. The order from strongest to weakest is employee, shift, designation, grade, department, branch, legal entity, company."
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "shifts",
+      "group": "Attendance & Time",
+      "title": "Shifts",
+      "href": "/app/shifts",
+      "summary": "A shift is a working-hours schedule, such as 9 am to 6 pm or a flexible 8-hour day. It tells the system when an employee is expected to be at work, so that lateness, early leaving and overtime can be worked out.",
+      "whenToUse": "Set up shifts before attendance policies, because attendance is always judged against an employee's shift. Create one shift for each different working pattern you run, such as General, Morning, Night and Flexible.",
+      "parts": [
+        {
+          "title": "The shift itself",
+          "items": [
+            {
+              "name": "Shift name",
+              "text": "What people will see, for example \"General Shift\". The system creates the shift code for you."
+            },
+            {
+              "name": "Active / inactive",
+              "text": "A shift you no longer use can be deactivated. Existing history is kept."
+            }
+          ],
+          "intro": "Every shift has a name and one or more versions of its schedule."
+        },
+        {
+          "title": "The schedule (each version)",
+          "items": [
+            {
+              "name": "Type: Fixed",
+              "text": "Everyone starts and ends at set times, for example 09:00 to 18:00. Lateness and early leaving are measured against these times."
+            },
+            {
+              "name": "Type: Flexible",
+              "text": "People can arrive any time inside a window, as long as they put in the required hours. You set the earliest start and latest end of the window, plus the number of required minutes."
+            },
+            {
+              "name": "Core hours (flexible shifts)",
+              "text": "An optional block of the day when everyone must be present, for example 11:00 to 15:00, even though start and end times are flexible. The attendance policy decides what happens if someone misses core hours."
+            },
+            {
+              "name": "Effective from",
+              "text": "The date this version of the schedule starts. A schedule must have one to be published."
+            },
+            {
+              "name": "Timezone",
+              "text": "Leave it blank to use the branch's timezone, or the company's if the branch has none. Set it only if this shift runs on a different clock, such as a remote team."
+            },
+            {
+              "name": "Scheduled, minimum and maximum minutes",
+              "text": "The planned length of the working day and the allowed range. These are for information and reports only. They are not used to judge attendance."
+            }
+          ],
+          "intro": "Each shift can have many schedule versions over time, but only one is live on any date."
+        },
+        {
+          "title": "Flags",
+          "items": [
+            {
+              "name": "Night shift",
+              "text": "Marks the shift as a night shift. The overtime policy can use this to treat overtime on this shift as night overtime."
+            },
+            {
+              "name": "Overtime eligible",
+              "text": "People on this shift can earn overtime. If this is off, no overtime is detected for them under policies that rely on the shift."
+            },
+            {
+              "name": "Operates on holidays",
+              "text": "The shift works on public holidays, so employees are expected to be present and are not treated as having the day off."
+            },
+            {
+              "name": "Operates on weekly-off days",
+              "text": "The same idea for weekly rest days, for shifts that run seven days a week."
+            },
+            {
+              "name": "Shift-specific weekly-off pattern",
+              "text": "Normally an employee's weekly off comes from their work calendar. Choose a pattern here if people on this shift have a different weekly off, such as a rotating crew."
+            }
+          ]
+        },
+        {
+          "title": "Breaks",
+          "items": [
+            {
+              "name": "Name",
+              "text": "For example Lunch or Tea."
+            },
+            {
+              "name": "Kind: fixed window",
+              "text": "The break happens at a set time, such as 13:00 to 14:00."
+            },
+            {
+              "name": "Kind: flexible duration",
+              "text": "People can take the break at any time inside a window, but only for a minimum and maximum number of minutes."
+            },
+            {
+              "name": "Paid",
+              "text": "A paid break counts as working time. An unpaid break is taken out of the hours worked."
+            },
+            {
+              "name": "Mandatory",
+              "text": "The break is expected every day."
+            },
+            {
+              "name": "Allows split",
+              "text": "The break can be taken in more than one piece, for example two short tea breaks instead of one long one."
+            }
+          ],
+          "intro": "Breaks are optional. Add them if you want unpaid breaks to reduce worked hours, or want to flag people who take too long."
+        }
+      ],
+      "example": "A General Shift is Fixed, 09:00 to 18:00, with a one-hour unpaid lunch from 13:00 to 14:00. It is marked overtime eligible. A Night Shift is Fixed, 21:00 to 06:00, with the Night shift flag turned on.",
+      "tips": [
+        "Opening a shift and clicking Edit shows the name and the whole schedule together. Save keeps it as a draft.",
+        "Nothing changes for employees until you publish the draft from the Versions tab and give it an effective date.",
+        "To change a live schedule, edit it and publish again with a future effective date. The old version stays as history."
+      ]
+    },
+    {
+      "id": "attendance-periods",
+      "group": "Attendance & Time",
+      "title": "Attendance Periods",
+      "href": "/app/attendance-periods",
+      "summary": "An attendance period is a stretch of dates, usually a month, that you formally close once attendance for it is final. Closing it locks the month so nothing can be changed after payroll has used the numbers.",
+      "whenToUse": "Use this at the end of each month, before running payroll. It is the point where you confirm that every exception is sorted out.",
+      "parts": [
+        {
+          "title": "Creating a period",
+          "items": [
+            {
+              "name": "Company",
+              "text": "Which company (legal entity) the period belongs to. Each company runs its own cycle."
+            },
+            {
+              "name": "Cycle: calendar month",
+              "text": "Pick a month and the period covers the first to the last day of it."
+            },
+            {
+              "name": "Cycle: custom date range",
+              "text": "Choose your own start and end dates, for example the 26th of one month to the 25th of the next."
+            },
+            {
+              "name": "Label",
+              "text": "A name such as \"October 2026\". It is filled in for you for calendar months."
+            }
+          ]
+        },
+        {
+          "title": "What you can do with a period",
+          "items": [
+            {
+              "name": "Validate",
+              "text": "Checks whether the period is ready to close. It lists anything still blocking it, with a count for each."
+            },
+            {
+              "name": "Finalize and lock",
+              "text": "Closes the period. After this, punches, roster changes, regularization requests and overtime approvals for those dates are refused until the period is reopened."
+            },
+            {
+              "name": "Reopen",
+              "text": "Unlocks a closed period when a correction is genuinely needed. A reason is required, and only people with the unlock permission can do it."
+            }
+          ]
+        },
+        {
+          "title": "What can block a period from closing",
+          "items": [
+            {
+              "name": "Missing attendance",
+              "text": "Some employees have no calculated attendance for the period."
+            },
+            {
+              "name": "Configuration errors",
+              "text": "Some days could not be calculated because a policy or shift is missing."
+            },
+            {
+              "name": "Incomplete attendance",
+              "text": "Days that still need someone to resolve them by hand, such as a missing punch. Depending on the attendance policy, these may instead be automatically treated as absent or present when you lock."
+            },
+            {
+              "name": "Pending regularization requests",
+              "text": "Correction requests that nobody has approved or rejected yet."
+            },
+            {
+              "name": "Pending overtime approvals",
+              "text": "Overtime waiting for a decision."
+            },
+            {
+              "name": "Unpublished roster entries",
+              "text": "Roster rows still in draft."
+            },
+            {
+              "name": "Mismatched days",
+              "text": "Days where paid, unpaid and loss-of-pay shares do not add up to exactly one day."
+            },
+            {
+              "name": "Work on approved leave",
+              "text": "Punches on a day of approved full-day leave, waiting for an HR decision."
+            }
+          ]
+        }
+      ],
+      "example": "On 1 November you create the October period. You press Validate and it shows 6 pending regularization requests. You get them decided, validate again, then Finalize and lock. Payroll can now rely on October.",
+      "tips": [
+        "Validate as often as you like. It changes nothing.",
+        "Lock only when you are sure. Reopening is possible but is meant for real corrections, and it is recorded."
+      ]
+    },
+    {
+      "id": "work-calendars",
+      "group": "Attendance & Time",
+      "title": "Work Calendars",
+      "href": "/app/work-calendars",
+      "summary": "A work calendar answers one question for every date: is it a working day, a holiday, a weekly off or a shutdown? It does this by combining your holiday calendars, a weekly-off pattern and special dated exceptions.",
+      "whenToUse": "Create at least one work calendar for the whole company. Create more if different locations or teams have different holidays or weekly offs.",
+      "parts": [
+        {
+          "title": "What goes into a work calendar",
+          "items": [
+            {
+              "name": "Name and description",
+              "text": "For identification, for example \"Kerala Office Calendar\"."
+            },
+            {
+              "name": "Holiday calendars",
+              "text": "One or more holiday calendars whose dates count as holidays."
+            },
+            {
+              "name": "Weekly-off pattern",
+              "text": "The rule for weekly rest days, such as every Sunday or the 2nd and 4th Saturday."
+            },
+            {
+              "name": "Dated exceptions",
+              "text": "One-off changes to a specific date, described below."
+            }
+          ]
+        },
+        {
+          "title": "Exception types",
+          "items": [
+            {
+              "name": "Special working day",
+              "text": "A day that would normally be off but is a working day this time, for example a Saturday worked to make up for a bridge holiday."
+            },
+            {
+              "name": "Shutdown",
+              "text": "A day or days the whole company is closed, which is not a regular holiday."
+            },
+            {
+              "name": "Substitute holiday",
+              "text": "A holiday moved to another date, for example when a festival falls on a Sunday."
+            },
+            {
+              "name": "Cancel holiday",
+              "text": "Removes a holiday from the calendar for that year."
+            }
+          ],
+          "intro": "Each exception has a date, a type, and an optional name and reason."
+        },
+        {
+          "title": "The setup helper",
+          "items": [
+            {
+              "name": "Work calendar setup",
+              "text": "A guided page that suggests a normal working week, shows you the result as a calendar, and lets you activate it. This is the quickest way to create your first calendar."
+            },
+            {
+              "name": "Impact preview",
+              "text": "Before a calendar change is saved, the system shows which days and which employees would be affected. Read it before confirming."
+            }
+          ]
+        }
+      ],
+      "example": "The Kerala Office Calendar uses the India National and Kerala Office holiday calendars, with every Sunday and the 2nd Saturday off. A special working day is added for the Saturday that makes up for a bridge holiday.",
+      "tips": [
+        "A work calendar only affects people once it is assigned in Policy Assignments.",
+        "Changing a calendar can change past or future attendance results, which is why the impact preview exists."
+      ]
+    },
+    {
+      "id": "holiday-calendars",
+      "group": "Attendance & Time",
+      "title": "Holiday Calendars",
+      "href": "/app/holiday-calendars",
+      "summary": "A holiday calendar is a reusable list of holiday dates, such as India National, Kerala Office or Company FY26.",
+      "whenToUse": "Make a separate calendar for each group of holidays that applies to a different set of people, then combine them in work calendars.",
+      "parts": [
+        {
+          "title": "Settings",
+          "items": [
+            {
+              "name": "Calendar name",
+              "text": "For example \"India National Holidays\"."
+            },
+            {
+              "name": "Kind: national",
+              "text": "Holidays observed across the country."
+            },
+            {
+              "name": "Kind: regional",
+              "text": "Holidays for one state. A state code, such as KL or MH, is required."
+            },
+            {
+              "name": "Kind: company",
+              "text": "Holidays only your company observes."
+            },
+            {
+              "name": "Kind: location",
+              "text": "Holidays for one office or location."
+            },
+            {
+              "name": "Valid from and valid to",
+              "text": "The dates within which the calendar applies. Holidays outside this range are ignored. Leave them empty for no limit."
+            },
+            {
+              "name": "Holidays",
+              "text": "The individual dates and their names. A month view lets you click a day to add a holiday."
+            }
+          ]
+        }
+      ],
+      "example": "You create \"Kerala Office FY26\", set it to regional with state code KL, valid from 1 April 2026 to 31 March 2027, then add Onam, Vishu and the other dates.",
+      "tips": [
+        "Splitting national, state and company holidays into separate calendars means you update each only once a year.",
+        "A holiday calendar does nothing alone. It must be included in a work calendar."
+      ]
+    },
+    {
+      "id": "weekly-off-patterns",
+      "group": "Attendance & Time",
+      "title": "Weekly-Off Patterns",
+      "href": "/app/weekly-off-patterns",
+      "summary": "A weekly-off pattern is the rule for which days of the week people rest, such as every Sunday, alternate Saturdays, or the 2nd and 4th Saturday.",
+      "whenToUse": "Create one pattern for each different rest-day arrangement in your company, then attach it to a work calendar or a shift.",
+      "parts": [
+        {
+          "title": "Pattern kinds",
+          "items": [
+            {
+              "name": "Fixed weekdays",
+              "text": "The same weekday or weekdays every week, for example Saturday and Sunday."
+            },
+            {
+              "name": "Nth weekday of the month",
+              "text": "A particular occurrence, such as the 2nd and 4th Saturday of every month."
+            },
+            {
+              "name": "Alternate weeks",
+              "text": "Every other week, such as alternate Saturdays."
+            },
+            {
+              "name": "Custom",
+              "text": "Several rules in one pattern, where each rule can use an occurrence (such as 2nd Saturday), an alternating week, or both."
+            }
+          ]
+        },
+        {
+          "title": "What each rule asks for",
+          "items": [
+            {
+              "name": "Weekday",
+              "text": "Monday to Sunday."
+            },
+            {
+              "name": "Occurrence",
+              "text": "For nth-weekday rules: 1st, 2nd, 3rd, 4th, 5th or last."
+            },
+            {
+              "name": "Starting from and off week",
+              "text": "For alternate rules: which week the pattern starts from, and whether the off week is the same as the starting week or the opposite one."
+            },
+            {
+              "name": "Off amount",
+              "text": "A full day off, or a half day. Half-day offs are handled as a day where people work half."
+            }
+          ]
+        }
+      ],
+      "example": "\"Sunday plus 2nd and 4th Saturday\" is a custom pattern with two rules: every Sunday as a full day, and the 2nd and 4th Saturday as full days.",
+      "tips": [
+        "Attach the pattern to a work calendar so the calendar knows the weekly offs.",
+        "Use a shift-specific pattern only for people whose rest days really differ from the company calendar."
+      ]
+    },
+    {
+      "id": "attendance-policies",
+      "group": "Attendance & Time",
+      "title": "Attendance Policies",
+      "href": "/app/attendance-policies",
+      "summary": "An attendance policy is the rulebook for turning raw punches into a day's result: present, half-day, absent, or incomplete. It also decides how lateness, early leaving, missing punches and location checks are treated.",
+      "whenToUse": "Create at least one general policy for the whole company. Add stricter or looser ones for groups that need them, such as factory staff or senior managers.",
+      "parts": [
+        {
+          "title": "Grace",
+          "items": [
+            {
+              "name": "Grace in (minutes)",
+              "text": "How late someone can arrive without being counted late. With 10 minutes of grace, arriving at 9:08 for a 9:00 shift is not late. Arriving at 9:25 is 15 minutes late."
+            },
+            {
+              "name": "Grace out (minutes)",
+              "text": "The same idea for leaving early."
+            },
+            {
+              "name": "Earliest punch-in before shift start",
+              "text": "How early an employee may punch in on their own. Earlier punches from the app are refused. Early time is recorded but does not count as work or overtime. Leave blank for no limit."
+            }
+          ]
+        },
+        {
+          "title": "Missing punch and missing shift",
+          "items": [
+            {
+              "name": "Missing punch behaviour",
+              "text": "What happens when a punch in or out is missing. Incomplete (the default) flags the day for someone to fix. Absent marks the day absent straight away. Require regularization leaves the day waiting for a correction request."
+            },
+            {
+              "name": "Missing shift behaviour",
+              "text": "What happens when the system cannot work out the employee's shift and there are no punches. Incomplete flags the day. Absent marks it absent. If the employee did punch, the day is judged on the punches alone, without lateness or early leaving."
+            }
+          ]
+        },
+        {
+          "title": "Multiple punches",
+          "items": [
+            {
+              "name": "Multi-punch mode: pair all",
+              "text": "Counts only the time between each in and out pair. Gaps in between, such as a long lunch out, are not counted."
+            },
+            {
+              "name": "Multi-punch mode: first in, last out",
+              "text": "Counts the whole span from the first in to the last out, gaps included."
+            },
+            {
+              "name": "Duplicate punch window (seconds)",
+              "text": "Two punches of the same kind within this many seconds count as one. This absorbs double taps. The default is 60."
+            }
+          ]
+        },
+        {
+          "title": "Flexible and split shifts",
+          "items": [
+            {
+              "name": "Core-hours breach behaviour",
+              "text": "For flexible shifts with core hours. Ignore does nothing. Flag marks the day for reports. Half-day or Absent changes the day's result when someone misses core hours."
+            },
+            {
+              "name": "Split shift: missed block behaviour",
+              "text": "What to do when someone has no punch in one of a split shift's blocks: ignore it, make it a half-day, make it absent, or require regularization."
+            }
+          ]
+        },
+        {
+          "title": "On-duty",
+          "items": [
+            {
+              "name": "On-duty requires punch",
+              "text": "When off, an approved on-duty day, such as field work, counts as fully paid without any punches. When on, the punches still decide the status and the day is only flagged."
+            }
+          ]
+        },
+        {
+          "title": "Breaks, caps and lock behaviour",
+          "items": [
+            {
+              "name": "Lates to half-day (per month)",
+              "text": "After this many late days in a month, the day that reaches the number becomes a half-day. For example, with 3 the third late day is a half-day. Blank turns it off."
+            },
+            {
+              "name": "Excess-break days to half-day (per month)",
+              "text": "The same idea for days where breaks ran too long."
+            },
+            {
+              "name": "Incomplete at lock time",
+              "text": "What happens to days still incomplete when the attendance period is closed. Treat as absent makes them unpaid. Treat as present makes them paid. Keep incomplete refuses to close the period until someone resolves them."
+            },
+            {
+              "name": "Early departure requires approval",
+              "text": "Leaving early beyond grace without an approved request is given the harshest early-departure band instead of a graduated one."
+            }
+          ]
+        },
+        {
+          "title": "Location check (geofencing)",
+          "items": [
+            {
+              "name": "Location check",
+              "text": "Disabled does not look at location. Optional records and flags it but never blocks a punch. Required blocks self-service punches made outside an approved workplace."
+            },
+            {
+              "name": "Worst acceptable GPS accuracy (metres)",
+              "text": "Location readings less precise than this are refused. The allowed range is 5 to 500 and the default is 100."
+            },
+            {
+              "name": "Oldest acceptable reading (seconds)",
+              "text": "Location readings older than this are refused, so an old stored location cannot be reused. The allowed range is 5 to 300 and the default is 60."
+            }
+          ],
+          "intro": "This applies only to employees punching from the mobile app. Corrections by HR are never location-checked. A phone's location can be faked, so a pass is evidence, not proof."
+        },
+        {
+          "title": "Bands",
+          "items": [
+            {
+              "name": "Hour bands",
+              "text": "A table that turns hours worked into a day result. For example, under 4 hours is absent, 4 to 8 hours is half-day, and 8 hours or more is present. At least one band is needed to publish, and bands must not overlap."
+            },
+            {
+              "name": "Late bands",
+              "text": "A table that turns minutes late, after grace, into a result: none, late, half-day or absent. Optional."
+            },
+            {
+              "name": "Early departure bands",
+              "text": "The same idea for minutes of leaving early. Optional."
+            }
+          ],
+          "intro": "When several rules apply on the same day, the harshest result wins: absent, then half-day, then the hour-band result."
+        }
+      ],
+      "example": "The General policy gives 10 minutes grace, treats a missing punch as incomplete, counts the third late day in a month as a half-day, and uses hour bands of under 4 hours absent, 4 to 8 half-day, 8 or more present.",
+      "tips": [
+        "Open a policy and click Edit. You see the name and every setting at once. Save stores it as a draft.",
+        "A policy only takes effect after you publish the draft with an effective date and assign it in Policy Assignments.",
+        "Start location checks on Optional to see what Required would block before you switch it on."
+      ]
+    },
+    {
+      "id": "attendance-geofences",
+      "group": "Attendance & Time",
+      "title": "Workplace Geofences",
+      "href": "/app/attendance-geofences",
+      "summary": "Workplace geofences define the approved places employees may punch from. A workplace is a branch that has map coordinates and a radius. The location check itself is switched on inside each Attendance Policy.",
+      "whenToUse": "Use this if you want to know, or enforce, that employees punch from the office or site rather than from anywhere.",
+      "parts": [
+        {
+          "title": "Workplaces",
+          "items": [
+            {
+              "name": "Workplace list",
+              "text": "Shows each branch with its coordinates and radius. A branch with no coordinates or radius cannot be used."
+            },
+            {
+              "name": "Edit coordinates and radius",
+              "text": "Opens the branch so you can set its latitude, longitude and radius in metres. Employees within the radius count as at the workplace."
+            }
+          ]
+        },
+        {
+          "title": "Extra workplaces for individual employees",
+          "items": [
+            {
+              "name": "Employee and workplace",
+              "text": "Employees can always punch at the branch on their assignment. Use this to let a person work legitimately at other approved locations too. Employees cannot choose a workplace themselves."
+            },
+            {
+              "name": "Authorise",
+              "text": "Saves the extra permission."
+            }
+          ]
+        },
+        {
+          "title": "Location attempts",
+          "items": [
+            {
+              "name": "Attempt list",
+              "text": "A record of location-checked punches, with how far from the workplace each one was and whether it was accepted. A switch shows only the rejected ones."
+            }
+          ],
+          "intro": "Attempts appear here only once a policy with Optional or Required location checks is in use."
+        }
+      ],
+      "example": "Your Kochi office has coordinates and a 150 metre radius. With a Required policy, staff there can punch in only within that radius. A sales executive who also visits the Bangalore office is authorised for that workplace too.",
+      "tips": [
+        "A phone's reported location can be spoofed, so treat results as evidence rather than proof.",
+        "Make the radius big enough to cover the whole building and car park, or honest employees will be rejected."
+      ]
+    },
+    {
+      "id": "overtime-policies",
+      "group": "Attendance & Time",
+      "title": "Overtime Policies",
+      "href": "/app/overtime-policies",
+      "summary": "An overtime policy decides who can earn overtime, how much is counted, who must approve it, and whether it is paid or turned into time off.",
+      "whenToUse": "Create one if any of your people work beyond their shift and you need that time recognised or paid. Leave it unassigned for staff who never earn overtime.",
+      "parts": [
+        {
+          "title": "Who earns overtime",
+          "items": [
+            {
+              "name": "Eligibility",
+              "text": "Whether overtime depends on the shift's overtime flag, applies to everyone, applies to no one, or depends on grade."
+            },
+            {
+              "name": "Minimum overtime (minutes)",
+              "text": "Extra time shorter than this is ignored. For example, a 30-minute minimum means 20 extra minutes earn nothing."
+            }
+          ]
+        },
+        {
+          "title": "How it is counted",
+          "items": [
+            {
+              "name": "Rounding",
+              "text": "Rounds the overtime minutes, for example to the nearest 15 minutes, up or down."
+            },
+            {
+              "name": "Daily, weekly and monthly caps",
+              "text": "The most overtime counted per day, week and month. Anything above the cap is not counted. Blank means no cap."
+            }
+          ]
+        },
+        {
+          "title": "Approval",
+          "items": [
+            {
+              "name": "Needs approval before",
+              "text": "Overtime must be approved in advance."
+            },
+            {
+              "name": "Needs approval after",
+              "text": "Overtime is approved after it has been worked. This is on by default."
+            },
+            {
+              "name": "Approval chain",
+              "text": "Who approves: nobody, the manager, the manager then HR, or HR."
+            }
+          ]
+        },
+        {
+          "title": "Time off instead of pay (comp-off)",
+          "items": [
+            {
+              "name": "Comp-off instead of pay",
+              "text": "Approved overtime is turned into compensatory-off days instead of being paid."
+            },
+            {
+              "name": "Comp-off expiry (days)",
+              "text": "How long an earned comp-off day can be used before it lapses."
+            },
+            {
+              "name": "Comp-off day length (minutes)",
+              "text": "How many overtime minutes make one comp-off day."
+            }
+          ],
+          "intro": "Comp-off means compensatory off: a day off given in return for extra work. It only works if a leave type is marked as the company's comp-off type."
+        },
+        {
+          "title": "Night overtime",
+          "items": [
+            {
+              "name": "Night overtime mode",
+              "text": "Whether overtime counts as night overtime because the shift is a night shift, because it falls in a time window, or either."
+            },
+            {
+              "name": "Night window start and end",
+              "text": "The hours that count as night, for example 22:00 to 06:00. Both must be given together."
+            }
+          ]
+        },
+        {
+          "title": "Rate rows",
+          "items": [
+            {
+              "name": "Day class",
+              "text": "The kind of day the overtime was worked on: normal, weekly off, holiday or night."
+            },
+            {
+              "name": "Classification code",
+              "text": "A label you choose, such as OT_HOLIDAY, stamped on the overtime. Payroll uses it to decide how that overtime is paid."
+            },
+            {
+              "name": "Multiplier",
+              "text": "A number such as 1.5 or 2. It is for information only. The system never turns it into money."
+            }
+          ],
+          "intro": "Each day class can appear once. If there is no night row, night overtime uses the normal row's label. If a day class has no row at all, the overtime has no label."
+        }
+      ],
+      "example": "Eligible staff earn overtime after a 30-minute minimum, rounded to 15 minutes, capped at 4 hours a day. The manager approves afterwards. Normal days are labelled OT_NORMAL at 1.5, weekly offs OT_WEEKOFF at 2, and holidays OT_HOLIDAY at 2.5.",
+      "tips": [
+        "Open a policy and click Edit to set everything together, then publish from the Versions tab.",
+        "Add at least normal, weekly-off and holiday rate rows. Without them payroll cannot tell what kind of overtime it is."
+      ]
+    },
+    {
+      "id": "regularization-policies",
+      "group": "Attendance & Time",
+      "title": "Regularization Policies",
+      "href": "/app/regularization-policies",
+      "summary": "Regularization means correcting an attendance record after the day has passed, for example when someone forgot to punch out. A regularization policy sets who may ask for a correction, how far back, and who approves it.",
+      "whenToUse": "Create one so that corrections follow clear rules rather than ad-hoc requests.",
+      "parts": [
+        {
+          "title": "Who can ask",
+          "items": [
+            {
+              "name": "Employee, manager and HR requests",
+              "text": "Choose which of these can raise a correction. Managers and HR can raise one on behalf of someone else."
+            }
+          ]
+        },
+        {
+          "title": "Limits",
+          "items": [
+            {
+              "name": "Maximum backdated days",
+              "text": "How many days back a correction can reach. Blank means no limit."
+            },
+            {
+              "name": "Maximum requests per month",
+              "text": "How many corrections one person can raise per month. Blank means no limit."
+            }
+          ]
+        },
+        {
+          "title": "Evidence",
+          "items": [
+            {
+              "name": "Reason required",
+              "text": "The requester must explain. On by default."
+            },
+            {
+              "name": "Attachment required",
+              "text": "The requester must upload a document or proof. Off by default."
+            }
+          ]
+        },
+        {
+          "title": "Approval",
+          "items": [
+            {
+              "name": "Approval chain",
+              "text": "Automatic, manager, manager then HR, or HR."
+            },
+            {
+              "name": "Auto-approve within (minutes)",
+              "text": "You can enter a number here and it is saved, but it is not applied yet. Corrections currently follow the approval chain above. Do not rely on this to approve anything automatically."
+            },
+            {
+              "name": "Blocked when locked",
+              "text": "Refuses corrections for a day that has been individually locked. On by default. Separately, once an attendance period has been closed and locked in Attendance Periods, corrections for those dates are always refused, whatever this setting says."
+            }
+          ]
+        },
+        {
+          "title": "Allowed types of correction",
+          "items": [
+            {
+              "name": "Missing punch",
+              "text": "A punch in or out is absent."
+            },
+            {
+              "name": "Wrong punch",
+              "text": "A punch exists but at the wrong time."
+            },
+            {
+              "name": "Wrong shift",
+              "text": "The day was judged against the wrong shift."
+            },
+            {
+              "name": "Wrong status",
+              "text": "The day's result, such as absent, is wrong."
+            },
+            {
+              "name": "Work from home",
+              "text": "The employee worked from home that day."
+            },
+            {
+              "name": "On duty",
+              "text": "The employee was on official work away from the office."
+            },
+            {
+              "name": "Excess break",
+              "text": "The employee disputes an excess-break flag."
+            },
+            {
+              "name": "Full day",
+              "text": "A whole day should be treated as worked."
+            }
+          ],
+          "intro": "Only the types you tick can be requested under this policy."
+        }
+      ],
+      "example": "Employees and managers may raise corrections up to 7 days back, at most 5 a month, with a reason required, and the manager approves each one.",
+      "tips": [
+        "Pair this with the attendance policy's missing-punch setting. Choosing Require regularization there leaves days waiting for a request under this policy.",
+        "Click Edit on the policy to set all of this together, then publish from the Versions tab."
+      ]
+    },
+    {
+      "id": "leave-types",
+      "group": "Leave",
+      "title": "Leave Types",
+      "href": "/app/leave-types",
+      "summary": "A leave type is a kind of leave, such as Casual Leave, Sick Leave, Earned Leave or Loss of Pay. It is the category itself. The detailed rules for it live in a leave policy.",
+      "whenToUse": "Create one for every kind of leave your company offers before creating any leave policy.",
+      "parts": [
+        {
+          "title": "Fields",
+          "items": [
+            {
+              "name": "Code",
+              "text": "A short unique label such as CL or SL, up to 30 characters. It cannot be changed afterwards."
+            },
+            {
+              "name": "Name",
+              "text": "What people see, such as Casual Leave."
+            },
+            {
+              "name": "Paid by default",
+              "text": "Whether the leave is paid. Off for types like Loss of Pay."
+            },
+            {
+              "name": "Requires a balance",
+              "text": "On means employees must have days in a balance, which accrue and are checked when applying. Off means there is no balance, as with Loss of Pay."
+            },
+            {
+              "name": "Company's comp-off type",
+              "text": "Marks this as the leave type that holds compensatory-off days. Only one active type can be marked. Approved overtime that is set to give comp-off credits this type automatically."
+            },
+            {
+              "name": "Statutory category",
+              "text": "Earned, Sick, Casual, Maternity or Paternity, or none. If set, leave policies of this type are checked against the legal minimum you set in Statutory Minimums."
+            },
+            {
+              "name": "Active",
+              "text": "Turn it off to stop using the type for new things."
+            }
+          ]
+        }
+      ],
+      "example": "Casual (CL), Sick (SL) and Earned (EL) are paid, need a balance, and have statutory categories. Loss of Pay (LOP) is unpaid with no balance. Comp Off (CO) is paid with a balance and is marked as the comp-off type.",
+      "tips": [
+        "Paid by default, Requires a balance and Comp-off cannot be changed once the type has been used, because that would change what old records mean.",
+        "Leave types are only categories. Add a Leave Policy to give each one its rules."
+      ]
+    },
+    {
+      "id": "leave-policies",
+      "group": "Leave",
+      "title": "Leave Policies",
+      "href": "/app/leave-policies",
+      "summary": "A leave policy holds the rules for one leave type: who can apply, how leave is earned, what happens at year end, and so on.",
+      "whenToUse": "Create one for each leave type, publish it, and assign it in Policy Assignments.",
+      "parts": [
+        {
+          "title": "Who can apply",
+          "items": [
+            {
+              "name": "Employee self-service",
+              "text": "Employees can apply for themselves."
+            },
+            {
+              "name": "Manager on behalf of a report",
+              "text": "A manager can apply for a team member."
+            },
+            {
+              "name": "HR on behalf of anyone",
+              "text": "HR can apply for any employee."
+            }
+          ]
+        },
+        {
+          "title": "Application rules",
+          "items": [
+            {
+              "name": "Maximum backdated days",
+              "text": "How far back an application may start. Blank means no limit."
+            },
+            {
+              "name": "Maximum requests per month",
+              "text": "A cap on applications per person per month."
+            },
+            {
+              "name": "Reason required",
+              "text": "The employee must give a reason."
+            },
+            {
+              "name": "Attachment required",
+              "text": "The employee must upload a document, such as a medical certificate."
+            },
+            {
+              "name": "Half-day allowed",
+              "text": "Employees can apply for half a day."
+            },
+            {
+              "name": "Approval chain",
+              "text": "Automatic, manager, manager then HR, manager then head of department then HR, or HR."
+            }
+          ]
+        },
+        {
+          "title": "Special handling",
+          "items": [
+            {
+              "name": "Sandwich rule",
+              "text": "A weekend or holiday between two leave days counts as leave too. Leave on Friday and Monday also uses Saturday and Sunday."
+            },
+            {
+              "name": "Reserve balance on submission",
+              "text": "A pending application already blocks that part of the balance, so someone cannot apply twice for the same days before the first is approved."
+            },
+            {
+              "name": "Allowed during probation",
+              "text": "Turn off to stop employees on probation applying."
+            },
+            {
+              "name": "Accrue during probation",
+              "text": "Turn off to skip earning leave while on probation."
+            }
+          ]
+        },
+        {
+          "title": "Earning leave (accrual)",
+          "items": [
+            {
+              "name": "Frequency",
+              "text": "None (no automatic earning), monthly or yearly."
+            },
+            {
+              "name": "Rate per cycle",
+              "text": "Days added each cycle. For example, 1.5 days monthly gives 18 days a year."
+            }
+          ]
+        },
+        {
+          "title": "At the end of the leave year",
+          "items": [
+            {
+              "name": "What happens to unused leave",
+              "text": "Carry forward up to a cap with the rest lost, lose all of it, or carry forward up to a cap and pay out the rest."
+            },
+            {
+              "name": "Maximum carry-forward days",
+              "text": "The cap. It is required for the pay-out option and blank means unlimited for the others."
+            }
+          ]
+        },
+        {
+          "title": "Negative balance",
+          "items": [
+            {
+              "name": "Allow negative balance",
+              "text": "Employees can borrow leave they have not earned yet."
+            },
+            {
+              "name": "Days below zero allowed",
+              "text": "How far the balance can go below zero. For example, 3 lets it reach minus 3. The shortfall is recovered when the employee leaves."
+            }
+          ]
+        },
+        {
+          "title": "Encashment (paying out leave)",
+          "items": [
+            {
+              "name": "Encashment allowed",
+              "text": "Employees can convert leave days to pay."
+            },
+            {
+              "name": "Maximum encashment days",
+              "text": "The most days per request. Enforced."
+            },
+            {
+              "name": "Minimum balance after encashment",
+              "text": "The balance that must stay behind. Enforced."
+            },
+            {
+              "name": "Frequency and calculation basis",
+              "text": "Notes for payroll only. They are not enforced, and leave never works out the money."
+            }
+          ]
+        },
+        {
+          "title": "Maternity split (information only)",
+          "items": [
+            {
+              "name": "Pre-delivery and post-delivery days",
+              "text": "Records how the entitlement is divided. It is never checked against an application's dates."
+            }
+          ]
+        }
+      ],
+      "example": "Casual Leave: manager approval, reason required, 1 day earned monthly, balance does not carry forward. Earned Leave: manager then HR, 1.25 days monthly, carry forward up to 30 days, encashment allowed.",
+      "tips": [
+        "If the leave type has a statutory category, the policy cannot be published below the legal minimum you set.",
+        "Open a policy and click Edit to set the name and all rules together, then publish from the Versions tab."
+      ]
+    },
+    {
+      "id": "leave-combination-rules",
+      "group": "Leave",
+      "title": "Leave Combination Rules",
+      "href": "/app/leave-combination-rules",
+      "summary": "These rules say whether an employee may have two different kinds of leave applied for on overlapping dates, for example Casual plus Sick.",
+      "whenToUse": "Use it only where a pair of leave types should be blocked. By default every pair is allowed.",
+      "parts": [
+        {
+          "title": "Fields",
+          "items": [
+            {
+              "name": "Leave type and Combined with",
+              "text": "The two leave types the rule is about."
+            },
+            {
+              "name": "Allowed",
+              "text": "Ticked means the two can overlap. Unticked means blocked."
+            },
+            {
+              "name": "Reason",
+              "text": "An optional note shown to HR on the rule list."
+            }
+          ]
+        }
+      ],
+      "example": "A rule blocks Casual with Sick so that someone cannot claim both on the same day. Annual with Casual is left alone, so it stays allowed.",
+      "tips": [
+        "If there is no rule for a pair, it is allowed.",
+        "You can add an explicit \"allowed\" rule for clarity, but it changes nothing."
+      ]
+    },
+    {
+      "id": "leave-year-setting",
+      "group": "Leave",
+      "title": "Leave Year",
+      "href": "/app/leave-year-setting",
+      "summary": "The leave year is the 12-month period that leave balances, yearly earning and carry-forward run against. There is one setting for the whole company.",
+      "whenToUse": "Set it once when you start, before leave policies go live. Changing it later affects how balances are counted.",
+      "parts": [
+        {
+          "title": "Choices",
+          "items": [
+            {
+              "name": "Calendar year",
+              "text": "The year runs from 1 January to 31 December."
+            },
+            {
+              "name": "Financial year",
+              "text": "The year runs from 1 April to 31 March, as in India."
+            },
+            {
+              "name": "Anniversary",
+              "text": "Each employee's year starts on the date they joined, so everyone's year is different."
+            },
+            {
+              "name": "Custom",
+              "text": "You choose the start month and day. Month 1 is January and 12 is December."
+            }
+          ]
+        }
+      ],
+      "example": "A company that reports on the Indian financial year picks Financial year, so balances reset and carry forward on 1 April.",
+      "tips": [
+        "Pick the same year you use for payroll and reports to avoid confusion at year end."
+      ]
+    },
+    {
+      "id": "statutory-leave-minimums",
+      "group": "Leave",
+      "title": "Statutory Minimums",
+      "href": "/app/statutory-leave-minimums",
+      "summary": "This is where you record the minimum leave the law requires. A leave policy cannot be published below the strictest minimum set here for its leave type's category.",
+      "whenToUse": "Use it if your state or industry sets legal minimums for leave. No figures are filled in for you, so enter the ones that apply to you.",
+      "parts": [
+        {
+          "title": "Fields",
+          "items": [
+            {
+              "name": "Leave category",
+              "text": "Earned, Sick, Casual, Maternity or Paternity."
+            },
+            {
+              "name": "Minimum days per year",
+              "text": "The legal floor for that category."
+            },
+            {
+              "name": "State",
+              "text": "Optional. Leave blank if the minimum applies regardless of state."
+            },
+            {
+              "name": "Establishment type",
+              "text": "Optional, for example Shop and Establishment, Factory or IT/ITES."
+            },
+            {
+              "name": "Note",
+              "text": "Optional, such as where the figure comes from."
+            }
+          ]
+        }
+      ],
+      "example": "You add Casual leave, 12 days a year for the Shops and Establishments Act in your state. A casual leave policy giving 10 days is refused at publish time.",
+      "tips": [
+        "Until a minimum is added for a category, publishing policies in that category is not restricted.",
+        "If several minimums apply, the strictest one is used."
+      ]
+    },
+    {
+      "id": "policy-assignments",
+      "group": "Policies",
+      "title": "Policy Assignments",
+      "href": "/app/policy-assignments",
+      "summary": "Policy assignments connect policies to people. A policy does nothing until it is assigned. You assign a policy to a group, called a scope, and everyone in the group follows it.",
+      "whenToUse": "Use it after publishing policies. Start with one policy of each kind for the whole company, then add narrower assignments for groups that differ.",
+      "parts": [
+        {
+          "title": "Scope: who it applies to",
+          "items": [
+            {
+              "name": "Company",
+              "text": "Everyone."
+            },
+            {
+              "name": "Legal entity",
+              "text": "One registered company within a group."
+            },
+            {
+              "name": "Branch",
+              "text": "One office or location."
+            },
+            {
+              "name": "Department",
+              "text": "For example Sales or Production."
+            },
+            {
+              "name": "Grade",
+              "text": "For example Senior or Manager."
+            },
+            {
+              "name": "Designation",
+              "text": "A job title."
+            },
+            {
+              "name": "Shift",
+              "text": "People working a particular shift."
+            },
+            {
+              "name": "Employee",
+              "text": "One person, for an exception."
+            }
+          ],
+          "intro": "Anything other than Company asks you to pick which one."
+        },
+        {
+          "title": "What can be assigned",
+          "items": [
+            {
+              "name": "Work calendar and weekly-off pattern",
+              "text": "These show an impact preview before they are saved."
+            },
+            {
+              "name": "Attendance, overtime and regularization policies",
+              "text": "One of each kind per group."
+            },
+            {
+              "name": "Leave policies",
+              "text": "One for each leave type, per group."
+            }
+          ]
+        },
+        {
+          "title": "The New Assignment form",
+          "items": [
+            {
+              "name": "Scope and target",
+              "text": "Chosen once at the top."
+            },
+            {
+              "name": "Effective from",
+              "text": "The date the assignment starts applying."
+            },
+            {
+              "name": "Policies to assign",
+              "text": "One dropdown per kind, and one per leave type for leave policies. Leave a row on No change to skip it. You can fill in several rows and create them together."
+            },
+            {
+              "name": "Reason",
+              "text": "An optional note for your records."
+            }
+          ]
+        }
+      ],
+      "example": "You assign General Attendance to the whole company, then Factory Attendance to the Production department. Ravi in Accounts follows General. Priya in Production follows Factory, because the department is more specific than the company.",
+      "tips": [
+        "A group follows only one policy of each kind. A new assignment closes the old one from its effective date and keeps it as history.",
+        "A policy must be published to take effect. A draft is not enough.",
+        "Always keep a company-wide assignment of each kind as a safety net."
+      ]
+    },
+    {
+      "id": "policy-resolution",
+      "group": "Policies",
+      "title": "Policy Resolution",
+      "href": "/app/policy-resolution",
+      "summary": "Policy Resolution is a checking tool. It tells you which policy an employee follows on a given date and which group it came from.",
+      "whenToUse": "Use it after changing assignments, or whenever someone asks why they were treated a certain way.",
+      "parts": [
+        {
+          "title": "How to use it",
+          "items": [
+            {
+              "name": "Employee",
+              "text": "Who you are checking."
+            },
+            {
+              "name": "Date",
+              "text": "The day you are checking."
+            },
+            {
+              "name": "Policy kind",
+              "text": "Which type of policy to look up."
+            }
+          ],
+          "intro": "The result names the policy and the level that matched, such as Department: Production."
+        },
+        {
+          "title": "What the result can mean",
+          "items": [
+            {
+              "name": "A policy is shown",
+              "text": "That is the one in force for that employee on that date."
+            },
+            {
+              "name": "Config incomplete",
+              "text": "No policy of that kind is assigned to any group the employee belongs to, or the assigned policy has no published version for that date. The system never falls back to a made-up default. Fix it by assigning a policy at company level and publishing it."
+            }
+          ]
+        }
+      ],
+      "example": "You check Priya's attendance policy for 15 November. It shows Factory Attendance from the Production department, so you know the assignment is working.",
+      "tips": [
+        "Checking changes nothing. It is safe to use at any time."
+      ]
+    }
+  ]
+}
