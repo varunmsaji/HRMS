@@ -179,6 +179,32 @@ void main() {
       await _pump(tester, repo);
       expect(find.text('Status unavailable'), findsOneWidget);
       expect(find.text('Punch in'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+    });
+
+    testWidgets('Try again re-reads today once the reads work again', (tester) async {
+      final repo = _Repo()
+        ..punches = null
+        ..days = null;
+      await _pump(tester, repo);
+      expect(find.text('Status unavailable'), findsOneWidget);
+      repo
+        ..punches = []
+        ..days = [];
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.text('Status unavailable'), findsNothing);
+      expect(find.text('Try again'), findsNothing);
+      expect(find.text('Not punched in'), findsOneWidget);
+    });
+
+    testWidgets('a provisional ABSENT sweep row is not counted as absent in the month summary', (tester) async {
+      final repo = _Repo()..days = [AttendanceDay.fromJson(_day(status: 'ABSENT'))];
+      await _pump(tester, repo);
+      expect(find.text('Not punched in'), findsOneWidget);
+      expect(find.text('0 Days'), findsWidgets);
+      expect(find.text('Absent (100%)'), findsNothing);
+      expect(find.textContaining('1 Working Days'), findsNothing);
     });
 
     testWidgets('the shift shown on Home comes from the work-profile read', (tester) async {
@@ -275,13 +301,20 @@ void main() {
       expect(find.text('Not punched in'), findsOneWidget);
     });
 
-    testWidgets('a failing leave read never hides attendance; only the leave tile falls back to a dash', (tester) async {
-      final api = _api(failing: {'/leave-balances': ApiError(status: 500, code: 'X', message: 'Leave is down.')});
+    testWidgets('a failing leave read never hides attendance; only the leave tile says so and offers a retry', (tester) async {
+      final failing = <String, Object>{'/leave-balances': ApiError(status: 500, code: 'X', message: 'Leave is down.')};
+      final api = _api(failing: failing);
       await _pump(tester, _Repo(), api: api);
       expect(find.text('Not punched in'), findsOneWidget);
       expect(find.text('Punch in'), findsOneWidget);
       expect(find.text('8.5'), findsNothing, reason: 'the failed read shows no balance');
-      expect(find.text('—'), findsWidgets);
+      expect(find.text('Couldn’t load · Tap to retry'), findsOneWidget);
+
+      failing.clear();
+      await tester.tap(find.text('Couldn’t load · Tap to retry'));
+      await tester.pumpAndSettle();
+      expect(find.text('Couldn’t load · Tap to retry'), findsNothing);
+      expect(find.text('Cas 8.5'), findsOneWidget);
     });
 
     testWidgets('shift and work location come from the work-profile read', (tester) async {

@@ -37,6 +37,24 @@ void main() {
     expect(summary.total, 4);
   });
 
+  test('today\'s provisional sweep row is neither absent nor counted', () {
+    final rows = [
+      day('2026-10-26', 'ABSENT'),
+      day('2026-10-27', 'ABSENT'),
+    ];
+    final withToday = summariseMonth(rows, today: '2026-10-27');
+    expect(withToday.absent, 1, reason: 'only the finished day is absent');
+    expect(withToday.total, 1);
+    expect(summariseMonth(rows).absent, 2, reason: 'without a today, every row is judged as before');
+  });
+
+  test('today with a punch, or a locked row, is judged normally', () {
+    final punched = AttendanceDay(id: 't', employeeId: 'e', attendanceDate: '2026-10-27', attendanceStatus: 'INCOMPLETE', workedMinutes: 0, isLocked: false, actualFirstIn: '2026-10-27T04:00:00Z', raw: const {});
+    final locked = AttendanceDay(id: 'l', employeeId: 'e', attendanceDate: '2026-10-27', attendanceStatus: 'ABSENT', workedMinutes: 0, isLocked: true, raw: const {});
+    expect(summariseMonth([punched], today: '2026-10-27').other, 1);
+    expect(summariseMonth([locked], today: '2026-10-27').absent, 1);
+  });
+
   test('week bars are Monday to Sunday and missing days are zero hours', () {
     final bars = weekBars([day('2026-10-26', 'PRESENT', minutes: 400)], '2026-10-28');
     expect(bars.map((b) => b.label).toList(), ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']);

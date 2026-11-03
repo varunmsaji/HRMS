@@ -99,7 +99,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     if (employeeId == null) {
       return Scaffold(
         backgroundColor: Dd.canvas,
-        body: SafeArea(child: Column(children: [_Header(onBell: () {}, onProfile: () => context.push('/app/more')), const Expanded(child: Center(child: Text('No employee record is linked to your account.')))])),
+        body: SafeArea(child: Column(children: [_Header(onBell: () => context.push('/app/notifications'), onProfile: () => context.push('/app/more')), const Expanded(child: Center(child: Text('No employee record is linked to your account.')))])),
       );
     }
 
@@ -117,7 +117,9 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     final state = todayAsync == null ? null : todayStateOf(todayAsync, key);
     final todayDate = today?.today ?? businessToday(zone);
     final monthDays = canViewAttendance ? ref.watch(homeMonthDaysProvider(key)).valueOrNull : null;
-    final balances = canSeeLeave ? ref.watch(homeBalancesProvider(employeeId)).valueOrNull : null;
+    final balancesAsync = canSeeLeave ? ref.watch(homeBalancesProvider(employeeId)) : null;
+    final balances = balancesAsync?.valueOrNull;
+    final balancesFailed = balancesAsync != null && balancesAsync.hasError && balances == null;
     final leaveApps = canSeeLeave ? ref.watch(homeLeaveProvider(employeeId)).valueOrNull : null;
     final corrections = canViewAttendance ? ref.watch(homeSubmittedCorrectionsProvider(employeeId)).valueOrNull : null;
     final payslip = canSeePayslip ? ref.watch(homeLatestPayslipProvider(employeeId)).valueOrNull : null;
@@ -167,6 +169,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
                         canPunch: canPunch,
                         faceKnown: face == null || !face.isLoading || face.hasValue,
                         onPunch: (d) => _punch(d, key),
+                        onRetry: () => ref.invalidate(todayDataProvider(key)),
                       ),
                     if (canPunch && face?.valueOrNull != null && !face!.valueOrNull!.isEnrolled) ...[
                       const SizedBox(height: 16),
@@ -176,6 +179,8 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
                     _tiles(
                       context,
                       balances: balances,
+                      balancesFailed: balancesFailed,
+                      onRetryBalances: () => ref.invalidate(homeBalancesProvider(employeeId)),
                       pendingLeave: pendingLeave.length,
                       pendingCorrections: pendingCorrections.length,
                       known: leaveApps != null || corrections != null,
@@ -207,6 +212,8 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
   Widget _tiles(
     BuildContext context, {
     required List<LeaveBalance>? balances,
+    required bool balancesFailed,
+    required VoidCallback onRetryBalances,
     required int pendingLeave,
     required int pendingCorrections,
     required bool known,
@@ -259,8 +266,9 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
           badgeBackground: Colors.transparent,
           value: left == null ? '—' : days(left),
           unit: left == null ? null : 'days left',
-          caption: breakdown,
-          onTap: () => context.push('/app/leave-balances'),
+          caption: balancesFailed ? 'Couldn’t load · Tap to retry' : breakdown,
+          captionColor: balancesFailed ? Dd.red : Dd.muted,
+          onTap: balancesFailed ? onRetryBalances : () => context.push('/app/leave-balances'),
         ),
       if (showLeave || showHours)
         DdStatTile(
@@ -310,7 +318,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
 
   Widget _monthCard(BuildContext context, List<AttendanceDay> days, String todayDate) {
     final monthPrefix = todayDate.substring(0, 7);
-    final month = summariseMonth(days.where((d) => d.attendanceDate.startsWith(monthPrefix) && d.attendanceDate.compareTo(todayDate) <= 0));
+    final month = summariseMonth(days.where((d) => d.attendanceDate.startsWith(monthPrefix) && d.attendanceDate.compareTo(todayDate) <= 0), today: todayDate);
     final total = month.total;
     String pct(int n) => total == 0 ? '0%' : '${(n / total * 100).toStringAsFixed(n * 1000 % total == 0 ? 0 : 1)}%';
     final presentPct = total == 0 ? 0 : (month.present / total * 100).round();
@@ -584,7 +592,7 @@ class _Legend extends StatelessWidget {
 
 /// The "worked today" card: status line, live clock, progress, and the punch button.
 class _PunchCard extends StatelessWidget {
-  const _PunchCard({required this.state, required this.data, required this.zone, required this.shift, required this.canPunch, required this.faceKnown, required this.onPunch});
+  const _PunchCard({required this.state, required this.data, required this.zone, required this.shift, required this.canPunch, required this.faceKnown, required this.onPunch, required this.onRetry});
   final TodayState state;
   final TodayData? data;
   final String zone;
@@ -592,6 +600,9 @@ class _PunchCard extends StatelessWidget {
   final bool canPunch;
   final bool faceKnown;
   final void Function(String direction) onPunch;
+
+  /// Re-reads today's punches and day row; offered only when both reads failed.
+  final VoidCallback onRetry;
 
   /// Seconds worked today. While punched in it follows the punches (closed IN→OUT pairs plus the
   /// open one up to now) so the clock ticks; otherwise it is the server's `worked_minutes`.
@@ -657,6 +668,11 @@ class _PunchCard extends StatelessWidget {
           Expanded(flex: 3, child: Text(status, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Dd.green).copyWith(color: dot == Dd.green ? Dd.green : Dd.ink))),
           if (shift != null) Flexible(flex: 2, child: DdPill(label: 'Shift $shift', background: const Color(0xFFDCE8FB), foreground: Dd.navy)),
         ]),
+        if (kind == TodayStateKind.unavailable)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh_rounded, size: 18), label: const Text('Try again')),
+          ),
         const SizedBox(height: 18),
         Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
           Expanded(

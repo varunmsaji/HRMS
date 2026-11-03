@@ -20,9 +20,16 @@ class MonthSummary {
   int get total => present + onLeave + absent + other;
 }
 
-MonthSummary summariseMonth(Iterable<AttendanceDay> days) {
+/// Today's row before the employee has punched: the 09:30 sweep writes `ABSENT`/`INCOMPLETE`, which
+/// is provisional, so it is neither absent nor tracked yet (same rule as `todayStateOf`).
+bool _isProvisionalToday(AttendanceDay d, String? today) =>
+    today != null && d.attendanceDate == today && (d.attendanceStatus == 'ABSENT' || d.attendanceStatus == 'INCOMPLETE') && d.actualFirstIn == null && !d.isLocked;
+
+/// Counts the month's day rows. Pass [today] so today's provisional row is not counted as absent.
+MonthSummary summariseMonth(Iterable<AttendanceDay> days, {String? today}) {
   var present = 0, onLeave = 0, absent = 0, other = 0, offs = 0, holidays = 0;
   for (final d in days) {
+    if (_isProvisionalToday(d, today)) continue;
     final dayType = d.raw['calendar_day_type'];
     if (dayType == 'WEEKLY_OFF') offs++;
     if (dayType == 'HOLIDAY') holidays++;

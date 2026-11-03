@@ -224,7 +224,7 @@ class _LiquidTile extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          height: 78 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.6),
+          height: 88 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.6),
           decoration: BoxDecoration(color: t.inset, borderRadius: BorderRadius.circular(14), border: Border.all(color: c.glyph.withValues(alpha: 0.25))),
           child: Stack(fit: StackFit.expand, children: [
             TweenAnimationBuilder<double>(
@@ -237,10 +237,11 @@ class _LiquidTile extends StatelessWidget {
               padding: const EdgeInsets.all(10),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                 Icon(icon, size: 20, color: c.glyph),
-                Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+                Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                   Text('$count', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: c.text, height: 1)),
-                  const SizedBox(width: 6),
-                  Flexible(child: Text('$label days', overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.inkSecondary))),
+                  const SizedBox(height: 3),
+                  // Stacked under the count so the label is never clipped; it shrinks, not truncates.
+                  FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text('$label days', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: t.inkSecondary))),
                 ]),
               ]),
             ),
