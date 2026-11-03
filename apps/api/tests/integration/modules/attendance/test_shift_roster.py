@@ -35,9 +35,9 @@ async def _create_night_shift(client: AsyncClient, headers: dict[str, str]) -> d
     """A published 22:00-06:00 cross-midnight shift, distinct from `_build_wired_employee`'s
     09:00-18:00 default — used to prove a roster override actually changes which shift the
     calculation engine reads, including its overnight attribution (FR-ATT-005)."""
-    shift = (
-        await client.post("/v1/shifts", headers=headers, json={"name": "Night", "code": "NGT"})
-    ).json()["data"]
+    shift = (await client.post("/v1/shifts", headers=headers, json={"name": "Night"})).json()[
+        "data"
+    ]
     draft_id = shift["draft_version_id"]
     patched = await client.patch(
         f"/v1/shifts/{shift['id']}/versions/{draft_id}",

@@ -77,13 +77,15 @@ async def test_create_grade_records_audit(service: OrganisationService) -> None:
     company_id = uuid4()
     grade = _grade(company_id=company_id)
     service._repo.insert_grade.return_value = grade
+    service._repo.next_auto_code.return_value = "GR-001"
 
     result = await service.create_grade(
         company_id,
-        GradeCreate(code="L5", name="Senior Engineer"),
+        GradeCreate(name="Senior Engineer"),
         actor_user_id=uuid4(),
     )
 
+    assert service._repo.insert_grade.call_args.kwargs["data"]["code"] == "GR-001"
     assert result.code == "L5"
     assert result.is_active is True
     service._audit.record.assert_awaited_once()
@@ -95,7 +97,7 @@ async def test_create_grade_invalid_ctc_range_rejected(service: OrganisationServ
     with pytest.raises(InvalidCtcRangeError):
         await service.create_grade(
             uuid4(),
-            GradeCreate(code="L5", name="Senior Engineer", min_ctc=2_000_000, max_ctc=1_000_000),
+            GradeCreate(name="Senior Engineer", min_ctc=2_000_000, max_ctc=1_000_000),
             actor_user_id=uuid4(),
         )
     service._repo.insert_grade.assert_not_awaited()
@@ -110,7 +112,7 @@ async def test_create_grade_equal_min_max_ctc_allowed(service: OrganisationServi
 
     result = await service.create_grade(
         company_id,
-        GradeCreate(code="L5", name="Senior Engineer", min_ctc=1_000_000, max_ctc=1_000_000),
+        GradeCreate(name="Senior Engineer", min_ctc=1_000_000, max_ctc=1_000_000),
         actor_user_id=uuid4(),
     )
 
@@ -124,7 +126,7 @@ async def test_create_grade_duplicate_code_rejected(service: OrganisationService
     with pytest.raises(GradeCodeAlreadyExistsError):
         await service.create_grade(
             uuid4(),
-            GradeCreate(code="L5", name="Senior Engineer"),
+            GradeCreate(name="Senior Engineer"),
             actor_user_id=uuid4(),
         )
 
@@ -277,3 +279,8 @@ async def test_create_designation_invalid_grade_rejected(service: OrganisationSe
             actor_user_id=uuid4(),
         )
     service._repo.insert_designation.assert_not_awaited()
+
+
+def test_client_cannot_supply_a_code() -> None:
+    with pytest.raises(ValueError):
+        GradeCreate.model_validate({"name": "Senior Engineer", "code": "L5"})

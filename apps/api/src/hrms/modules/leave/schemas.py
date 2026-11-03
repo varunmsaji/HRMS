@@ -161,14 +161,12 @@ class LeavePolicyCreate(BaseModel):
 
     leave_type_id: UUID
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
 
 
 class LeavePolicyUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
 
 

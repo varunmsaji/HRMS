@@ -39,9 +39,9 @@ async def _register_tenant(
 
 
 async def _create_shift(
-    client: AsyncClient, headers: dict[str, str], code: str = "GEN", **extra: Any
+    client: AsyncClient, headers: dict[str, str], **extra: Any
 ) -> dict[str, Any]:
-    payload = {"code": code, "name": "General Shift", **extra}
+    payload = {"name": "General Shift", **extra}
     response = await client.post("/v1/shifts", headers=headers, json=payload)
     assert response.status_code == 201
     return dict(response.json()["data"])
@@ -88,11 +88,11 @@ async def test_create_shift_auto_assigns_sequential_code(
             codes.append(response.json()["data"]["code"])
         assert codes == ["SHF-001", "SHF-002", "SHF-003"]
 
-        # An explicit code is kept as given and does not disturb the sequence.
-        explicit = await client.post(
+        # A client-supplied code is refused; the sequence is never disturbed.
+        refused = await client.post(
             "/v1/shifts", headers=headers, json={"name": "Custom", "code": "GEN"}
         )
-        assert explicit.json()["data"]["code"] == "GEN"
+        assert refused.status_code == 422
         after = await client.post("/v1/shifts", headers=headers, json={"name": "Next"})
         assert after.json()["data"]["code"] == "SHF-004"
     finally:
@@ -104,12 +104,10 @@ async def test_create_shift_auto_assigns_sequential_code(
 async def test_create_shift_success(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        response = await client.post(
-            "/v1/shifts", headers=headers, json={"code": "GEN", "name": "General Shift"}
-        )
+        response = await client.post("/v1/shifts", headers=headers, json={"name": "General Shift"})
         assert response.status_code == 201
         data = response.json()["data"]
-        assert data["code"] == "GEN"
+        assert data["code"] == "SHF-001"
         assert data["is_active"] is True
         assert data["version"] == 1
         assert data["company_id"] == str(company_id)
@@ -186,9 +184,9 @@ async def test_create_shift_same_code_different_tenant_allowed(
     headers_a, company_a, user_a = await _register_tenant(client)
     headers_b, company_b, user_b = await _register_tenant(client)
     try:
-        await _create_shift(client, headers_a, code="GEN")
+        await _create_shift(client, headers_a)
         response = await client.post(
-            "/v1/shifts", headers=headers_b, json={"code": "GEN", "name": "General Shift"}
+            "/v1/shifts", headers=headers_b, json={"name": "General Shift"}
         )
         assert response.status_code == 201
     finally:
@@ -273,7 +271,7 @@ async def test_update_shift_success(client: AsyncClient, seeded_plan_catalogue: 
         data = response.json()["data"]
         assert data["name"] == "Renamed Shift"
         assert data["version"] == 2
-        assert data["code"] == "GEN"
+        assert data["code"] == "SHF-001"
     finally:
         await _cleanup_shifts(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -378,11 +376,11 @@ async def test_reactivate_shift_via_patch(client: AsyncClient, seeded_plan_catal
 async def test_multiple_shifts_supported(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        await _create_shift(client, headers, code="GEN")
-        await _create_shift(client, headers, code="NGT")
+        await _create_shift(client, headers)
+        await _create_shift(client, headers)
         listed = await client.get("/v1/shifts", headers=headers)
         codes = {row["code"] for row in listed.json()["data"]}
-        assert codes == {"GEN", "NGT"}
+        assert codes == {"SHF-001", "SHF-002"}
     finally:
         await _cleanup_shifts(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -392,7 +390,7 @@ async def test_multiple_shifts_supported(client: AsyncClient, seeded_plan_catalo
 async def test_delete_shift_safeguards(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        shift = await _create_shift(client, headers, code="DEL", name="Delete Me")
+        shift = await _create_shift(client, headers, name="Delete Me")
         sid = shift["id"]
         good = {
             "confirm_name": "Delete Me",

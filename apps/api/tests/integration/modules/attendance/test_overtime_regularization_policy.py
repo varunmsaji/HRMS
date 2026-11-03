@@ -178,3 +178,27 @@ async def test_invalid_enum_value_rejected(
     finally:
         await _cleanup_attendance(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "prefix"),
+    [("/v1/overtime-policies", "OTP-"), ("/v1/regularization-policies", "REGP-")],
+)
+async def test_policy_code_is_generated_and_not_accepted(
+    client: AsyncClient, seeded_plan_catalogue: None, path: str, prefix: str
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        first = await client.post(path, headers=headers, json={"name": "One"})
+        second = await client.post(path, headers=headers, json={"name": "Two"})
+        assert first.status_code == 201, first.text
+        assert second.status_code == 201, second.text
+        first_code = first.json()["data"]["code"]
+        assert first_code.startswith(prefix)
+        assert first_code != second.json()["data"]["code"]
+        rejected = await client.post(path, headers=headers, json={"name": "Typed", "code": "X"})
+        assert rejected.status_code == 422
+    finally:
+        await _cleanup_attendance(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

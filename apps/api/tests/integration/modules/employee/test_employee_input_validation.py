@@ -394,9 +394,7 @@ async def test_valid_bank_details_accepted_and_ifsc_normalised(client: AsyncClie
 async def test_grade_numeric_fields_are_bounded(client: AsyncClient, patch: dict[str, Any]) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        r = await client.post(
-            "/v1/grades", headers=headers, json={"code": "G1", "name": "Grade", **patch}
-        )
+        r = await client.post("/v1/grades", headers=headers, json={"name": "Grade", **patch})
         assert r.status_code == 422, (patch, r.status_code, r.text[:200])
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)

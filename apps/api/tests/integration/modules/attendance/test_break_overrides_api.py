@@ -428,9 +428,9 @@ async def test_shift_break_configuration_validation(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        shift = (
-            await client.post("/v1/shifts", headers=headers, json={"name": "G", "code": "G1"})
-        ).json()["data"]
+        shift = (await client.post("/v1/shifts", headers=headers, json={"name": "G"})).json()[
+            "data"
+        ]
 
         async def patch(breaks: list[dict[str, Any]]) -> Any:
             url = f"/v1/shifts/{shift['id']}/versions/{shift['draft_version_id']}"

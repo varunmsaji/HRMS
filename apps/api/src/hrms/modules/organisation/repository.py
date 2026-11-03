@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Integer, and_, delete, func, or_, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.models.identity import (
@@ -40,6 +40,7 @@ from hrms.modules.organisation.models import (
     WorkCalendar,
     WorkCalendarHolidayCalendar,
 )
+from hrms.shared.auto_code import next_auto_code
 
 _TERMINAL_SUBSCRIPTION_STATUSES = ("CANCELED", "EXPIRED")
 
@@ -708,22 +709,15 @@ class OrganisationRepository:
         await session.flush()
         return row
 
+    async def next_auto_code(
+        self, session: AsyncSession, *, model: Any, company_id: UUID, prefix: str
+    ) -> str:
+        """Next `<PREFIX>-NNN` code for the company (`BR-001`, `DEPT-002`, ...); see
+        `hrms.shared.auto_code`."""
+        return await next_auto_code(session, model=model, company_id=company_id, prefix=prefix)
+
     async def next_auto_shift_code(self, session: AsyncSession, *, company_id: UUID) -> str:
-        """Next `SHF-NNN` code for the company. Serialised per company with a transaction-scoped
-        advisory lock (`shift.code` has no unique constraint), and soft-deleted rows are counted
-        so a code is never reused."""
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-            {"key": f"shift_code:{company_id}"},
-        )
-        stmt = select(
-            func.coalesce(
-                func.max(func.substring(Shift.code, r"^SHF-(\d+)$").cast(Integer)),
-                0,
-            )
-        ).where(Shift.company_id == company_id)
-        highest = (await session.execute(stmt)).scalar_one()
-        return f"SHF-{highest + 1:03d}"
+        return await self.next_auto_code(session, model=Shift, company_id=company_id, prefix="SHF")
 
     async def count_shift_references(
         self, session: AsyncSession, *, company_id: UUID, shift_id: UUID

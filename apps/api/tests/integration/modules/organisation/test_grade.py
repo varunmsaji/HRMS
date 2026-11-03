@@ -40,10 +40,10 @@ async def _register_tenant(
 
 
 async def _create_grade(
-    client: AsyncClient, headers: dict[str, str], code: str = "L5", **extra: Any
+    client: AsyncClient, headers: dict[str, str], **extra: Any
 ) -> dict[str, Any]:
     response = await client.post(
-        "/v1/grades", headers=headers, json={"code": code, "name": "Senior Engineer", **extra}
+        "/v1/grades", headers=headers, json={"name": "Senior Engineer", **extra}
     )
     assert response.status_code == 201
     return dict(response.json()["data"])
@@ -79,11 +79,11 @@ async def test_create_grade_success(client: AsyncClient, seeded_plan_catalogue: 
         response = await client.post(
             "/v1/grades",
             headers=headers,
-            json={"code": "L5", "name": "Senior Engineer", "level": 5},
+            json={"name": "Senior Engineer", "level": 5},
         )
         assert response.status_code == 201
         data = response.json()["data"]
-        assert data["code"] == "L5"
+        assert data["code"] == "GR-001"
         assert data["level"] == 5
         assert data["is_active"] is True
         assert data["version"] == 1
@@ -123,7 +123,6 @@ async def test_create_grade_with_ctc_band_success(
             "/v1/grades",
             headers=headers,
             json={
-                "code": "L5",
                 "name": "Senior Engineer",
                 "min_ctc": 1_000_000,
                 "max_ctc": 2_000_000,
@@ -148,7 +147,6 @@ async def test_create_grade_invalid_ctc_range_rejected(
             "/v1/grades",
             headers=headers,
             json={
-                "code": "L5",
                 "name": "Senior Engineer",
                 "min_ctc": 2_000_000,
                 "max_ctc": 1_000_000,
@@ -161,32 +159,33 @@ async def test_create_grade_invalid_ctc_range_rejected(
 
 
 @pytest.mark.asyncio
-async def test_create_grade_duplicate_code_rejected(
+async def test_create_grade_codes_are_generated_and_not_client_supplied(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        await _create_grade(client, headers, code="L5")
-        response = await client.post(
-            "/v1/grades", headers=headers, json={"code": "L5", "name": "Duplicate"}
+        first = await _create_grade(client, headers)
+        second = await _create_grade(client, headers)
+        assert (first["code"], second["code"]) == ("GR-001", "GR-002")
+        rejected = await client.post(
+            "/v1/grades", headers=headers, json={"code": "L5", "name": "Mine"}
         )
-        assert response.status_code == 409
-        assert response.json()["error"]["code"] == "GRADE_CODE_ALREADY_EXISTS"
+        assert rejected.status_code == 422
     finally:
         await _cleanup_grades_and_designations(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
 @pytest.mark.asyncio
-async def test_create_grade_same_code_different_tenant_allowed(
+async def test_generated_grade_codes_restart_per_tenant(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
     headers_a, company_a, user_a = await _register_tenant(client)
     headers_b, company_b, user_b = await _register_tenant(client)
     try:
-        await _create_grade(client, headers_a, code="L5")
+        await _create_grade(client, headers_a)
         response = await client.post(
-            "/v1/grades", headers=headers_b, json={"code": "L5", "name": "Senior Engineer"}
+            "/v1/grades", headers=headers_b, json={"name": "Senior Engineer"}
         )
         assert response.status_code == 201
     finally:
@@ -217,7 +216,7 @@ async def test_create_grade_mass_assignment_rejected(
         response = await client.post(
             "/v1/grades",
             headers=headers,
-            json={"code": "L5", "name": "Senior Engineer", "is_active": False, "version": 99},
+            json={"name": "Senior Engineer", "is_active": False, "version": 99},
         )
         assert response.status_code == 422
     finally:
@@ -271,7 +270,7 @@ async def test_update_grade_success(client: AsyncClient, seeded_plan_catalogue: 
         data = response.json()["data"]
         assert data["level"] == 6
         assert data["version"] == 2
-        assert data["code"] == "L5"
+        assert data["code"] == "GR-001"
     finally:
         await _cleanup_grades_and_designations(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -421,11 +420,11 @@ async def test_reactivate_grade_via_patch(client: AsyncClient, seeded_plan_catal
 async def test_multiple_grades_supported(client: AsyncClient, seeded_plan_catalogue: None) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        await _create_grade(client, headers, code="L4")
-        await _create_grade(client, headers, code="L5")
+        await _create_grade(client, headers)
+        await _create_grade(client, headers)
         listed = await client.get("/v1/grades", headers=headers)
         codes = {row["code"] for row in listed.json()["data"]}
-        assert codes == {"L4", "L5"}
+        assert codes == {"GR-001", "GR-002"}
     finally:
         await _cleanup_grades_and_designations(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

@@ -94,8 +94,8 @@ async def test_new_assignment_rejects_inactive_master_record(
             "branch": await _create_branch(client, headers, org["legal_entity"]["id"]),
             "department": await _create_department(client, headers),
             "designation": await _create_designation(client, headers),
-            "grade": await _create_grade(client, headers, code="SPARE"),
-            "shift": await _create_shift(client, headers, code="SPARE"),
+            "grade": await _create_grade(client, headers),
+            "shift": await _create_shift(client, headers),
         }
         plural = {
             "branch": "branches",
@@ -182,7 +182,7 @@ async def test_in_use_master_record_cannot_be_deactivated_until_reassigned(
         used = (
             org[kind]
             if kind in org
-            else await _create_shift(client, headers, code="USED")
+            else await _create_shift(client, headers)
             if kind == "shift"
             else None
         )
@@ -190,8 +190,8 @@ async def test_in_use_master_record_cannot_be_deactivated_until_reassigned(
         spare = {
             "department": lambda: _create_department(client, headers),
             "designation": lambda: _create_designation(client, headers),
-            "grade": lambda: _create_grade(client, headers, code="SPARE"),
-            "shift": lambda: _create_shift(client, headers, code="SPARE"),
+            "grade": lambda: _create_grade(client, headers),
+            "shift": lambda: _create_shift(client, headers),
         }[kind]
         unused = await spare()
 
@@ -284,8 +284,8 @@ async def _make_replacement(client, headers, kind: str) -> dict:
     if kind == "designation":
         return await _create_designation(client, headers, title="Replacement Desig")
     if kind == "grade":
-        return await _create_grade(client, headers, code="NEXT")
-    return await _create_shift(client, headers, code="NEXT")
+        return await _create_grade(client, headers)
+    return await _create_shift(client, headers)
 
 
 async def test_deactivated_employees_do_not_block_deactivation(client: AsyncClient) -> None:

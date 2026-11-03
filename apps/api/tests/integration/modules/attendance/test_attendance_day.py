@@ -90,9 +90,9 @@ async def _build_wired_employee(
     )
     assert employment.status_code == 201, employment.text
 
-    shift = (
-        await client.post("/v1/shifts", headers=headers, json={"name": "General", "code": "GEN"})
-    ).json()["data"]
+    shift = (await client.post("/v1/shifts", headers=headers, json={"name": "General"})).json()[
+        "data"
+    ]
     draft_id = shift["draft_version_id"]
     patched = await client.patch(
         f"/v1/shifts/{shift['id']}/versions/{draft_id}",

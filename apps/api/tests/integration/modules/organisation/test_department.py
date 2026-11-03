@@ -106,7 +106,7 @@ async def test_create_department_success_without_branch(
     headers, company_id, user_id = await _register_tenant(client)
     try:
         response = await client.post(
-            "/v1/departments", headers=headers, json={"name": "Engineering", "code": "ENG"}
+            "/v1/departments", headers=headers, json={"name": "Engineering"}
         )
         assert response.status_code == 201
         data = response.json()["data"]
@@ -385,13 +385,13 @@ async def test_update_department_success(client: AsyncClient, seeded_plan_catalo
         response = await client.patch(
             f"/v1/departments/{department['id']}",
             headers={**headers, "If-Match": str(department["version"])},
-            json={"code": "ENG"},
+            json={"name": "Platform Engineering"},
         )
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["code"] == "ENG"
+        assert data["code"] == "DEPT-001"
         assert data["version"] == 2
-        assert data["name"] == "Engineering"
+        assert data["name"] == "Platform Engineering"
     finally:
         await _cleanup_departments_and_branches(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

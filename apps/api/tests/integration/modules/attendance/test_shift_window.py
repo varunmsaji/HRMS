@@ -102,9 +102,7 @@ async def _make_shift(
     timezone: str = "UTC",
     **extra: Any,
 ) -> str:
-    shift = (
-        await client.post("/v1/shifts", headers=headers, json={"name": code, "code": code})
-    ).json()["data"]
+    shift = (await client.post("/v1/shifts", headers=headers, json={"name": code})).json()["data"]
     draft_id = shift["draft_version_id"]
     patched = await client.patch(
         f"/v1/shifts/{shift['id']}/versions/{draft_id}",
@@ -287,9 +285,7 @@ async def tenant(
     yield headers, company_id
     # Off-day fixtures add calendar rows the attendance cleanup does not know about. Clear them
     # before it deletes `work_calendar` and before the company row itself goes.
-    await _sql(
-        company_id, "DELETE FROM work_calendar_holiday_calendar WHERE company_id = :cid"
-    )
+    await _sql(company_id, "DELETE FROM work_calendar_holiday_calendar WHERE company_id = :cid")
     await _sql(
         company_id,
         "UPDATE work_calendar SET weekly_off_pattern_id = NULL WHERE company_id = :cid",

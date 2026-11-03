@@ -363,9 +363,7 @@ async def test_cross_tenant_grade_get_blocked(
     headers_a, company_a, user_a = await _register_tenant(client)
     headers_b, company_b, user_b = await _register_tenant(client)
     try:
-        created = await client.post(
-            "/v1/grades", headers=headers_b, json={"code": "L5", "name": "B Grade"}
-        )
+        created = await client.post("/v1/grades", headers=headers_b, json={"name": "B Grade"})
         grade_id = created.json()["data"]["id"]
 
         forged = await client.get(
@@ -393,7 +391,7 @@ async def test_cross_tenant_grade_list_never_leaks(
     headers_a, company_a, user_a = await _register_tenant(client)
     headers_b, company_b, user_b = await _register_tenant(client)
     try:
-        await client.post("/v1/grades", headers=headers_b, json={"code": "L5", "name": "B Grade"})
+        await client.post("/v1/grades", headers=headers_b, json={"name": "B Grade"})
 
         listed_a = await client.get("/v1/grades", headers=headers_a)
         assert listed_a.status_code == 200

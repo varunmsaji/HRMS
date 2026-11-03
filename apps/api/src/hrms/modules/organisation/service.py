@@ -91,6 +91,15 @@ from hrms.modules.organisation.exceptions import (
     WorkCalendarCompositionInvalidError,
     WorkCalendarDeactivationBlockedError,
 )
+from hrms.modules.organisation.models import (
+    Branch,
+    Department,
+    Designation,
+    Grade,
+    HolidayCalendar,
+    WeeklyOffPattern,
+    WorkCalendar,
+)
 from hrms.modules.organisation.permissions import (
     DASHBOARD_COMPANY_VIEW,
     ORG_BRANCH_MANAGE,
@@ -1348,7 +1357,9 @@ class OrganisationService:
                 "company_id": company_id,
                 "legal_entity_id": body.legal_entity_id,
                 "name": body.name,
-                "code": body.code,
+                "code": await self._repo.next_auto_code(
+                    self._session, model=Branch, company_id=company_id, prefix="BR"
+                ),
                 "address_line1": body.address_line1,
                 "address_line2": body.address_line2,
                 "city": body.city,
@@ -1614,7 +1625,9 @@ class OrganisationService:
                 "branch_id": body.branch_id,
                 "parent_id": body.parent_id,
                 "name": body.name,
-                "code": body.code,
+                "code": await self._repo.next_auto_code(
+                    self._session, model=Department, company_id=company_id, prefix="DEPT"
+                ),
                 "head_employee_id": body.head_employee_id,
                 "is_active": True,
                 "created_at": now,
@@ -1800,7 +1813,9 @@ class OrganisationService:
                 "department_id": body.department_id,
                 "grade_id": body.grade_id,
                 "title": body.title,
-                "code": body.code,
+                "code": await self._repo.next_auto_code(
+                    self._session, model=Designation, company_id=company_id, prefix="DSG"
+                ),
                 "is_active": True,
                 "created_at": now,
                 "updated_at": now,
@@ -1968,7 +1983,9 @@ class OrganisationService:
                 data={
                     "id": grade_id,
                     "company_id": company_id,
-                    "code": body.code,
+                    "code": await self._repo.next_auto_code(
+                        self._session, model=Grade, company_id=company_id, prefix="GR"
+                    ),
                     "name": body.name,
                     "level": body.level,
                     "min_ctc": body.min_ctc,
@@ -2134,13 +2151,11 @@ class OrganisationService:
         evaluation columns are frozen-zero placeholders for new rows (never read again by W2+
         code — see `ShiftRead`'s field docstrings). A new shift is meaningless without a
         schedule, so an initial empty DRAFT `ShiftVersion` is created in the same transaction
-        rather than requiring a mandatory second round-trip. A blank `code` is auto-assigned
-        (`SHF-001`, `SHF-002`, …)."""
+        rather than requiring a mandatory second round-trip. The `code` is always auto-assigned
+        (`SHF-001`, `SHF-002`, …); the client never supplies one."""
         now = datetime.now(UTC)
         shift_id = uuid4()
-        code = (body.code or "").strip() or await self._repo.next_auto_shift_code(
-            self._session, company_id=company_id
-        )
+        code = await self._repo.next_auto_shift_code(self._session, company_id=company_id)
         shift = await self._repo.insert_shift(
             self._session,
             data={
@@ -3502,7 +3517,9 @@ class OrganisationService:
                     "id": calendar_id,
                     "company_id": company_id,
                     "name": body.name,
-                    "code": body.code,
+                    "code": await self._repo.next_auto_code(
+                        self._session, model=HolidayCalendar, company_id=company_id, prefix="HC"
+                    ),
                     "kind": body.kind,
                     "state_code": body.state_code,
                     "valid_from": body.valid_from,
@@ -3854,7 +3871,9 @@ class OrganisationService:
                 "id": pattern_id,
                 "company_id": company_id,
                 "name": body.name,
-                "code": body.code,
+                "code": await self._repo.next_auto_code(
+                    self._session, model=WeeklyOffPattern, company_id=company_id, prefix="WOP"
+                ),
                 "pattern_kind": body.pattern_kind,
                 "is_active": True,
                 "created_at": now,
@@ -4083,7 +4102,9 @@ class OrganisationService:
                     "id": work_calendar_id,
                     "company_id": company_id,
                     "name": body.name,
-                    "code": body.code,
+                    "code": await self._repo.next_auto_code(
+                        self._session, model=WorkCalendar, company_id=company_id, prefix="WC"
+                    ),
                     "description": body.description,
                     "weekly_off_pattern_id": body.weekly_off_pattern_id,
                     "restricted_holidays_are_off_by_default": (

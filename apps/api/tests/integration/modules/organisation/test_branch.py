@@ -99,7 +99,6 @@ async def test_create_branch_success(client: AsyncClient, seeded_plan_catalogue:
             json={
                 "legal_entity_id": entity_id,
                 "name": "HQ Branch",
-                "code": "HQ",
                 "city": "Bengaluru",
                 "state_code": "ka",
                 "pincode": "560001",

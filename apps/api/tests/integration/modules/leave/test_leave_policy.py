@@ -563,3 +563,25 @@ async def test_leave_type_id_mismatch_rejected(
     finally:
         await _cleanup_leave(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_leave_policy_code_is_generated_and_not_accepted(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        first = await _create_leave_policy(client, headers, name="One")
+        second = await _create_leave_policy(
+            client, headers, name="Two", leave_type_id=first["leave_type_id"]
+        )
+        assert first["code"].startswith("LVP-")
+        assert first["code"] != second["code"]
+        rejected = await client.post(
+            "/v1/leave-policies",
+            headers=headers,
+            json={"name": "Typed", "code": "X", "leave_type_id": first["leave_type_id"]},
+        )
+        assert rejected.status_code == 422
+    finally:
+        await _cleanup_leave(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

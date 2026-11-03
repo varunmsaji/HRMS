@@ -89,7 +89,7 @@ async def test_create_designation_success_without_department(
         response = await client.post(
             "/v1/designations",
             headers=headers,
-            json={"title": "Software Engineer", "code": "SWE"},
+            json={"title": "Software Engineer"},
         )
         assert response.status_code == 201
         data = response.json()["data"]
@@ -250,13 +250,13 @@ async def test_update_designation_success(client: AsyncClient, seeded_plan_catal
         response = await client.patch(
             f"/v1/designations/{designation['id']}",
             headers={**headers, "If-Match": str(designation["version"])},
-            json={"code": "SWE"},
+            json={"title": "Senior Software Engineer"},
         )
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["code"] == "SWE"
+        assert data["code"] == "DSG-001"
         assert data["version"] == 2
-        assert data["title"] == "Software Engineer"
+        assert data["title"] == "Senior Software Engineer"
     finally:
         await _cleanup_designations_and_departments(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

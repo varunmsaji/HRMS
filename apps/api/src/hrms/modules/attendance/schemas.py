@@ -170,14 +170,12 @@ class AttendancePolicyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
 
 
 class AttendancePolicyUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
 
 
@@ -695,14 +693,12 @@ class OvertimePolicyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
 
 
 class OvertimePolicyUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
 
 
@@ -945,14 +941,12 @@ class RegularizationPolicyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
 
 
 class RegularizationPolicyUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
 
 

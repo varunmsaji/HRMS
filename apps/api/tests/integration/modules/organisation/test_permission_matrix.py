@@ -346,9 +346,7 @@ async def test_grade_company_admin_allowed(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        create = await client.post(
-            "/v1/grades", headers=headers, json={"code": "L5", "name": "Senior Engineer"}
-        )
+        create = await client.post("/v1/grades", headers=headers, json={"name": "Senior Engineer"})
         assert create.status_code == 201
         listed = await client.get("/v1/grades", headers=headers)
         assert listed.status_code == 200
@@ -375,7 +373,7 @@ async def test_grade_zero_permission_denied(
         assert list_response.json()["error"]["code"] == "PERMISSION_DENIED"
 
         create_response = await client.post(
-            "/v1/grades", headers=headers, json={"code": "L5", "name": "Senior Engineer"}
+            "/v1/grades", headers=headers, json={"name": "Senior Engineer"}
         )
         assert create_response.status_code == 403
     finally:

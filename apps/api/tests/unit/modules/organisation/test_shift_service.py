@@ -111,7 +111,7 @@ async def test_create_shift_records_audit_and_creates_initial_draft(
 
     result = await service.create_shift(
         company_id,
-        ShiftCreate(name="General Shift", code="GEN"),
+        ShiftCreate(name="General Shift"),
         actor_user_id=uuid4(),
     )
 

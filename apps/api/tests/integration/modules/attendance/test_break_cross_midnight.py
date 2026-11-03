@@ -28,9 +28,9 @@ async def _create_night_shift_with_breaks(
     """A published `22:00->06:00` `FIXED` shift carrying the given breaks — mirrors
     `test_shift_roster.py::_create_night_shift`, with breaks added in the same PATCH rather
     than a second call, since `ShiftVersionUpdate.breaks` is full-replace-on-write."""
-    shift = (
-        await client.post("/v1/shifts", headers=headers, json={"name": "Night", "code": "NGT"})
-    ).json()["data"]
+    shift = (await client.post("/v1/shifts", headers=headers, json={"name": "Night"})).json()[
+        "data"
+    ]
     draft_id = shift["draft_version_id"]
     patched = await client.patch(
         f"/v1/shifts/{shift['id']}/versions/{draft_id}",

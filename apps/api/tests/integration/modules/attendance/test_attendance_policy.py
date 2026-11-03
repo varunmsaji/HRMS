@@ -338,3 +338,22 @@ async def test_unauthenticated_request_rejected(
 ) -> None:
     response = await client.get("/v1/attendance-policies")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_policy_code_is_generated_and_not_accepted(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        first = await _create_policy(client, headers, name="Auto code one")
+        second = await _create_policy(client, headers, name="Auto code two")
+        assert first["code"].startswith("ATTP-")
+        assert first["code"] != second["code"]
+        rejected = await client.post(
+            "/v1/attendance-policies", headers=headers, json={"name": "Typed", "code": "MINE"}
+        )
+        assert rejected.status_code == 422
+    finally:
+        await _cleanup_attendance(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

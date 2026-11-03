@@ -692,7 +692,6 @@ class BranchCreate(BaseModel):
 
     legal_entity_id: UUID
     name: str = Field(min_length=1, max_length=200)
-    code: str | None = Field(default=None, max_length=30)
     address_line1: str | None = Field(default=None, max_length=200)
     address_line2: str | None = Field(default=None, max_length=200)
     city: str | None = Field(default=None, max_length=100)
@@ -729,7 +728,6 @@ class BranchUpdate(BaseModel):
 
     legal_entity_id: UUID | None = None
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    code: str | None = Field(default=None, max_length=30)
     address_line1: str | None = Field(default=None, max_length=200)
     address_line2: str | None = Field(default=None, max_length=200)
     city: str | None = Field(default=None, max_length=100)
@@ -823,7 +821,6 @@ class DepartmentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     branch_id: UUID | None = None
     parent_id: UUID | None = None
     head_employee_id: UUID | None = None
@@ -833,7 +830,6 @@ class DepartmentUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     branch_id: UUID | None = None
     parent_id: UUID | None = None
     head_employee_id: UUID | None = None
@@ -887,7 +883,6 @@ class DesignationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     department_id: UUID | None = None
     grade_id: UUID | None = None
 
@@ -896,7 +891,6 @@ class DesignationUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     department_id: UUID | None = None
     grade_id: UUID | None = None
     is_active: bool | None = None
@@ -946,7 +940,6 @@ def build_designation_update_values(patch: DesignationUpdate) -> dict[str, Any]:
 class GradeCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str = Field(min_length=1, max_length=30)
     name: str = Field(min_length=1, max_length=100)
     level: int | None = Field(default=None, ge=0, le=MAX_INT32)
     min_ctc: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
@@ -959,7 +952,6 @@ class GradeCreate(BaseModel):
 class GradeUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    code: str | None = Field(default=None, min_length=1, max_length=30)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     level: int | None = Field(default=None, ge=0, le=MAX_INT32)
     min_ctc: int | None = Field(default=None, ge=0, le=MAX_MONEY_MINOR)
@@ -1030,7 +1022,6 @@ class ShiftCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=100)
-    code: str | None = Field(default=None, max_length=30)
 
 
 class ShiftUpdate(BaseModel):
@@ -1039,7 +1030,6 @@ class ShiftUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    code: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
 
 
@@ -1585,7 +1575,6 @@ class HolidayCalendarCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     kind: str = "COMPANY"
     state_code: str | None = Field(default=None, max_length=10)
     valid_from: date | None = None
@@ -1613,7 +1602,6 @@ class HolidayCalendarUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     kind: str | None = None
     state_code: str | None = Field(default=None, max_length=10)
     valid_from: date | None = None
@@ -1819,7 +1807,6 @@ class WeeklyOffPatternCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     pattern_kind: str
     rules: list[WeeklyOffRuleInput] = Field(default_factory=list, min_length=1)
 
@@ -1838,7 +1825,6 @@ class WeeklyOffPatternUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     pattern_kind: str | None = None
     rules: list[WeeklyOffRuleInput] | None = None
     is_active: bool | None = None
@@ -1893,7 +1879,6 @@ class WorkCalendarCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     description: str | None = None
     weekly_off_pattern_id: UUID | None = None
     restricted_holidays_are_off_by_default: bool = False
@@ -1904,7 +1889,6 @@ class WorkCalendarUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1, max_length=150)
-    code: str | None = Field(default=None, max_length=30)
     description: str | None = None
     weekly_off_pattern_id: UUID | None = None
     restricted_holidays_are_off_by_default: bool | None = None

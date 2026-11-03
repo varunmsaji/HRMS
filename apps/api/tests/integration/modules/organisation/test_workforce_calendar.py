@@ -151,7 +151,6 @@ async def test_create_and_get_holiday_calendar(
             client,
             headers,
             name="Kerala Office Holidays",
-            code="KL",
             kind="REGIONAL",
             state_code="KL",
         )
@@ -184,17 +183,34 @@ async def test_create_and_get_holiday_calendar(
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
-async def test_holiday_calendar_duplicate_code_rejected(
+async def test_holiday_and_weekly_off_codes_are_generated_and_not_accepted(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        await _create_holiday_calendar(client, headers, name="First", code="NAT")
-        response = await client.post(
-            "/v1/holiday-calendars", headers=headers, json={"name": "Second", "code": "NAT"}
+        first = await _create_holiday_calendar(client, headers, name="First")
+        second = await _create_holiday_calendar(client, headers, name="Second")
+        assert first["code"].startswith("HC-")
+        assert first["code"] != second["code"]
+        rejected = await client.post(
+            "/v1/holiday-calendars", headers=headers, json={"name": "Typed", "code": "NAT"}
         )
-        assert response.status_code == 409
-        assert response.json()["error"]["code"] == "HOLIDAY_CALENDAR_CODE_ALREADY_EXISTS"
+        assert rejected.status_code == 422
+
+        rule = {"weekday": 6, "off_fraction": "1.00"}
+        pattern = await client.post(
+            "/v1/weekly-off-patterns",
+            headers=headers,
+            json={"name": "Sundays", "pattern_kind": "FIXED_WEEKDAYS", "rules": [rule]},
+        )
+        assert pattern.status_code == 201, pattern.text
+        assert pattern.json()["data"]["code"].startswith("WOP-")
+        rejected = await client.post(
+            "/v1/weekly-off-patterns",
+            headers=headers,
+            json={"name": "Typed", "code": "X", "pattern_kind": "FIXED_WEEKDAYS", "rules": [rule]},
+        )
+        assert rejected.status_code == 422
     finally:
         await _cleanup_workforce_calendar(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
@@ -964,4 +980,22 @@ async def test_registration_grants_calendar_permissions_to_new_company(
         response = await client.get("/v1/holiday-calendars", headers=headers)
         assert response.status_code == 200
     finally:
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_work_calendar_code_is_generated_and_not_accepted(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        first = await _create_work_calendar(client, headers, name="Auto code one")
+        second = await _create_work_calendar(client, headers, name="Auto code two")
+        assert first["code"].startswith("WC-")
+        assert first["code"] != second["code"]
+        rejected = await client.post(
+            "/v1/work-calendars", headers=headers, json={"name": "Typed", "code": "MINE"}
+        )
+        assert rejected.status_code == 422
+    finally:
+        await _cleanup_workforce_calendar(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)

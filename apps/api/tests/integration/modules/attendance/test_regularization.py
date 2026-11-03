@@ -978,7 +978,7 @@ async def test_wrong_shift_applies_via_roster(
         await _create_regularization_policy(client, headers, approval_chain="HR")
 
         night_shift = (
-            await client.post("/v1/shifts", headers=headers, json={"name": "Night", "code": "NGT"})
+            await client.post("/v1/shifts", headers=headers, json={"name": "Night"})
         ).json()["data"]
         draft_id = night_shift["draft_version_id"]
         await client.patch(

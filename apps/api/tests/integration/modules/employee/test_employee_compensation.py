@@ -81,10 +81,10 @@ async def _create_employment(
 
 
 async def _create_grade(
-    client: AsyncClient, headers: dict[str, str], code: str = "L5", **extra: Any
+    client: AsyncClient, headers: dict[str, str], **extra: Any
 ) -> dict[str, Any]:
     response = await client.post(
-        "/v1/grades", headers=headers, json={"code": code, "name": "Senior Engineer", **extra}
+        "/v1/grades", headers=headers, json={"name": "Senior Engineer", **extra}
     )
     assert response.status_code == 201, response.text
     return dict(response.json()["data"])

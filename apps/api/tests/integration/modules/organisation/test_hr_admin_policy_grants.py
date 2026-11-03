@@ -202,7 +202,7 @@ async def test_hr_admin_runtime_access_and_limits(
         for method, path, body in [
             ("GET", "/v1/attendance-policies", None),
             ("POST", "/v1/attendance-policies", {"name": "x"}),
-            ("POST", "/v1/shifts", {"name": "x", "code": "X"}),
+            ("POST", "/v1/shifts", {"name": "x"}),
             ("POST", "/v1/rosters", {}),
             ("POST", "/v1/attendance-periods", {}),
             ("POST", f"/v1/attendance-periods/{uuid4()}/finalize", {}),

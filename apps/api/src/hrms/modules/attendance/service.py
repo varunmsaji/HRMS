@@ -100,12 +100,15 @@ from hrms.modules.attendance.geofence_service import (
 from hrms.modules.attendance.models import (
     AttendanceDay,
     AttendancePeriod,
+    AttendancePolicy,
     AttendanceRegularizationRequest,
     LeaveDayProjection,
+    OvertimePolicy,
     OvertimePolicyRateRow,
     OvertimePolicyVersion,
     OvertimeRecord,
     Punch,
+    RegularizationPolicy,
 )
 from hrms.modules.attendance.repository import (
     AttendanceBreakRepository,
@@ -218,6 +221,7 @@ from hrms.modules.attendance.shift_window import (
     combine_shift_window_decisions,
     evaluate_shift_window,
 )
+from hrms.shared.auto_code import next_auto_code
 from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
 from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
@@ -286,7 +290,12 @@ class AttendanceService:
                     "id": policy_id,
                     "company_id": company_id,
                     "name": body.name,
-                    "code": body.code,
+                    "code": await next_auto_code(
+                        self._session,
+                        model=AttendancePolicy,
+                        company_id=company_id,
+                        prefix="ATTP",
+                    ),
                     "is_active": True,
                     "created_at": now,
                     "updated_at": now,
@@ -920,7 +929,12 @@ class AttendanceService:
                     "id": policy_id,
                     "company_id": company_id,
                     "name": body.name,
-                    "code": body.code,
+                    "code": await next_auto_code(
+                        self._session,
+                        model=OvertimePolicy,
+                        company_id=company_id,
+                        prefix="OTP",
+                    ),
                     "is_active": True,
                     "created_at": now,
                     "updated_at": now,
@@ -1422,7 +1436,12 @@ class AttendanceService:
                     "id": policy_id,
                     "company_id": company_id,
                     "name": body.name,
-                    "code": body.code,
+                    "code": await next_auto_code(
+                        self._session,
+                        model=RegularizationPolicy,
+                        company_id=company_id,
+                        prefix="REGP",
+                    ),
                     "is_active": True,
                     "created_at": now,
                     "updated_at": now,

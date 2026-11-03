@@ -132,8 +132,8 @@ async def test_versions_cross_shift_isolation_under_pagination(
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
-        shift_a = await _create_shift(client, headers, code="GEN-A")
-        shift_b = await _create_shift(client, headers, code="GEN-B")
+        shift_a = await _create_shift(client, headers)
+        shift_b = await _create_shift(client, headers)
 
         response_a = await client.get(f"/v1/shifts/{shift_a['id']}/versions", headers=headers)
         response_b = await client.get(f"/v1/shifts/{shift_b['id']}/versions", headers=headers)

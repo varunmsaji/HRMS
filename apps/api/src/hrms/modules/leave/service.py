@@ -72,6 +72,7 @@ from hrms.modules.leave.exceptions import (
     LeaveTypeInUseError,
     StaleLeaveResourceError,
 )
+from hrms.modules.leave.models import LeavePolicy
 from hrms.modules.leave.repository import (
     LeaveApplicationActionRepository,
     LeaveApplicationDayRepository,
@@ -130,6 +131,7 @@ from hrms.modules.leave.schemas import (
     statutory_leave_minimum_to_read,
 )
 from hrms.modules.leave.year import LeaveYearSettingData, is_leave_year_start
+from hrms.shared.auto_code import next_auto_code
 from hrms.shared.business_time import business_month_start, business_today
 from hrms.shared.pagination import PageParams
 from hrms.shared.timezone import resolve_zoneinfo
@@ -667,7 +669,12 @@ class LeavePolicyService:
                     "company_id": company_id,
                     "leave_type_id": body.leave_type_id,
                     "name": body.name,
-                    "code": body.code,
+                    "code": await next_auto_code(
+                        self._session,
+                        model=LeavePolicy,
+                        company_id=company_id,
+                        prefix="LVP",
+                    ),
                     "is_active": True,
                     "created_at": now,
                     "updated_at": now,

@@ -38,9 +38,9 @@ async def _register_tenant(
 
 
 async def _create_shift(
-    client: AsyncClient, headers: dict[str, str], code: str = "GEN", **extra: Any
+    client: AsyncClient, headers: dict[str, str], **extra: Any
 ) -> dict[str, Any]:
-    payload = {"code": code, "name": "General Shift", **extra}
+    payload = {"name": "General Shift", **extra}
     response = await client.post("/v1/shifts", headers=headers, json=payload)
     assert response.status_code == 201, response.text
     return dict(response.json()["data"])
