@@ -44,6 +44,7 @@ import {
   type ShiftFormValues,
 } from "@/lib/shift/validate-shift";
 import {
+  EMPTY_SHIFT_VERSION_FORM_VALUES,
   buildShiftVersionPatch,
   mapShiftVersionApiErrors,
   shiftVersionToFormValues,
@@ -93,6 +94,12 @@ export default function ShiftDetailPage() {
   const [formErrors, setFormErrors] = useState<ShiftFormErrors>({});
   const [saving, setSaving] = useState(false);
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
+  // Schedule edited alongside the name on the Overview tab; saved into the draft version.
+  const [editSchedule, setEditSchedule] = useState<ShiftVersionFormValues | null>(null);
+  const [editScheduleErrors, setEditScheduleErrors] = useState<ShiftVersionFormErrors>({});
+  const [startingEdit, setStartingEdit] = useState(false);
+  // Snapshot of the rules when Edit opened, so Save can tell whether they were touched.
+  const [editBaseline, setEditBaseline] = useState<string | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -214,53 +221,104 @@ export default function ShiftDetailPage() {
 
   // --- Identity (Overview) editing ---
 
-  function startEditing() {
+  /** Edit opens the name and the whole schedule at once. The schedule starts from the open draft,
+   * else a copy of the published version, else blank — so there is no separate "create draft"
+   * step. */
+  async function startEditing() {
     if (!shift) return;
-    setFormValues(shiftToFormValues(shift));
-    setFormErrors({});
-    setStaleMessage(null);
-    setEditing(true);
+    setStartingEdit(true);
+    try {
+      setVersionsPage(1);
+      const loaded = await loadVersions(1);
+      if (!loaded) return;
+      const openDraft = loaded.find((v) => v.status === "DRAFT") ?? null;
+      const published =
+        loaded.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
+      const source = openDraft ?? published;
+      const schedule = source
+        ? shiftVersionToFormValues(source)
+        : EMPTY_SHIFT_VERSION_FORM_VALUES;
+      const initial = openDraft ? schedule : { ...schedule, effectiveFrom: "" };
+      setEditSchedule(initial);
+      setEditBaseline(JSON.stringify(initial));
+      setEditScheduleErrors({});
+      setFormValues(shiftToFormValues(shift));
+      setFormErrors({});
+      setStaleMessage(null);
+      setEditing(true);
+    } finally {
+      setStartingEdit(false);
+    }
   }
 
   function cancelEditing() {
     setEditing(false);
     setFormValues(null);
+    setEditSchedule(null);
+    setEditBaseline(null);
     setFormErrors({});
+    setEditScheduleErrors({});
     setStaleMessage(null);
   }
 
   async function handleSave() {
-    if (!shift || !formValues) return;
+    if (!shift || !formValues || !editSchedule) return;
 
     const clientErrors = validateShiftForm(formValues);
-    if (Object.keys(clientErrors).length > 0) {
+    const rulesChanged = JSON.stringify(editSchedule) !== editBaseline;
+    const scheduleErrors = rulesChanged ? validateShiftVersionForm(editSchedule) : {};
+    if (Object.keys(clientErrors).length > 0 || Object.keys(scheduleErrors).length > 0) {
       setFormErrors(clientErrors);
-      return;
-    }
-
-    const patch = buildUpdatePatch(formValues, shift);
-    if (Object.keys(patch).length === 0) {
-      setEditing(false);
-      setFormValues(null);
-      toast({ title: "No changes to save", variant: "default" });
+      setEditScheduleErrors(scheduleErrors);
+      toast({ title: "Fix the highlighted fields", variant: "danger" });
       return;
     }
 
     setSaving(true);
     setFormErrors({});
+    setEditScheduleErrors({});
     setStaleMessage(null);
     try {
-      const updated = await apiClient.patch<Shift>(
-        `/shifts/${shift.id}`,
-        patch,
-        {
+      const patch = buildUpdatePatch(formValues, shift);
+      if (Object.keys(patch).length > 0) {
+        const updated = await apiClient.patch<Shift>(`/shifts/${shift.id}`, patch, {
           ifMatch: String(shift.version),
-        },
+        });
+        setShift(updated);
+      }
+
+      if (!rulesChanged) {
+        setEditing(false);
+        setFormValues(null);
+        setEditSchedule(null);
+        setEditBaseline(null);
+        toast(
+          Object.keys(patch).length > 0
+            ? { title: "Shift saved", variant: "success" }
+            : { title: "No changes to save", variant: "default" },
+        );
+        return;
+      }
+
+      // No open draft yet: create an empty one, then fill it with the same PATCH an existing
+      // draft gets (the draft builder diffs breaks/duty blocks against the row it patches).
+      const target =
+        draft ?? (await apiClient.post<ShiftVersion>(`/shifts/${params.id}/versions`, {}));
+      const savedDraft = await apiClient.patch<ShiftVersion>(
+        `/shifts/${params.id}/versions/${target.id}`,
+        buildShiftVersionPatch(editSchedule, target),
+        { ifMatch: String(target.version) },
       );
-      setShift(updated);
+      const upsert = (prev: ShiftVersion[] | null) =>
+        [...(prev ?? []).filter((v) => v.id !== savedDraft.id), savedDraft];
+      setVersions(upsert);
+      setLatestVersions(upsert);
+      setDraftValues(shiftVersionToFormValues(savedDraft));
       setEditing(false);
       setFormValues(null);
-      toast({ title: "Shift saved", variant: "success" });
+      setEditSchedule(null);
+      setEditBaseline(null);
+      toast({ title: "Saved as a draft — publish it from the Versions tab", variant: "success" });
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409 && err.code === "STALE_RESOURCE") {
@@ -269,6 +327,7 @@ export default function ShiftDetailPage() {
         }
         if (err.status === 422) {
           setFormErrors({ name: getFieldError(err.details, "name") });
+          setEditScheduleErrors(mapShiftVersionApiErrors(err.details));
           return;
         }
         if (err.status === 403) {
@@ -288,10 +347,13 @@ export default function ShiftDetailPage() {
   }
 
   async function reloadLatest() {
-    const latest = await loadShift();
+    setVersionsPage(1);
+    const [latest] = await Promise.all([loadShift(), loadVersions(1)]);
     if (latest) {
       setEditing(false);
       setFormValues(null);
+      setEditSchedule(null);
+      setDraftValues(null);
       setStaleMessage(null);
       toast({ title: "Reloaded", variant: "success" });
     }
@@ -467,7 +529,7 @@ export default function ShiftDetailPage() {
 
       <PageHeader
         title={shift?.name ?? "Shift"}
-        description="Identity on the Overview tab; the actual schedule (timings, breaks, duty blocks) lives on the Versions tab."
+        description="Edit the name and the whole schedule (timings, breaks, duty blocks) together; publish the saved draft from the Versions tab."
         actions={
           canManage && shift && !editing && tab === "overview" ? (
             <div className="flex items-center gap-2">
@@ -485,8 +547,8 @@ export default function ShiftDetailPage() {
               >
                 Delete
               </Button>
-              <Button type="button" onClick={startEditing}>
-                Edit
+              <Button type="button" onClick={() => void startEditing()} disabled={startingEdit}>
+                {startingEdit ? "Loading…" : "Edit"}
               </Button>
             </div>
           ) : null
@@ -555,12 +617,18 @@ export default function ShiftDetailPage() {
                   />
                 ) : null}
 
-                {editing && formValues ? (
+                {editing && formValues && editSchedule ? (
                   <div className="space-y-6">
                     <ShiftForm
                       values={formValues}
                       errors={formErrors}
                       onChange={setFormValues}
+                    />
+                    <ShiftVersionForm
+                      values={editSchedule}
+                      errors={editScheduleErrors}
+                      onChange={setEditSchedule}
+                      weeklyOffPatterns={weeklyOffPatterns}
                     />
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -568,7 +636,7 @@ export default function ShiftDetailPage() {
                         onClick={() => void handleSave()}
                         disabled={saving}
                       >
-                        {saving ? "Saving…" : "Save changes"}
+                        {saving ? "Saving…" : "Save"}
                       </Button>
                       <Button
                         type="button"
@@ -630,7 +698,7 @@ export default function ShiftDetailPage() {
                       </div>
                     </dl>
                     <p className="text-xs text-foreground-muted">
-                      Configure timings and breaks on the{" "}
+                      Click Edit to set the name and the full schedule. Publish and history are on the{" "}
                       <button
                         type="button"
                         className="underline"

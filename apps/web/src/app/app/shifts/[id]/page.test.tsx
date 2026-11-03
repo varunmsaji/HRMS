@@ -158,17 +158,17 @@ describe("ShiftDetailPage", () => {
     expect(screen.queryByLabelText(/shift code/i)).not.toBeInTheDocument();
   });
 
-  it("saves identity changes with the current If-Match version", async () => {
+  it("renames the shift without touching its draft when the schedule is left alone", async () => {
     mockLoad(sampleShift);
     mockedPatch.mockResolvedValueOnce({ ...sampleShift, name: "Renamed Shift", version: 2 });
     const user = userEvent.setup();
     render(<ShiftDetailPage />);
 
     await user.click(await screen.findByRole("button", { name: /^edit$/i }));
-    const nameInput = screen.getByLabelText(/shift name/i);
+    const nameInput = await screen.findByLabelText(/shift name/i);
     await user.clear(nameInput);
     await user.type(nameInput, "Renamed Shift");
-    await user.click(screen.getByRole("button", { name: /save changes/i }));
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
     expect(mockedPatch).toHaveBeenCalledWith(
@@ -176,7 +176,63 @@ describe("ShiftDetailPage", () => {
       { name: "Renamed Shift" },
       { ifMatch: "1" },
     );
+    expect(mockedPost).not.toHaveBeenCalled();
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
+  });
+
+  it("saves the name and the schedule together into the open draft", async () => {
+    mockLoad(sampleShift);
+    mockedPatch
+      .mockResolvedValueOnce({ ...sampleShift, name: "Renamed Shift", version: 2 })
+      .mockResolvedValueOnce({ ...draftVersion, shift_type: "FIXED", version: 2 });
+    const user = userEvent.setup();
+    render(<ShiftDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^edit$/i }));
+    const nameInput = await screen.findByLabelText(/shift name/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, "Renamed Shift");
+    await user.selectOptions(screen.getByLabelText(/^type/i), "FIXED");
+    await user.type(screen.getByLabelText(/start time/i), "09:00");
+    await user.type(screen.getByLabelText(/end time/i), "18:00");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(2));
+    expect(mockedPatch).toHaveBeenNthCalledWith(
+      1,
+      "/shifts/shift-1",
+      { name: "Renamed Shift" },
+      { ifMatch: "1" },
+    );
+    expect(mockedPatch).toHaveBeenNthCalledWith(
+      2,
+      "/shifts/shift-1/versions/version-1",
+      expect.objectContaining({ shift_type: "FIXED", start_time: "09:00", end_time: "18:00" }),
+      { ifMatch: "1" },
+    );
+    expect(mockedPost).not.toHaveBeenCalled();
+  });
+
+  it("creates the draft automatically when none exists", async () => {
+    mockLoad({ ...sampleShift, draft_version_id: null }, []);
+    mockedPost.mockResolvedValueOnce({ ...draftVersion, id: "version-9" });
+    mockedPatch.mockResolvedValueOnce({ ...draftVersion, id: "version-9", shift_type: "FIXED", version: 2 });
+    const user = userEvent.setup();
+    render(<ShiftDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^edit$/i }));
+    await user.selectOptions(await screen.findByLabelText(/^type/i), "FIXED");
+    await user.type(screen.getByLabelText(/start time/i), "09:00");
+    await user.type(screen.getByLabelText(/end time/i), "18:00");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
+    expect(mockedPost).toHaveBeenCalledWith("/shifts/shift-1/versions", {});
+    expect(mockedPatch).toHaveBeenCalledWith(
+      "/shifts/shift-1/versions/version-9",
+      expect.objectContaining({ shift_type: "FIXED" }),
+      { ifMatch: "1" },
+    );
   });
 
   it("deactivates the shift after confirmation", async () => {
