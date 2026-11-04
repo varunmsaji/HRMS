@@ -26,6 +26,17 @@ export const SCOPE_TYPES = [
 ] as const;
 export type ScopeType = (typeof SCOPE_TYPES)[number];
 
+export const SCOPE_TYPE_LABELS: Record<ScopeType, string> = {
+  COMPANY: "Whole company",
+  LEGAL_ENTITY: "Legal entity",
+  BRANCH: "Branch",
+  DEPARTMENT: "Department",
+  GRADE: "Grade",
+  DESIGNATION: "Designation",
+  SHIFT: "Shift",
+  EMPLOYEE: "Employee",
+};
+
 export interface PolicyAssignment {
   id: string;
   company_id: string;

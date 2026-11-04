@@ -1,7 +1,8 @@
 "use client";
 
 import { Link2, Plus } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
@@ -10,12 +11,14 @@ import { FormField } from "@/components/common/form-field";
 import { BusyRegion } from "@/components/common/busy-region";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
+import { EmployeeSelect } from "@/components/employee/employee-select";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -39,10 +42,14 @@ import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
+import { businessToday } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
+import { employeeOptionName, useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import {
   POLICY_KIND_LABELS,
   POLICY_KIND_LIST_PATH,
   POLICY_KINDS,
+  SCOPE_TYPE_LABELS,
   SCOPE_TYPES,
   type PolicyAssignment,
   type PolicyKind,
@@ -54,6 +61,7 @@ interface NamedOption {
   name?: string;
   title?: string;
   leave_type_id?: string;
+  is_active?: boolean;
 }
 
 function optionLabel(option: NamedOption): string {
@@ -100,6 +108,47 @@ function needsImpactPreview(kind: PolicyKind): boolean {
   return kind === "WORK_CALENDAR" || kind === "WEEKLY_OFF";
 }
 
+/** The four versioned kinds can only be assigned once published; the API filters them. */
+function assignableOptionsPath(kind: PolicyKind): string {
+  return needsImpactPreview(kind)
+    ? POLICY_KIND_LIST_PATH[kind]
+    : `${POLICY_KIND_LIST_PATH[kind]}?assignable=true`;
+}
+
+/** Mirrors `end_policy_assignment`: the company-wide row is the safety net, and calendar kinds
+ * change day classification so they can only be replaced through the impact preview. */
+function canEndAssignment(assignment: PolicyAssignment): boolean {
+  return (
+    assignment.effective_to === null &&
+    assignment.scope_type !== "COMPANY" &&
+    !needsImpactPreview(assignment.policy_kind)
+  );
+}
+
+type NameById = Record<string, string>;
+
+function toNames(options: NamedOption[]): NameById {
+  return Object.fromEntries(options.map((option) => [option.id, optionLabel(option)]));
+}
+
+/** The open assignment a new one would replace; the API needs its version to close it. Asked of
+ * the server because the table only holds one filtered page. */
+async function findOpenAssignment(
+  kind: PolicyKind,
+  scopeType: ScopeType,
+  scopeId: string | null,
+  leaveTypeId?: string,
+): Promise<PolicyAssignment | null> {
+  const { data } = await apiClient.getList<PolicyAssignment>("/policy-assignments", {
+    policy_kind: kind,
+    scope_type: scopeType,
+    scope_id: scopeId ?? undefined,
+    leave_type_id: leaveTypeId,
+    current_only: "true",
+  });
+  return data[0] ?? null;
+}
+
 function pickKey(kind: PolicyKind, leaveTypeId?: string): string {
   return leaveTypeId ? `${kind}:${leaveTypeId}` : kind;
 }
@@ -114,6 +163,8 @@ interface PickRow {
 
 export default function PolicyAssignmentsPage() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const directory = useEmployeeDirectory();
   const [impact, setImpact] = useState<{
     change: ProposedChange;
     title: string;
@@ -136,6 +187,20 @@ export default function PolicyAssignmentsPage() {
   const [scopeOptions, setScopeOptions] = useState<NamedOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  const [policyNames, setPolicyNames] = useState<NameById>({});
+  const [leaveTypeNames, setLeaveTypeNames] = useState<NameById>({});
+  const [scopeNames, setScopeNames] = useState<NameById>({});
+
+  const [ending, setEnding] = useState<PolicyAssignment | null>(null);
+  const [endDate, setEndDate] = useState("");
+  const [endSaving, setEndSaving] = useState(false);
+  const [endError, setEndError] = useState<string | null>(null);
+
+  const employeeNames = useMemo(
+    () => Object.fromEntries(directory.employees.map((e) => [e.id, employeeOptionName(e)])),
+    [directory.employees],
+  );
 
   const pickRows: PickRow[] = [
     ...SINGLE_ROW_KINDS.map((kind) => ({
@@ -193,11 +258,26 @@ export default function PolicyAssignmentsPage() {
     void loadAssignments(filterKind, page);
   }, [filterKind, page, loadAssignments]);
 
+  // Names for the table: every policy and scope, including inactive ones older rows point at.
+  useEffect(() => {
+    const load = (path: string) => apiClient.get<NamedOption[]>(path).catch(() => [] as NamedOption[]);
+    void Promise.all(POLICY_KINDS.map((kind) => load(POLICY_KIND_LIST_PATH[kind]))).then((lists) =>
+      setPolicyNames(toNames(lists.flat())),
+    );
+    void load("/leave-types").then((list) => setLeaveTypeNames(toNames(list)));
+    void Promise.all(Object.values(SCOPE_LIST_PATH).map(load)).then((lists) =>
+      setScopeNames(toNames(lists.flat())),
+    );
+  }, []);
+
   useEffect(() => {
     if (!createOpen) return;
     void Promise.all([
       ...POLICY_KINDS.map((kind) =>
-        apiClient.get<NamedOption[]>(POLICY_KIND_LIST_PATH[kind]).catch(() => [] as NamedOption[]),
+        apiClient
+          .get<NamedOption[]>(assignableOptionsPath(kind))
+          .then((options) => options.filter((option) => option.is_active !== false))
+          .catch(() => [] as NamedOption[]),
       ),
       apiClient.get<NamedOption[]>("/leave-types").catch(() => [] as NamedOption[]),
     ]).then((results) => {
@@ -239,7 +319,7 @@ export default function PolicyAssignmentsPage() {
   }
 
   /** Work Calendar / Weekly-Off rows: each one is previewed and confirmed before it is applied. */
-  function runImpactQueue(
+  async function runImpactQueue(
     rows: PickRow[],
     base: Record<string, unknown>,
     createdSoFar: number,
@@ -250,19 +330,23 @@ export default function PolicyAssignmentsPage() {
       return;
     }
     const body = { ...base, policy_kind: row.kind, policy_id: form.picks[row.key] };
-    const current = (assignments ?? []).find(
-      (a) =>
-        a.policy_kind === row.kind &&
-        a.scope_type === base.scope_type &&
-        (a.scope_id ?? null) === base.scope_id &&
-        a.effective_to === null,
-    );
+    let current: PolicyAssignment | null;
+    try {
+      current = await findOpenAssignment(
+        row.kind,
+        form.scopeType,
+        form.scopeType === "COMPANY" ? null : form.scopeId,
+      );
+    } catch (err) {
+      setFormError(`${row.label}: ${describeApiError(err)}`);
+      return;
+    }
     setImpact({
       change: { change_type: "ASSIGNMENT_CREATE", body, expected_version: current?.version },
       title: `Create assignment — ${row.label}`,
       onDone: () => {
         setForm((f) => ({ ...f, picks: { ...f.picks, [row.key]: "" } }));
-        runImpactQueue(rest, base, createdSoFar + 1);
+        void runImpactQueue(rest, base, createdSoFar + 1);
       },
     });
   }
@@ -281,9 +365,10 @@ export default function PolicyAssignmentsPage() {
       setFormError("Effective from is required.");
       return;
     }
+    const scopeId = form.scopeType === "COMPANY" ? null : form.scopeId;
     const base = {
       scope_type: form.scopeType,
-      scope_id: form.scopeType === "COMPANY" ? null : form.scopeId,
+      scope_id: scopeId,
       effective_from: form.effectiveFrom,
       reason: form.reason.trim() || null,
     };
@@ -295,12 +380,17 @@ export default function PolicyAssignmentsPage() {
     let created = 0;
     for (const row of chosen.filter((r) => !needsImpactPreview(r.kind))) {
       try {
-        await apiClient.post<PolicyAssignment>("/policy-assignments", {
-          ...base,
-          policy_kind: row.kind,
-          policy_id: form.picks[row.key],
-          leave_type_id: row.leaveTypeId,
-        });
+        const open = await findOpenAssignment(row.kind, form.scopeType, scopeId, row.leaveTypeId);
+        await apiClient.post<PolicyAssignment>(
+          "/policy-assignments",
+          {
+            ...base,
+            policy_kind: row.kind,
+            policy_id: form.picks[row.key],
+            leave_type_id: row.leaveTypeId,
+          },
+          open ? { ifMatch: String(open.version) } : undefined,
+        );
         created += 1;
         remainingPicks[row.key] = "";
       } catch (err) {
@@ -317,11 +407,51 @@ export default function PolicyAssignmentsPage() {
       );
       return;
     }
-    runImpactQueue(
+    await runImpactQueue(
       chosen.filter((r) => needsImpactPreview(r.kind)),
       base,
       created,
     );
+  }
+
+  function openEnd(assignment: PolicyAssignment) {
+    const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
+    setEnding(assignment);
+    setEndDate(today < assignment.effective_from ? assignment.effective_from : today);
+    setEndError(null);
+  }
+
+  async function handleEnd() {
+    if (!ending) return;
+    if (!endDate) {
+      setEndError("Last day is required.");
+      return;
+    }
+    setEndSaving(true);
+    setEndError(null);
+    try {
+      await apiClient.post<PolicyAssignment>(
+        `/policy-assignments/${ending.id}/end`,
+        { effective_to: endDate },
+        { ifMatch: String(ending.version) },
+      );
+      setEnding(null);
+      toast({ title: "Assignment ended", variant: "success" });
+      await loadAssignments(filterKind, page);
+    } catch (err) {
+      setEndError(describeApiError(err));
+    } finally {
+      setEndSaving(false);
+    }
+  }
+
+  function scopeLabel(assignment: PolicyAssignment): string {
+    const label = SCOPE_TYPE_LABELS[assignment.scope_type];
+    if (!assignment.scope_id) return label;
+    if (assignment.scope_type === "EMPLOYEE") {
+      return `${label}: ${employeeNames[assignment.scope_id] ?? "not in loaded list"}`;
+    }
+    return `${label}: ${scopeNames[assignment.scope_id] ?? "unavailable"}`;
   }
 
   return (
@@ -401,6 +531,7 @@ export default function PolicyAssignmentsPage() {
                 <TableHead>Policy &amp; Scope</TableHead>
                 <TableHead>Effective Range</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -408,13 +539,25 @@ export default function PolicyAssignmentsPage() {
                 <TableRow key={a.id}>
                   <TableCell>
                     <p className="font-medium text-foreground">
-                      {POLICY_KIND_LABELS[a.policy_kind]} → {a.scope_type}
-                      {a.scope_id ? ` (${a.scope_id})` : ""}
+                      {POLICY_KIND_LABELS[a.policy_kind]} → {scopeLabel(a)}
                     </p>
                     <p className="mt-0.5 text-xs text-foreground-muted">
-                      Policy {a.policy_id}
-                      {a.leave_type_id ? ` · Leave type ${a.leave_type_id}` : ""}
+                      {policyNames[a.policy_id] ?? "Policy name unavailable"}
+                      {a.leave_type_id
+                        ? ` · ${leaveTypeNames[a.leave_type_id] ?? "Leave type unavailable"}`
+                        : ""}
                       {a.reason ? ` · ${a.reason}` : ""}
+                      {a.scope_type === "EMPLOYEE" && a.scope_id ? (
+                        <>
+                          {" · "}
+                          <Link
+                            href={`/app/employees/${a.scope_id}`}
+                            className="text-primary hover:underline"
+                          >
+                            Open profile
+                          </Link>
+                        </>
+                      ) : null}
                     </p>
                   </TableCell>
                   <TableCell className="tabular-nums text-xs text-foreground-secondary">
@@ -431,6 +574,13 @@ export default function PolicyAssignmentsPage() {
                         </>
                       )}
                     </Badge>
+                  </TableCell>
+                  <TableCell align="right">
+                    {canEndAssignment(a) ? (
+                      <Button type="button" variant="outline" size="sm" onClick={() => openEnd(a)}>
+                        End
+                      </Button>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -463,14 +613,14 @@ export default function PolicyAssignmentsPage() {
               >
                 {SCOPE_TYPES.map((scope) => (
                   <option key={scope} value={scope}>
-                    {scope}
+                    {SCOPE_TYPE_LABELS[scope]}
                   </option>
                 ))}
               </NativeSelect>
             </FormField>
 
             {form.scopeType !== "COMPANY" && SCOPE_LIST_PATH[form.scopeType] ? (
-              <FormField id="assign-scope-id" label={`${form.scopeType} target`} required>
+              <FormField id="assign-scope-id" label={SCOPE_TYPE_LABELS[form.scopeType]} required>
                 <NativeSelect
                   value={form.scopeId}
                   onChange={(e) => setForm((f) => ({ ...f, scopeId: e.target.value }))}
@@ -486,15 +636,11 @@ export default function PolicyAssignmentsPage() {
             ) : null}
 
             {form.scopeType === "EMPLOYEE" ? (
-              <FormField
-                id="assign-employee-id"
-                label="Employee ID"
-                required
-                description="Paste the employee's ID (visible on their profile page URL)."
-              >
-                <Input
+              <FormField id="assign-employee-id" label="Employee" required>
+                <EmployeeSelect
+                  directory={directory}
                   value={form.scopeId}
-                  onChange={(e) => setForm((f) => ({ ...f, scopeId: e.target.value }))}
+                  onChange={(scopeId) => setForm((f) => ({ ...f, scopeId }))}
                 />
               </FormField>
             ) : null}
@@ -513,11 +659,16 @@ export default function PolicyAssignmentsPage() {
                 <p className="text-xs text-foreground-muted">
                   Pick a policy for each kind you want to assign. Rows left on &quot;No change&quot;
                   are skipped. A group follows one policy of each kind, so a new one replaces the
-                  current one from the effective date.
+                  current one from the effective date. Only active, published policies are listed.
                 </p>
               </div>
               {pickRows.map((row) => (
-                <FormField key={row.key} id={`assign-pick-${row.key}`} label={row.label}>
+                <FormField
+                  key={row.key}
+                  id={`assign-pick-${row.key}`}
+                  label={row.label}
+                  description={row.options.length === 0 ? "Nothing to assign yet." : undefined}
+                >
                   <NativeSelect
                     value={form.picks[row.key] ?? ""}
                     onChange={(e) =>
@@ -565,6 +716,40 @@ export default function PolicyAssignmentsPage() {
                 : chosenCount > 1
                   ? `Create ${chosenCount} assignments`
                   : "Create assignment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={ending !== null} onOpenChange={(open) => (!open && !endSaving ? setEnding(null) : null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>End this assignment?</DialogTitle>
+            <DialogDescription>
+              {ending
+                ? `${POLICY_KIND_LABELS[ending.policy_kind]} for ${scopeLabel(ending)}. After the last day, these people follow the next wider assignment, ending at the company-wide one.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <FormField id="end-assignment-date" label="Last day" required>
+            <Input
+              type="date"
+              min={ending?.effective_from}
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </FormField>
+          {endError ? <p className="text-sm text-danger">{endError}</p> : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEnding(null)} disabled={endSaving}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleEnd()}
+              disabled={endSaving}
+            >
+              {endSaving ? "Ending…" : "End assignment"}
             </Button>
           </DialogFooter>
         </DialogContent>
