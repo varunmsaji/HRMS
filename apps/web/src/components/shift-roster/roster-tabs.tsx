@@ -7,6 +7,7 @@ const TABS = [
   { href: "/app/rosters", key: "entries", label: "Roster entries" },
   { href: "/app/rosters/calendar", key: "calendar", label: "Calendar" },
   { href: "/app/rosters/grid", key: "grid", label: "Workforce roster" },
+  { href: "/app/rosters/board", key: "board", label: "Shift board" },
 ] as const;
 
 /** One "Shift Rosters" destination in the sidebar; this strip switches between its views. */
