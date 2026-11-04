@@ -74,3 +74,75 @@ export const POLICY_KIND_LIST_PATH: Record<PolicyKind, string> = {
   REGULARIZATION_POLICY: "/regularization-policies",
   LEAVE_POLICY: "/leave-policies",
 };
+
+/** Mirrors `PolicyCoverageRead`: for one scope, what is set there and what applies on `as_of`. */
+export interface PolicyCoverageOwn {
+  assignment_id: string;
+  policy_id: string;
+  policy_name: string | null;
+  effective_from: string;
+  version: number;
+}
+
+export interface PolicyCoverageApplied {
+  policy_id: string;
+  policy_name: string | null;
+  scope_type: ScopeType;
+  scope_id: string | null;
+  scope_name: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  has_rules: boolean;
+}
+
+export interface PolicyCoverageRow {
+  policy_kind: PolicyKind;
+  leave_type_id: string | null;
+  leave_type_name: string | null;
+  own: PolicyCoverageOwn | null;
+  applied: PolicyCoverageApplied | null;
+}
+
+export interface PolicyCoverage {
+  scope_type: ScopeType;
+  scope_id: string | null;
+  as_of: string;
+  rows: PolicyCoverageRow[];
+}
+
+export function coveragePath(scopeType: ScopeType, scopeId: string | null, asOf: string): string {
+  const query = new URLSearchParams({ scope_type: scopeType, as_of: asOf });
+  if (scopeId) query.set("scope_id", scopeId);
+  return `/policy-assignments/coverage?${query.toString()}`;
+}
+
+export function coverageRowKey(row: { policy_kind: PolicyKind; leave_type_id: string | null }): string {
+  return row.leave_type_id ? `${row.policy_kind}:${row.leave_type_id}` : row.policy_kind;
+}
+
+export function coverageRowLabel(row: PolicyCoverageRow): string {
+  return row.leave_type_name
+    ? `Leave Policy — ${row.leave_type_name}`
+    : POLICY_KIND_LABELS[row.policy_kind];
+}
+
+/** Work Calendar / Weekly-Off changes alter day types, so they go through the impact preview. */
+export function needsImpactPreview(kind: PolicyKind): boolean {
+  return kind === "WORK_CALENDAR" || kind === "WEEKLY_OFF";
+}
+
+/** Mirrors `end_policy_assignment`: the company-wide row is the safety net, and calendar kinds can
+ * only be replaced through the impact preview. */
+export function canEndAssignment(
+  policyKind: PolicyKind,
+  scopeType: ScopeType,
+  effectiveTo: string | null = null,
+): boolean {
+  return effectiveTo === null && scopeType !== "COMPANY" && !needsImpactPreview(policyKind);
+}
+
+/** Where a coverage row's policy comes from, in words. */
+export function appliedSourceLabel(applied: PolicyCoverageApplied): string {
+  const label = SCOPE_TYPE_LABELS[applied.scope_type];
+  return applied.scope_name ? `${label}: ${applied.scope_name}` : label;
+}
