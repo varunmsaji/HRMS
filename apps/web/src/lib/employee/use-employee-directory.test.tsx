@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api/client", () => ({ apiClient: { getList: vi.fn(), get: vi.fn() } }));
@@ -108,5 +109,25 @@ describe("useEmployeeDirectory", () => {
     await waitFor(() => expect(mockedGetList).toHaveBeenCalledTimes(1));
     const signal = (mockedGetList.mock.calls[0]?.[2] as { signal: AbortSignal }).signal;
     expect(signal.aborted).toBe(false);
+  });
+
+  it("finishes loading under StrictMode's mount/unmount/mount, where the first request is aborted", async () => {
+    mockedGetList.mockImplementation(((_path: string, query: { page: number; per_page: number }, opts: { signal: AbortSignal }) =>
+      new Promise((resolve, reject) => {
+        opts.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        setTimeout(
+          () =>
+            resolve({
+              data: ALL.slice(0, query.per_page),
+              pagination: { page: 1, per_page: query.per_page, total: TOTAL, total_pages: 4 },
+              meta: { request_id: "r" },
+            }),
+          0,
+        );
+      })) as never);
+
+    const { result } = renderHook(() => useEmployeeDirectory(), { wrapper: StrictMode });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.employees).toHaveLength(100);
   });
 });

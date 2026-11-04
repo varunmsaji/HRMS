@@ -27,6 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
@@ -196,12 +197,7 @@ export default function GradesPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/grades/${grade.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View
-                    </Link>
+                    <TableRowAction href={`/app/grades/${grade.id}`}>View</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

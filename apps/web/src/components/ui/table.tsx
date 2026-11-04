@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
+import { ChevronRight } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -22,7 +24,7 @@ const TableContainer = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "overflow-hidden rounded-lg border border-border bg-surface",
+      "overflow-hidden rounded-xl border border-border bg-surface shadow-elevation-1",
       className
     )}
     {...props}
@@ -120,7 +122,7 @@ const TableHeader = React.forwardRef<
   <thead
     ref={ref}
     className={cn(
-      "border-b border-border bg-surface-secondary text-xs font-semibold uppercase tracking-wider text-foreground-secondary [&_tr]:border-b",
+      "border-b border-border bg-surface-secondary/70 [&_tr]:border-b",
       className
     )}
     {...props}
@@ -162,7 +164,7 @@ const TableRow = React.forwardRef<
   <tr
     ref={ref}
     className={cn(
-      "border-b border-border transition-colors duration-motion-instant hover:bg-muted/50 data-[state=selected]:bg-primary-subtle/50",
+      "group/row border-b border-border-subtle transition-colors duration-motion-instant hover:bg-primary-subtle/40 data-[state=selected]:bg-primary-subtle/60",
       className
     )}
     {...props}
@@ -180,7 +182,7 @@ const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
       ref={ref}
       scope="col"
       className={cn(
-        "h-9 px-4 py-2 align-middle text-xs font-semibold uppercase tracking-wider text-foreground-muted",
+        "h-10 whitespace-nowrap px-3 py-2 align-middle text-2xs font-semibold uppercase tracking-wider text-foreground-muted first:pl-5 last:pr-5",
         align === "right" && "text-right",
         align === "center" && "text-center",
         align === "left" && "text-left",
@@ -195,14 +197,17 @@ TableHead.displayName = "TableHead"
 interface TableCellProps extends React.TdHTMLAttributes<HTMLTableCellElement> {
   align?: "left" | "center" | "right"
   numeric?: boolean
+  /** Keep the content on one line (codes, dates, badges, short names). Long free text should wrap. */
+  nowrap?: boolean
 }
 
 const TableCell = React.forwardRef<HTMLTableCellElement, TableCellProps>(
-  ({ className, align = "left", numeric = false, ...props }, ref) => (
+  ({ className, align = "left", numeric = false, nowrap = false, ...props }, ref) => (
     <td
       ref={ref}
       className={cn(
-        "px-4 py-2.5 align-middle text-sm text-foreground",
+        "px-3 py-3 align-middle text-sm text-foreground first:pl-5 last:pr-5",
+        nowrap && "whitespace-nowrap",
         (align === "right" || numeric) && "text-right tabular-nums",
         align === "center" && "text-center",
         align === "left" && !numeric && "text-left",
@@ -226,6 +231,93 @@ const TableCaption = React.forwardRef<
 ))
 TableCaption.displayName = "TableCaption"
 
+/**
+ * Two-line cell: a primary value with a quieter secondary line beneath it
+ * (e.g. designation over department). Gives a column hierarchy instead of one flat string.
+ */
+function TableCellStack({
+  primary,
+  secondary,
+  className,
+}: {
+  primary: React.ReactNode
+  secondary?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <div className="truncate text-sm font-medium text-foreground">{primary}</div>
+      {secondary ? <div className="mt-0.5 truncate text-xs text-foreground-muted">{secondary}</div> : null}
+    </div>
+  )
+}
+
+/** Identifier such as an employee or policy code: monospace, quiet, never wraps. */
+function TableCode({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-block whitespace-nowrap rounded-sm bg-muted px-1.5 py-0.5 font-mono text-2xs font-medium tracking-tight text-foreground-secondary",
+        className
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+/** Placeholder for a missing value — visibly quiet, and announced as "none" to screen readers. */
+function TableEmpty({ label = "None" }: { label?: string }) {
+  return (
+    <span className="text-foreground-disabled">
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">{label}</span>
+    </span>
+  )
+}
+
+/** Row-end action link ("View", "Open"): a small pill with a chevron that picks up the row hover. */
+function TableRowAction({
+  href,
+  children = "View",
+  className,
+}: {
+  href: string
+  children?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "inline-flex items-center gap-0.5 rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        className
+      )}
+    >
+      {children}
+      <ChevronRight className="h-3.5 w-3.5 transition-transform duration-motion-fast group-hover/row:translate-x-0.5" aria-hidden="true" />
+    </Link>
+  )
+}
+
+/** Row-end action that opens a dialog or runs in place (so no chevron): same pill as TableRowAction. */
+function TableRowActionButton({
+  className,
+  type = "button",
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type={type}
+      className={cn(
+        "inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
 export {
   TableContainer,
   TableToolbar,
@@ -237,4 +329,9 @@ export {
   TableRow,
   TableCell,
   TableCaption,
+  TableCellStack,
+  TableCode,
+  TableEmpty,
+  TableRowAction,
+  TableRowActionButton,
 }

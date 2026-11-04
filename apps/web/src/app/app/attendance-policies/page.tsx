@@ -28,6 +28,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -202,12 +203,7 @@ export default function AttendancePoliciesPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/attendance-policies/${policy.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Configure
-                    </Link>
+                    <TableRowAction href={`/app/attendance-policies/${policy.id}`}>Configure</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

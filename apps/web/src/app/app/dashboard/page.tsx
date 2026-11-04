@@ -66,7 +66,7 @@ function CompanyDashboard() {
   return (
     <div className="space-y-6">
       <section aria-label="Welcome">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Dashboard</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">Dashboard</h1>
         <p className="mt-1.5 text-sm text-foreground-secondary">
           Here&apos;s what&apos;s happening in {companyName} today.
         </p>

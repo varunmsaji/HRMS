@@ -72,7 +72,7 @@ function SidebarSignOut() {
   );
 }
 
-const SIDEBAR_BG = "bg-[#0b1530] text-slate-300";
+const SIDEBAR_BG = "bg-sidebar text-slate-300";
 
 /** Desktop (≥768px): persistent left sidebar + top bar, per docs/design/03_Navigation_System.md §2.
  * Below that, the sidebar collapses into a Sheet drawer opened from the top bar (§3–4). */
@@ -98,7 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         Skip to main content
       </a>
 
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-white/5 bg-[#0b1530] text-slate-300 md:flex print:hidden">
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-slate-300 md:flex print:hidden">
         <div className="flex h-16 shrink-0 items-center px-5">
           <SidebarBrand />
         </div>
@@ -123,7 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Menu className="h-4 w-4" aria-hidden="true" />
             </Button>
             <CompanyContext />
-            <div className="hidden h-4 w-px bg-border sm:block" aria-hidden="true" />
+            <div className="hidden h-4 w-px bg-border sm:block lg:hidden xl:block" aria-hidden="true" />
             <AppBreadcrumbs />
           </div>
           <CompanySearch />
@@ -139,7 +139,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           tabIndex={-1}
           className="flex-1 px-4 py-6 outline-none sm:px-6 lg:px-8 print:p-0"
         >
-          <div className="mx-auto w-full max-w-[1440px]">
+          <div className="mx-auto w-full max-w-[1680px]">
             <CompanyStatusBanner />
             {/* Keyed so arriving on the dashboard from any page replays the entrance; other routes
              * share one key and behave exactly as before. */}
@@ -151,7 +151,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
 
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <SheetContent side="left" className={`flex w-64 flex-col border-white/5 p-0 ${SIDEBAR_BG}`}>
+        <SheetContent side="left" className={`flex w-64 flex-col border-sidebar-border p-0 ${SIDEBAR_BG}`}>
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <div className="flex h-16 items-center px-5">
             <SidebarBrand />

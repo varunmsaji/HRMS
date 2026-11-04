@@ -27,6 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
@@ -228,12 +229,7 @@ export default function DepartmentsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/departments/${department.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View
-                    </Link>
+                    <TableRowAction href={`/app/departments/${department.id}`}>View</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

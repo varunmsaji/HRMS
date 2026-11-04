@@ -50,6 +50,10 @@
   --color-border: #e2e8f0;
   --color-border-strong: #cbd5e1;
 
+  /* Navigation sidebar — dark in both themes; in dark mode it is lifted off the page. */
+  --color-sidebar: #0b1530;
+  --color-sidebar-border: rgba(255, 255, 255, 0.05);
+
   /* Neutral Text Hierarchy */
   --color-foreground: #0f172a;
   --color-foreground-secondary: #334155;
@@ -115,6 +119,8 @@
     --color-border-subtle: rgba(226, 232, 240, 0.07);
     --color-border: rgba(226, 232, 240, 0.12);
     --color-border-strong: rgba(226, 232, 240, 0.22);
+    --color-sidebar: #131f45;
+    --color-sidebar-border: rgba(255, 255, 255, 0.1);
 
     --color-foreground: #f8fafc;
     --color-foreground-secondary: #cbd5e1;
@@ -176,6 +182,8 @@
   --color-border-subtle: rgba(226, 232, 240, 0.07);
   --color-border: rgba(226, 232, 240, 0.12);
   --color-border-strong: rgba(226, 232, 240, 0.22);
+  --color-sidebar: #131f45;
+  --color-sidebar-border: rgba(255, 255, 255, 0.1);
 
   --color-foreground: #f8fafc;
   --color-foreground-secondary: #cbd5e1;

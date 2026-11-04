@@ -57,7 +57,9 @@ export function useEmployeeDirectory({ enabled = true }: { enabled?: boolean } =
 
   const loadPage = useCallback(
     async (page: number) => {
-      if (inFlight.current) return;
+      // Only "load more" is de-duplicated; a first-page load supersedes (aborts) any request in
+      // flight, which is what StrictMode's mount/unmount/mount and `retry` rely on.
+      if (inFlight.current && page > 1) return;
       inFlight.current = true;
       const request = beginRequest();
       if (page === 1) setLoading(true);
@@ -86,8 +88,9 @@ export function useEmployeeDirectory({ enabled = true }: { enabled?: boolean } =
             : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
         );
       } finally {
-        inFlight.current = false;
+        // A superseded request must not clear state that now belongs to the newer one.
         if (request.isCurrent()) {
+          inFlight.current = false;
           setLoading(false);
           setLoadingMore(false);
         }

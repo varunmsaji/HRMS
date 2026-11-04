@@ -27,6 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
@@ -204,12 +205,7 @@ export default function HolidayCalendarsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/holiday-calendars/${calendar.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Manage holidays
-                    </Link>
+                    <TableRowAction href={`/app/holiday-calendars/${calendar.id}`}>Manage holidays</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

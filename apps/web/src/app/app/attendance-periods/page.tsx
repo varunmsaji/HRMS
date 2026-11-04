@@ -1,7 +1,6 @@
 "use client";
 
 import { Lock, Plus } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { CompanyDate } from "@/components/common/company-date";
@@ -21,6 +20,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
@@ -165,12 +165,7 @@ export default function AttendancePeriodsPage() {
                     {period.last_validation_status ?? "—"}
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/attendance-periods/${period.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View
-                    </Link>
+                    <TableRowAction href={`/app/attendance-periods/${period.id}`}>View</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

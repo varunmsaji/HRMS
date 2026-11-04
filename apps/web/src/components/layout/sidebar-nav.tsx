@@ -8,14 +8,21 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { useEmployeeMode } from "@/lib/auth/use-employee-mode";
 import { cn } from "@/lib/utils";
 
-const SETTINGS_HREFS = new Set(SETTINGS_ITEMS.map((item) => item.href));
-
 function matchesHref(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
   if (href === "/app/me" || href === "/app/dashboard") {
     return pathname === href;
   }
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** The single nav item that owns `pathname`: the longest matching href wins, so a parent route
+ * (`/app/rosters`) is not also highlighted while a more specific sibling (`/app/rosters/grid`)
+ * is current. */
+export function findActiveHref(pathname: string | null, hrefs: readonly string[]): string | undefined {
+  return hrefs
+    .filter((href) => matchesHref(pathname, href))
+    .sort((a, b) => b.length - a.length)[0];
 }
 
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
@@ -27,9 +34,10 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
   if (employeeMode) {
     // Longest match wins so /app/me/calendar highlights My Calendar, not My Profile.
-    const activeHref = EMPLOYEE_NAV_ITEMS.filter((i) => matchesHref(pathname, i.href)).sort(
-      (a, b) => b.href.length - a.href.length,
-    )[0]?.href;
+    const activeHref = findActiveHref(
+      pathname,
+      EMPLOYEE_NAV_ITEMS.map((i) => i.href),
+    );
     return (
       <nav className="flex flex-col gap-1.5 px-4 py-4" aria-label="Primary">
         {EMPLOYEE_NAV_ITEMS.map((item) => {
@@ -58,6 +66,13 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   }
 
   const activeSettingsItem = SETTINGS_ITEMS.find((item) => matchesHref(pathname, item.href));
+  const settingsActive = Boolean(activeSettingsItem) || matchesHref(pathname, "/app/settings");
+  const activePrimaryHref = findActiveHref(
+    pathname,
+    PRIMARY_NAV_GROUPS.flatMap((group) => group.items)
+      .filter((item) => item.href !== "/app/settings")
+      .map((item) => item.matchPrefix ?? item.href),
+  );
 
   return (
     <nav className="flex flex-col gap-5 px-3 py-4" aria-label="Primary">
@@ -69,16 +84,17 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 
         return (
           <div key={group.label} className="space-y-1">
-            <p className="px-2.5 pb-1 text-2xs font-semibold uppercase tracking-wider text-slate-500">
+            <p className="px-2.5 pb-1 text-2xs font-semibold uppercase tracking-wider text-slate-400">
               {group.label}
             </p>
             <div className="space-y-0.5">
               {visibleItems.map((item) => {
                 const isSettingsHub = item.href === "/app/settings";
+                // A settings screen under /app/payroll/* must not also light up Payroll: when a
+                // settings item owns the path, the Settings hub is the only active entry.
                 const active = isSettingsHub
-                  ? matchesHref(pathname, item.href) ||
-                    Array.from(SETTINGS_HREFS).some((href) => matchesHref(pathname, href))
-                  : matchesHref(pathname, item.matchPrefix ?? item.href);
+                  ? settingsActive
+                  : !activeSettingsItem && (item.matchPrefix ?? item.href) === activePrimaryHref;
                 const Icon = item.icon;
 
                 return (

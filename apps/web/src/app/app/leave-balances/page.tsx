@@ -1,6 +1,6 @@
 "use client";
 
-import { Wallet } from "lucide-react";
+import { ArrowLeft, Wallet } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { EmptyState } from "@/components/common/empty-state";
@@ -33,6 +33,7 @@ import {
   TableToolbar,
 } from "@/components/ui/table";
 import { EmployeeSelect } from "@/components/employee/employee-select";
+import { TeamBalanceMatrix } from "@/components/leave-balances/team-balance-matrix";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient, newIdempotencyKey } from "@/lib/api/client";
@@ -209,8 +210,13 @@ export default function LeaveBalancesPage() {
           ]}
         />
 
-        {view === "TEAM" ? (
-          <div className="w-full max-w-sm">
+        {view === "TEAM" && selectedEmployeeId ? (
+          <div className="flex w-full max-w-xl flex-wrap items-end justify-end gap-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => setSelectedEmployeeId("")}>
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              All employees
+            </Button>
+            <div className="w-full sm:w-80">
             <FormField id="leave-balances-employee" label="Employee">
               <EmployeeSelect
                 directory={directory}
@@ -219,12 +225,13 @@ export default function LeaveBalancesPage() {
                 onChange={setSelectedEmployeeId}
               />
             </FormField>
+            </div>
           </div>
         ) : null}
       </div>
 
       {!targetEmployeeId && view === "TEAM" ? (
-        <EmptyState icon={Wallet} title="Choose an employee to view their leave balance." />
+        <TeamBalanceMatrix directory={directory} onSelectEmployee={setSelectedEmployeeId} />
       ) : null}
 
       {!targetEmployeeId && view === "MINE" ? (

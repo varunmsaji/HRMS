@@ -16,7 +16,7 @@ export function CompanySearch() {
   }
 
   return (
-    <form onSubmit={onSubmit} role="search" className="relative hidden w-full max-w-sm lg:block">
+    <form onSubmit={onSubmit} role="search" className="relative hidden shrink-0 lg:block lg:w-60 xl:w-72">
       <Search
         className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted"
         aria-hidden="true"

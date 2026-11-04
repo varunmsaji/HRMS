@@ -32,6 +32,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
@@ -281,12 +282,7 @@ export default function PayRunsPage() {
                     <CompanyDate value={run.pay_date} />
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/payroll/pay-runs/${run.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View
-                    </Link>
+                    <TableRowAction href={`/app/payroll/pay-runs/${run.id}`}>View</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

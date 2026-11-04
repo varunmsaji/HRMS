@@ -1,7 +1,6 @@
 "use client";
 
 import { Download, Search, UserPlus, Users, X } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -30,10 +29,13 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableCellStack,
   TableContainer,
   TableHead,
+  TableEmpty,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { Skeleton, TableSkeleton } from "@/components/ui/skeleton";
@@ -461,70 +463,66 @@ export default function EmployeesPage() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
                   <TableHead>Employee</TableHead>
-                  <TableHead className="hidden sm:table-cell">Code</TableHead>
-                  <TableHead className="hidden md:table-cell">Designation</TableHead>
-                  <TableHead className="hidden md:table-cell">Department</TableHead>
+                  <TableHead className="hidden md:table-cell">Role</TableHead>
                   <TableHead className="hidden lg:table-cell">Reporting manager</TableHead>
                   <TableHead className="hidden lg:table-cell">Shift</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden sm:table-cell">State</TableHead>
-                  <TableHead align="right">Actions</TableHead>
+                  <TableHead align="right">
+                    <span className="sr-only">Actions</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredEmployees.map((employee) => (
-                  <TableRow key={employee.id}>
-                    <TableCell>
-                      <EmployeeIdentityCell
-                        name={employeeName(employee) || "—"}
-                        subtitle={
-                          <span className="md:hidden">
-                            {employee.employee_code}
-                            {employee.personal_email ? ` · ${employee.personal_email}` : ""}
-                          </span>
-                        }
-                        href={`/app/employees/${employee.id}`}
-                      />
-                    </TableCell>
-                    <TableCell className="hidden font-mono text-xs text-foreground-secondary sm:table-cell">
-                      {employee.employee_code}
-                    </TableCell>
-                    <TableCell className="hidden text-foreground-secondary md:table-cell">
-                      {detailsReady ? (details.get(employee.id)?.designation ?? "—") : <DetailPlaceholder />}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {!detailsReady ? (
-                        <DetailPlaceholder />
-                      ) : details.get(employee.id)?.department ? (
-                        <Badge variant="secondary">{details.get(employee.id)?.department}</Badge>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden text-foreground-secondary lg:table-cell">
-                      {detailsReady ? (details.get(employee.id)?.manager_name ?? "—") : <DetailPlaceholder />}
-                    </TableCell>
-                    <TableCell className="hidden text-foreground-secondary lg:table-cell">
-                      {detailsReady ? (details.get(employee.id)?.shift_name ?? "—") : <DetailPlaceholder />}
-                    </TableCell>
-                    <TableCell>
-                      <EmployeeStatusBadge status={employee.status} />
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      <Badge variant={employee.is_active ? "secondary" : "outline"}>
-                        {employee.is_active ? "Active" : "Inactive"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Link
-                        href={`/app/employees/${employee.id}`}
-                        className="text-xs font-medium text-primary hover:underline"
-                      >
-                        View
-                      </Link>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {filteredEmployees.map((employee) => {
+                  const detail = details.get(employee.id);
+                  return (
+                    <TableRow key={employee.id}>
+                      <TableCell>
+                        <EmployeeIdentityCell
+                          name={employeeName(employee) || "—"}
+                          code={employee.employee_code}
+                          href={`/app/employees/${employee.id}`}
+                        />
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {detailsReady ? (
+                          <TableCellStack
+                            primary={detail?.designation ?? <TableEmpty label="No designation" />}
+                            secondary={detail?.department}
+                          />
+                        ) : (
+                          <DetailPlaceholder />
+                        )}
+                      </TableCell>
+                      <TableCell nowrap className="hidden text-foreground-secondary lg:table-cell">
+                        {!detailsReady ? (
+                          <DetailPlaceholder />
+                        ) : (
+                          (detail?.manager_name ?? <TableEmpty label="No reporting manager" />)
+                        )}
+                      </TableCell>
+                      <TableCell nowrap className="hidden text-foreground-secondary lg:table-cell">
+                        {!detailsReady ? (
+                          <DetailPlaceholder />
+                        ) : (
+                          (detail?.shift_name ?? <TableEmpty label="No shift" />)
+                        )}
+                      </TableCell>
+                      <TableCell nowrap>
+                        <EmployeeStatusBadge status={employee.status} />
+                      </TableCell>
+                      <TableCell nowrap className="hidden sm:table-cell">
+                        <Badge variant={employee.is_active ? "secondary" : "outline"}>
+                          {employee.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell align="right" nowrap>
+                        <TableRowAction href={`/app/employees/${employee.id}`} />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
             </div>

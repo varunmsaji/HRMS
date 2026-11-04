@@ -27,6 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
@@ -208,12 +209,7 @@ export default function WeeklyOffPatternsPage() {
                     </Badge>
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/weekly-off-patterns/${pattern.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      Configure
-                    </Link>
+                    <TableRowAction href={`/app/weekly-off-patterns/${pattern.id}`}>Configure</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

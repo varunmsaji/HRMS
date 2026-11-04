@@ -1,7 +1,6 @@
 "use client";
 
 import { AlarmClock } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { EmployeeIdentityCell } from "@/components/employee/employee-identity";
@@ -24,6 +23,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
   TableToolbar,
 } from "@/components/ui/table";
 import { EmployeeSelect } from "@/components/employee/employee-select";
@@ -237,7 +237,11 @@ export default function OvertimePage() {
                   <TableCell align="right" numeric className="text-foreground-secondary">
                     {formatMinutes(record.minutes_detected)}
                   </TableCell>
-                  <TableCell align="right" numeric className="font-medium text-foreground">
+                  <TableCell
+                    align="right"
+                    numeric
+                    className={record.minutes_approved > 0 ? "font-medium text-foreground" : "text-foreground-disabled"}
+                  >
                     {formatMinutes(record.minutes_approved)}
                   </TableCell>
                   <TableCell>
@@ -247,12 +251,7 @@ export default function OvertimePage() {
                     {OVERTIME_APPROVAL_CHAIN_LABELS[record.approval_chain]}
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/overtime/${record.id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View
-                    </Link>
+                    <TableRowAction href={`/app/overtime/${record.id}`}>View</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

@@ -1,7 +1,6 @@
 "use client";
 
 import { FileText } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { CompanyDate } from "@/components/common/company-date";
@@ -17,6 +16,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { describeApiError } from "@/lib/api/errors";
@@ -83,12 +83,7 @@ export default function MyPayslipsPage() {
                     {formatInr(payslip.net_minor)}
                   </TableCell>
                   <TableCell align="right">
-                    <Link
-                      href={`/app/me/payslips/${payslip.pay_run_id}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View
-                    </Link>
+                    <TableRowAction href={`/app/me/payslips/${payslip.pay_run_id}`}>View</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}

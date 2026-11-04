@@ -32,6 +32,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
@@ -241,12 +242,7 @@ export default function SalaryStructuresPage() {
                       </div>
                     </TableCell>
                     <TableCell align="right">
-                      <Link
-                        href={`/app/payroll/salary-structures/${structure.id}`}
-                        className="text-xs font-medium text-primary hover:underline"
-                      >
-                        View
-                      </Link>
+                      <TableRowAction href={`/app/payroll/salary-structures/${structure.id}`}>View</TableRowAction>
                     </TableCell>
                   </TableRow>
                 );

@@ -41,14 +41,14 @@ const badgeVariants = cva(
 )
 
 export interface BadgeProps
-  extends React.HTMLAttributes<HTMLDivElement>,
+  extends React.HTMLAttributes<HTMLSpanElement>,
     VariantProps<typeof badgeVariants> {
   dot?: boolean
 }
 
 function Badge({ className, variant, dot = false, children, ...props }: BadgeProps) {
   return (
-    <div className={cn(badgeVariants({ variant }), className)} {...props}>
+    <span className={cn(badgeVariants({ variant }), className)} {...props}>
       {dot ? (
         <span
           aria-hidden="true"
@@ -56,7 +56,7 @@ function Badge({ className, variant, dot = false, children, ...props }: BadgePro
         />
       ) : null}
       {children}
-    </div>
+    </span>
   )
 }
 

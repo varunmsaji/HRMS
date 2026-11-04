@@ -74,26 +74,29 @@ export function AppBreadcrumbs() {
   if (crumbs.length === 0) return null;
 
   return (
-    <nav aria-label="Breadcrumb" className="hidden items-center gap-1.5 text-xs sm:flex">
-      <ol className="flex items-center gap-1.5">
+    <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-1.5 text-xs sm:flex lg:hidden xl:flex">
+      <ol className="flex min-w-0 items-center gap-1.5">
         {crumbs.map((crumb, idx) => {
           const isLast = idx === crumbs.length - 1;
           return (
-            <li key={`${crumb.label}-${idx}`} className="flex items-center gap-1.5">
+            <li
+              key={`${crumb.label}-${idx}`}
+              className={`flex items-center gap-1.5 whitespace-nowrap ${isLast ? "shrink-0" : "min-w-0"}`}
+            >
               {idx > 0 ? (
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-foreground-disabled" aria-hidden="true" />
               ) : null}
               {crumb.href && !isLast ? (
                 <Link
                   href={crumb.href}
-                  className="font-medium text-foreground-muted transition-colors hover:text-foreground"
+                  className="truncate font-medium text-foreground-muted transition-colors hover:text-foreground"
                 >
                   {crumb.label}
                 </Link>
               ) : (
                 <span
                   aria-current={isLast ? "page" : undefined}
-                  className={isLast ? "font-semibold text-foreground" : "text-foreground-muted"}
+                  className={isLast ? "max-w-[14rem] truncate font-semibold text-foreground" : "truncate text-foreground-muted"}
                 >
                   {crumb.label}
                 </span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, Banknote, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -136,7 +136,7 @@ export function DonutChart({
         {segments.map((s) => (
           <li key={s.key} className="flex items-center gap-2 text-sm">
             <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", s.dot)} aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate text-foreground-secondary">{s.label}</span>
+            <span className="min-w-0 flex-1 truncate text-foreground-secondary" title={s.label}>{s.label}</span>
             <span className="font-semibold tabular-nums text-foreground">{s.value}</span>
             <span className="w-12 text-right text-xs tabular-nums text-foreground-muted">
               {total > 0 ? `${((s.value / total) * 100).toFixed(1)}%` : "0%"}
@@ -148,35 +148,91 @@ export function DonutChart({
   );
 }
 
-/** Headcount per month-end as bars; the axis starts at zero so bar heights stay honest. */
+/** Headcount per month-end as a trend line with the current figure and the change over the
+ * period. The line is scaled to the data's own range (padded), not to zero — a flat 60→64 trend
+ * would otherwise be six identical bars; every point is labelled with its real value, so the
+ * scale cannot mislead. */
 export function GrowthChart({ points }: { points: HeadcountPoint[] }) {
-  const max = Math.max(...points.map((p) => p.headcount), 1);
-  const ticks = [1, 0.75, 0.5, 0.25, 0].map((f) => Math.round(max * f));
+  if (points.length === 0) return <Empty>No headcount history yet.</Empty>;
+
+  const values = points.map((p) => p.headcount);
+  const first = points[0];
+  const last = points[points.length - 1];
+  const delta = last.headcount - first.headcount;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const pad = Math.max((max - min) * 0.35, 1);
+  const lo = min - pad;
+  const hi = max + pad;
+  const n = points.length;
+  const xs = points.map((_, i) => (n === 1 ? 50 : (i / (n - 1)) * 100));
+  const ys = values.map((v) => (1 - (v - lo) / (hi - lo)) * 100);
+  const line = xs.map((x, i) => `${i === 0 ? "M" : "L"} ${x} ${ys[i]}`).join(" ");
+  const area = `${line} L ${xs[n - 1]} 100 L ${xs[0]} 100 Z`;
+  const summary = `Employee headcount by month, from ${first.headcount} in ${monthShort(first.month)} to ${last.headcount} in ${monthShort(last.month)}`;
+
   return (
-    <div className="flex h-56 gap-3" role="img" aria-label="Employee headcount by month">
-      <div className="flex flex-col justify-between pb-6 text-right text-2xs tabular-nums text-foreground-muted">
-        {ticks.map((t, i) => (
-          <span key={i}>{t}</span>
-        ))}
+    <div>
+      <div className="mb-4 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-3xl font-bold tabular-nums tracking-tight text-foreground">{last.headcount}</span>
+        <span className="text-sm text-foreground-secondary">employees</span>
+        <span
+          className={cn(
+            "ml-1 inline-flex items-center gap-0.5 text-xs font-medium",
+            delta > 0 ? "text-success" : delta < 0 ? "text-danger" : "text-foreground-muted",
+          )}
+        >
+          {delta > 0 ? <ArrowUp className="h-3 w-3" aria-hidden="true" /> : null}
+          {delta < 0 ? <ArrowDown className="h-3 w-3" aria-hidden="true" /> : null}
+          {delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta}`} since {monthShort(first.month)}
+        </span>
       </div>
-      <div className="relative flex min-w-0 flex-1 items-end justify-between gap-2 border-b border-border pb-6">
-        {points.map((p, i) => (
-          <div key={p.month} className="relative flex h-full min-w-0 flex-1 flex-col justify-end">
-            <span className="mb-1 text-center text-2xs font-medium tabular-nums text-foreground-secondary">
-              {p.headcount}
+
+      <div className="relative h-44" role="img" aria-label={summary}>
+        <div className="absolute inset-x-5 bottom-7 top-6">
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full overflow-visible" aria-hidden="true">
+            {[0, 50, 100].map((y) => (
+              <line key={y} x1="0" x2="100" y1={y} y2={y} vectorEffect="non-scaling-stroke" className="stroke-border-subtle" strokeDasharray="3 3" />
+            ))}
+            <path d={area} className="fill-primary/10" />
+            <path d={line} fill="none" vectorEffect="non-scaling-stroke" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" className="stroke-primary" />
+          </svg>
+          {points.map((p, i) => (
+            <span
+              key={p.month}
+              aria-hidden="true"
+              className="absolute"
+              style={{ left: `${xs[i]}%`, top: `${ys[i]}%` }}
+            >
+              <span
+                className={cn(
+                  "absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface bg-primary",
+                  i === n - 1 ? "h-3.5 w-3.5 ring-2 ring-primary/30" : "h-2 w-2",
+                )}
+              />
+              <span
+                className={cn(
+                  "absolute -translate-x-1/2 -translate-y-full whitespace-nowrap pb-2 text-2xs tabular-nums",
+                  i === n - 1 ? "font-semibold text-foreground" : "text-foreground-muted",
+                )}
+              >
+                {p.headcount}
+              </span>
             </span>
-            <div
-              className={cn(
-                "w-full rounded-t-md",
-                i === points.length - 1 ? "bg-primary" : "bg-primary/40",
-              )}
-              style={{ height: `${(p.headcount / max) * 85}%` }}
-            />
-            <span className="absolute -bottom-6 left-0 right-0 text-center text-2xs text-foreground-muted">
+          ))}
+        </div>
+        <div className="absolute inset-x-5 bottom-0 h-5">
+          {points.map((p, i) => (
+            <span
+              key={p.month}
+              aria-hidden="true"
+              className="absolute -translate-x-1/2 text-2xs text-foreground-muted"
+              style={{ left: `${xs[i]}%` }}
+            >
               {monthShort(p.month)}
             </span>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -229,13 +285,21 @@ export function ActivityList({ items }: { items: RecentActivity[] }) {
               ACTIVITY_TONE[a.kind] ?? "bg-muted text-foreground-secondary",
             )}
           >
-            {initials(a.subject ?? a.title)}
+            {a.kind.startsWith("PAYROLL_") ? (
+              <Banknote className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              initials(a.subject ?? a.title)
+            )}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground">{a.title}</p>
-            {a.subject ? <p className="truncate text-xs text-foreground-muted">{a.subject}</p> : null}
+            <p className="truncate text-sm font-semibold text-foreground" title={a.title}>
+              {a.title}
+            </p>
+            <p className="truncate text-xs text-foreground-muted">
+              {a.subject ? `${a.subject} · ` : ""}
+              {relativeTime(a.occurred_at)}
+            </p>
           </div>
-          <span className="shrink-0 text-2xs text-foreground-muted">{relativeTime(a.occurred_at)}</span>
         </li>
       ))}
     </ul>

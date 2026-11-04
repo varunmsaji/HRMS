@@ -83,9 +83,10 @@ describe("LeaveBalancesPage loading behaviour", () => {
     return { balances, ledgers, signals };
   }
 
+  /** Team view opens on the matrix of everyone; choosing a person opens their ledger. */
   async function choose(user: ReturnType<typeof userEvent.setup>, id: string) {
-    await screen.findByRole("option", { name: /Asha/ });
-    await user.selectOptions(screen.getByRole("combobox"), id);
+    const name = id === "emp-a" ? "Asha" : "Bala";
+    await user.click(await screen.findByRole("button", { name: new RegExp(`Open ${name}`) }));
   }
 
   it("shows a skeleton for the first load of a selected employee", async () => {
@@ -194,5 +195,19 @@ describe("LeaveBalancesPage loading behaviour", () => {
     expect(signals["emp-a"]![0]!.aborted).toBe(false);
     unmount();
     expect(signals["emp-a"]![0]!.aborted).toBe(true);
+  });
+
+  it("opens on everyone's balances, drills into a person, and returns to the list", async () => {
+    setup();
+    const user = userEvent.setup();
+    render(<LeaveBalancesPage />);
+
+    expect(await screen.findByText("Leave balances by employee")).toBeInTheDocument();
+    await choose(user, "emp-a");
+    expect(screen.queryByText("Leave balances by employee")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "All employees" }));
+    expect(await screen.findByText("Leave balances by employee")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "All employees" })).not.toBeInTheDocument();
   });
 });
