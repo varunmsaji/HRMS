@@ -16,7 +16,8 @@ typedef Rec = Map<String, dynamic>;
 /// Policy assignments — mirrors `apps/web/src/app/app/policy-assignments/page.tsx`: which
 /// calendar, weekly-off pattern or policy applies to which scope, and from when. There is no edit:
 /// assigning a new one for the same kind and scope closes the open one the day before (the open
-/// assignment's version is sent as `If-Match`, which the server requires in that case).
+/// assignment's version is sent as `If-Match`, which the server requires in that case). Tapping a
+/// current group-level assignment ends it so the group falls back to the wider one.
 class PolicyAssignmentsScreen extends ConsumerStatefulWidget {
   const PolicyAssignmentsScreen({super.key});
 
@@ -38,6 +39,9 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
 
   List<String> get _sources => choiceSourcesOf(policyAssignmentSpec)..add('leave_types');
 
+  /// Names for rows that already exist, including policies that can no longer be assigned.
+  List<String> get _nameSources => [..._sources.where((k) => !k.startsWith('assignable_')), ...policySources.values];
+
   @override
   void initState() {
     super.initState();
@@ -47,7 +51,7 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
 
   Future<void> _loadNames() async {
     try {
-      final c = await loadChoices(_client, _sources);
+      final c = await loadChoices(_client, _nameSources);
       if (mounted) setState(() => _names = {for (final e in c.entries) e.key: {for (final x in e.value) x.value: x.label}});
     } catch (_) {}
   }
@@ -124,6 +128,45 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
     }
   }
 
+  String _isoDate(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Ends a current override: from the day after the chosen last day, its scope follows the next
+  /// wider assignment again. The server needs the open row's version as `If-Match`.
+  Future<void> _end(Rec a) async {
+    final start = DateTime.tryParse('${a['effective_from']}') ?? DateTime.now();
+    final now = DateTime.now();
+    final initial = now.isAfter(start) ? now : start;
+    final picked = await showDatePicker(
+      context: context,
+      helpText: 'Last day of this assignment',
+      initialDate: initial,
+      firstDate: start,
+      lastDate: DateTime(2100),
+    );
+    if (picked == null || !mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('End this assignment?'),
+        content: Text('After ${_isoDate(picked)}, this group follows the next wider assignment, ending at the company-wide one.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('End assignment')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _client.post<Object?>('/policy-assignments/${a['id']}/end', body: {'effective_to': _isoDate(picked)}, ifMatch: a['version']?.toString(), parse: (_) => null);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Assignment ended.')));
+      _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Could not end the assignment.')));
+    }
+  }
+
   String _name(String source, String? id) => id == null ? '' : (_names[source]?[id] ?? id);
 
   @override
@@ -169,6 +212,7 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
                                   if (a['reason'] != null) '${a['reason']}',
                                 ].join(' · '),
                                 showChevron: false,
+                                onTap: canEndAssignment('${a['policy_kind']}', '${a['scope_type']}', a['effective_to']) ? () => _end(a) : null,
                                 trailing: StatusChip(label: a['effective_to'] == null ? 'Current' : 'Ended ${a['effective_to']}', tone: a['effective_to'] == null ? Tone.success : Tone.neutral),
                               ),
                             ),

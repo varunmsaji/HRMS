@@ -421,7 +421,7 @@ void policyAssignmentContractTests() {
   group('policy assignment form matches PolicyAssignmentCreate', () {
     _writeFormMatches('policyAssignmentSpec', policyAssignmentSpec, 'organisation.PolicyAssignmentCreate', notInForm: const {'priority', 'effective_to'});
     test('every policy and scope source the form can offer is a loadable choice source', () {
-      expect(choiceSourcesOf(policyAssignmentSpec), containsAll([...policySources.values, ...scopeSources.values, 'leave_types']));
+      expect(choiceSourcesOf(policyAssignmentSpec), containsAll([...assignablePolicySources.values, ...scopeSources.values, 'leave_types']));
     });
     test('the read schema has what the list shows', () {
       final keys = (_load('organisation.PolicyAssignmentRead', 'full') as Map<String, dynamic>).keys.toSet();

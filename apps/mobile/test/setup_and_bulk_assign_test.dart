@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/core/resource/resource_screens.dart';
+import 'package:hrms_mobile/features/onboarding/data/onboarding_repository.dart' show SetupChecklistItem;
 import 'package:hrms_mobile/features/onboarding/presentation/setup_screen.dart';
 import 'package:hrms_mobile/features/payroll/domain/payroll_resources.dart';
 
@@ -50,6 +51,45 @@ void main() {
       expect(find.text('Setup complete'), findsOneWidget);
       expect(find.text('Next step'), findsNothing);
       expect(find.text('Complete'), findsOneWidget);
+    });
+  });
+
+  group('setup checklist', () {
+    final registration = {
+      'status': 'COMPLETE',
+      'current_step': null,
+      'steps': [
+        {'code': 'COMPANY_PROFILE', 'label': 'Company profile', 'is_complete': true}
+      ],
+    };
+
+    testWidgets('shows what is left from the live checklist, labelled apart from registration', (tester) async {
+      final api = FakeApiClient(objects: {
+        '/companies/current/setup-progress': registration,
+        '/companies/current/setup-checklist': {
+          'required_total': 3,
+          'required_complete': 1,
+          'next_code': 'SHIFT',
+          'items': [
+            {'code': 'SHIFT', 'label': 'Create a shift', 'description': 'A published shift.', 'required': true, 'is_complete': false, 'path': '/app/shifts'},
+            {'code': 'ATTENDANCE_POLICY', 'label': 'Attendance policy', 'description': 'Whole company.', 'required': true, 'is_complete': true, 'path': '/app/attendance-policies/new'},
+            {'code': 'OVERTIME_POLICY', 'label': 'Overtime policy', 'description': 'Optional.', 'required': false, 'is_complete': false, 'path': '/app/overtime-policies/new'},
+          ],
+        },
+      });
+      await _pump(tester, api, const [], const SetupScreen());
+      expect(find.text('1 of 3 essentials done'), findsOneWidget);
+      expect(find.text('To do'), findsOneWidget);
+      expect(find.text('Done'), findsOneWidget);
+      expect(find.text('Optional'), findsOneWidget);
+      expect(find.text('Registration'), findsOneWidget);
+    });
+
+    test('create-page paths map to the list screens the app has', () {
+      SetupChecklistItem item(String path) => SetupChecklistItem(code: 'X', label: 'x', description: 'x', required: true, isComplete: false, path: path);
+      expect(item('/app/attendance-policies/new').appPath, '/app/attendance-policies');
+      expect(item('/app/work-calendars/setup').appPath, '/app/work-calendars');
+      expect(item('/app/shifts').appPath, '/app/shifts');
     });
   });
 

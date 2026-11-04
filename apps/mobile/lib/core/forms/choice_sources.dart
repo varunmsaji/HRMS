@@ -5,8 +5,10 @@ import 'form_spec.dart';
 /// Where the options for a `FieldKind.choice` field come from: a list endpoint plus how to label a
 /// row. Keys are the `choiceKey` used in specs.
 class _Source {
-  const _Source(this.path, this.label, {this.filter});
+  const _Source(this.path, this.label, {this.filter, this.query});
   final String path;
+  /// Extra query parameters sent with every page request.
+  final Map<String, dynamic>? query;
   final String Function(Map<String, dynamic>) label;
   final bool Function(Map<String, dynamic>)? filter;
 }
@@ -36,6 +38,12 @@ final Map<String, _Source> _sources = {
   'overtime_policies': _Source('/overtime-policies', _name),
   'regularization_policies': _Source('/regularization-policies', _name),
   'leave_policies': _Source('/leave-policies', _name),
+  // Only policies that can be assigned today: active, with published rules. Used by the
+  // assignment form; the plain keys above stay for naming rows that already exist.
+  'assignable_attendance_policies': _Source('/attendance-policies', _name, query: {'assignable': 'true'}),
+  'assignable_overtime_policies': _Source('/overtime-policies', _name, query: {'assignable': 'true'}),
+  'assignable_regularization_policies': _Source('/regularization-policies', _name, query: {'assignable': 'true'}),
+  'assignable_leave_policies': _Source('/leave-policies', _name, query: {'assignable': 'true'}),
   'salary_structures': _Source('/payroll/salary-structures', _name, filter: (m) => m['is_active'] != false),
   'salary_components': _Source('/payroll/salary-components', (m) => '${m['name']} (${m['code']})', filter: (m) => m['is_active'] != false),
 };
@@ -51,6 +59,7 @@ Future<Map<String, List<Choice>>> loadChoices(ApiClient client, Iterable<String>
       final env = await client.getList<Map<String, dynamic>>(
         source.path,
         query: PageQuery(page: page, perPage: 100),
+        filters: source.query,
         parseItem: (d) => d as Map<String, dynamic>,
       );
       for (final row in env.data) {

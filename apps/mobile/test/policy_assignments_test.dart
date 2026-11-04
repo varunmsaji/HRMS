@@ -168,4 +168,41 @@ void main() {
     expect(call.ifMatch, '9');
     expect((call.body as Map)['policy_id'], 'ap2');
   });
+
+  testWidgets('the policy picker asks only for assignable policies, names still come from all', (tester) async {
+    final api = _api([_assignment()]);
+    await _pump(tester, api);
+    expect(api.listCalls.any((c) => c.path == '/attendance-policies' && c.filters == null), isTrue);
+    await tester.tap(find.text('New assignment'));
+    await tester.pumpAndSettle();
+    final asked = api.listCalls.where((c) => c.path == '/attendance-policies' && c.filters?['assignable'] == 'true');
+    expect(asked, isNotEmpty);
+  });
+
+  testWidgets('ending a current group assignment sends its version and the last day', (tester) async {
+    final api = _api([_assignment()]);
+    await _pump(tester, api);
+    await tester.tap(find.text('Attendance Policy → Branch: Pune HQ'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'End assignment'));
+    await tester.pumpAndSettle();
+    final call = api.calls.single;
+    expect(call.path, '/policy-assignments/a1/end');
+    expect(call.ifMatch, '4');
+    expect((call.body as Map)['effective_to'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
+  });
+
+  testWidgets('the company-wide and ended assignments cannot be ended', (tester) async {
+    final api = _api([_assignment(scope: 'COMPANY', scopeId: null), _assignment(id: 'a2', to: '2026-03-31')]);
+    await _pump(tester, api);
+    await tester.tap(find.text('Attendance Policy → Whole company'));
+    await tester.pumpAndSettle();
+    expect(find.text('OK'), findsNothing);
+    await tester.tap(find.textContaining('Ended 2026-03-31'));
+    await tester.pumpAndSettle();
+    expect(find.text('OK'), findsNothing);
+    expect(api.calls, isEmpty);
+  });
 }

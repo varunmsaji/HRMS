@@ -119,6 +119,46 @@ class SetupProgress {
       );
 }
 
+/// One line of `GET /companies/current/setup-checklist`: what the company needs, worked out live
+/// from its real data (unlike [SetupProgress], which records registration).
+class SetupChecklistItem {
+  SetupChecklistItem({required this.code, required this.label, required this.description, required this.required, required this.isComplete, required this.path});
+  final String code;
+  final String label;
+  final String description;
+  final bool required;
+  final bool isComplete;
+  final String path;
+
+  factory SetupChecklistItem.fromJson(Map<String, dynamic> json) => SetupChecklistItem(
+        code: json['code'] as String,
+        label: json['label'] as String,
+        description: json['description'] as String,
+        required: json['required'] as bool,
+        isComplete: json['is_complete'] as bool,
+        path: json['path'] as String,
+      );
+
+  /// The web paths point at create pages (`/new`, `/setup`) that the app does not have; the list
+  /// screen at the parent path is where the app adds one.
+  String get appPath => path.replaceFirst(RegExp(r'/(new|setup)$'), '');
+}
+
+class SetupChecklist {
+  SetupChecklist({required this.items, required this.requiredTotal, required this.requiredComplete, this.nextCode});
+  final List<SetupChecklistItem> items;
+  final int requiredTotal;
+  final int requiredComplete;
+  final String? nextCode;
+
+  factory SetupChecklist.fromJson(Map<String, dynamic> json) => SetupChecklist(
+        items: (json['items'] as List).map((i) => SetupChecklistItem.fromJson(i as Map<String, dynamic>)).toList(),
+        requiredTotal: json['required_total'] as int,
+        requiredComplete: json['required_complete'] as int,
+        nextCode: json['next_code'] as String?,
+      );
+}
+
 class UserSummary {
   UserSummary({required this.userId, this.email, this.firstName, this.lastName, required this.status, required this.roleCodes});
   final String userId;
@@ -189,6 +229,11 @@ class OnboardingRepository {
   Future<SetupProgress> getSetupProgress() => _client.get(
         '/companies/current/setup-progress',
         parse: (d) => SetupProgress.fromJson(d as Map<String, dynamic>),
+      );
+
+  Future<SetupChecklist> getSetupChecklist() => _client.get(
+        '/companies/current/setup-checklist',
+        parse: (d) => SetupChecklist.fromJson(d as Map<String, dynamic>),
       );
 
   Future<List<UserSummary>> listUsers() =>
