@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 290" role="img" aria-label="Krewoxa penguin mascot — explaining"><title>Krewoxa penguin mascot — explaining</title><defs>
+  <linearGradient id="kp-body" x1="0.2" y1="0" x2="0.8" y2="1">
+    <stop offset="0" stop-color="#34405F"/><stop offset="0.55" stop-color="#1A2135"/><stop offset="1" stop-color="#0C101C"/>
+  </linearGradient>
+  <linearGradient id="kp-fl" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#2C3651"/><stop offset="1" stop-color="#0E1322"/>
+  </linearGradient>
+  <radialGradient id="kp-belly" cx="0.42" cy="0.32" r="0.8">
+    <stop offset="0" stop-color="#FFFFFF"/><stop offset="0.7" stop-color="#F3F6FB"/><stop offset="1" stop-color="#DCE3EE"/>
+  </radialGradient>
+  <linearGradient id="kp-beak" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#FFC24A"/><stop offset="1" stop-color="#FF8A1F"/>
+  </linearGradient>
+  <radialGradient id="kp-chest" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#FFD873" stop-opacity="0.55"/><stop offset="1" stop-color="#FFD873" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="kp-brand" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#0B3D91"/><stop offset="1" stop-color="#00C6FF"/>
+  </linearGradient>
+</defs>
+  <ellipse cx="120" cy="274" rx="66" ry="7" fill="#0B3D91" opacity=".13"/>
+  
+  <path d="M120 36 C174 36 194 100 195 170 C196 234 164 266 120 266 C76 266 44 234 45 170 C46 100 66 36 120 36 Z" fill="url(#kp-body)"/>
+  <path d="M120 72 C106 56 72 60 72 92 C72 112 86 120 92 124 C78 146 70 172 70 205 C70 242 94 258 120 258 C146 258 170 242 170 205 C170 172 162 146 148 124 C154 120 168 112 168 92 C168 60 134 56 120 72 Z" fill="url(#kp-belly)"/>
+  <ellipse cx="120" cy="140" rx="44" ry="22" fill="url(#kp-chest)"/>
+  <path d="M181 74 C193 102 197 146 194 196" fill="none" stroke="#00C6FF" stroke-width="2.6" stroke-linecap="round" opacity=".75"/>
+  <path d="M88 252 C80 262 82 272 96 272 L112 272 C118 272 118 264 112 258 Z" fill="#FF9F2E"/>
+  <path d="M152 252 C160 262 158 272 144 272 L128 272 C122 272 122 264 128 258 Z" fill="#FF9F2E"/>
+  <path d="M96 122 L120 168 L144 122" fill="none" stroke="#00C6FF" stroke-width="2.6" stroke-linejoin="round"/>
+  <rect x="109" y="166" width="22" height="28" rx="4" fill="#fff" stroke="#CBD5E1"/>
+  <rect x="113" y="171" width="14" height="14" rx="3" fill="url(#kp-brand)"/>
+  <path d="M117 174 V182 M117 178.5 L122.5 174 M118.5 177.5 L123 182" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>
+  <rect x="113" y="188" width="14" height="2" rx="1" fill="#CBD5E1"/>
+  <ellipse cx="101" cy="95" rx="8.5" ry="9.5" fill="#141A2B"/><circle cx="104" cy="91.5" r="3.2" fill="#fff"/><circle cx="98" cy="99" r="1.4" fill="#fff" opacity=".8"/><ellipse cx="139" cy="95" rx="8.5" ry="9.5" fill="#141A2B"/><circle cx="142" cy="91.5" r="3.2" fill="#fff"/><circle cx="136" cy="99" r="1.4" fill="#fff" opacity=".8"/><path d="M87 93 L71 89" stroke="#0B3D91" stroke-width="2.6" stroke-linecap="round"/><path d="M153 93 L169 89" stroke="#0B3D91" stroke-width="2.6" stroke-linecap="round"/><path d="M114.5 92 Q120 87.5 125.5 92" fill="none" stroke="#0B3D91" stroke-width="2.6" stroke-linecap="round"/><circle cx="101" cy="95" r="14" fill="#BFEFFF" fill-opacity=".14" stroke="#0B3D91" stroke-width="2.8"/><path d="M92 88 A10.5 10.5 0 0 1 103 84.5" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="2" stroke-linecap="round"/><circle cx="139" cy="95" r="14" fill="#BFEFFF" fill-opacity=".14" stroke="#0B3D91" stroke-width="2.8"/><path d="M130 88 A10.5 10.5 0 0 1 141 84.5" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="2" stroke-linecap="round"/>
+  <ellipse cx="86" cy="110" rx="7" ry="4" fill="#FF8FA8" opacity=".35"/>
+  <ellipse cx="154" cy="110" rx="7" ry="4" fill="#FF8FA8" opacity=".35"/>
+  <path d="M109 106 Q120 100 131 106 Q126 117 120 118 Q114 117 109 106 Z" fill="url(#kp-beak)"/>
+  <path d="M112 107 Q120 104 128 107" fill="none" stroke="#fff" stroke-opacity=".5" stroke-width="1.4" stroke-linecap="round"/>
+  
+  <g transform="translate(62 132) rotate(14) scale(1 1.0)"><path d="M-7 0 C-24 22,-27 62,-15 92 C-10 101,-1 99,3 88 C11 62,14 26,8 0 Z" fill="url(#kp-fl)"/><path d="M5 6 C10 30,8 60,1 84" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="3" stroke-linecap="round"/></g><g transform="translate(178 132) rotate(-128) scale(-1,1) scale(1 0.85)"><path d="M-7 0 C-24 22,-27 62,-15 92 C-10 101,-1 99,3 88 C11 62,14 26,8 0 Z" fill="url(#kp-fl)"/><path d="M5 6 C10 30,8 60,1 84" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="3" stroke-linecap="round"/></g>
+  
+  <g stroke="#FFB02E" stroke-width="3" stroke-linecap="round"><path d="M214 66 L220 56"/><path d="M224 76 L234 72"/><path d="M204 58 L203 48"/></g></svg>

@@ -15,7 +15,6 @@ import {
   FileText,
   Fingerprint,
   History,
-  LayoutDashboard,
   Layers,
   Lock,
   Menu,
@@ -23,7 +22,6 @@ import {
   Play,
   Plus,
   ScanFace,
-  Search,
   ShieldCheck,
   Smartphone,
   UserPlus,
@@ -51,20 +49,6 @@ function BrandLogo({ onDark = false }: { onDark?: boolean }) {
   );
 }
 
-/** Initials avatar for the sample people, one fixed colour each. */
-const TONES: Record<string, string> = {
-  "Anjali Menon": "#0657E6",
-  "Rahul Nair": "#0E9F6E",
-  "Fathima Rasheed": "#D97706",
-  "Joseph Thomas": "#7C3AED",
-  "Meera Pillai": "#DB2777",
-};
-function Avatar({ name, sm = false }: { name: string; sm?: boolean }) {
-  const initials = name.split(" ").map((w) => w[0]).slice(0, 2).join("");
-  const tone = TONES[name] ?? "#0891B2";
-  return <span className={`av${sm ? " sm" : ""}`} style={{ background: tone }} aria-hidden="true">{initials}</span>;
-}
-
 const NAV: [string, string][] = [
   ["Platform", "#platform"],
   ["Payroll", "#payroll"],
@@ -73,34 +57,6 @@ const NAV: [string, string][] = [
   ["Security", "#security"],
   ["FAQ", "#faq"],
 ];
-
-const DAYS: [string, number][] = [["Mon", 94], ["Tue", 96], ["Wed", 91], ["Thu", 95], ["Fri", 88]];
-
-// The chart axis starts at this rate so day-to-day differences are visible.
-const BAR_FLOOR = 80;
-
-const FEED: [string, string, string][] = [
-  ["Rahul Nair", "Rahul Nair checked in", "9:02 AM · Operations"],
-  ["Anjali Menon", "Leave request submitted", "Casual leave · 12–14 Nov"],
-  ["Fathima Rasheed", "Payroll review started", "Manager review"],
-];
-
-const PAY: [string, string, string, string][] = [
-  ["Anjali Menon", "Design", "₹68,500", "ok"],
-  ["Rahul Nair", "Operations", "₹82,000", "ok"],
-  ["Fathima Rasheed", "People", "₹59,750", "wip"],
-  ["Joseph Thomas", "Finance", "₹74,200", "wip"],
-  ["Meera Pillai", "Customer Care", "₹48,900", "wait"],
-];
-
-const DIRECTORY: [string, string, string, "in" | "leave" | "out"][] = [
-  ["Anjali Menon", "Product Designer", "Design", "in"],
-  ["Rahul Nair", "Operations Manager", "Operations", "in"],
-  ["Fathima Rasheed", "HR Executive", "People", "leave"],
-  ["Joseph Thomas", "Accounts Lead", "Finance", "in"],
-  ["Meera Pillai", "Support Associate", "Customer Care", "out"],
-];
-const DIR_TAG = { in: "Checked in", leave: "On leave", out: "Not checked in" };
 
 const CORE: string[] = [
   "Profiles, roles, departments and reporting lines",
@@ -113,7 +69,6 @@ const MOBILE: [LucideIcon, string, string][] = [
   [CalendarDays, "Leave and shifts", "Apply for leave, track balances and see the upcoming roster."],
   [ClipboardPen, "Corrections and payslips", "Fix a missed punch and download payslips without emailing HR."],
 ];
-const PAY_TAG: Record<string, string> = { ok: "Approved", wip: "In review", wait: "Waiting" };
 
 const DEPTS: [string, number][] = [["Operations", 14], ["Customer Care", 11], ["Design", 9], ["People", 8], ["Finance", 6]];
 
@@ -173,6 +128,14 @@ const FAQS: [string, string][] = [
 
 const FOOT_PRODUCT: [string, string][] = [["Platform", "#platform"], ["Payroll", "#payroll"], ["Workflows", "#workflows"], ["Mobile", "#mobile"], ["Security", "#security"]];
 
+type MascotPose = "standing" | "waving" | "thinking" | "clipboard" | "celebrating" | "explaining" | "welcome";
+
+// Decorative only: the penguin never carries information the copy doesn't.
+function Mascot({ pose, className }: { pose: MascotPose; className: string }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className={`mascot ${className}`} src={`/mascot/penguin-${pose}.svg`} width={240} height={290} alt="" aria-hidden="true" />;
+}
+
 export function Landing() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [openFaq, setOpenFaq] = useState(-1);
@@ -229,47 +192,12 @@ export function Landing() {
               <a href="#workflows" className="btn btn-ghost"><Play size={14} /> See how it works</a>
             </div>
 
-            <div className="win up d3" role="img" aria-label="Illustrative Krewoxa dashboard showing headcount, attendance and live activity, using sample data">
-              <div className="win-bar"><i /><i /><i /></div>
-              <div className="win-body">
-                <div className="win-side">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={LOGO_WHITE} alt="" />
-                  <span className="on"><LayoutDashboard size={15} /> Dashboard</span>
-                  <span><Users size={15} /> Employees</span>
-                  <span><Clock size={15} /> Attendance</span>
-                  <span><CalendarCheck size={15} /> Leave</span>
-                  <span><Wallet size={15} /> Payroll</span>
-                </div>
-                <div className="win-main">
-                  <h3>Workforce overview</h3>
-                  <div className="kpis">
-                    <div className="kpi"><small>Headcount</small><b>48</b><em>+3</em></div>
-                    <div className="kpi"><small>Present today</small><b>41</b><em>85%</em></div>
-                    <div className="kpi"><small>Pending approvals</small><b>3</b></div>
-                  </div>
-                  <div className="chart">
-                    <small>Weekly attendance rate (%, axis from {BAR_FLOOR})</small>
-                    <div className="bars">
-                      {DAYS.map(([d, v], i) => (
-                        <div key={d}>
-                          <b>{v}</b>
-                          <span style={{ height: `${((v - BAR_FLOOR) / (100 - BAR_FLOOR)) * 100}%`, animationDelay: `${i * 0.08}s` }} />
-                          {d}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="feed">
-                  <h3><span className="live" /> Live activity</h3>
-                  {FEED.map(([name, t, s]) => (
-                    <div className="feed-i" key={t}>
-                      <Avatar name={name} sm />
-                      <div>{t}<small>{s}</small></div>
-                    </div>
-                  ))}
-                </div>
+            <div className="win-stage up d3">
+              <Mascot pose="waving" className="mascot-hero" />
+              <div className="win">
+                <div className="win-bar"><i /><i /><i /></div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img className="shot-img" src="/landing/product-roster.webp" width={1600} height={1000} alt="The Krewoxa team roster grid: every employee's shift by date, with week offs marked" />
               </div>
             </div>
           </div>
@@ -287,16 +215,9 @@ export function Landing() {
               </ul>
               <a href="#workflows" className="btn btn-dark">See how it works <ArrowRight size={16} /></a>
             </div>
-            <div className="card dir" role="img" aria-label="Illustrative employee directory showing roles, departments and today's status, using sample data">
-              <div className="dir-h"><b>Employees</b><span>48 people · Sample data</span></div>
-              <div className="dir-search"><Search size={15} /> Search by name, role or department</div>
-              {DIRECTORY.map(([name, role, dept, st]) => (
-                <div className="dir-row" key={name}>
-                  <Avatar name={name} />
-                  <div><b>{name}</b><small>{role} · {dept}</small></div>
-                  <span className={`st ${st}`}>{DIR_TAG[st]}</span>
-                </div>
-              ))}
+            <div className="card shot">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="shot-img" src="/landing/product-employees.webp" width={1600} height={1000} loading="lazy" alt="The Krewoxa employee directory with role, department, reporting manager, shift and status" />
             </div>
           </div>
         </section>
@@ -308,21 +229,9 @@ export function Landing() {
             <h2 className="h2" style={{ margin: "18px 0 16px" }}>Payroll inputs, reconciled<br /><span className="mute">before they reach finance.</span></h2>
             <p className="lead">Attendance, leave and approvals come together in one summary. Managers review it once, and every change is on record.</p>
 
-            <div className="card tbl" role="img" aria-label="Illustrative payroll review table using sample data" style={{ textAlign: "left" }}>
-              <div className="tbl-h"><b>November payroll review</b><span>Sample data</span></div>
-              <table>
-                <thead><tr><th>Employee</th><th>Department</th><th>Net pay</th><th>Status</th></tr></thead>
-                <tbody>
-                  {PAY.map(([name, dept, amt, st]) => (
-                    <tr key={name}>
-                      <td><span className="who"><Avatar name={name} sm />{name}</span></td>
-                      <td>{dept}</td>
-                      <td>{amt}</td>
-                      <td><span className={`tag ${st}`}>{PAY_TAG[st]}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="card shot shot-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="shot-img" src="/landing/product-payroll.webp" width={1600} height={705} loading="lazy" alt="The Krewoxa pay runs list with month, status, employees paid and net pay" />
             </div>
 
             <div className="grid3" style={{ marginTop: 20, textAlign: "left" }}>
@@ -463,6 +372,7 @@ export function Landing() {
         {/* FAQ */}
         <section id="faq">
           <div className="wrap center">
+            <Mascot pose="thinking" className="mascot-faq" />
             <h2 className="h2">Common questions</h2>
             <div className="faq" style={{ textAlign: "left" }}>
               {FAQS.map(([q, a], i) => {
@@ -482,6 +392,7 @@ export function Landing() {
         <section id="demo" className="cta">
           <div className="wrap">
             <div className="cta-card">
+              <Mascot pose={sent ? "celebrating" : "welcome"} className="mascot-cta" />
               <h2>Ready to bring your HR <span style={{ color: "#5CC8FF" }}>into sync?</span></h2>
               <p>Leave your work email and we&apos;ll show you whether Krewoxa fits how you work. No pressure, no obligation.</p>
               {sent ? (

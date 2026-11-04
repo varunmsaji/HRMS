@@ -247,3 +247,19 @@ html:has(.kx){scroll-behavior:smooth;scroll-padding-top:84px}
   html:has(.kx){scroll-behavior:auto}
   .kx *,.kx *::before,.kx *::after{animation:none!important;transition:none!important}
 }
+
+/* real product screenshots */
+.kx .shot-img{display:block;width:100%;height:auto}
+.kx .win .shot-img{border-radius:0 0 21px 21px}
+.kx .shot{overflow:hidden;padding:0}
+.kx .shot-center{max-width:920px;margin:48px auto 32px}
+
+/* mascot */
+.kx .mascot{display:block;height:auto;pointer-events:none;user-select:none}
+.kx .win-stage{position:relative;max-width:1060px;margin:clamp(40px,5vw,64px) auto 0}
+.kx .win-stage .win{margin:0;position:relative}
+.kx .mascot-hero{position:absolute;right:7%;bottom:100%;width:clamp(86px,11vw,150px);margin-bottom:-6px;z-index:1;animation:kBob 4s ease-in-out infinite}
+.kx .mascot-faq{width:112px;margin:0 auto 8px}
+.kx .mascot-cta{position:absolute;right:clamp(12px,4vw,56px);bottom:-14px;width:clamp(120px,14vw,170px)}
+@keyframes kBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@media(max-width:880px){.kx .mascot-cta{display:none}}
