@@ -140,6 +140,7 @@ from hrms.modules.attendance.schemas import (
     AttendancePeriodSummaryRead,
     AttendancePeriodValidationRead,
     AttendancePolicyCreate,
+    AttendancePolicyFormContext,
     AttendancePolicyRead,
     AttendancePolicyUpdate,
     AttendancePolicyVersionCreate,
@@ -326,6 +327,47 @@ class AttendanceService:
             self._session, company_id=company_id, assignable_only=assignable_only
         )
         return [attendance_policy_to_read(r) for r in rows]
+
+    async def list_attendance_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[AttendancePolicyRead]:
+        from hrms.modules.organisation.repository import PolicyAssignmentRepository
+
+        policies = await self.list_attendance_policies(company_id, assignable_only=assignable_only)
+        versions = await self._attendance_repo.list_open_and_draft_versions(
+            self._session, company_id=company_id
+        )
+        assignments = await PolicyAssignmentRepository().list_assignments(
+            self._session,
+            company_id=company_id,
+            policy_kind="ATTENDANCE_POLICY",
+            current_only=True,
+        )
+        for policy in policies:
+            for version in versions:
+                if version.policy_id != policy.id:
+                    continue
+                if version.status == "PUBLISHED":
+                    policy.live_from = version.effective_from
+                else:
+                    policy.has_draft = True
+            for assignment in assignments:
+                if assignment.policy_id != policy.id:
+                    continue
+                if assignment.scope_type == "COMPANY":
+                    policy.assigned_company_wide = True
+                else:
+                    policy.assigned_group_count += 1
+        return policies
+
+    async def attendance_policy_form_context(self, company_id: UUID) -> AttendancePolicyFormContext:
+        from hrms.modules.organisation.repository import ShiftVersionRepository
+
+        return AttendancePolicyFormContext(
+            shift_types_in_use=await ShiftVersionRepository().list_open_shift_types(
+                self._session, company_id=company_id
+            )
+        )
 
     async def get_attendance_policy(
         self, company_id: UUID, policy_id: UUID

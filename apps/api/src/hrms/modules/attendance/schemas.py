@@ -188,6 +188,11 @@ class AttendancePolicyRead(BaseModel):
     version: int
     created_at: str
     updated_at: str
+    # Filled by the list endpoint so a table can show status without a request per row.
+    live_from: date | None = None
+    has_draft: bool = False
+    assigned_company_wide: bool = False
+    assigned_group_count: int = 0
 
 
 def attendance_policy_to_read(row: "AttendancePolicy") -> AttendancePolicyRead:
@@ -560,6 +565,31 @@ class AttendancePolicyVersionPublishRequest(BaseModel):
     expected_previous_version: int | None = None
 
 
+class PolicySetupAssign(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope_type: str
+    scope_id: UUID | None = None
+    # Version of the open assignment being replaced at that scope, when there is one.
+    expected_version: int | None = None
+
+
+class AttendancePolicySetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=150)
+    rules: AttendancePolicyVersionCreate
+    publish: bool = False
+    publish_reason: str | None = None
+    assign: PolicySetupAssign | None = None
+
+
+class AttendancePolicyFormContext(BaseModel):
+    """What the rules form needs to hide settings that cannot apply to this company."""
+
+    shift_types_in_use: list[str]
+
+
 class AttendancePolicyVersionRead(BaseModel):
     id: UUID
     company_id: UUID
@@ -611,6 +641,11 @@ class AttendancePolicyVersionRead(BaseModel):
     published_by: UUID | None
     created_at: str
     updated_at: str
+
+
+class AttendancePolicySetupRead(BaseModel):
+    policy: AttendancePolicyRead
+    version: AttendancePolicyVersionRead
 
 
 def attendance_policy_version_to_read(

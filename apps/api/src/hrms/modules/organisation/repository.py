@@ -1082,6 +1082,21 @@ class ShiftVersionRepository:
         await session.flush()
         return created
 
+    async def list_open_shift_types(self, session: AsyncSession, *, company_id: UUID) -> list[str]:
+        """The distinct types of shifts' open published versions."""
+        stmt = (
+            select(ShiftVersion.shift_type)
+            .where(
+                ShiftVersion.company_id == company_id,
+                ShiftVersion.status == "PUBLISHED",
+                ShiftVersion.effective_to.is_(None),
+                ShiftVersion.deleted_at.is_(None),
+                ShiftVersion.shift_type.is_not(None),
+            )
+            .distinct()
+        )
+        return [str(value) for value in (await session.execute(stmt)).scalars().all()]
+
     async def list_open_and_draft_for_shifts(
         self, session: AsyncSession, *, company_id: UUID, shift_ids: list[UUID]
     ) -> list[ShiftVersion]:

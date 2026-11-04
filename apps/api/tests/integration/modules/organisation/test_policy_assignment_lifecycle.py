@@ -322,3 +322,108 @@ async def test_batch_is_all_or_nothing(client: AsyncClient) -> None:
         assert r.status_code == 422, r.text
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+def _setup_body(name: str = "One step", **extra: Any) -> dict:
+    return {
+        "name": name,
+        "rules": {
+            "effective_from": "2026-01-01",
+            "grace_in_minutes": 10,
+            "hour_bands": [{"min_minutes": 0, "max_minutes": None, "result_status": "PRESENT"}],
+        },
+        **extra,
+    }
+
+
+async def test_policy_setup_creates_publishes_and_assigns_in_one_call(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        r = await client.post(
+            "/v1/attendance-policies/setup",
+            headers=headers,
+            json=_setup_body(publish=True, assign={"scope_type": "COMPANY"}),
+        )
+        assert r.status_code == 201, r.text
+        data = r.json()["data"]
+        assert data["version"]["status"] == "PUBLISHED"
+        assert data["version"]["grace_in_minutes"] == 10
+
+        listed = (await client.get("/v1/attendance-policies", headers=headers)).json()["data"]
+        assert listed[0]["live_from"] == "2026-01-01"
+        assert listed[0]["has_draft"] is False
+        assert listed[0]["assigned_company_wide"] is True
+        assert listed[0]["assigned_group_count"] == 0
+
+        coverage = await client.get(
+            "/v1/policy-assignments/coverage",
+            headers=headers,
+            params={"scope_type": "COMPANY", "as_of": "2026-06-01"},
+        )
+        row = next(
+            x for x in coverage.json()["data"]["rows"] if x["policy_kind"] == "ATTENDANCE_POLICY"
+        )
+        assert row["applied"]["policy_id"] == data["policy"]["id"]
+
+        # a draft stays unpublished and unassigned
+        r = await client.post(
+            "/v1/attendance-policies/setup", headers=headers, json=_setup_body("Later")
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["data"]["version"]["status"] == "DRAFT"
+        listed = (await client.get("/v1/attendance-policies", headers=headers)).json()["data"]
+        later = next(p for p in listed if p["name"] == "Later")
+        assert later["has_draft"] is True and later["live_from"] is None
+
+        # assigning needs publishing
+        r = await client.post(
+            "/v1/attendance-policies/setup",
+            headers=headers,
+            json=_setup_body("Bad", assign={"scope_type": "COMPANY"}),
+        )
+        assert r.status_code == 422, r.text
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_policy_setup_leaves_nothing_behind_when_a_step_fails(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        before = (await client.get("/v1/attendance-policies", headers=headers)).json()["data"]
+
+        # publish fails: no hour bands
+        body = _setup_body(publish=True)
+        body["rules"]["hour_bands"] = []
+        r = await client.post("/v1/attendance-policies/setup", headers=headers, json=body)
+        assert r.status_code == 422, r.text
+
+        # assign fails: the company already has an open assignment and no version was sent
+        first = await client.post(
+            "/v1/attendance-policies/setup",
+            headers=headers,
+            json=_setup_body("First", publish=True, assign={"scope_type": "COMPANY"}),
+        )
+        assert first.status_code == 201, first.text
+        body = _setup_body("Second", publish=True, assign={"scope_type": "COMPANY"})
+        body["rules"]["effective_from"] = "2026-03-01"
+        r = await client.post("/v1/attendance-policies/setup", headers=headers, json=body)
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "POLICY_ASSIGNMENT_VERSION_REQUIRED"
+
+        names = [
+            p["name"]
+            for p in (await client.get("/v1/attendance-policies", headers=headers)).json()["data"]
+        ]
+        assert names == [p["name"] for p in before] + ["First"]
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_form_context_reports_shift_types_in_use(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        r = await client.get("/v1/attendance-policies/form-context", headers=headers)
+        assert r.status_code == 200, r.text
+        assert isinstance(r.json()["data"]["shift_types_in_use"], list)
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)

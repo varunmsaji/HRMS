@@ -88,6 +88,10 @@ from hrms.modules.attendance.permissions import (
     ATTENDANCE_VIEW,
     ATTENDANCE_VIEW_ALL,
 )
+from hrms.modules.attendance.policy_setup import (
+    AttendancePolicySetupService,
+    get_attendance_policy_setup_service,
+)
 from hrms.modules.attendance.regularization_decision_center import (
     RegularizationDecisionCenter,
     RegularizationTab,
@@ -104,7 +108,10 @@ from hrms.modules.attendance.schemas import (
     AttendancePeriodSummaryRead,
     AttendancePeriodValidationRead,
     AttendancePolicyCreate,
+    AttendancePolicyFormContext,
     AttendancePolicyRead,
+    AttendancePolicySetup,
+    AttendancePolicySetupRead,
     AttendancePolicyUpdate,
     AttendancePolicyVersionCreate,
     AttendancePolicyVersionPublishRequest,
@@ -188,8 +195,39 @@ async def list_attendance_policies(
     service: Annotated[AttendanceService, Depends(get_attendance_service)],
     assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[AttendancePolicyRead]:
-    data = await service.list_attendance_policies(tenant.company_id, assignable_only=assignable)
+    data = await service.list_attendance_policies_with_status(
+        tenant.company_id, assignable_only=assignable
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/attendance-policies/form-context", status_code=status.HTTP_200_OK)
+async def get_attendance_policy_form_context(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
+    service: Annotated[AttendanceService, Depends(get_attendance_service)],
+) -> DataEnvelope[AttendancePolicyFormContext]:
+    data = await service.attendance_policy_form_context(tenant.company_id)
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/attendance-policies/setup", status_code=status.HTTP_201_CREATED)
+async def setup_attendance_policy(
+    body: AttendancePolicySetup,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
+    service: Annotated[AttendancePolicySetupService, Depends(get_attendance_policy_setup_service)],
+) -> DataEnvelope[AttendancePolicySetupRead]:
+    """Creates the policy and its rules, optionally publishing and assigning it, all or nothing."""
+    data = await service.setup(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/attendance-policies", status_code=status.HTTP_201_CREATED)
