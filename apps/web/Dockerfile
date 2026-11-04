@@ -37,6 +37,9 @@ ENV NODE_ENV=production \
 # reused here rather than creating a second one (uid 1000 is already taken).
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+# `output: "standalone"` does not trace `public/`; without this every /brand, /mascot and /landing
+# asset 404s in production.
+COPY --from=builder --chown=node:node /app/public ./public
 
 USER node
 
