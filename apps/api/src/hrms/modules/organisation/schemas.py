@@ -2058,6 +2058,12 @@ class PolicyAssignmentCreate(BaseModel):
         return self
 
 
+class PolicyAssignmentEnd(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    effective_to: date
+
+
 class PolicyAssignmentRead(BaseModel):
     id: UUID
     company_id: UUID

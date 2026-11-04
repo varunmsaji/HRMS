@@ -186,8 +186,9 @@ async def list_attendance_policies(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
     service: Annotated[AttendanceService, Depends(get_attendance_service)],
+    assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[AttendancePolicyRead]:
-    data = await service.list_attendance_policies(tenant.company_id)
+    data = await service.list_attendance_policies(tenant.company_id, assignable_only=assignable)
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -390,8 +391,9 @@ async def list_overtime_policies(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
     service: Annotated[AttendanceService, Depends(get_attendance_service)],
+    assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[OvertimePolicyRead]:
-    data = await service.list_overtime_policies(tenant.company_id)
+    data = await service.list_overtime_policies(tenant.company_id, assignable_only=assignable)
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
@@ -587,8 +589,9 @@ async def list_regularization_policies(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
     service: Annotated[AttendanceService, Depends(get_attendance_service)],
+    assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[RegularizationPolicyRead]:
-    data = await service.list_regularization_policies(tenant.company_id)
+    data = await service.list_regularization_policies(tenant.company_id, assignable_only=assignable)
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

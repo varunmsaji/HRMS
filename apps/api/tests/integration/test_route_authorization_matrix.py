@@ -122,6 +122,7 @@ def test_only_known_routes_pick_permissions_imperatively() -> None:
         - {
             ("GET", "/policy-assignments"),
             ("POST", "/policy-assignments"),
+            ("POST", "/policy-assignments/{assignment_id}/end"),
             # Gated by `_require_calendar_change_permission` plus a per-change-type check
             # (holiday edits need ORG.HOLIDAY.MANAGE, the rest ORG.CALENDAR.MANAGE); asserted below.
             ("POST", "/work-calendar-changes/preview"),
@@ -223,6 +224,12 @@ async def test_imperatively_gated_routes(client: AsyncClient) -> None:
             assert r.status_code in (403, 422), (kind, r.status_code, r.text)
         r = await client.get("/v1/policy-assignments", headers=zero)
         assert r.status_code in (403, 422), r.text
+        r = await client.post(
+            f"/v1/policy-assignments/{uuid4()}/end",
+            headers={**zero, "If-Match": "1"},
+            json={"effective_to": "2026-01-01"},
+        )
+        assert r.status_code == 403, r.text
 
         # work-calendar change preview/confirm: refused before body validation without a grant
         for path in ("preview", "confirm"):

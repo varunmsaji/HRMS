@@ -71,6 +71,23 @@ async def _create_leave_policy(
     return dict(response.json()["data"])
 
 
+async def _publish_leave_policy(
+    client: AsyncClient, headers: dict[str, str], policy_id: str
+) -> None:
+    draft = await client.post(
+        f"/v1/leave-policies/{policy_id}/versions",
+        headers=headers,
+        json={"effective_from": "2026-01-01"},
+    )
+    assert draft.status_code == 201, draft.text
+    published = await client.post(
+        f"/v1/leave-policies/{policy_id}/versions/{draft.json()['data']['id']}/publish",
+        headers={**headers, "If-Match": "1"},
+        json={},
+    )
+    assert published.status_code == 200, published.text
+
+
 # ---------------------------------------------------------------------------
 # Leave Type
 # ---------------------------------------------------------------------------
@@ -503,6 +520,8 @@ async def test_two_leave_type_policies_assignable_at_same_company_scope(
         earned_policy = await _create_leave_policy(
             client, headers, name="Earned Leave Policy", leave_type_id=earned["id"]
         )
+        await _publish_leave_policy(client, headers, casual_policy["id"])
+        await _publish_leave_policy(client, headers, earned_policy["id"])
 
         first = await client.post(
             "/v1/policy-assignments",

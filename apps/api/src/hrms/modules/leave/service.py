@@ -698,8 +698,12 @@ class LeavePolicyService:
         )
         return read
 
-    async def list_policies(self, company_id: UUID) -> list[LeavePolicyRead]:
-        rows = await self._repo.list_policies(self._session, company_id=company_id)
+    async def list_policies(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[LeavePolicyRead]:
+        rows = await self._repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [leave_policy_to_read(r) for r in rows]
 
     async def get_policy(self, company_id: UUID, policy_id: UUID) -> LeavePolicyRead:
@@ -1146,6 +1150,12 @@ class LeavePolicyService:
             return False
         row = await self._repo.get_policy(self._session, company_id=company_id, policy_id=policy_id)
         return row is not None
+
+    async def policy_is_published(self, company_id: UUID, policy_id: UUID) -> bool:
+        version = await self._repo.get_current_published(
+            self._session, company_id=company_id, policy_id=policy_id
+        )
+        return version is not None
 
 
 async def _ensure_within_employment(

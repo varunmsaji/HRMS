@@ -199,8 +199,9 @@ async def list_leave_policies(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(LEAVE_POLICY_MANAGE))],
     service: Annotated[LeavePolicyService, Depends(get_leave_policy_service)],
+    assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[LeavePolicyRead]:
-    data = await service.list_policies(tenant.company_id)
+    data = await service.list_policies(tenant.company_id, assignable_only=assignable)
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

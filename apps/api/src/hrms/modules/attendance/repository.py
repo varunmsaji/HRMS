@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import ColumnElement, Select, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -69,13 +69,23 @@ class AttendancePolicyRepository:
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def list_policies(
-        self, session: AsyncSession, *, company_id: UUID
+        self, session: AsyncSession, *, company_id: UUID, assignable_only: bool = False
     ) -> list[AttendancePolicy]:
         stmt = (
             select(AttendancePolicy)
             .where(AttendancePolicy.company_id == company_id, AttendancePolicy.deleted_at.is_(None))
             .order_by(AttendancePolicy.name)
         )
+        if assignable_only:
+            stmt = stmt.where(
+                AttendancePolicy.is_active.is_(True),
+                exists().where(
+                    AttendancePolicyVersion.policy_id == AttendancePolicy.id,
+                    AttendancePolicyVersion.status == "PUBLISHED",
+                    AttendancePolicyVersion.effective_to.is_(None),
+                    AttendancePolicyVersion.deleted_at.is_(None),
+                ),
+            )
         return list((await session.execute(stmt)).scalars().all())
 
     async def update_policy(
@@ -383,13 +393,23 @@ class OvertimePolicyRepository:
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def list_policies(
-        self, session: AsyncSession, *, company_id: UUID
+        self, session: AsyncSession, *, company_id: UUID, assignable_only: bool = False
     ) -> list[OvertimePolicy]:
         stmt = (
             select(OvertimePolicy)
             .where(OvertimePolicy.company_id == company_id, OvertimePolicy.deleted_at.is_(None))
             .order_by(OvertimePolicy.name)
         )
+        if assignable_only:
+            stmt = stmt.where(
+                OvertimePolicy.is_active.is_(True),
+                exists().where(
+                    OvertimePolicyVersion.policy_id == OvertimePolicy.id,
+                    OvertimePolicyVersion.status == "PUBLISHED",
+                    OvertimePolicyVersion.effective_to.is_(None),
+                    OvertimePolicyVersion.deleted_at.is_(None),
+                ),
+            )
         return list((await session.execute(stmt)).scalars().all())
 
     async def update_policy(
@@ -612,7 +632,7 @@ class RegularizationPolicyRepository:
         return (await session.execute(stmt)).scalar_one_or_none()
 
     async def list_policies(
-        self, session: AsyncSession, *, company_id: UUID
+        self, session: AsyncSession, *, company_id: UUID, assignable_only: bool = False
     ) -> list[RegularizationPolicy]:
         stmt = (
             select(RegularizationPolicy)
@@ -622,6 +642,16 @@ class RegularizationPolicyRepository:
             )
             .order_by(RegularizationPolicy.name)
         )
+        if assignable_only:
+            stmt = stmt.where(
+                RegularizationPolicy.is_active.is_(True),
+                exists().where(
+                    RegularizationPolicyVersion.policy_id == RegularizationPolicy.id,
+                    RegularizationPolicyVersion.status == "PUBLISHED",
+                    RegularizationPolicyVersion.effective_to.is_(None),
+                    RegularizationPolicyVersion.deleted_at.is_(None),
+                ),
+            )
         return list((await session.execute(stmt)).scalars().all())
 
     async def update_policy(

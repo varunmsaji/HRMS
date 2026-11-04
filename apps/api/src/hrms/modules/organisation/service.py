@@ -74,9 +74,11 @@ from hrms.modules.organisation.exceptions import (
     InvalidWorkingDaysError,
     LegalEntityDeactivationBlockedError,
     MasterDataInUseError,
+    PolicyAssignmentNotEndableError,
     PolicyAssignmentOverlapError,
     PolicyAssignmentVersionRequiredError,
     PolicyKindNotSupportedError,
+    PolicyNotPublishedError,
     ShiftDeleteConfirmationMismatchError,
     ShiftDeletionBlockedError,
     ShiftVersionDraftAlreadyExistsError,
@@ -159,6 +161,7 @@ from hrms.modules.organisation.schemas import (
     LegalEntityUpdate,
     PlanSummary,
     PolicyAssignmentCreate,
+    PolicyAssignmentEnd,
     PolicyAssignmentRead,
     SetupStepDefinition,
     SetupStepSummary,
@@ -4496,6 +4499,8 @@ class OrganisationService:
         leave_type_id: UUID | None = None,
     ) -> None:
         found: Any
+        # Work calendars and weekly-off patterns have no versions, so nothing to publish.
+        is_published = True
         if policy_kind == "WORK_CALENDAR":
             found = await self._work_calendar_repo.get(
                 self._session, company_id=company_id, work_calendar_id=policy_id
@@ -4514,10 +4519,11 @@ class OrganisationService:
             # the same way it already does for its own WORK_CALENDAR/WEEKLY_OFF kinds.
             from hrms.modules.attendance.service import AttendanceService
 
-            exists = await AttendanceService(self._session).policy_exists(
+            attendance = AttendanceService(self._session)
+            found = await attendance.find_policy(company_id, policy_kind, policy_id)
+            is_published = found is not None and await attendance.policy_is_published(
                 company_id, policy_kind, policy_id
             )
-            found = object() if exists else None
         elif policy_kind == "LEAVE_POLICY":
             # Same local-import rationale as the ATTENDANCE_POLICY/OVERTIME_POLICY/
             # REGULARIZATION_POLICY branch above — LeavePolicy's identity lives in the `leave`
@@ -4526,15 +4532,21 @@ class OrganisationService:
             # name a Casual Leave policy but tag the assignment as Earned Leave.
             from hrms.modules.leave.service import LeavePolicyService
 
+            leave_policies = LeavePolicyService(self._session)
             try:
-                policy = await LeavePolicyService(self._session).get_policy(company_id, policy_id)
-                found = object() if policy.leave_type_id == leave_type_id else None
+                policy = await leave_policies.get_policy(company_id, policy_id)
+                found = policy if policy.leave_type_id == leave_type_id else None
+                is_published = found is not None and await leave_policies.policy_is_published(
+                    company_id, policy_id
+                )
             except NotFoundError:
                 found = None
         else:
             raise PolicyKindNotSupportedError(policy_kind)
         if found is None or getattr(found, "is_active", True) is False:
             raise InvalidPolicyReferenceError()
+        if not is_published:
+            raise PolicyNotPublishedError()
 
     async def _validate_policy_scope(
         self, company_id: UUID, scope_type: str, scope_id: UUID | None
@@ -4673,6 +4685,92 @@ class OrganisationService:
         )
         return read
 
+    async def get_policy_assignment(
+        self, company_id: UUID, assignment_id: UUID
+    ) -> PolicyAssignmentRead:
+        row = await self._policy_assignment_repo.get(
+            self._session, company_id=company_id, assignment_id=assignment_id
+        )
+        if row is None:
+            raise NotFoundError("Resource not found")
+        return policy_assignment_to_read(row)
+
+    async def end_policy_assignment(
+        self,
+        company_id: UUID,
+        assignment_id: UUID,
+        body: PolicyAssignmentEnd,
+        *,
+        expected_version: int,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> PolicyAssignmentRead:
+        """Closes an open assignment without a replacement, so its scope falls back to the next
+        wider assignment from the following day. Company-level assignments are the safety net and
+        calendar kinds change day classification (which needs the impact preview), so neither can
+        be ended here."""
+        current = await self._policy_assignment_repo.get(
+            self._session, company_id=company_id, assignment_id=assignment_id
+        )
+        if current is None:
+            raise NotFoundError("Resource not found")
+        if current.effective_to is not None:
+            raise PolicyAssignmentNotEndableError("This assignment has already ended")
+        if current.scope_type == "COMPANY":
+            raise PolicyAssignmentNotEndableError(
+                "A company-wide assignment can only be replaced, so nobody is left without a policy"
+            )
+        if current.policy_kind in ("WORK_CALENDAR", "WEEKLY_OFF"):
+            raise PolicyAssignmentNotEndableError(
+                "Work calendar and weekly-off assignments can only be replaced"
+            )
+        if body.effective_to < current.effective_from:
+            raise ValidationError(
+                "The end date cannot be before the assignment's effective date",
+                code="INVALID_EFFECTIVE_TO",
+            )
+        # Any closed period after the end date would have its rules changed retroactively.
+        from hrms.modules.attendance.exceptions import AttendancePeriodClosedError
+        from hrms.modules.attendance.repository import AttendancePeriodRepository
+
+        if await AttendancePeriodRepository().list_closed_overlapping(
+            self._session,
+            company_id=company_id,
+            date_from=body.effective_to + timedelta(days=1),
+            date_to=date.max,
+        ):
+            raise AttendancePeriodClosedError()
+
+        before_read = policy_assignment_to_read(current)
+        closed = await self._policy_assignment_repo.close(
+            self._session,
+            company_id=company_id,
+            assignment_id=assignment_id,
+            effective_to=body.effective_to,
+            expected_version=expected_version,
+            now=datetime.now(UTC),
+        )
+        if closed is None:
+            raise StaleResourceError(
+                "This assignment has been modified by another request",
+                current=policy_assignment_to_audit_dict(before_read),
+            )
+        read = policy_assignment_to_read(closed)
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="POLICY_ASSIGNMENT_CHANGED",
+            entity_type="policy_assignment",
+            entity_id=assignment_id,
+            before=policy_assignment_to_audit_dict(before_read),
+            after=policy_assignment_to_audit_dict(read),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+        return read
+
     async def list_policy_assignments(
         self,
         company_id: UUID,
@@ -4680,6 +4778,8 @@ class OrganisationService:
         policy_kind: str | None = None,
         scope_type: str | None = None,
         scope_id: UUID | None = None,
+        leave_type_id: UUID | None = None,
+        current_only: bool = False,
         page: PageParams,
     ) -> tuple[list[PolicyAssignmentRead], int]:
         rows = await self._policy_assignment_repo.list_assignments(
@@ -4688,6 +4788,8 @@ class OrganisationService:
             policy_kind=policy_kind,
             scope_type=scope_type,
             scope_id=scope_id,
+            leave_type_id=leave_type_id,
+            current_only=current_only,
             limit=page.limit,
             offset=page.offset,
         )
@@ -4697,6 +4799,8 @@ class OrganisationService:
             policy_kind=policy_kind,
             scope_type=scope_type,
             scope_id=scope_id,
+            leave_type_id=leave_type_id,
+            current_only=current_only,
         )
         return [policy_assignment_to_read(row) for row in rows], total
 

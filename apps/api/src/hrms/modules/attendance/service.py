@@ -319,8 +319,12 @@ class AttendanceService:
         )
         return read
 
-    async def list_attendance_policies(self, company_id: UUID) -> list[AttendancePolicyRead]:
-        rows = await self._attendance_repo.list_policies(self._session, company_id=company_id)
+    async def list_attendance_policies(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[AttendancePolicyRead]:
+        rows = await self._attendance_repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [attendance_policy_to_read(r) for r in rows]
 
     async def get_attendance_policy(
@@ -958,8 +962,12 @@ class AttendanceService:
         )
         return read
 
-    async def list_overtime_policies(self, company_id: UUID) -> list[OvertimePolicyRead]:
-        rows = await self._overtime_repo.list_policies(self._session, company_id=company_id)
+    async def list_overtime_policies(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[OvertimePolicyRead]:
+        rows = await self._overtime_repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [overtime_policy_to_read(r) for r in rows]
 
     async def get_overtime_policy(self, company_id: UUID, policy_id: UUID) -> OvertimePolicyRead:
@@ -1466,9 +1474,11 @@ class AttendanceService:
         return read
 
     async def list_regularization_policies(
-        self, company_id: UUID
+        self, company_id: UUID, *, assignable_only: bool = False
     ) -> list[RegularizationPolicyRead]:
-        rows = await self._regularization_repo.list_policies(self._session, company_id=company_id)
+        rows = await self._regularization_repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [regularization_policy_to_read(r) for r in rows]
 
     async def get_regularization_policy(
@@ -1928,23 +1938,40 @@ class AttendanceService:
     # Cross-module hook — called from `organisation.service._validate_policy_reference`
     # -----------------------------------------------------------------
 
-    async def policy_exists(self, company_id: UUID, policy_kind: str, policy_id: UUID) -> bool:
-        row: Any
+    async def find_policy(self, company_id: UUID, policy_kind: str, policy_id: UUID) -> Any:
         if policy_kind == "ATTENDANCE_POLICY":
-            row = await self._attendance_repo.get_policy(
+            return await self._attendance_repo.get_policy(
                 self._session, company_id=company_id, policy_id=policy_id
             )
+        if policy_kind == "OVERTIME_POLICY":
+            return await self._overtime_repo.get_policy(
+                self._session, company_id=company_id, policy_id=policy_id
+            )
+        if policy_kind == "REGULARIZATION_POLICY":
+            return await self._regularization_repo.get_policy(
+                self._session, company_id=company_id, policy_id=policy_id
+            )
+        return None
+
+    async def policy_exists(self, company_id: UUID, policy_kind: str, policy_id: UUID) -> bool:
+        return await self.find_policy(company_id, policy_kind, policy_id) is not None
+
+    async def policy_is_published(
+        self, company_id: UUID, policy_kind: str, policy_id: UUID
+    ) -> bool:
+        repo: Any
+        if policy_kind == "ATTENDANCE_POLICY":
+            repo = self._attendance_repo
         elif policy_kind == "OVERTIME_POLICY":
-            row = await self._overtime_repo.get_policy(
-                self._session, company_id=company_id, policy_id=policy_id
-            )
+            repo = self._overtime_repo
         elif policy_kind == "REGULARIZATION_POLICY":
-            row = await self._regularization_repo.get_policy(
-                self._session, company_id=company_id, policy_id=policy_id
-            )
+            repo = self._regularization_repo
         else:
             return False
-        return row is not None
+        version = await repo.get_current_published(
+            self._session, company_id=company_id, policy_id=policy_id
+        )
+        return version is not None
 
     async def has_computed_attendance_blocking_timezone_change(
         self, company_id: UUID, *, employee_ids: list[UUID] | None = None

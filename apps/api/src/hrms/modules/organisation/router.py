@@ -101,6 +101,7 @@ from hrms.modules.organisation.schemas import (
     LegalEntityRead,
     LegalEntityUpdate,
     PolicyAssignmentCreate,
+    PolicyAssignmentEnd,
     PolicyAssignmentRead,
     RegistrationConfigRead,
     ShiftCreate,
@@ -1407,6 +1408,8 @@ async def list_policy_assignments(
     policy_kind: Annotated[str | None, Query()] = None,
     scope_type: Annotated[str | None, Query()] = None,
     scope_id: Annotated[UUID | None, Query()] = None,
+    leave_type_id: Annotated[UUID | None, Query()] = None,
+    current_only: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[PolicyAssignmentRead]:
     await _require_policy_assignment_permission(policy_kind, user, rbac)
     data, total = await service.list_policy_assignments(
@@ -1414,6 +1417,8 @@ async def list_policy_assignments(
         policy_kind=policy_kind,
         scope_type=scope_type,
         scope_id=scope_id,
+        leave_type_id=leave_type_id,
+        current_only=current_only,
         page=page,
     )
     return ListEnvelope(
@@ -1441,6 +1446,34 @@ async def create_policy_assignment(
         tenant.company_id,
         body,
         expected_version=parse_if_match(if_match) if if_match is not None else None,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/policy-assignments/{assignment_id}/end", status_code=status.HTTP_200_OK)
+async def end_policy_assignment(
+    assignment_id: UUID,
+    body: PolicyAssignmentEnd,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated["AuthenticatedUser", Depends(get_current_user)],
+    rbac: Annotated["RbacService", Depends(get_rbac_service)],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+    if_match: Annotated[str, Header(alias="If-Match")],
+) -> DataEnvelope[PolicyAssignmentRead]:
+    # Every kind that can be ended needs the attendance grant, so refuse before reading the row;
+    # then apply the row's own kind rule, the same as creating one.
+    await _require_policy_assignment_permission("ATTENDANCE_POLICY", user, rbac)
+    assignment = await service.get_policy_assignment(tenant.company_id, assignment_id)
+    await _require_policy_assignment_permission(assignment.policy_kind, user, rbac)
+    data = await service.end_policy_assignment(
+        tenant.company_id,
+        assignment_id,
+        body,
+        expected_version=parse_if_match(if_match),
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),

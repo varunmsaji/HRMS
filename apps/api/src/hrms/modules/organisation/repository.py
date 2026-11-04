@@ -1664,6 +1664,8 @@ class PolicyAssignmentRepository:
         policy_kind: str | None,
         scope_type: str | None,
         scope_id: UUID | None,
+        leave_type_id: UUID | None = None,
+        current_only: bool = False,
     ) -> list[Any]:
         conditions = [
             PolicyAssignment.company_id == company_id,
@@ -1675,6 +1677,10 @@ class PolicyAssignmentRepository:
             conditions.append(PolicyAssignment.scope_type == scope_type)
         if scope_id is not None:
             conditions.append(PolicyAssignment.scope_id == scope_id)
+        if leave_type_id is not None:
+            conditions.append(PolicyAssignment.leave_type_id == leave_type_id)
+        if current_only:
+            conditions.append(PolicyAssignment.effective_to.is_(None))
         return conditions
 
     async def list_assignments(
@@ -1685,11 +1691,18 @@ class PolicyAssignmentRepository:
         policy_kind: str | None = None,
         scope_type: str | None = None,
         scope_id: UUID | None = None,
+        leave_type_id: UUID | None = None,
+        current_only: bool = False,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[PolicyAssignment]:
         conditions = self._assignment_conditions(
-            company_id=company_id, policy_kind=policy_kind, scope_type=scope_type, scope_id=scope_id
+            company_id=company_id,
+            policy_kind=policy_kind,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            leave_type_id=leave_type_id,
+            current_only=current_only,
         )
         # `id` is a stable secondary key — `effective_from` (a plain `Date`) ties constantly
         # across assignments created the same day, which would make page boundaries
@@ -1711,11 +1724,18 @@ class PolicyAssignmentRepository:
         policy_kind: str | None = None,
         scope_type: str | None = None,
         scope_id: UUID | None = None,
+        leave_type_id: UUID | None = None,
+        current_only: bool = False,
     ) -> int:
         """Same predicates as `list_assignments`, no `ORDER BY`/`LIMIT` — the paired COUNT query
         for `GET /policy-assignments`'s `pagination.total` (API-01 §6)."""
         conditions = self._assignment_conditions(
-            company_id=company_id, policy_kind=policy_kind, scope_type=scope_type, scope_id=scope_id
+            company_id=company_id,
+            policy_kind=policy_kind,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            leave_type_id=leave_type_id,
+            current_only=current_only,
         )
         stmt = select(func.count()).select_from(PolicyAssignment).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
