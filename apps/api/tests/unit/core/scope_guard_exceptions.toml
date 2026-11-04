@@ -228,3 +228,51 @@ key = "hrms.modules.organisation.router:get_my_calendar"
 permission = "ATTENDANCE.VIEW"
 kind = "scope_irrelevant"
 reason = "Self-service route: always acts on the caller's own employee id (user.employee_id from the JWT claim); there is no employee_id or company_id parameter, so a wider scope grants nothing more."
+
+[[handler]]
+key = "hrms.modules.attendance.router:start_my_face_enrollment"
+permission = "ATTENDANCE.PUNCH"
+kind = "scope_irrelevant"
+reason = "Self-service route: always acts on the caller's own employee id (user.employee_id), never a client-supplied target."
+
+[[handler]]
+key = "hrms.modules.attendance.schedule_router:swap_candidates"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Self-service route: lists only colleagues in the caller's own department who are on a different published shift that day, with name, code, department and shift only (no pay, attendance or personal data). The caller's own employee id is taken from the session."
+
+[[handler]]
+key = "hrms.modules.attendance.schedule_router:create_my_swap_request"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Self-service route: the requester is always the caller's own employee id (user.employee_id); the colleague must be in the caller's department and must consent, and a manager approves."
+
+[[handler]]
+key = "hrms.modules.attendance.schedule_router:consent_swap_request"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Self-service route: only the named counterpart of the swap may consent; any other caller gets 404 (RosterScheduleService.consent)."
+
+[[handler]]
+key = "hrms.modules.attendance.schedule_router:withdraw_swap_request"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Self-service route: only the requester or the named counterpart may withdraw or decline; any other caller gets 404 (RosterScheduleService.withdraw)."
+
+[[handler]]
+key = "hrms.modules.organisation.router:get_my_work_profile"
+permission = "ATTENDANCE.VIEW"
+kind = "scope_irrelevant"
+reason = "Self-service route: returns the caller's own current shift and work location only, resolved from user.employee_id; there is no client-supplied employee id."
+
+[[handler]]
+key = "hrms.modules.attendance.router:get_face_enrollment_policy"
+permission = "ATTENDANCE.FACE_ENROLLMENT_MANAGE"
+kind = "company_level"
+reason = "Company-level setting (one row per company), not a per-employee record; shipped roles hold the permission at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."
+
+[[handler]]
+key = "hrms.modules.attendance.router:update_face_enrollment_policy"
+permission = "ATTENDANCE.FACE_ENROLLMENT_MANAGE"
+kind = "company_level"
+reason = "Company-level setting (one row per company), not a per-employee record; shipped roles hold the permission at COMPANY only (asserted against a freshly registered tenant by the integration guard). A grant below COMPANY is unsupported until the handler enforces scope."

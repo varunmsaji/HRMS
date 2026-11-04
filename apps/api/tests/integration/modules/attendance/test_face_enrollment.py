@@ -27,6 +27,7 @@ from tests.integration.modules.attendance.test_attendance_security import (
 )
 from tests.integration.modules.organisation.test_registration_flow import _cleanup
 
+from hrms.core.config.settings import get_settings
 from hrms.core.db.session import get_session_factory, set_rls_company_id
 from hrms.modules.attendance.dependencies import get_face_provider
 from hrms.modules.attendance.email_templates import build_face_enrollment_requested_email
@@ -382,8 +383,13 @@ async def test_mismatched_angle_discards_everything(
 
 
 async def test_turned_angle_below_angle_threshold_is_rejected(
-    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
+    client: AsyncClient,
+    face_tenant: Tenant,
+    fake_face_provider: FakeFaceProvider,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Pin the floor: a developer's .env may lower FACE_ENROLLMENT_ANGLE_MIN_SIMILARITY.
+    monkeypatch.setattr(get_settings(), "face_enrollment_angle_min_similarity", 0.80)
     admin, company_id = face_tenant
     employee_id = await _employee(client, admin)
     await _open(client, admin, employee_id)
