@@ -148,3 +148,14 @@ export function mapRegularizationPolicyVersionApiErrors(
   }
   return errors;
 }
+
+/** Publishing needs a correction type, or the policy would allow nothing. */
+export function validateRegularizationPolicyForPublish(
+  values: RegularizationPolicyVersionFormValues,
+): RegularizationPolicyVersionFormErrors {
+  const errors = validateRegularizationPolicyVersionForm(values);
+  if (values.allowedTypes.length === 0) {
+    errors.allowedTypes = "Allow at least one kind of correction to publish.";
+  }
+  return errors;
+}

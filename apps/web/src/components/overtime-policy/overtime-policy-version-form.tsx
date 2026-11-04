@@ -1,7 +1,13 @@
 import { FormField } from "@/components/common/form-field";
 import { OvertimePolicyRateRowsEditor } from "@/components/overtime-policy/overtime-policy-rate-rows-editor";
+import { PolicyCheckbox } from "@/components/policy/policy-checkbox";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import {
+  ELIGIBILITY_LABELS,
+  NIGHT_MODE_LABELS,
+  ROUNDING_LABELS,
+} from "@/lib/overtime-policy/labels";
 import {
   APPROVAL_CHAINS,
   NIGHT_OT_MODES,
@@ -12,6 +18,7 @@ import type {
   OvertimePolicyVersionFormErrors,
   OvertimePolicyVersionFormValues,
 } from "@/lib/overtime-policy/validate-overtime-policy";
+import { APPROVAL_CHAIN_LABELS } from "@/lib/policy/approval-labels";
 
 interface OvertimePolicyVersionFormProps {
   values: OvertimePolicyVersionFormValues;
@@ -19,28 +26,12 @@ interface OvertimePolicyVersionFormProps {
   onChange: (values: OvertimePolicyVersionFormValues) => void;
 }
 
-function Checkbox({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-sm text-foreground">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="rounded border-border"
-      />
-      {label}
-    </label>
-  );
-}
-
+/** Who earns overtime, approval, limits and comp-off come first; rounding, night overtime and
+ * payroll labels sit under Advanced, which opens by itself when one of them has an error. The
+ * effective date is asked for when publishing.
+ *
+ * PD-1 — "requires pre-approval" is not applied by the engine yet, so it is not shown; its stored
+ * value still round-trips through the form state. */
 export function OvertimePolicyVersionForm({
   values,
   errors,
@@ -53,24 +44,18 @@ export function OvertimePolicyVersionForm({
     onChange({ ...values, [key]: value });
   }
 
+  const showCompOffDetails =
+    values.compOffInsteadOfPay || values.compOffExpiryDays !== "" || values.compOffDayLengthMinutes !== "";
+  const showRoundingMinutes = values.roundingMode !== "NONE" || values.roundingMinutes !== "";
+  const showNightWindow =
+    values.nightOtMode !== "SHIFT_FLAG" || values.nightWindowStart !== "" || values.nightWindowEnd !== "";
+
   return (
     <div className="space-y-6">
       <section>
-        <h3 className="text-sm font-medium text-foreground">Effective date &amp; eligibility</h3>
+        <h3 className="text-sm font-medium text-foreground">Who earns overtime</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField
-            id="ot-effective-from"
-            label="Effective from"
-            required
-            error={errors.effectiveFrom}
-          >
-            <Input
-              type="date"
-              value={values.effectiveFrom}
-              onChange={(e) => update("effectiveFrom", e.target.value)}
-            />
-          </FormField>
-          <FormField id="ot-eligibility" label="Eligibility">
+          <FormField id="ot-eligibility" label="Who can earn overtime">
             <NativeSelect
               value={values.eligibility}
               onChange={(e) => update("eligibility", e.target.value)}
@@ -81,87 +66,81 @@ export function OvertimePolicyVersionForm({
                 (o) => o !== "GRADE_VIA_ASSIGNMENT" || values.eligibility === "GRADE_VIA_ASSIGNMENT",
               ).map((o) => (
                 <option key={o} value={o}>
-                  {o.replaceAll("_", " ")}
+                  {ELIGIBILITY_LABELS[o] ?? o}
                 </option>
               ))}
             </NativeSelect>
           </FormField>
-        </div>
-      </section>
-
-      <section>
-        <h3 className="text-sm font-medium text-foreground">Detection &amp; rounding</h3>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="ot-min-minutes" label="Minimum OT minutes">
+          <FormField
+            id="ot-min-minutes"
+            label="Minimum overtime (minutes)"
+            description="Extra time shorter than this earns nothing. With 30, 20 extra minutes count as none."
+          >
             <Input
               type="number"
+              min={0}
               value={values.minOtMinutes}
               onChange={(e) => update("minOtMinutes", e.target.value)}
             />
           </FormField>
-          <FormField id="ot-rounding-mode" label="Rounding mode">
-            <NativeSelect
-              value={values.roundingMode}
-              onChange={(e) => update("roundingMode", e.target.value)}
-            >
-              {OT_ROUNDING_MODES.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
-          <FormField id="ot-rounding-minutes" label="Rounding minutes">
-            <Input
-              type="number"
-              value={values.roundingMinutes}
-              onChange={(e) => update("roundingMinutes", e.target.value)}
-            />
-          </FormField>
         </div>
       </section>
 
       <section>
-        <h3 className="text-sm font-medium text-foreground">Approval &amp; caps</h3>
+        <h3 className="text-sm font-medium text-foreground">Approval</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="ot-approval-chain" label="Approval chain">
+          <FormField id="ot-approval-chain" label="Who approves overtime">
             <NativeSelect
               value={values.approvalChain}
               onChange={(e) => update("approvalChain", e.target.value)}
             >
               {APPROVAL_CHAINS.map((o) => (
                 <option key={o} value={o}>
-                  {o.replaceAll("_", " ")}
+                  {APPROVAL_CHAIN_LABELS[o] ?? o}
                 </option>
               ))}
             </NativeSelect>
           </FormField>
-          <div className="flex flex-col justify-end gap-2 pb-2">
+          <div className="flex items-end pb-2">
             {/* PD-1 — "requires pre-approval" is not applied by the engine yet, so it is not
                 shown; its stored value still round-trips through the form state. */}
-            <Checkbox
-              label="Requires post-approval"
+            <PolicyCheckbox
+              label="Approve after the overtime is worked"
+              description="On by default. Overtime waits for approval before it counts."
               checked={values.requiresPostApproval}
               onChange={(v) => update("requiresPostApproval", v)}
             />
           </div>
-          <FormField id="ot-daily-cap" label="Daily cap (minutes)">
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-sm font-medium text-foreground">Limits</h3>
+        <p className="mt-1 text-sm text-foreground-muted">
+          The most overtime counted. Anything above is ignored. Leave blank for no limit. 240
+          minutes is 4 hours.
+        </p>
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <FormField id="ot-daily-cap" label="Per day (minutes)">
             <Input
               type="number"
+              min={1}
               value={values.dailyCapMinutes}
               onChange={(e) => update("dailyCapMinutes", e.target.value)}
             />
           </FormField>
-          <FormField id="ot-weekly-cap" label="Weekly cap (minutes)">
+          <FormField id="ot-weekly-cap" label="Per week (minutes)">
             <Input
               type="number"
+              min={1}
               value={values.weeklyCapMinutes}
               onChange={(e) => update("weeklyCapMinutes", e.target.value)}
             />
           </FormField>
-          <FormField id="ot-monthly-cap" label="Monthly cap (minutes)">
+          <FormField id="ot-monthly-cap" label="Per month (minutes)">
             <Input
               type="number"
+              min={1}
               value={values.monthlyCapMinutes}
               onChange={(e) => update("monthlyCapMinutes", e.target.value)}
             />
@@ -170,76 +149,123 @@ export function OvertimePolicyVersionForm({
       </section>
 
       <section>
-        <h3 className="text-sm font-medium text-foreground">Comp-off &amp; night OT</h3>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="flex items-end pb-2">
-            <Checkbox
-              label="Comp-off instead of pay"
-              checked={values.compOffInsteadOfPay}
-              onChange={(v) => update("compOffInsteadOfPay", v)}
-            />
-          </div>
-          <FormField
-            id="ot-comp-off-expiry"
-            label="Comp-off expiry (days)"
-            description="Leave blank for the default of 60 days."
-          >
-            <Input
-              type="number"
-              placeholder="60"
-              value={values.compOffExpiryDays}
-              onChange={(e) => update("compOffExpiryDays", e.target.value)}
-            />
-          </FormField>
-          <FormField
-            id="ot-comp-off-day-length"
-            label="Comp-off day length (minutes)"
-            description="Minutes of comp-off that equal one full day on the leave balance, e.g. 480 for an 8-hour day. Leave blank to use the employee's scheduled shift length that day."
-          >
-            <Input
-              type="number"
-              value={values.compOffDayLengthMinutes}
-              onChange={(e) => update("compOffDayLengthMinutes", e.target.value)}
-            />
-          </FormField>
-          <FormField id="ot-night-mode" label="Night OT mode">
-            <NativeSelect
-              value={values.nightOtMode}
-              onChange={(e) => update("nightOtMode", e.target.value)}
-            >
-              {NIGHT_OT_MODES.map((o) => (
-                <option key={o} value={o}>
-                  {o.replaceAll("_", " ")}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
-          <div className="grid grid-cols-2 gap-2">
-            <FormField id="ot-night-start" label="Night window start (HH:mm)" error={errors.nightWindow}>
-              <Input
-                placeholder="22:00"
-                value={values.nightWindowStart}
-                onChange={(e) => update("nightWindowStart", e.target.value)}
-              />
-            </FormField>
-            <FormField id="ot-night-end" label="Night window end (HH:mm)">
-              <Input
-                placeholder="06:00"
-                value={values.nightWindowEnd}
-                onChange={(e) => update("nightWindowEnd", e.target.value)}
-              />
-            </FormField>
-          </div>
+        <h3 className="text-sm font-medium text-foreground">Time off instead of pay</h3>
+        <div className="mt-3 space-y-4">
+          <PolicyCheckbox
+            label="Give comp-off days instead of paying overtime"
+            description="Needs a leave type marked as the company's comp-off type."
+            checked={values.compOffInsteadOfPay}
+            onChange={(v) => update("compOffInsteadOfPay", v)}
+          />
+          {showCompOffDetails ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                id="ot-comp-off-expiry"
+                label="Days to use a comp-off"
+                description="Leave blank for the default of 60 days."
+              >
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="60"
+                  value={values.compOffExpiryDays}
+                  onChange={(e) => update("compOffExpiryDays", e.target.value)}
+                />
+              </FormField>
+              <FormField
+                id="ot-comp-off-day-length"
+                label="Minutes that make one comp-off day"
+                description="For example 480 for an 8-hour day. Leave blank to use the employee's shift length that day."
+              >
+                <Input
+                  type="number"
+                  min={1}
+                  value={values.compOffDayLengthMinutes}
+                  onChange={(e) => update("compOffDayLengthMinutes", e.target.value)}
+                />
+              </FormField>
+            </div>
+          ) : null}
         </div>
       </section>
 
-      <section>
-        {errors.rateRows ? <p className="mb-2 text-sm text-danger">{errors.rateRows}</p> : null}
-        <OvertimePolicyRateRowsEditor
-          rows={values.rateRows}
-          onChange={(rows) => update("rateRows", rows)}
-        />
-      </section>
+      <details
+        open={Boolean(errors.nightWindow || errors.rateRows) || undefined}
+        className="rounded-md border border-border"
+      >
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
+          Advanced settings
+        </summary>
+        <div className="space-y-6 border-t border-border p-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField id="ot-rounding-mode" label="Round overtime">
+              <NativeSelect
+                value={values.roundingMode}
+                onChange={(e) => update("roundingMode", e.target.value)}
+              >
+                {OT_ROUNDING_MODES.map((o) => (
+                  <option key={o} value={o}>
+                    {ROUNDING_LABELS[o] ?? o}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+            {showRoundingMinutes ? (
+              <FormField
+                id="ot-rounding-minutes"
+                label="Round to (minutes)"
+                description="For example 15 rounds to a quarter of an hour."
+              >
+                <Input
+                  type="number"
+                  min={1}
+                  value={values.roundingMinutes}
+                  onChange={(e) => update("roundingMinutes", e.target.value)}
+                />
+              </FormField>
+            ) : null}
+            <FormField id="ot-night-mode" label="What counts as night overtime">
+              <NativeSelect
+                value={values.nightOtMode}
+                onChange={(e) => update("nightOtMode", e.target.value)}
+              >
+                {NIGHT_OT_MODES.map((o) => (
+                  <option key={o} value={o}>
+                    {NIGHT_MODE_LABELS[o] ?? o}
+                  </option>
+                ))}
+              </NativeSelect>
+            </FormField>
+            {showNightWindow ? (
+              <div className="grid grid-cols-2 gap-2">
+                <FormField
+                  id="ot-night-start"
+                  label="Night starts (HH:mm)"
+                  error={errors.nightWindow}
+                >
+                  <Input
+                    placeholder="22:00"
+                    value={values.nightWindowStart}
+                    onChange={(e) => update("nightWindowStart", e.target.value)}
+                  />
+                </FormField>
+                <FormField id="ot-night-end" label="Night ends (HH:mm)">
+                  <Input
+                    placeholder="06:00"
+                    value={values.nightWindowEnd}
+                    onChange={(e) => update("nightWindowEnd", e.target.value)}
+                  />
+                </FormField>
+              </div>
+            ) : null}
+          </div>
+          {errors.rateRows ? <p className="text-sm text-danger">{errors.rateRows}</p> : null}
+          <OvertimePolicyRateRowsEditor
+            rows={values.rateRows}
+            onChange={(rows) => update("rateRows", rows)}
+          />
+        </div>
+      </details>
     </div>
   );
 }

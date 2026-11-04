@@ -2,6 +2,7 @@ import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { PolicyBandsEditor } from "@/components/attendance-policy/policy-bands-editor";
+import { PolicyCheckbox } from "@/components/policy/policy-checkbox";
 import {
   CORE_HOURS_LABELS,
   INCOMPLETE_AT_LOCK_LABELS,
@@ -36,35 +37,6 @@ interface AttendancePolicyVersionFormProps {
   onChange: (values: AttendancePolicyVersionFormValues) => void;
   /** Types of the company's live shifts. `null` when unknown, which shows every setting. */
   shiftTypesInUse?: string[] | null;
-}
-
-function Checkbox({
-  label,
-  description,
-  checked,
-  onChange,
-}: {
-  label: string;
-  description?: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="flex items-start gap-2 text-sm text-foreground">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 rounded border-border"
-      />
-      <span>
-        {label}
-        {description ? (
-          <span className="block text-xs text-foreground-muted">{description}</span>
-        ) : null}
-      </span>
-    </label>
-  );
 }
 
 /** The everyday rules come first; the rest sit under Advanced, which opens by itself when one of
@@ -157,7 +129,7 @@ export function AttendancePolicyVersionForm({
             />
           </FormField>
           <div className="flex items-end pb-2">
-            <Checkbox
+            <PolicyCheckbox
               label="Leaving early needs approval"
               description="Without an approved request, leaving early gets the harshest early-leaving result."
               checked={values.earlyDepartureRequiresApproval}
@@ -348,7 +320,7 @@ export function AttendancePolicyVersionForm({
               </FormField>
             ) : null}
             <div className="flex items-end pb-2">
-              <Checkbox
+              <PolicyCheckbox
                 label="On-duty days still need punches"
                 description="When off, an approved on-duty day counts as fully paid without punches."
                 checked={values.onDutyRequiresPunch}

@@ -9,6 +9,11 @@ export interface RegularizationPolicy {
   version: number;
   created_at: string;
   updated_at: string;
+  /** Filled by the list endpoint. */
+  live_from?: string | null;
+  has_draft?: boolean;
+  assigned_company_wide?: boolean;
+  assigned_group_count?: number;
 }
 
 export const APPROVAL_CHAINS = ["AUTO", "MANAGER", "MANAGER_THEN_HR", "HR"] as const;
