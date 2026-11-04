@@ -328,20 +328,18 @@ class AttendanceService:
         )
         return [attendance_policy_to_read(r) for r in rows]
 
-    async def list_attendance_policies_with_status(
-        self, company_id: UUID, *, assignable_only: bool = False
-    ) -> list[AttendancePolicyRead]:
+    async def _with_status(
+        self,
+        company_id: UUID,
+        policy_kind: str,
+        policies: list[Any],
+        repo: Any,
+    ) -> list[Any]:
         from hrms.modules.organisation.repository import PolicyAssignmentRepository
 
-        policies = await self.list_attendance_policies(company_id, assignable_only=assignable_only)
-        versions = await self._attendance_repo.list_open_and_draft_versions(
-            self._session, company_id=company_id
-        )
+        versions = await repo.list_open_and_draft_versions(self._session, company_id=company_id)
         assignments = await PolicyAssignmentRepository().list_assignments(
-            self._session,
-            company_id=company_id,
-            policy_kind="ATTENDANCE_POLICY",
-            current_only=True,
+            self._session, company_id=company_id, policy_kind=policy_kind, current_only=True
         )
         for policy in policies:
             for version in versions:
@@ -359,6 +357,30 @@ class AttendanceService:
                 else:
                     policy.assigned_group_count += 1
         return policies
+
+    async def list_attendance_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[AttendancePolicyRead]:
+        policies = await self.list_attendance_policies(company_id, assignable_only=assignable_only)
+        return await self._with_status(
+            company_id, "ATTENDANCE_POLICY", policies, self._attendance_repo
+        )
+
+    async def list_overtime_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[OvertimePolicyRead]:
+        policies = await self.list_overtime_policies(company_id, assignable_only=assignable_only)
+        return await self._with_status(company_id, "OVERTIME_POLICY", policies, self._overtime_repo)
+
+    async def list_regularization_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[RegularizationPolicyRead]:
+        policies = await self.list_regularization_policies(
+            company_id, assignable_only=assignable_only
+        )
+        return await self._with_status(
+            company_id, "REGULARIZATION_POLICY", policies, self._regularization_repo
+        )
 
     async def attendance_policy_form_context(self, company_id: UUID) -> AttendancePolicyFormContext:
         from hrms.modules.organisation.repository import ShiftVersionRepository

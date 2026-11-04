@@ -131,6 +131,8 @@ from hrms.modules.attendance.schemas import (
     LeaveProjectionSync,
     OvertimePolicyCreate,
     OvertimePolicyRead,
+    OvertimePolicySetup,
+    OvertimePolicySetupRead,
     OvertimePolicyUpdate,
     OvertimePolicyVersionCreate,
     OvertimePolicyVersionPublishRequest,
@@ -144,6 +146,8 @@ from hrms.modules.attendance.schemas import (
     PunchRead,
     RegularizationPolicyCreate,
     RegularizationPolicyRead,
+    RegularizationPolicySetup,
+    RegularizationPolicySetupRead,
     RegularizationPolicyUpdate,
     RegularizationPolicyVersionCreate,
     RegularizationPolicyVersionPublishRequest,
@@ -431,8 +435,29 @@ async def list_overtime_policies(
     service: Annotated[AttendanceService, Depends(get_attendance_service)],
     assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[OvertimePolicyRead]:
-    data = await service.list_overtime_policies(tenant.company_id, assignable_only=assignable)
+    data = await service.list_overtime_policies_with_status(
+        tenant.company_id, assignable_only=assignable
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/overtime-policies/setup", status_code=status.HTTP_201_CREATED)
+async def setup_overtime_policy(
+    body: OvertimePolicySetup,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
+    service: Annotated[AttendancePolicySetupService, Depends(get_attendance_policy_setup_service)],
+) -> DataEnvelope[OvertimePolicySetupRead]:
+    """Creates the policy and its rules, optionally publishing and assigning it, all or nothing."""
+    data = await service.setup_overtime(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/overtime-policies", status_code=status.HTTP_201_CREATED)
@@ -629,8 +654,29 @@ async def list_regularization_policies(
     service: Annotated[AttendanceService, Depends(get_attendance_service)],
     assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[RegularizationPolicyRead]:
-    data = await service.list_regularization_policies(tenant.company_id, assignable_only=assignable)
+    data = await service.list_regularization_policies_with_status(
+        tenant.company_id, assignable_only=assignable
+    )
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/regularization-policies/setup", status_code=status.HTTP_201_CREATED)
+async def setup_regularization_policy(
+    body: RegularizationPolicySetup,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ATTENDANCE_POLICY_MANAGE))],
+    service: Annotated[AttendancePolicySetupService, Depends(get_attendance_policy_setup_service)],
+) -> DataEnvelope[RegularizationPolicySetupRead]:
+    """Creates the policy and its rules, optionally publishing and assigning it, all or nothing."""
+    data = await service.setup_regularization(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/regularization-policies", status_code=status.HTTP_201_CREATED)

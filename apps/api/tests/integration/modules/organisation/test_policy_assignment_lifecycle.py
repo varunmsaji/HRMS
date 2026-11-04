@@ -427,3 +427,84 @@ async def test_form_context_reports_shift_types_in_use(client: AsyncClient) -> N
         assert isinstance(r.json()["data"]["shift_types_in_use"], list)
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_overtime_and_regularization_setup_in_one_call(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        overtime = await client.post(
+            "/v1/overtime-policies/setup",
+            headers=headers,
+            json={
+                "name": "OT standard",
+                "rules": {"effective_from": "2026-01-01", "min_ot_minutes": 30},
+                "publish": True,
+                "assign": {"scope_type": "COMPANY"},
+            },
+        )
+        assert overtime.status_code == 201, overtime.text
+        assert overtime.json()["data"]["version"]["status"] == "PUBLISHED"
+        assert overtime.json()["data"]["version"]["min_ot_minutes"] == 30
+
+        regularization = await client.post(
+            "/v1/regularization-policies/setup",
+            headers=headers,
+            json={
+                "name": "Corrections",
+                "rules": {
+                    "effective_from": "2026-01-01",
+                    "allowed_types": [{"regularization_type": "MISSING_PUNCH"}],
+                },
+                "publish": True,
+                "assign": {"scope_type": "COMPANY"},
+            },
+        )
+        assert regularization.status_code == 201, regularization.text
+
+        for path, kind, name in (
+            ("overtime-policies", "OVERTIME_POLICY", "OT standard"),
+            ("regularization-policies", "REGULARIZATION_POLICY", "Corrections"),
+        ):
+            listed = (await client.get(f"/v1/{path}", headers=headers)).json()["data"]
+            assert listed[0]["name"] == name
+            assert listed[0]["live_from"] == "2026-01-01"
+            assert listed[0]["assigned_company_wide"] is True
+            assert listed[0]["has_draft"] is False
+            coverage = await client.get(
+                "/v1/policy-assignments/coverage",
+                headers=headers,
+                params={"scope_type": "COMPANY", "as_of": "2026-06-01"},
+            )
+            row = next(x for x in coverage.json()["data"]["rows"] if x["policy_kind"] == kind)
+            assert row["applied"]["policy_name"] == name
+
+        # failures leave nothing behind, and assigning needs publishing
+        bad = await client.post(
+            "/v1/overtime-policies/setup",
+            headers=headers,
+            json={"name": "Nope", "rules": {}, "assign": {"scope_type": "COMPANY"}},
+        )
+        assert bad.status_code == 422, bad.text
+        clash = await client.post(
+            "/v1/regularization-policies/setup",
+            headers=headers,
+            json={
+                "name": "Second",
+                "rules": {"effective_from": "2026-03-01"},
+                "publish": True,
+                "assign": {"scope_type": "COMPANY"},
+            },
+        )
+        assert clash.status_code == 422, clash.text
+        assert clash.json()["error"]["code"] == "POLICY_ASSIGNMENT_VERSION_REQUIRED"
+        names = [
+            p["name"]
+            for p in (await client.get("/v1/regularization-policies", headers=headers)).json()[
+                "data"
+            ]
+        ]
+        assert names == ["Corrections"]
+        drafts = (await client.get("/v1/overtime-policies", headers=headers)).json()["data"]
+        assert [p["name"] for p in drafts] == ["OT standard"]
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)

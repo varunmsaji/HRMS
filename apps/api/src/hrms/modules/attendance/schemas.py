@@ -746,6 +746,11 @@ class OvertimePolicyRead(BaseModel):
     version: int
     created_at: str
     updated_at: str
+    # Filled by the list endpoint so a table can show status without a request per row.
+    live_from: date | None = None
+    has_draft: bool = False
+    assigned_company_wide: bool = False
+    assigned_group_count: int = 0
 
 
 def overtime_policy_to_read(row: "OvertimePolicy") -> OvertimePolicyRead:
@@ -972,6 +977,21 @@ def build_overtime_policy_version_update_values(
 # ---------------------------------------------------------------------------
 
 
+class OvertimePolicySetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=150)
+    rules: OvertimePolicyVersionCreate
+    publish: bool = False
+    publish_reason: str | None = None
+    assign: PolicySetupAssign | None = None
+
+
+class OvertimePolicySetupRead(BaseModel):
+    policy: OvertimePolicyRead
+    version: OvertimePolicyVersionRead
+
+
 class RegularizationPolicyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -994,6 +1014,11 @@ class RegularizationPolicyRead(BaseModel):
     version: int
     created_at: str
     updated_at: str
+    # Filled by the list endpoint so a table can show status without a request per row.
+    live_from: date | None = None
+    has_draft: bool = False
+    assigned_company_wide: bool = False
+    assigned_group_count: int = 0
 
 
 def regularization_policy_to_read(row: "RegularizationPolicy") -> RegularizationPolicyRead:
@@ -1122,6 +1147,21 @@ class RegularizationPolicyVersionRead(BaseModel):
     published_by: UUID | None
     created_at: str
     updated_at: str
+
+
+class RegularizationPolicySetup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=150)
+    rules: RegularizationPolicyVersionCreate
+    publish: bool = False
+    publish_reason: str | None = None
+    assign: PolicySetupAssign | None = None
+
+
+class RegularizationPolicySetupRead(BaseModel):
+    policy: RegularizationPolicyRead
+    version: RegularizationPolicyVersionRead
 
 
 def regularization_policy_version_to_read(

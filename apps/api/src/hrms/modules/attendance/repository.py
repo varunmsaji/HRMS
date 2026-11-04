@@ -403,6 +403,17 @@ class OvertimePolicyRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def list_open_and_draft_versions(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[OvertimePolicyVersion]:
+        """Every draft and open published version, for list status in one query."""
+        stmt = select(OvertimePolicyVersion).where(
+            OvertimePolicyVersion.company_id == company_id,
+            OvertimePolicyVersion.deleted_at.is_(None),
+            OvertimePolicyVersion.effective_to.is_(None),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def list_policies(
         self, session: AsyncSession, *, company_id: UUID, assignable_only: bool = False
     ) -> list[OvertimePolicy]:
@@ -641,6 +652,17 @@ class RegularizationPolicyRepository:
             RegularizationPolicy.deleted_at.is_(None),
         )
         return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def list_open_and_draft_versions(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[RegularizationPolicyVersion]:
+        """Every draft and open published version, for list status in one query."""
+        stmt = select(RegularizationPolicyVersion).where(
+            RegularizationPolicyVersion.company_id == company_id,
+            RegularizationPolicyVersion.deleted_at.is_(None),
+            RegularizationPolicyVersion.effective_to.is_(None),
+        )
+        return list((await session.execute(stmt)).scalars().all())
 
     async def list_policies(
         self, session: AsyncSession, *, company_id: UUID, assignable_only: bool = False
