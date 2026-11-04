@@ -7,6 +7,13 @@ What each setting is, what every option does, and how to use it, in plain Englis
 ## Contents
 
 - [How the settings fit together](#how-the-settings-fit-together)
+- **Organisation**
+  - [Company Profile](#company-profile)
+  - [Companies (Legal Entities)](#companies)
+  - [Branches](#branches)
+  - [Departments](#departments)
+  - [Designations](#designations)
+  - [Grades](#grades)
 - **Attendance & Time**
   - [Shifts](#shifts)
   - [Attendance Periods](#attendance-periods)
@@ -26,6 +33,13 @@ What each setting is, what every option does, and how to use it, in plain Englis
 - **Policies**
   - [Policy Assignments](#policy-assignments)
   - [Policy Resolution](#policy-resolution)
+- **Payroll**
+  - [Salary Components](#salary-components)
+  - [Salary Structures](#salary-structures)
+  - [Statutory Rates](#statutory-rates)
+- **Administration**
+  - [Setup](#setup)
+  - [Users](#users)
 
 ## How the settings fit together
 
@@ -35,7 +49,7 @@ A rulebook does nothing until it is published and assigned to people. Most of th
 
 ### A sensible order to set things up
 
-1. Set up your organisation: company, branches, departments, designations and grades (these are in the Organisation group of Settings).
+1. Set up your organisation: the Company Profile first (country, currency, timezone, working days), then the company's legal registrations, branches, departments, designations and grades (all in the Organisation group of Settings).
 2. Create your Shifts and publish each shift's schedule.
 3. Create Holiday Calendars, a Weekly-Off Pattern, and then a Work Calendar that combines them.
 4. Create an Attendance Policy, an Overtime Policy and a Regularization Policy, and publish each.
@@ -44,6 +58,8 @@ A rulebook does nothing until it is published and assigned to people. Most of th
 7. Add narrower assignments only where a group is different, such as one department or one grade.
 8. Use Policy Resolution to check a few real employees and confirm they get what you expect.
 9. At the end of each month, use Attendance Periods to check and lock the month before payroll.
+10. Before the first pay run, create any extra Salary Components, check the Salary Structures, and verify the Statutory Rates (Payroll group).
+11. Invite your team under Users and give each person the lowest role that lets them do their job.
 
 ### Words used throughout
 
@@ -51,6 +67,217 @@ A rulebook does nothing until it is published and assigned to people. Most of th
 - **Effective date**: The date a published version starts to apply. Days before it keep following the older version, so changing a policy never rewrites the past.
 - **Scope**: The group a policy is assigned to: the whole company, a branch, a department, a grade, a designation, a shift, or one employee.
 - **Most specific wins**: If someone belongs to several groups that each have a policy, the smallest, most specific group wins. The order from strongest to weakest is employee, shift, designation, grade, department, branch, legal entity, company.
+
+# Organisation
+
+<a id="company-profile"></a>
+## Company Profile
+
+The one record that describes your business as a whole: its name, country, currency, timezone, working week and branding. Almost every other part of the system reads from it.
+
+**When to use it:** Fill it in first, right after signing up, and come back when something about the business changes. The Setup page tracks whether it is complete.
+
+### Identity
+
+- **Company name:** Required, up to 200 characters. The everyday name shown around the product.
+- **Legal name:** The registered name, if it differs from the everyday name.
+- **Registration number:** Your company registration number, up to 64 characters.
+- **Industry code:** A short label for your industry, up to 40 characters.
+- **Company size:** One of 1-10, 11-50, 51-200, 201-500, 501-1000 or 1000+. Anything else is rejected.
+
+### Region and money
+
+- **Country code:** Two letters, such as IN. Saved in capitals.
+- **Currency:** Three letters, such as INR. It can only be changed while the company is on its trial. After the trial it is locked, because changing currency would reinterpret every amount already recorded.
+- **Timezone:** The company's default timezone. Only timezones on the allowed list are accepted. Every date and time the system works out (punches, late marks, shifts) uses this clock unless a branch or shift overrides it. It cannot be changed once any attendance has been calculated for the company, because that would reinterpret hours that payroll may already depend on.
+
+### Contact and address
+
+- **Email, phone, website:** Company contact details. The email must be a valid address.
+- **Address lines 1 and 2, city, state, postal code, country code:** The head-office address. Used for display and documents, not for any rule.
+
+### Localisation
+
+- **Language code:** The company's language, for example en.
+- **Date format:** How dates are written across the product, for example dd/MM/yyyy.
+- **Fiscal year start:** The month your financial year begins. April is the default for India. Reports and year-based settings that follow the financial year start from this month.
+
+### Working schedule and hours
+
+- **Working days:** Tick the days that are normal working days, Monday to Sunday. At least one must be ticked. This is the company-wide default week; Work Calendars and Weekly-Off Patterns refine it for particular groups.
+- **Business hours start and end:** In 24-hour HH:mm, for example 09:00 and 18:00. The end must be later than the start. These describe the office day in general. They are not a shift and do not decide who is late.
+
+### Branding
+
+- **Logo URL:** A link to your logo image, up to 2048 characters.
+- **Primary colour:** A colour code such as #4F46E5, used for the company theme.
+
+**Example:** A Bengaluru company sets country IN, currency INR, timezone Asia/Kolkata, fiscal year April, working days Monday to Saturday, and business hours 09:30 to 18:30.
+
+**Good to know**
+
+- Check the timezone and currency before you add employees or run attendance. They become locked once real data depends on them.
+- A suspended company is read-only: no changes can be saved until it is reactivated.
+- If two people edit at once, the second save is refused and shows the latest version so nothing is silently overwritten.
+- Every change is written to the audit log with who made it and what it was before.
+
+<a id="companies"></a>
+## Companies (Legal Entities)
+
+A legal entity is the registered company that actually employs people and files returns. It carries the tax and statutory registrations that appear on payslips and compliance reports.
+
+**When to use it:** Add one when you set up, and another only if your group has separately registered companies. The first release allows one company per account, with any number of branches under it.
+
+### Basic details
+
+- **Company name:** Required, up to 200 characters. The legally registered name.
+- **Registered address:** The registered office address, up to 4000 characters.
+
+### Statutory registrations
+
+All optional, but payroll and compliance documents need the ones that apply to you.
+
+- **PAN:** Ten characters: five letters, four digits, one letter, such as ABCDE1234F. Checked for format.
+- **GSTIN:** Fifteen characters in the official GST format, such as 29ABCDE1234F1Z5. Checked for format.
+- **TAN:** The tax deduction account number, used for TDS returns.
+- **CIN:** The corporate identification number.
+- **PF establishment code:** Your provident fund registration.
+- **ESI code:** Your employee state insurance registration.
+- **Labour welfare fund (LWF) registration:** Your LWF registration, where your state requires one.
+
+### Authorised signatory
+
+- **Signatory name and designation:** The person who signs documents on the company's behalf, such as offer letters.
+- **Signature image URL:** A link to an image of the signature, for documents that carry one.
+
+### Active or inactive
+
+- **Deactivate:** Hides the company from new use. It is refused while the company still has active branches. Nothing is ever hard-deleted.
+
+**Example:** Acme Pvt Ltd is added with its PAN, GSTIN, TAN and PF code. Pay runs are then created per legal entity, so the right registrations print on every payslip.
+
+**Good to know**
+
+- A pay run belongs to one legal entity, so every employee must sit under the right one.
+- Fix a wrong PAN or GSTIN here rather than on documents; the format check will catch most typing errors.
+- To deactivate a company, move or deactivate its branches first.
+
+<a id="branches"></a>
+## Branches
+
+A branch is a physical office or site. It holds the address, an optional timezone, and the map position and radius that attendance geofencing uses.
+
+**When to use it:** Add each location where people work. Add the map coordinates and radius if you want punches checked against the office location.
+
+### Details
+
+- **Company:** The legal entity the branch operates under. Required.
+- **Branch name:** Required, up to 200 characters.
+- **Address lines 1 and 2, city:** The branch address.
+- **State / union territory:** Chosen from the official list of Indian states and union territories.
+- **PIN code:** Six digits and cannot start with 0, such as 560001.
+- **Timezone:** Optional. Leave it empty and the branch uses the company timezone. Set it only for a site in a different zone. Like the company timezone, it cannot be changed once attendance has been calculated for people at that branch.
+
+### Geofence
+
+These three work together. Leave them empty to have no location check at this branch.
+
+- **Latitude:** Between -90 and 90, for example 12.9716.
+- **Longitude:** Between -180 and 180, for example 77.5946.
+- **Geofence radius (m):** A whole number of metres from 1 to 100,000, for example 200. A punch counts as on site when it is inside this circle.
+
+### Active or inactive
+
+- **Deactivate:** Refused while the branch has active departments, active employees, or employees authorised to punch there. Move or remove those first; nothing is moved automatically.
+
+**Example:** The Pune office is added with its address, latitude and longitude, and a radius of 150 m. Staff who punch from home or the car park outside the circle are flagged.
+
+**Good to know**
+
+- Open the office on a map, copy the coordinates of the entrance, and add a little extra radius for GPS drift. Too small a radius causes honest staff to be flagged.
+- Workplace Geofences (under Attendance & Time) decides what happens when a punch is outside the circle.
+- Branch timezone is the middle step in the order shift, then branch, then company.
+
+<a id="departments"></a>
+## Departments
+
+Departments are the teams in your company. They can nest inside each other, can belong to a branch, and can have a head, who becomes an approver for their people.
+
+**When to use it:** Build the team structure before you add employees, and keep it current as teams change.
+
+### Details
+
+- **Department name:** Required, up to 150 characters.
+- **Branch:** Optional. Ties the department to a location.
+- **Parent department:** Optional. Makes this a sub-team of another. The chain can be at most 5 levels deep, and a department cannot be placed under itself or one of its own sub-teams.
+- **Department head:** Optional. Must be an existing employee. The head acts as the department-head stage in leave, overtime and regularization approvals.
+
+### Active or inactive
+
+- **Deactivate:** Refused while active employees are assigned to the department; reassign them first.
+
+**Example:** Engineering is the parent of Backend and Frontend. Priya is set as head of Backend, so requests that need a department-head decision for her team reach her.
+
+**Good to know**
+
+- The department code is generated for you; you do not type it.
+- Departments can be used as the scope of a policy assignment, so a sensible structure makes policies easier to target.
+- If an approval seems to skip a step, check that the department has a head set.
+
+<a id="designations"></a>
+## Designations
+
+A designation is a job title, such as Software Engineer or HR Executive. It can be linked to a department and a grade.
+
+**When to use it:** Create the titles you use, then pick one for each employee.
+
+### Details
+
+- **Designation title:** Required, up to 150 characters.
+- **Department:** Optional. Links the title to one department.
+- **Grade:** Optional. Links the title to a level. Setting it needs only the permission to manage designations, not grades.
+
+### Active or inactive
+
+- **Deactivate:** Refused while active employees hold the title; reassign them first.
+
+**Example:** Senior Accountant is linked to the Finance department and to grade G4.
+
+**Good to know**
+
+- The designation code is generated for you.
+- Designations can be the scope of a policy assignment, for example a different overtime rule for Drivers.
+- Keep titles consistent; reports group by designation.
+
+<a id="grades"></a>
+## Grades
+
+A grade is a level or pay band. It records the pay range, notice and probation lengths and the approval limit that apply to people at that level.
+
+**When to use it:** Create grades if you manage people by level. They are optional, but they let you describe each level once.
+
+### Details
+
+Every field except the name is optional.
+
+- **Grade name:** Required, up to 100 characters.
+- **Level:** A whole number used to order grades, from 0 up.
+- **Min CTC and Max CTC (₹):** The annual pay range for the grade. The minimum may not be greater than the maximum.
+- **Approval limit (₹):** The amount this grade is allowed to approve.
+- **Notice period (days):** Whole days, 0 to 3650.
+- **Probation (days):** Whole days, 0 to 3650.
+
+### Active or inactive
+
+- **Deactivate:** Refused while active employees are on the grade; reassign them first.
+
+**Example:** G3 is level 3 with CTC from ₹6,00,000 to ₹9,00,000, a 60-day notice period and a 90-day probation.
+
+**Good to know**
+
+- The grade code is generated and cannot be duplicated.
+- At present the pay range, notice, probation and approval limit are recorded for reference. Other parts of the system do not yet enforce them, so they will not block a salary outside the range.
+- Grades can be the scope of a policy assignment, for example one leave policy for managers and another for trainees.
 
 # Attendance & Time
 
@@ -641,3 +868,199 @@ The result names the policy and the level that matched, such as Department: Prod
 **Good to know**
 
 - Checking changes nothing. It is safe to use at any time.
+
+# Payroll
+
+<a id="salary-components"></a>
+## Salary Components
+
+A salary component is one building block of pay, such as Basic, HRA or a Conveyance allowance. Structures are made by combining components.
+
+**When to use it:** Add a component whenever you pay or charge something that is not already listed, before you use it in a structure.
+
+### Details
+
+- **Code:** Capital letters, digits and underscores only, up to 30 characters, such as CONVEYANCE. It cannot be changed later. Codes the pay run writes itself (for example OVERTIME, ROUNDING, PF_EMPLOYEE, TDS_EMPLOYEE) and codes starting with ARR_ are reserved and refused.
+- **Name:** Required. What appears on the payslip.
+- **Type:** Earning is money paid to the employee. Employer contribution is a cost to the company that sits inside CTC. Deduction is money taken from pay.
+- **Display order:** A number from 0 to 10,000. Lower numbers appear first on the payslip.
+
+### Flags
+
+Each decides how the component is treated in the pay run.
+
+- **Taxable:** Counts toward income tax (TDS) calculations.
+- **Counts as PF wage:** Included in the wages on which provident fund is calculated. Basic is, by default.
+- **Counts as ESI wage:** Included in the wages on which ESI is calculated.
+- **Prorated by paid days:** Reduced in proportion when the employee is paid for fewer days than the month.
+- **Shown on payslip:** Whether the line is printed on the payslip.
+
+### Ready-made components
+
+- **System components:** Basic, House Rent Allowance, Special Allowance, and the employer PF and ESI contributions are created automatically. You can change their flags and names, but not their type.
+
+**Example:** You add CONVEYANCE as a taxable earning, prorated, shown on the payslip, with display order 40.
+
+**Good to know**
+
+- Deduction components can be defined but are not placed in structures yet. PF, ESI, professional tax, LWF and TDS are worked out automatically from Statutory Rates.
+- Turn a component off with the active switch rather than deleting it; payslips already issued keep their lines.
+- Getting the PF and ESI wage flags right matters, because they decide the statutory amounts for every employee.
+
+<a id="salary-structures"></a>
+## Salary Structures
+
+A salary structure is a recipe that turns an employee's yearly CTC into monthly pay lines. It lists components and how each is calculated.
+
+**When to use it:** Create a structure for each pay pattern, such as Standard or Metro. Standard and Standard (metro) are provided to start from.
+
+### The structure
+
+- **Code:** Capital letters, digits and underscores, up to 30 characters.
+- **Name:** Required.
+- **Description:** Optional, up to 2000 characters.
+
+### Lines (one per component, up to 50)
+
+Each component may appear only once.
+
+- **Calculation: fixed amount:** A set monthly amount.
+- **Calculation: % of monthly CTC:** A percentage of the monthly CTC.
+- **Calculation: % of gross:** A percentage of gross pay. Allowed on earnings only.
+- **Calculation: % of another component:** A percentage of another earning in the same structure, such as HRA as 40% of Basic. No circular references.
+- **Calculation: balance of gross:** Takes whatever is left. Every structure needs exactly one, and it must be an earning. Special Allowance is usually this line.
+- **Percentage:** 0 to 100, up to four decimal places.
+- **Monthly cap (₹):** An upper limit on the line. Not available on the balancing line.
+- **Applies when:** Always, only if PF applies, or only if ESI applies. A line that does not apply to an employee is skipped for them.
+
+### Versions and publishing
+
+- **Draft:** Edit lines freely. Nobody is paid from a draft. Editing a published structure creates a new draft copied from the current version.
+- **Publish with an effective-from date:** The version becomes the live one from that date, and the previous version ends the day before. A published version can no longer be edited.
+- **Preview:** Enter an annual CTC and whether PF or ESI applies to see the monthly breakup before you publish or assign.
+
+**Example:** In the Standard structure Basic is 50% of gross, HRA is 40% of Basic, employer PF is 12% of Basic, and Special Allowance balances the rest, so the lines always add up to the CTC.
+
+**Good to know**
+
+- CTC is the total cost: gross pay plus employer contributions. Gross is found by working backwards so the lines add up exactly.
+- If the CTC is too small for the fixed amounts, the preview shows an error instead of a wrong figure.
+- Publish a new version with a future date to change pay next month without touching past months.
+
+<a id="statutory-rates"></a>
+## Statutory Rates
+
+The government rates that pay runs use for provident fund, ESI, professional tax, labour welfare fund and income tax. They are data, not code, so you can update them when the law changes.
+
+**When to use it:** Review them before your first pay run, and again whenever a notification changes a rate.
+
+### What every rate has
+
+- **Scheme:** PF, ESI, PT (professional tax), LWF or TDS.
+- **State code:** Required for PT and LWF, and not allowed for PF, ESI or TDS.
+- **Effective from:** The date the rate starts. Adding a new rate ends the open one for the same scheme and state the day before.
+- **Notes:** Where the figure came from, such as the notification or circular.
+
+### PF fields
+
+- **Employee and employer contribution (%):** The two shares of PF wages.
+- **Of which pension, EPS (%):** The part of the employer share that goes to pension. It cannot exceed the employer share.
+- **Wage ceiling (₹):** PF is normally worked out on wages up to this amount.
+- **EDLI (%) and Admin charges (%):** The insurance and administration charges.
+- **No pension from age:** From this age the pension part is not paid.
+
+### ESI fields
+
+- **Employee and employer contribution (%):** The two shares.
+- **Wage ceiling (₹):** Above this gross, ESI cover does not apply, and the run shows a warning.
+- **No employee share up to a daily wage of (₹):** Low-paid staff pay no employee share, but the employer share is still due.
+
+### PT and LWF
+
+- **Slabs:** A band of monthly gross (from and to) with the amount due. PT slabs can apply to one gender and can have a different amount in a named month. No slabs means the state levies no PT.
+- **LWF months:** The month numbers in which LWF is deducted, such as 6 and 12, with employee and employer amounts per slab.
+
+### TDS (income tax, new regime)
+
+- **Standard deduction (₹/year):** Taken off annual income before tax.
+- **Full rebate at or below taxable income (₹/year):** Nobody at or below this pays tax.
+- **Health and education cess (%):** Added to the tax.
+- **Warn above (₹/year):** Surcharge is not calculated. Income above this only raises a warning.
+- **Slabs:** Annual income bands and the percentage on each.
+
+### Verification
+
+- **Verified:** Each rate must be verified, as a sign-off that it matches the latest notification. A pay run that uses an unverified rate cannot be approved.
+- **Editing a rate:** Correcting a rate in place clears its verified status, so it must be checked again. Pay runs already created keep the copy they used.
+
+**Example:** Maharashtra raises a professional tax slab. You add a new PT rate for MH effective 1 April, check the amounts against the notification, and click Verify.
+
+**Good to know**
+
+- Rates that came ready-made are marked not verified until someone checks them.
+- Never type a rate from memory. Use the official notification, and put its reference in Notes.
+- Money is stored in paise internally, but you always type rupees.
+
+# Administration
+
+<a id="setup"></a>
+## Setup
+
+A progress checklist that shows how far the company's initial set-up has got and what to do next.
+
+**When to use it:** Check it after signing up. It is also shown as a welcome prompt when you first arrive.
+
+### What it shows
+
+- **Progress badge:** Setup complete, or the number of steps done out of the total.
+- **Next step:** The first unfinished step, with a button that goes straight to the page that finishes it.
+- **Step list:** Each step with a done or not-done mark.
+
+### How a step is completed
+
+- **Company Profile:** Currently the only tracked step. It is done once the company profile has been filled in. It is worked out by the system from your data; you cannot tick it by hand.
+
+**Good to know**
+
+- When every step is done the company is marked as onboarded, once.
+- This checklist only tracks the profile. The wider order for setting up time, leave and policies is in the overview at the top of this guide.
+
+<a id="users"></a>
+## Users
+
+Everyone who can log in to this company, and the role each person holds. A role decides which pages they can use and whose data they can see.
+
+**When to use it:** Use it to invite a new person, or to change what an existing user can do.
+
+### The list
+
+- **Name and email:** The person's login.
+- **Status:** Whether the account is active.
+- **Roles:** The roles held. A person with no role can sign in but can do nothing.
+
+### Invite a user
+
+- **Email:** Required. Where the invitation is sent. If that email already has an account in this company, the invite is refused.
+- **Role:** The role they start with. The invitation link is valid for 7 days, and the person sets their own password when they accept.
+
+### Manage roles
+
+- **Roles you can assign:** Company Admin, HR Admin, Reporting Manager, Branch Manager and Employee. You choose among these five; custom roles cannot be created here.
+- **At least one role:** Saving with no roles ticked is refused.
+- **Your own roles:** You cannot change your own roles, so you cannot lock yourself out.
+
+### What each role can see
+
+- **Company Admin:** Full access to settings, users and approvals across the whole company.
+- **HR Admin:** Runs HR day to day across the company: employees, onboarding, attendance reading, leave administration, calendars and holidays, and preparing payroll. Approving a pay run, and editing shifts, attendance policies, leave types and leave policies, stay with Company Admin.
+- **Reporting Manager:** Sees and approves for their own team, including indirect reports.
+- **Branch Manager:** Sees employees, attendance and leave balances for their own branch. It does not by itself allow approving requests.
+- **Employee:** Sees and acts on their own records: applying for leave, viewing their balance and attendance.
+
+**Example:** A new HR executive is invited as HR Admin. A manager promoted to run the Pune office is given Branch Manager as well as Employee.
+
+**Good to know**
+
+- Give the least access that does the job. Most people only need Employee.
+- Invite someone from their employee record if they should be linked to it, so their own data and their team's data are found correctly.
+- Role changes and invites are written to the audit log.

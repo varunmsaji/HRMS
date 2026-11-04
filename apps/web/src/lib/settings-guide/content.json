@@ -7,7 +7,7 @@
     ],
     "stepsTitle": "A sensible order to set things up",
     "steps": [
-      "Set up your organisation: company, branches, departments, designations and grades (these are in the Organisation group of Settings).",
+      "Set up your organisation: the Company Profile first (country, currency, timezone, working days), then the company's legal registrations, branches, departments, designations and grades (all in the Organisation group of Settings).",
       "Create your Shifts and publish each shift's schedule.",
       "Create Holiday Calendars, a Weekly-Off Pattern, and then a Work Calendar that combines them.",
       "Create an Attendance Policy, an Overtime Policy and a Regularization Policy, and publish each.",
@@ -15,7 +15,9 @@
       "Open Policy Assignments and assign one policy of each kind to the whole Company. This is the safety net so that nobody is left without rules.",
       "Add narrower assignments only where a group is different, such as one department or one grade.",
       "Use Policy Resolution to check a few real employees and confirm they get what you expect.",
-      "At the end of each month, use Attendance Periods to check and lock the month before payroll."
+      "At the end of each month, use Attendance Periods to check and lock the month before payroll.",
+      "Before the first pay run, create any extra Salary Components, check the Salary Structures, and verify the Statutory Rates (Payroll group).",
+      "Invite your team under Users and give each person the lowest role that lets them do their job."
     ],
     "glossary": [
       {
@@ -37,6 +39,421 @@
     ]
   },
   "sections": [
+    {
+      "id": "company-profile",
+      "group": "Organisation",
+      "title": "Company Profile",
+      "href": "/app/company",
+      "summary": "The one record that describes your business as a whole: its name, country, currency, timezone, working week and branding. Almost every other part of the system reads from it.",
+      "whenToUse": "Fill it in first, right after signing up, and come back when something about the business changes. The Setup page tracks whether it is complete.",
+      "parts": [
+        {
+          "title": "Identity",
+          "items": [
+            {
+              "name": "Company name",
+              "text": "Required, up to 200 characters. The everyday name shown around the product."
+            },
+            {
+              "name": "Legal name",
+              "text": "The registered name, if it differs from the everyday name."
+            },
+            {
+              "name": "Registration number",
+              "text": "Your company registration number, up to 64 characters."
+            },
+            {
+              "name": "Industry code",
+              "text": "A short label for your industry, up to 40 characters."
+            },
+            {
+              "name": "Company size",
+              "text": "One of 1-10, 11-50, 51-200, 201-500, 501-1000 or 1000+. Anything else is rejected."
+            }
+          ]
+        },
+        {
+          "title": "Region and money",
+          "items": [
+            {
+              "name": "Country code",
+              "text": "Two letters, such as IN. Saved in capitals."
+            },
+            {
+              "name": "Currency",
+              "text": "Three letters, such as INR. It can only be changed while the company is on its trial. After the trial it is locked, because changing currency would reinterpret every amount already recorded."
+            },
+            {
+              "name": "Timezone",
+              "text": "The company's default timezone. Only timezones on the allowed list are accepted. Every date and time the system works out (punches, late marks, shifts) uses this clock unless a branch or shift overrides it. It cannot be changed once any attendance has been calculated for the company, because that would reinterpret hours that payroll may already depend on."
+            }
+          ]
+        },
+        {
+          "title": "Contact and address",
+          "items": [
+            {
+              "name": "Email, phone, website",
+              "text": "Company contact details. The email must be a valid address."
+            },
+            {
+              "name": "Address lines 1 and 2, city, state, postal code, country code",
+              "text": "The head-office address. Used for display and documents, not for any rule."
+            }
+          ]
+        },
+        {
+          "title": "Localisation",
+          "items": [
+            {
+              "name": "Language code",
+              "text": "The company's language, for example en."
+            },
+            {
+              "name": "Date format",
+              "text": "How dates are written across the product, for example dd/MM/yyyy."
+            },
+            {
+              "name": "Fiscal year start",
+              "text": "The month your financial year begins. April is the default for India. Reports and year-based settings that follow the financial year start from this month."
+            }
+          ]
+        },
+        {
+          "title": "Working schedule and hours",
+          "items": [
+            {
+              "name": "Working days",
+              "text": "Tick the days that are normal working days, Monday to Sunday. At least one must be ticked. This is the company-wide default week; Work Calendars and Weekly-Off Patterns refine it for particular groups."
+            },
+            {
+              "name": "Business hours start and end",
+              "text": "In 24-hour HH:mm, for example 09:00 and 18:00. The end must be later than the start. These describe the office day in general. They are not a shift and do not decide who is late."
+            }
+          ]
+        },
+        {
+          "title": "Branding",
+          "items": [
+            {
+              "name": "Logo URL",
+              "text": "A link to your logo image, up to 2048 characters."
+            },
+            {
+              "name": "Primary colour",
+              "text": "A colour code such as #4F46E5, used for the company theme."
+            }
+          ]
+        }
+      ],
+      "example": "A Bengaluru company sets country IN, currency INR, timezone Asia/Kolkata, fiscal year April, working days Monday to Saturday, and business hours 09:30 to 18:30.",
+      "tips": [
+        "Check the timezone and currency before you add employees or run attendance. They become locked once real data depends on them.",
+        "A suspended company is read-only: no changes can be saved until it is reactivated.",
+        "If two people edit at once, the second save is refused and shows the latest version so nothing is silently overwritten.",
+        "Every change is written to the audit log with who made it and what it was before."
+      ]
+    },
+    {
+      "id": "companies",
+      "group": "Organisation",
+      "title": "Companies (Legal Entities)",
+      "href": "/app/legal-entities",
+      "summary": "A legal entity is the registered company that actually employs people and files returns. It carries the tax and statutory registrations that appear on payslips and compliance reports.",
+      "whenToUse": "Add one when you set up, and another only if your group has separately registered companies. The first release allows one company per account, with any number of branches under it.",
+      "parts": [
+        {
+          "title": "Basic details",
+          "items": [
+            {
+              "name": "Company name",
+              "text": "Required, up to 200 characters. The legally registered name."
+            },
+            {
+              "name": "Registered address",
+              "text": "The registered office address, up to 4000 characters."
+            }
+          ]
+        },
+        {
+          "title": "Statutory registrations",
+          "intro": "All optional, but payroll and compliance documents need the ones that apply to you.",
+          "items": [
+            {
+              "name": "PAN",
+              "text": "Ten characters: five letters, four digits, one letter, such as ABCDE1234F. Checked for format."
+            },
+            {
+              "name": "GSTIN",
+              "text": "Fifteen characters in the official GST format, such as 29ABCDE1234F1Z5. Checked for format."
+            },
+            {
+              "name": "TAN",
+              "text": "The tax deduction account number, used for TDS returns."
+            },
+            {
+              "name": "CIN",
+              "text": "The corporate identification number."
+            },
+            {
+              "name": "PF establishment code",
+              "text": "Your provident fund registration."
+            },
+            {
+              "name": "ESI code",
+              "text": "Your employee state insurance registration."
+            },
+            {
+              "name": "Labour welfare fund (LWF) registration",
+              "text": "Your LWF registration, where your state requires one."
+            }
+          ]
+        },
+        {
+          "title": "Authorised signatory",
+          "items": [
+            {
+              "name": "Signatory name and designation",
+              "text": "The person who signs documents on the company's behalf, such as offer letters."
+            },
+            {
+              "name": "Signature image URL",
+              "text": "A link to an image of the signature, for documents that carry one."
+            }
+          ]
+        },
+        {
+          "title": "Active or inactive",
+          "items": [
+            {
+              "name": "Deactivate",
+              "text": "Hides the company from new use. It is refused while the company still has active branches. Nothing is ever hard-deleted."
+            }
+          ]
+        }
+      ],
+      "example": "Acme Pvt Ltd is added with its PAN, GSTIN, TAN and PF code. Pay runs are then created per legal entity, so the right registrations print on every payslip.",
+      "tips": [
+        "A pay run belongs to one legal entity, so every employee must sit under the right one.",
+        "Fix a wrong PAN or GSTIN here rather than on documents; the format check will catch most typing errors.",
+        "To deactivate a company, move or deactivate its branches first."
+      ]
+    },
+    {
+      "id": "branches",
+      "group": "Organisation",
+      "title": "Branches",
+      "href": "/app/branches",
+      "summary": "A branch is a physical office or site. It holds the address, an optional timezone, and the map position and radius that attendance geofencing uses.",
+      "whenToUse": "Add each location where people work. Add the map coordinates and radius if you want punches checked against the office location.",
+      "parts": [
+        {
+          "title": "Details",
+          "items": [
+            {
+              "name": "Company",
+              "text": "The legal entity the branch operates under. Required."
+            },
+            {
+              "name": "Branch name",
+              "text": "Required, up to 200 characters."
+            },
+            {
+              "name": "Address lines 1 and 2, city",
+              "text": "The branch address."
+            },
+            {
+              "name": "State / union territory",
+              "text": "Chosen from the official list of Indian states and union territories."
+            },
+            {
+              "name": "PIN code",
+              "text": "Six digits and cannot start with 0, such as 560001."
+            },
+            {
+              "name": "Timezone",
+              "text": "Optional. Leave it empty and the branch uses the company timezone. Set it only for a site in a different zone. Like the company timezone, it cannot be changed once attendance has been calculated for people at that branch."
+            }
+          ]
+        },
+        {
+          "title": "Geofence",
+          "intro": "These three work together. Leave them empty to have no location check at this branch.",
+          "items": [
+            {
+              "name": "Latitude",
+              "text": "Between -90 and 90, for example 12.9716."
+            },
+            {
+              "name": "Longitude",
+              "text": "Between -180 and 180, for example 77.5946."
+            },
+            {
+              "name": "Geofence radius (m)",
+              "text": "A whole number of metres from 1 to 100,000, for example 200. A punch counts as on site when it is inside this circle."
+            }
+          ]
+        },
+        {
+          "title": "Active or inactive",
+          "items": [
+            {
+              "name": "Deactivate",
+              "text": "Refused while the branch has active departments, active employees, or employees authorised to punch there. Move or remove those first; nothing is moved automatically."
+            }
+          ]
+        }
+      ],
+      "example": "The Pune office is added with its address, latitude and longitude, and a radius of 150 m. Staff who punch from home or the car park outside the circle are flagged.",
+      "tips": [
+        "Open the office on a map, copy the coordinates of the entrance, and add a little extra radius for GPS drift. Too small a radius causes honest staff to be flagged.",
+        "Workplace Geofences (under Attendance & Time) decides what happens when a punch is outside the circle.",
+        "Branch timezone is the middle step in the order shift, then branch, then company."
+      ]
+    },
+    {
+      "id": "departments",
+      "group": "Organisation",
+      "title": "Departments",
+      "href": "/app/departments",
+      "summary": "Departments are the teams in your company. They can nest inside each other, can belong to a branch, and can have a head, who becomes an approver for their people.",
+      "whenToUse": "Build the team structure before you add employees, and keep it current as teams change.",
+      "parts": [
+        {
+          "title": "Details",
+          "items": [
+            {
+              "name": "Department name",
+              "text": "Required, up to 150 characters."
+            },
+            {
+              "name": "Branch",
+              "text": "Optional. Ties the department to a location."
+            },
+            {
+              "name": "Parent department",
+              "text": "Optional. Makes this a sub-team of another. The chain can be at most 5 levels deep, and a department cannot be placed under itself or one of its own sub-teams."
+            },
+            {
+              "name": "Department head",
+              "text": "Optional. Must be an existing employee. The head acts as the department-head stage in leave, overtime and regularization approvals."
+            }
+          ]
+        },
+        {
+          "title": "Active or inactive",
+          "items": [
+            {
+              "name": "Deactivate",
+              "text": "Refused while active employees are assigned to the department; reassign them first."
+            }
+          ]
+        }
+      ],
+      "example": "Engineering is the parent of Backend and Frontend. Priya is set as head of Backend, so requests that need a department-head decision for her team reach her.",
+      "tips": [
+        "The department code is generated for you; you do not type it.",
+        "Departments can be used as the scope of a policy assignment, so a sensible structure makes policies easier to target.",
+        "If an approval seems to skip a step, check that the department has a head set."
+      ]
+    },
+    {
+      "id": "designations",
+      "group": "Organisation",
+      "title": "Designations",
+      "href": "/app/designations",
+      "summary": "A designation is a job title, such as Software Engineer or HR Executive. It can be linked to a department and a grade.",
+      "whenToUse": "Create the titles you use, then pick one for each employee.",
+      "parts": [
+        {
+          "title": "Details",
+          "items": [
+            {
+              "name": "Designation title",
+              "text": "Required, up to 150 characters."
+            },
+            {
+              "name": "Department",
+              "text": "Optional. Links the title to one department."
+            },
+            {
+              "name": "Grade",
+              "text": "Optional. Links the title to a level. Setting it needs only the permission to manage designations, not grades."
+            }
+          ]
+        },
+        {
+          "title": "Active or inactive",
+          "items": [
+            {
+              "name": "Deactivate",
+              "text": "Refused while active employees hold the title; reassign them first."
+            }
+          ]
+        }
+      ],
+      "example": "Senior Accountant is linked to the Finance department and to grade G4.",
+      "tips": [
+        "The designation code is generated for you.",
+        "Designations can be the scope of a policy assignment, for example a different overtime rule for Drivers.",
+        "Keep titles consistent; reports group by designation."
+      ]
+    },
+    {
+      "id": "grades",
+      "group": "Organisation",
+      "title": "Grades",
+      "href": "/app/grades",
+      "summary": "A grade is a level or pay band. It records the pay range, notice and probation lengths and the approval limit that apply to people at that level.",
+      "whenToUse": "Create grades if you manage people by level. They are optional, but they let you describe each level once.",
+      "parts": [
+        {
+          "title": "Details",
+          "intro": "Every field except the name is optional.",
+          "items": [
+            {
+              "name": "Grade name",
+              "text": "Required, up to 100 characters."
+            },
+            {
+              "name": "Level",
+              "text": "A whole number used to order grades, from 0 up."
+            },
+            {
+              "name": "Min CTC and Max CTC (₹)",
+              "text": "The annual pay range for the grade. The minimum may not be greater than the maximum."
+            },
+            {
+              "name": "Approval limit (₹)",
+              "text": "The amount this grade is allowed to approve."
+            },
+            {
+              "name": "Notice period (days)",
+              "text": "Whole days, 0 to 3650."
+            },
+            {
+              "name": "Probation (days)",
+              "text": "Whole days, 0 to 3650."
+            }
+          ]
+        },
+        {
+          "title": "Active or inactive",
+          "items": [
+            {
+              "name": "Deactivate",
+              "text": "Refused while active employees are on the grade; reassign them first."
+            }
+          ]
+        }
+      ],
+      "example": "G3 is level 3 with CTC from ₹6,00,000 to ₹9,00,000, a 60-day notice period and a 90-day probation.",
+      "tips": [
+        "The grade code is generated and cannot be duplicated.",
+        "At present the pay range, notice, probation and approval limit are recorded for reference. Other parts of the system do not yet enforce them, so they will not block a salary outside the range.",
+        "Grades can be the scope of a policy assignment, for example one leave policy for managers and another for trainees."
+      ]
+    },
     {
       "id": "shifts",
       "group": "Attendance & Time",
@@ -1264,6 +1681,425 @@
       "example": "You check Priya's attendance policy for 15 November. It shows Factory Attendance from the Production department, so you know the assignment is working.",
       "tips": [
         "Checking changes nothing. It is safe to use at any time."
+      ]
+    },
+    {
+      "id": "salary-components",
+      "group": "Payroll",
+      "title": "Salary Components",
+      "href": "/app/payroll/salary-components",
+      "summary": "A salary component is one building block of pay, such as Basic, HRA or a Conveyance allowance. Structures are made by combining components.",
+      "whenToUse": "Add a component whenever you pay or charge something that is not already listed, before you use it in a structure.",
+      "parts": [
+        {
+          "title": "Details",
+          "items": [
+            {
+              "name": "Code",
+              "text": "Capital letters, digits and underscores only, up to 30 characters, such as CONVEYANCE. It cannot be changed later. Codes the pay run writes itself (for example OVERTIME, ROUNDING, PF_EMPLOYEE, TDS_EMPLOYEE) and codes starting with ARR_ are reserved and refused."
+            },
+            {
+              "name": "Name",
+              "text": "Required. What appears on the payslip."
+            },
+            {
+              "name": "Type",
+              "text": "Earning is money paid to the employee. Employer contribution is a cost to the company that sits inside CTC. Deduction is money taken from pay."
+            },
+            {
+              "name": "Display order",
+              "text": "A number from 0 to 10,000. Lower numbers appear first on the payslip."
+            }
+          ]
+        },
+        {
+          "title": "Flags",
+          "intro": "Each decides how the component is treated in the pay run.",
+          "items": [
+            {
+              "name": "Taxable",
+              "text": "Counts toward income tax (TDS) calculations."
+            },
+            {
+              "name": "Counts as PF wage",
+              "text": "Included in the wages on which provident fund is calculated. Basic is, by default."
+            },
+            {
+              "name": "Counts as ESI wage",
+              "text": "Included in the wages on which ESI is calculated."
+            },
+            {
+              "name": "Prorated by paid days",
+              "text": "Reduced in proportion when the employee is paid for fewer days than the month."
+            },
+            {
+              "name": "Shown on payslip",
+              "text": "Whether the line is printed on the payslip."
+            }
+          ]
+        },
+        {
+          "title": "Ready-made components",
+          "items": [
+            {
+              "name": "System components",
+              "text": "Basic, House Rent Allowance, Special Allowance, and the employer PF and ESI contributions are created automatically. You can change their flags and names, but not their type."
+            }
+          ]
+        }
+      ],
+      "example": "You add CONVEYANCE as a taxable earning, prorated, shown on the payslip, with display order 40.",
+      "tips": [
+        "Deduction components can be defined but are not placed in structures yet. PF, ESI, professional tax, LWF and TDS are worked out automatically from Statutory Rates.",
+        "Turn a component off with the active switch rather than deleting it; payslips already issued keep their lines.",
+        "Getting the PF and ESI wage flags right matters, because they decide the statutory amounts for every employee."
+      ]
+    },
+    {
+      "id": "salary-structures",
+      "group": "Payroll",
+      "title": "Salary Structures",
+      "href": "/app/payroll/salary-structures",
+      "summary": "A salary structure is a recipe that turns an employee's yearly CTC into monthly pay lines. It lists components and how each is calculated.",
+      "whenToUse": "Create a structure for each pay pattern, such as Standard or Metro. Standard and Standard (metro) are provided to start from.",
+      "parts": [
+        {
+          "title": "The structure",
+          "items": [
+            {
+              "name": "Code",
+              "text": "Capital letters, digits and underscores, up to 30 characters."
+            },
+            {
+              "name": "Name",
+              "text": "Required."
+            },
+            {
+              "name": "Description",
+              "text": "Optional, up to 2000 characters."
+            }
+          ]
+        },
+        {
+          "title": "Lines (one per component, up to 50)",
+          "intro": "Each component may appear only once.",
+          "items": [
+            {
+              "name": "Calculation: fixed amount",
+              "text": "A set monthly amount."
+            },
+            {
+              "name": "Calculation: % of monthly CTC",
+              "text": "A percentage of the monthly CTC."
+            },
+            {
+              "name": "Calculation: % of gross",
+              "text": "A percentage of gross pay. Allowed on earnings only."
+            },
+            {
+              "name": "Calculation: % of another component",
+              "text": "A percentage of another earning in the same structure, such as HRA as 40% of Basic. No circular references."
+            },
+            {
+              "name": "Calculation: balance of gross",
+              "text": "Takes whatever is left. Every structure needs exactly one, and it must be an earning. Special Allowance is usually this line."
+            },
+            {
+              "name": "Percentage",
+              "text": "0 to 100, up to four decimal places."
+            },
+            {
+              "name": "Monthly cap (₹)",
+              "text": "An upper limit on the line. Not available on the balancing line."
+            },
+            {
+              "name": "Applies when",
+              "text": "Always, only if PF applies, or only if ESI applies. A line that does not apply to an employee is skipped for them."
+            }
+          ]
+        },
+        {
+          "title": "Versions and publishing",
+          "items": [
+            {
+              "name": "Draft",
+              "text": "Edit lines freely. Nobody is paid from a draft. Editing a published structure creates a new draft copied from the current version."
+            },
+            {
+              "name": "Publish with an effective-from date",
+              "text": "The version becomes the live one from that date, and the previous version ends the day before. A published version can no longer be edited."
+            },
+            {
+              "name": "Preview",
+              "text": "Enter an annual CTC and whether PF or ESI applies to see the monthly breakup before you publish or assign."
+            }
+          ]
+        }
+      ],
+      "example": "In the Standard structure Basic is 50% of gross, HRA is 40% of Basic, employer PF is 12% of Basic, and Special Allowance balances the rest, so the lines always add up to the CTC.",
+      "tips": [
+        "CTC is the total cost: gross pay plus employer contributions. Gross is found by working backwards so the lines add up exactly.",
+        "If the CTC is too small for the fixed amounts, the preview shows an error instead of a wrong figure.",
+        "Publish a new version with a future date to change pay next month without touching past months."
+      ]
+    },
+    {
+      "id": "statutory-rates",
+      "group": "Payroll",
+      "title": "Statutory Rates",
+      "href": "/app/payroll/statutory-rates",
+      "summary": "The government rates that pay runs use for provident fund, ESI, professional tax, labour welfare fund and income tax. They are data, not code, so you can update them when the law changes.",
+      "whenToUse": "Review them before your first pay run, and again whenever a notification changes a rate.",
+      "parts": [
+        {
+          "title": "What every rate has",
+          "items": [
+            {
+              "name": "Scheme",
+              "text": "PF, ESI, PT (professional tax), LWF or TDS."
+            },
+            {
+              "name": "State code",
+              "text": "Required for PT and LWF, and not allowed for PF, ESI or TDS."
+            },
+            {
+              "name": "Effective from",
+              "text": "The date the rate starts. Adding a new rate ends the open one for the same scheme and state the day before."
+            },
+            {
+              "name": "Notes",
+              "text": "Where the figure came from, such as the notification or circular."
+            }
+          ]
+        },
+        {
+          "title": "PF fields",
+          "items": [
+            {
+              "name": "Employee and employer contribution (%)",
+              "text": "The two shares of PF wages."
+            },
+            {
+              "name": "Of which pension, EPS (%)",
+              "text": "The part of the employer share that goes to pension. It cannot exceed the employer share."
+            },
+            {
+              "name": "Wage ceiling (₹)",
+              "text": "PF is normally worked out on wages up to this amount."
+            },
+            {
+              "name": "EDLI (%) and Admin charges (%)",
+              "text": "The insurance and administration charges."
+            },
+            {
+              "name": "No pension from age",
+              "text": "From this age the pension part is not paid."
+            }
+          ]
+        },
+        {
+          "title": "ESI fields",
+          "items": [
+            {
+              "name": "Employee and employer contribution (%)",
+              "text": "The two shares."
+            },
+            {
+              "name": "Wage ceiling (₹)",
+              "text": "Above this gross, ESI cover does not apply, and the run shows a warning."
+            },
+            {
+              "name": "No employee share up to a daily wage of (₹)",
+              "text": "Low-paid staff pay no employee share, but the employer share is still due."
+            }
+          ]
+        },
+        {
+          "title": "PT and LWF",
+          "items": [
+            {
+              "name": "Slabs",
+              "text": "A band of monthly gross (from and to) with the amount due. PT slabs can apply to one gender and can have a different amount in a named month. No slabs means the state levies no PT."
+            },
+            {
+              "name": "LWF months",
+              "text": "The month numbers in which LWF is deducted, such as 6 and 12, with employee and employer amounts per slab."
+            }
+          ]
+        },
+        {
+          "title": "TDS (income tax, new regime)",
+          "items": [
+            {
+              "name": "Standard deduction (₹/year)",
+              "text": "Taken off annual income before tax."
+            },
+            {
+              "name": "Full rebate at or below taxable income (₹/year)",
+              "text": "Nobody at or below this pays tax."
+            },
+            {
+              "name": "Health and education cess (%)",
+              "text": "Added to the tax."
+            },
+            {
+              "name": "Warn above (₹/year)",
+              "text": "Surcharge is not calculated. Income above this only raises a warning."
+            },
+            {
+              "name": "Slabs",
+              "text": "Annual income bands and the percentage on each."
+            }
+          ]
+        },
+        {
+          "title": "Verification",
+          "items": [
+            {
+              "name": "Verified",
+              "text": "Each rate must be verified, as a sign-off that it matches the latest notification. A pay run that uses an unverified rate cannot be approved."
+            },
+            {
+              "name": "Editing a rate",
+              "text": "Correcting a rate in place clears its verified status, so it must be checked again. Pay runs already created keep the copy they used."
+            }
+          ]
+        }
+      ],
+      "example": "Maharashtra raises a professional tax slab. You add a new PT rate for MH effective 1 April, check the amounts against the notification, and click Verify.",
+      "tips": [
+        "Rates that came ready-made are marked not verified until someone checks them.",
+        "Never type a rate from memory. Use the official notification, and put its reference in Notes.",
+        "Money is stored in paise internally, but you always type rupees."
+      ]
+    },
+    {
+      "id": "setup",
+      "group": "Administration",
+      "title": "Setup",
+      "href": "/app/setup",
+      "summary": "A progress checklist that shows how far the company's initial set-up has got and what to do next.",
+      "whenToUse": "Check it after signing up. It is also shown as a welcome prompt when you first arrive.",
+      "parts": [
+        {
+          "title": "What it shows",
+          "items": [
+            {
+              "name": "Progress badge",
+              "text": "Setup complete, or the number of steps done out of the total."
+            },
+            {
+              "name": "Next step",
+              "text": "The first unfinished step, with a button that goes straight to the page that finishes it."
+            },
+            {
+              "name": "Step list",
+              "text": "Each step with a done or not-done mark."
+            }
+          ]
+        },
+        {
+          "title": "How a step is completed",
+          "items": [
+            {
+              "name": "Company Profile",
+              "text": "Currently the only tracked step. It is done once the company profile has been filled in. It is worked out by the system from your data; you cannot tick it by hand."
+            }
+          ]
+        }
+      ],
+      "example": null,
+      "tips": [
+        "When every step is done the company is marked as onboarded, once.",
+        "This checklist only tracks the profile. The wider order for setting up time, leave and policies is in the overview at the top of this guide."
+      ]
+    },
+    {
+      "id": "users",
+      "group": "Administration",
+      "title": "Users",
+      "href": "/app/users",
+      "summary": "Everyone who can log in to this company, and the role each person holds. A role decides which pages they can use and whose data they can see.",
+      "whenToUse": "Use it to invite a new person, or to change what an existing user can do.",
+      "parts": [
+        {
+          "title": "The list",
+          "items": [
+            {
+              "name": "Name and email",
+              "text": "The person's login."
+            },
+            {
+              "name": "Status",
+              "text": "Whether the account is active."
+            },
+            {
+              "name": "Roles",
+              "text": "The roles held. A person with no role can sign in but can do nothing."
+            }
+          ]
+        },
+        {
+          "title": "Invite a user",
+          "items": [
+            {
+              "name": "Email",
+              "text": "Required. Where the invitation is sent. If that email already has an account in this company, the invite is refused."
+            },
+            {
+              "name": "Role",
+              "text": "The role they start with. The invitation link is valid for 7 days, and the person sets their own password when they accept."
+            }
+          ]
+        },
+        {
+          "title": "Manage roles",
+          "items": [
+            {
+              "name": "Roles you can assign",
+              "text": "Company Admin, HR Admin, Reporting Manager, Branch Manager and Employee. You choose among these five; custom roles cannot be created here."
+            },
+            {
+              "name": "At least one role",
+              "text": "Saving with no roles ticked is refused."
+            },
+            {
+              "name": "Your own roles",
+              "text": "You cannot change your own roles, so you cannot lock yourself out."
+            }
+          ]
+        },
+        {
+          "title": "What each role can see",
+          "items": [
+            {
+              "name": "Company Admin",
+              "text": "Full access to settings, users and approvals across the whole company."
+            },
+            {
+              "name": "HR Admin",
+              "text": "Runs HR day to day across the company: employees, onboarding, attendance reading, leave administration, calendars and holidays, and preparing payroll. Approving a pay run, and editing shifts, attendance policies, leave types and leave policies, stay with Company Admin."
+            },
+            {
+              "name": "Reporting Manager",
+              "text": "Sees and approves for their own team, including indirect reports."
+            },
+            {
+              "name": "Branch Manager",
+              "text": "Sees employees, attendance and leave balances for their own branch. It does not by itself allow approving requests."
+            },
+            {
+              "name": "Employee",
+              "text": "Sees and acts on their own records: applying for leave, viewing their balance and attendance."
+            }
+          ]
+        }
+      ],
+      "example": "A new HR executive is invited as HR Admin. A manager promoted to run the Pune office is given Branch Manager as well as Employee.",
+      "tips": [
+        "Give the least access that does the job. Most people only need Employee.",
+        "Invite someone from their employee record if they should be linked to it, so their own data and their team's data are found correctly.",
+        "Role changes and invites are written to the audit log."
       ]
     }
   ]
