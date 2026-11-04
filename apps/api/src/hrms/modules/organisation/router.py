@@ -131,6 +131,11 @@ from hrms.modules.organisation.schemas import (
     WorkCalendarUpdate,
 )
 from hrms.modules.organisation.service import OrganisationService
+from hrms.modules.organisation.setup_checklist import (
+    SetupChecklistRead,
+    SetupChecklistService,
+    get_setup_checklist_service,
+)
 from hrms.shared.if_match import parse_if_match
 from hrms.shared.pagination import (
     DataEnvelope,
@@ -212,6 +217,17 @@ async def update_company_profile(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
     )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.get("/companies/current/setup-checklist", status_code=status.HTTP_200_OK)
+async def get_setup_checklist(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_COMPANY_MANAGE))],
+    service: Annotated[SetupChecklistService, Depends(get_setup_checklist_service)],
+) -> DataEnvelope[SetupChecklistRead]:
+    """What is still left to set up, worked out live from the company's real data."""
+    data = await service.get(tenant.company_id)
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 

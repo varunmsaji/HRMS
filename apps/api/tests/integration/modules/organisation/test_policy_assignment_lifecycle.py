@@ -508,3 +508,53 @@ async def test_overtime_and_regularization_setup_in_one_call(client: AsyncClient
         assert [p["name"] for p in drafts] == ["OT standard"]
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_setup_checklist_follows_the_real_state(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+
+        async def items() -> dict:
+            r = await client.get("/v1/companies/current/setup-checklist", headers=headers)
+            assert r.status_code == 200, r.text
+            data = r.json()["data"]
+            return {"by_code": {i["code"]: i for i in data["items"]}, **data}
+
+        fresh = await items()
+        assert fresh["required_total"] == 3 and fresh["required_complete"] == 0
+        assert fresh["next_code"] == "SHIFT"
+        assert not any(i["is_complete"] for i in fresh["items"])
+
+        # an unassigned or unpublished policy does not count
+        draft = (
+            await client.post("/v1/attendance-policies", headers=headers, json={"name": "Draft"})
+        ).json()["data"]
+        await client.post(
+            "/v1/policy-assignments", headers=headers, json=_body(draft["id"], "2027-01-01")
+        )
+        assert not (await items())["by_code"]["ATTENDANCE_POLICY"]["is_complete"]
+
+        live = await _publish_attendance_policy(client, headers, "Live")
+        await client.post(
+            "/v1/policy-assignments", headers=headers, json=_body(live["id"], "2026-01-01")
+        )
+        after = await items()
+        assert after["by_code"]["ATTENDANCE_POLICY"]["is_complete"] is True
+        assert after["required_complete"] == 1
+        assert after["next_code"] == "SHIFT"
+
+        # a group-level assignment is not company-wide
+        department_id = await _department(client, headers)
+        await client.post(
+            "/v1/overtime-policies/setup",
+            headers=headers,
+            json={
+                "name": "OT",
+                "rules": {"effective_from": "2026-01-01"},
+                "publish": True,
+                "assign": {"scope_type": "DEPARTMENT", "scope_id": department_id},
+            },
+        )
+        assert not (await items())["by_code"]["OVERTIME_POLICY"]["is_complete"]
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
