@@ -5,21 +5,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { FaceEnrollmentPolicyCard } from "@/components/attendance/face-enrollment-policy-card";
-import { AttendancePolicyForm } from "@/components/attendance-policy/attendance-policy-form";
+import { CompanyDate } from "@/components/common/company-date";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
-import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -31,30 +23,48 @@ import {
   TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
+import { businessToday } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
-import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
+import { ApiError } from "@/lib/api/errors";
 import type { AttendancePolicy } from "@/lib/attendance-policy/types";
-import {
-  EMPTY_ATTENDANCE_POLICY_FORM_VALUES,
-  buildAttendancePolicyCreatePayload,
-  validateAttendancePolicyForm,
-  type AttendancePolicyFormErrors,
-  type AttendancePolicyFormValues,
-} from "@/lib/attendance-policy/validate-attendance-policy";
+
+function appliesToLabel(policy: AttendancePolicy): string {
+  const groups = policy.assigned_group_count ?? 0;
+  const groupText = `${groups} ${groups === 1 ? "group" : "groups"}`;
+  if (policy.assigned_company_wide) {
+    return groups > 0 ? `Whole company and ${groupText}` : "Whole company";
+  }
+  return groups > 0 ? groupText : "Not assigned";
+}
+
+function PolicyStatus({ policy, today }: { policy: AttendancePolicy; today: string }) {
+  if (!policy.is_active) return <Badge variant="outline">Inactive</Badge>;
+  return (
+    <span className="flex flex-col items-start gap-1">
+      {policy.live_from ? (
+        <Badge variant="secondary">
+          {policy.live_from > today ? "New rules from " : "Live since "}
+          <CompanyDate value={policy.live_from} />
+        </Badge>
+      ) : (
+        <Badge variant="outline">{policy.has_draft ? "Draft" : "No rules yet"}</Badge>
+      )}
+      {policy.live_from && policy.has_draft ? (
+        <span className="text-xs text-foreground-muted">Unpublished changes</span>
+      ) : null}
+    </span>
+  );
+}
 
 export default function AttendancePoliciesPage() {
-  const { toast } = useToast();
   const { can } = usePermissions();
+  const { user } = useAuth();
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const [policies, setPolicies] = useState<AttendancePolicy[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
 
-  const [createOpen, setCreateOpen] = useState(false);
-  const [formValues, setFormValues] = useState<AttendancePolicyFormValues>(
-    EMPTY_ATTENDANCE_POLICY_FORM_VALUES,
-  );
-  const [formErrors, setFormErrors] = useState<AttendancePolicyFormErrors>({});
-  const [saving, setSaving] = useState(false);
 
   const loadPolicies = useCallback(async () => {
     setLoading(true);
@@ -78,63 +88,20 @@ export default function AttendancePoliciesPage() {
     void loadPolicies();
   }, [loadPolicies]);
 
-  function openCreate() {
-    setFormValues(EMPTY_ATTENDANCE_POLICY_FORM_VALUES);
-    setFormErrors({});
-    setCreateOpen(true);
-  }
-
-  async function handleCreate() {
-    const clientErrors = validateAttendancePolicyForm(formValues);
-    if (Object.keys(clientErrors).length > 0) {
-      setFormErrors(clientErrors);
-      return;
-    }
-    setSaving(true);
-    setFormErrors({});
-    try {
-      await apiClient.post<AttendancePolicy>(
-        "/attendance-policies",
-        buildAttendancePolicyCreatePayload(formValues),
-      );
-      setCreateOpen(false);
-      toast({
-        title: "Attendance policy added — open it and click Edit to set the rules",
-        variant: "success",
-      });
-      await loadPolicies();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 422) {
-        setFormErrors({ name: getFieldError(err.details, "name") });
-        return;
-      }
-      if (err instanceof ApiError && err.status === 403) {
-        setCreateOpen(false);
-        toast({ title: "You don't have permission to add attendance policies", variant: "danger" });
-        return;
-      }
-      toast({
-        title: "Could not add policy",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <PageHeader
         backHref="/app/settings"
         backLabel="Settings"
         title="Attendance Policies"
-        description="Grace, rounding, missing-punch, hour bands, and other rules for evaluating attendance against a schedule."
+        description="The rules that turn punches into a day's result: hours worked, lateness, missing punches and location checks."
         actions={
           policies && policies.length > 0 ? (
-            <Button type="button" onClick={openCreate}>
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Add Policy
+            <Button asChild>
+              <Link href="/app/attendance-policies/new">
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add Policy
+              </Link>
             </Button>
           ) : null
         }
@@ -163,10 +130,10 @@ export default function AttendancePoliciesPage() {
             <EmptyState
               icon={ClipboardList}
               title="No attendance policies have been configured yet."
-              description="Add a policy, then click Edit on it to set its grace, rounding and hour-band rules."
+              description="Start from a template and publish it in one go."
               action={
-                <Button type="button" onClick={openCreate}>
-                  Add Policy
+                <Button asChild>
+                  <Link href="/app/attendance-policies/new">Add Policy</Link>
                 </Button>
               }
             />
@@ -178,8 +145,8 @@ export default function AttendancePoliciesPage() {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Policy</TableHead>
-                <TableHead>Code</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Applies to</TableHead>
                 <TableHead align="right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -194,16 +161,14 @@ export default function AttendancePoliciesPage() {
                       {policy.name}
                     </Link>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-foreground-secondary">
-                    {policy.code ?? "—"}
-                  </TableCell>
                   <TableCell>
-                    <Badge variant={policy.is_active ? "secondary" : "outline"}>
-                      {policy.is_active ? "Active" : "Inactive"}
-                    </Badge>
+                    <PolicyStatus policy={policy} today={today} />
+                  </TableCell>
+                  <TableCell className="text-sm text-foreground-secondary">
+                    {appliesToLabel(policy)}
                   </TableCell>
                   <TableCell align="right">
-                    <TableRowAction href={`/app/attendance-policies/${policy.id}`}>Configure</TableRowAction>
+                    <TableRowAction href={`/app/attendance-policies/${policy.id}`}>Open</TableRowAction>
                   </TableCell>
                 </TableRow>
               ))}
@@ -211,35 +176,6 @@ export default function AttendancePoliciesPage() {
           </Table>
         ) : null}
       </TableContainer>
-
-      <Dialog open={createOpen} onOpenChange={(open) => (!saving ? setCreateOpen(open) : null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Add Attendance Policy</DialogTitle>
-          </DialogHeader>
-          <div className="max-h-[60vh] overflow-y-auto pr-1">
-            <AttendancePolicyForm
-              values={formValues}
-              errors={formErrors}
-              onChange={setFormValues}
-              idPrefix="create-"
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setCreateOpen(false)}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <Button type="button" onClick={() => void handleCreate()} disabled={saving}>
-              {saving ? "Adding…" : "Add policy"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

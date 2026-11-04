@@ -1,17 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { AttendancePolicyForm } from "@/components/attendance-policy/attendance-policy-form";
+import { AttendancePolicySummary } from "@/components/attendance-policy/attendance-policy-summary";
 import { AttendancePolicyVersionForm } from "@/components/attendance-policy/attendance-policy-version-form";
-import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
 import { CompanyDate } from "@/components/common/company-date";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
-import { PolicyVersionPublishDialog } from "@/components/common/policy-version-publish-dialog";
 import { useToast } from "@/components/common/toast";
+import { ConcurrencyConflictBanner } from "@/components/employee/concurrency-conflict-banner";
+import {
+  PublishAssignDialog,
+  type PublishChoice,
+} from "@/components/policy-assignment/publish-assign-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,268 +36,280 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  TableToolbar,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
-import { usePermissions } from "@/lib/auth/use-permissions";
 import type { AttendancePolicy, AttendancePolicyVersion } from "@/lib/attendance-policy/types";
 import {
-  EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES,
+  attendancePolicyVersionToFormValues,
   buildAttendancePolicyUpdatePatch,
   buildAttendancePolicyVersionPayload,
-  attendancePolicyVersionToFormValues,
+  EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES,
   mapAttendancePolicyVersionApiErrors,
   validateAttendancePolicyForm,
+  validateAttendancePolicyForPublish,
   validateAttendancePolicyVersionForm,
   type AttendancePolicyFormErrors,
-  type AttendancePolicyFormValues,
   type AttendancePolicyVersionFormErrors,
   type AttendancePolicyVersionFormValues,
 } from "@/lib/attendance-policy/validate-attendance-policy";
+import { businessToday } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
+import { usePermissions } from "@/lib/auth/use-permissions";
 import { cn } from "@/lib/utils";
 
-type TabKey = "overview" | "versions";
+type TabKey = "rules" | "history";
 const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: "overview", label: "Overview" },
-  { key: "versions", label: "Versions" },
+  { key: "rules", label: "Rules" },
+  { key: "history", label: "History" },
 ];
+
+function nextDay(date: string): string {
+  const next = new Date(`${date}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
+function toApiError(err: unknown): ApiError {
+  return err instanceof ApiError
+    ? err
+    : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." });
+}
 
 export default function AttendancePolicyDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
   const { can } = usePermissions();
+  const { user } = useAuth();
   const canManage = can("ATTENDANCE.POLICY_MANAGE");
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
 
-  const [tab, setTab] = useState<TabKey>("overview");
-
+  const [tab, setTab] = useState<TabKey>("rules");
   const [policy, setPolicy] = useState<AttendancePolicy | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [versions, setVersions] = useState<AttendancePolicyVersion[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [shiftTypes, setShiftTypes] = useState<string[] | null>(null);
 
   const [editing, setEditing] = useState(false);
-  const [formValues, setFormValues] = useState<AttendancePolicyFormValues | null>(null);
-  const [formErrors, setFormErrors] = useState<AttendancePolicyFormErrors>({});
-  const [saving, setSaving] = useState(false);
+  const [name, setName] = useState("");
+  const [rules, setRules] = useState<AttendancePolicyVersionFormValues | null>(null);
+  const [nameErrors, setNameErrors] = useState<AttendancePolicyFormErrors>({});
+  const [ruleErrors, setRuleErrors] = useState<AttendancePolicyVersionFormErrors>({});
   const [staleMessage, setStaleMessage] = useState<string | null>(null);
-  // Rules edited alongside the name on the Overview tab; saved into the draft version.
-  const [editRules, setEditRules] = useState<AttendancePolicyVersionFormValues | null>(null);
-  const [editRuleErrors, setEditRuleErrors] = useState<AttendancePolicyVersionFormErrors>({});
-  const [startingEdit, setStartingEdit] = useState(false);
-  // Snapshot of the rules when Edit opened, so Save can tell whether they were touched.
-  const [editBaseline, setEditBaseline] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [statusChanging, setStatusChanging] = useState(false);
-
-  const [versions, setVersions] = useState<AttendancePolicyVersion[] | null>(null);
-  const [versionsLoading, setVersionsLoading] = useState(false);
-  const [creatingDraft, setCreatingDraft] = useState(false);
-
-  const [draftValues, setDraftValues] = useState<AttendancePolicyVersionFormValues | null>(null);
-  const [draftErrors, setDraftErrors] = useState<AttendancePolicyVersionFormErrors>({});
-  const [savingDraft, setSavingDraft] = useState(false);
-  const [draftStaleMessage, setDraftStaleMessage] = useState<string | null>(null);
-
-  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
   const [discarding, setDiscarding] = useState(false);
-  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
 
-  const draft = versions?.find((v) => v.status === "DRAFT") ?? null;
-  const currentPublished =
-    versions?.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
-  const historical =
-    versions
-      ?.filter((v) => v.id !== draft?.id && v.id !== currentPublished?.id)
-      .sort((a, b) => (b.effective_from ?? "").localeCompare(a.effective_from ?? "")) ?? [];
-
-  const loadPolicy = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async () => {
     try {
-      const data = await apiClient.get<AttendancePolicy>(`/attendance-policies/${params.id}`);
-      setPolicy(data);
-      return data;
+      const [policyData, versionData] = await Promise.all([
+        apiClient.get<AttendancePolicy>(`/attendance-policies/${params.id}`),
+        apiClient.get<AttendancePolicyVersion[]>(`/attendance-policies/${params.id}/versions`),
+      ]);
+      setPolicy(policyData);
+      setVersions(versionData);
+      setError(null);
     } catch (err) {
-      setPolicy(null);
-      setError(
-        err instanceof ApiError
-          ? err
-          : new ApiError({ status: 0, code: "UNKNOWN_ERROR", message: "Something went wrong." }),
-      );
-      return null;
-    } finally {
-      setLoading(false);
+      setError(toApiError(err));
     }
   }, [params.id]);
 
-  const loadVersions = useCallback(async () => {
-    setVersionsLoading(true);
-    try {
-      const data = await apiClient.get<AttendancePolicyVersion[]>(
-        `/attendance-policies/${params.id}/versions`,
-      );
-      setVersions(data);
-      return data;
-    } catch (err) {
-      toast({
-        title: "Could not load policy versions",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-      return null;
-    } finally {
-      setVersionsLoading(false);
-    }
-  }, [params.id, toast]);
-
   useEffect(() => {
-    void loadPolicy();
-  }, [loadPolicy]);
+    void load();
+    apiClient
+      .get<{ shift_types_in_use: string[] }>("/attendance-policies/form-context")
+      .then((context) => setShiftTypes(context.shift_types_in_use))
+      .catch(() => setShiftTypes(null));
+  }, [load]);
 
-  useEffect(() => {
-    if (tab === "versions" && versions === null) {
-      void loadVersions();
-    }
-  }, [tab, versions, loadVersions]);
+  const draft = versions?.find((v) => v.status === "DRAFT") ?? null;
+  const current =
+    versions?.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
+  const published = (versions ?? [])
+    .filter((v) => v.status === "PUBLISHED")
+    .sort((a, b) => (b.effective_from ?? "").localeCompare(a.effective_from ?? ""));
 
-  /** Edit opens the name and every rule at once. The rules start from the open draft, else a copy
-   * of the published version, else the defaults — so there is no separate "create draft" step. */
-  async function startEditing() {
+  // The open version may not have started yet; the version in force today is what "live" means.
+  const liveToday =
+    published.find(
+      (v) =>
+        v.effective_from !== null &&
+        v.effective_from <= today &&
+        (v.effective_to === null || v.effective_to >= today),
+    ) ?? null;
+  const scheduled = current && current.id !== liveToday?.id ? current : null;
+
+  function startEditing() {
     if (!policy) return;
-    setStartingEdit(true);
-    try {
-      const loaded = versions ?? (await loadVersions());
-      if (!loaded) return;
-      const openDraft = loaded.find((v) => v.status === "DRAFT") ?? null;
-      const published =
-        loaded.find((v) => v.status === "PUBLISHED" && v.effective_to === null) ?? null;
-      const source = openDraft ?? published;
-      const rules = source
-        ? attendancePolicyVersionToFormValues(source)
-        : EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES;
-      const initial = openDraft ? rules : { ...rules, effectiveFrom: "" };
-      setEditRules(initial);
-      setEditBaseline(JSON.stringify(initial));
-      setEditRuleErrors({});
-      setFormValues({ name: policy.name });
-      setFormErrors({});
-      setStaleMessage(null);
-      setEditing(true);
-    } finally {
-      setStartingEdit(false);
-    }
+    const source = draft ?? current;
+    const values = source
+      ? attendancePolicyVersionToFormValues(source)
+      : EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES;
+    setRules(draft ? values : { ...values, effectiveFrom: "" });
+    setName(policy.name);
+    setNameErrors({});
+    setRuleErrors({});
+    setStaleMessage(null);
+    setEditing(true);
   }
 
-  function cancelEditing() {
+  function stopEditing() {
     setEditing(false);
-    setFormValues(null);
-    setEditRules(null);
-    setEditBaseline(null);
-    setFormErrors({});
-    setEditRuleErrors({});
+    setRules(null);
+    setNameErrors({});
+    setRuleErrors({});
     setStaleMessage(null);
   }
 
-  async function handleSave() {
-    if (!policy || !formValues || !editRules) return;
-    const clientErrors = validateAttendancePolicyForm(formValues);
-    const rulesChanged = JSON.stringify(editRules) !== editBaseline;
-    const ruleErrors = rulesChanged ? validateAttendancePolicyVersionForm(editRules) : {};
-    if (Object.keys(clientErrors).length > 0 || Object.keys(ruleErrors).length > 0) {
-      setFormErrors(clientErrors);
-      setEditRuleErrors(ruleErrors);
+  /** Saves the name and rules into the draft, creating it if needed. Null means it failed and
+   * the reason is already on screen. */
+  async function saveRules(
+    values: AttendancePolicyVersionFormValues,
+  ): Promise<AttendancePolicyVersion | null> {
+    if (!policy) return null;
+    try {
+      const patch = editing ? buildAttendancePolicyUpdatePatch({ name }, policy) : {};
+      if (Object.keys(patch).length > 0) {
+        setPolicy(
+          await apiClient.patch<AttendancePolicy>(`/attendance-policies/${policy.id}`, patch, {
+            ifMatch: String(policy.version),
+          }),
+        );
+      }
+      const payload = buildAttendancePolicyVersionPayload(values);
+      return draft
+        ? await apiClient.patch<AttendancePolicyVersion>(
+            `/attendance-policies/${policy.id}/versions/${draft.id}`,
+            payload,
+            { ifMatch: String(draft.version) },
+          )
+        : await apiClient.post<AttendancePolicyVersion>(
+            `/attendance-policies/${policy.id}/versions`,
+            payload,
+          );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.code === "STALE_RESOURCE") {
+        setPublishOpen(false);
+        setStaleMessage("This policy was changed by someone else.");
+      } else if (err instanceof ApiError && err.status === 422) {
+        setPublishOpen(false);
+        setNameErrors({ name: getFieldError(err.details, "name") });
+        setRuleErrors(mapAttendancePolicyVersionApiErrors(err.details));
+        toast({ title: "Fix the highlighted fields", variant: "danger" });
+      } else {
+        setPublishError(describeApiError(err));
+        toast({ title: "Could not save", description: describeApiError(err), variant: "danger" });
+      }
+      return null;
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (!rules) return;
+    const nameCheck = validateAttendancePolicyForm({ name });
+    const ruleCheck = validateAttendancePolicyVersionForm(rules);
+    setNameErrors(nameCheck);
+    setRuleErrors(ruleCheck);
+    if (Object.keys(nameCheck).length > 0 || Object.keys(ruleCheck).length > 0) {
       toast({ title: "Fix the highlighted fields", variant: "danger" });
       return;
     }
     setSaving(true);
-    setFormErrors({});
-    setEditRuleErrors({});
-    setStaleMessage(null);
-    try {
-      const patch = buildAttendancePolicyUpdatePatch(formValues, policy);
-      if (Object.keys(patch).length > 0) {
-        const updated = await apiClient.patch<AttendancePolicy>(
-          `/attendance-policies/${policy.id}`,
-          patch,
-          { ifMatch: String(policy.version) },
-        );
-        setPolicy(updated);
-      }
-
-      if (!rulesChanged) {
-        setEditing(false);
-        setFormValues(null);
-        setEditRules(null);
-        setEditBaseline(null);
-        toast(
-          Object.keys(patch).length > 0
-            ? { title: "Policy saved", variant: "success" }
-            : { title: "No changes to save", variant: "default" },
-        );
-        return;
-      }
-
-      const payload = buildAttendancePolicyVersionPayload(editRules);
-      let savedDraft: AttendancePolicyVersion;
-      if (draft) {
-        savedDraft = await apiClient.patch<AttendancePolicyVersion>(
-          `/attendance-policies/${params.id}/versions/${draft.id}`,
-          payload,
-          { ifMatch: String(draft.version) },
-        );
-      } else {
-        savedDraft = await apiClient.post<AttendancePolicyVersion>(
-          `/attendance-policies/${params.id}/versions`,
-          payload,
-        );
-      }
-      setVersions((prev) => {
-        const rest = (prev ?? []).filter((v) => v.id !== savedDraft.id);
-        return [...rest, savedDraft];
-      });
-      setDraftValues(attendancePolicyVersionToFormValues(savedDraft));
-      setEditing(false);
-      setFormValues(null);
-      setEditRules(null);
-      setEditBaseline(null);
-      toast({ title: "Saved as a draft — publish it from the Versions tab", variant: "success" });
-    } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 409 && err.code === "STALE_RESOURCE") {
-          setStaleMessage("This policy was changed by someone else.");
-          return;
-        }
-        if (err.status === 422) {
-          setFormErrors({ name: getFieldError(err.details, "name") });
-          setEditRuleErrors(mapAttendancePolicyVersionApiErrors(err.details));
-          return;
-        }
-        if (err.status === 403) {
-          setError(err);
-          setEditing(false);
-          return;
-        }
-      }
-      toast({
-        title: "Could not save policy",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setSaving(false);
-    }
+    const saved = await saveRules(rules);
+    setSaving(false);
+    if (!saved) return;
+    toast({ title: "Draft saved. It isn't live until you publish it.", variant: "success" });
+    stopEditing();
+    await load();
   }
 
-  async function reloadLatest() {
-    const [latest] = await Promise.all([loadPolicy(), loadVersions()]);
-    if (latest) {
-      setEditing(false);
-      setFormValues(null);
-      setEditRules(null);
-      setDraftValues(null);
-      setStaleMessage(null);
-      toast({ title: "Reloaded", variant: "success" });
+  function openPublish() {
+    const values =
+      rules ?? (draft ? attendancePolicyVersionToFormValues(draft) : null);
+    if (!values) return;
+    const nameCheck = editing ? validateAttendancePolicyForm({ name }) : {};
+    const ruleCheck = validateAttendancePolicyForPublish(values);
+    setNameErrors(nameCheck);
+    setRuleErrors(ruleCheck);
+    if (Object.keys(nameCheck).length > 0 || Object.keys(ruleCheck).length > 0) {
+      if (!editing) startEditing();
+      toast({ title: "Fix the highlighted fields", variant: "danger" });
+      return;
+    }
+    setPublishError(null);
+    setPublishOpen(true);
+  }
+
+  function initialPublishDate(): string {
+    const fromDraft = rules?.effectiveFrom || draft?.effective_from;
+    if (fromDraft) return fromDraft;
+    if (current?.effective_from && current.effective_from >= today) {
+      return nextDay(current.effective_from);
+    }
+    return today;
+  }
+
+  async function handlePublish(choice: PublishChoice) {
+    if (!policy) return;
+    const values = rules ?? (draft ? attendancePolicyVersionToFormValues(draft) : null);
+    if (!values) return;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const saved = await saveRules({ ...values, effectiveFrom: choice.effectiveFrom });
+      if (!saved) return;
+      await apiClient.post(
+        `/attendance-policies/${policy.id}/versions/${saved.id}/publish`,
+        {
+          publish_reason: choice.reason || null,
+          ...(current ? { expected_previous_version: current.version } : {}),
+        },
+        { ifMatch: String(saved.version) },
+      );
+      if (choice.assign) {
+        try {
+          await apiClient.post("/policy-assignments/batch", {
+            scope_type: choice.assign.scopeType,
+            scope_id: choice.assign.scopeId,
+            effective_from: choice.effectiveFrom,
+            reason: choice.reason || null,
+            changes: [
+              {
+                policy_kind: "ATTENDANCE_POLICY",
+                policy_id: policy.id,
+                expected_version: choice.assign.expectedVersion,
+              },
+            ],
+          });
+        } catch (err) {
+          toast({
+            title: "Published, but not assigned",
+            description: `${describeApiError(err)} Assign it from Policy Assignments.`,
+            variant: "danger",
+          });
+          setPublishOpen(false);
+          stopEditing();
+          await load();
+          return;
+        }
+      }
+      toast({ title: "Policy published", variant: "success" });
+      setPublishOpen(false);
+      stopEditing();
+      await load();
+    } catch (err) {
+      setPublishError(describeApiError(err));
+      // The draft was saved; its version changed, so the next attempt must use the new one.
+      await load();
+    } finally {
+      setPublishing(false);
     }
   }
 
@@ -322,108 +339,17 @@ export default function AttendancePolicyDetailPage() {
     }
   }
 
-  function startEditingDraft() {
-    if (!draft) return;
-    setDraftValues(attendancePolicyVersionToFormValues(draft));
-    setDraftErrors({});
-    setDraftStaleMessage(null);
-  }
-
-  useEffect(() => {
-    if (draft && draftValues === null) startEditingDraft();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft?.id]);
-
-  async function handleCreateDraft() {
-    setCreatingDraft(true);
-    try {
-      await apiClient.post(`/attendance-policies/${params.id}/versions`, {});
-      toast({ title: "Draft created", variant: "success" });
-      await loadVersions();
-    } catch (err) {
-      toast({
-        title: "Could not create a new draft",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-    } finally {
-      setCreatingDraft(false);
-    }
-  }
-
-  async function handleSaveDraft(): Promise<boolean> {
-    if (!draft || !draftValues) return false;
-    const clientErrors = validateAttendancePolicyVersionForm(draftValues);
-    if (Object.keys(clientErrors).length > 0) {
-      setDraftErrors(clientErrors);
-      toast({ title: "Fix the highlighted fields", variant: "danger" });
-      return false;
-    }
-    setSavingDraft(true);
-    setDraftErrors({});
-    setDraftStaleMessage(null);
-    try {
-      const payload = buildAttendancePolicyVersionPayload(draftValues);
-      const updated = await apiClient.patch<AttendancePolicyVersion>(
-        `/attendance-policies/${params.id}/versions/${draft.id}`,
-        payload,
-        { ifMatch: String(draft.version) },
-      );
-      setVersions((prev) => (prev ? prev.map((v) => (v.id === updated.id ? updated : v)) : prev));
-      setDraftValues(attendancePolicyVersionToFormValues(updated));
-      toast({ title: "Draft saved", variant: "success" });
-      return true;
-    } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 409 && err.code === "STALE_RESOURCE") {
-          setDraftStaleMessage("This draft was changed by someone else.");
-          return false;
-        }
-        if (err.status === 422) {
-          setDraftErrors(mapAttendancePolicyVersionApiErrors(err.details));
-          return false;
-        }
-      }
-      toast({
-        title: "Could not save draft",
-        description: describeApiError(err),
-        variant: "danger",
-      });
-      return false;
-    } finally {
-      setSavingDraft(false);
-    }
-  }
-
-  /** Publish acts on the saved draft, so unsaved edits are saved first; a failed save stops here. */
-  async function handlePublishClick() {
-    if (!draft || !draftValues) return;
-    const hasUnsavedEdits = JSON.stringify(draftValues) !== JSON.stringify(attendancePolicyVersionToFormValues(draft));
-    if (hasUnsavedEdits && !(await handleSaveDraft())) return;
-    setPublishDialogOpen(true);
-  }
-
-  async function reloadDraftLatest() {
-    const latest = await loadVersions();
-    if (latest) {
-      setDraftStaleMessage(null);
-      const latestDraft = latest.find((v) => v.status === "DRAFT") ?? null;
-      setDraftValues(latestDraft ? attendancePolicyVersionToFormValues(latestDraft) : null);
-      toast({ title: "Reloaded", variant: "success" });
-    }
-  }
-
   async function handleDiscardDraft() {
-    if (!draft) return;
+    if (!policy || !draft) return;
     setDiscarding(true);
     try {
-      await apiClient.delete(`/attendance-policies/${params.id}/versions/${draft.id}`, {
+      await apiClient.delete(`/attendance-policies/${policy.id}/versions/${draft.id}`, {
         ifMatch: String(draft.version),
       });
-      setDiscardConfirmOpen(false);
-      setDraftValues(null);
+      setDiscardOpen(false);
+      stopEditing();
       toast({ title: "Draft discarded", variant: "success" });
-      await loadVersions();
+      await load();
     } catch (err) {
       toast({
         title: "Could not discard draft",
@@ -435,11 +361,7 @@ export default function AttendancePolicyDetailPage() {
     }
   }
 
-  function handlePublished() {
-    setDraftValues(null);
-    toast({ title: "Policy published", variant: "success" });
-    void loadVersions();
-  }
+  const loading = !error && (policy === null || versions === null);
 
   return (
     <div className="space-y-6">
@@ -447,7 +369,6 @@ export default function AttendancePolicyDetailPage() {
         backHref="/app/attendance-policies"
         backLabel="Attendance Policies"
         title={policy?.name ?? "Attendance Policy"}
-        description="Edit the name and all attendance rules together; publish the saved draft from the Versions tab."
         badge={
           policy ? (
             <Badge variant={policy.is_active ? "secondary" : "outline"}>
@@ -456,13 +377,13 @@ export default function AttendancePolicyDetailPage() {
           ) : undefined
         }
         actions={
-          canManage && policy && !editing && tab === "overview" ? (
+          canManage && policy && !editing ? (
             <div className="flex items-center gap-2">
               <Button type="button" variant="outline" onClick={() => setConfirmOpen(true)}>
                 {policy.is_active ? "Deactivate" : "Reactivate"}
               </Button>
-              <Button type="button" onClick={() => void startEditing()} disabled={startingEdit}>
-                {startingEdit ? "Loading…" : "Edit"}
+              <Button type="button" onClick={startEditing} disabled={versions === null}>
+                {draft ? "Continue editing draft" : "Edit rules"}
               </Button>
             </div>
           ) : null
@@ -477,7 +398,7 @@ export default function AttendancePolicyDetailPage() {
         </Card>
       ) : null}
 
-      {error && !loading ? (
+      {error ? (
         <Card>
           <CardContent>
             <ErrorState
@@ -488,7 +409,7 @@ export default function AttendancePolicyDetailPage() {
                     ? "This policy could not be found."
                     : error.message
               }
-              onRetry={error.status === 404 ? undefined : () => void loadPolicy()}
+              onRetry={error.status === 404 ? undefined : () => void load()}
             />
           </CardContent>
         </Card>
@@ -516,236 +437,191 @@ export default function AttendancePolicyDetailPage() {
             ))}
           </div>
 
-          {tab === "overview" ? (
+          {tab === "rules" && editing && rules ? (
             <Card>
-              <CardContent>
+              <CardContent className="space-y-6 pt-6">
                 {staleMessage ? (
                   <ConcurrencyConflictBanner
                     message={staleMessage}
-                    onReload={() => void reloadLatest()}
-                    onCancel={cancelEditing}
+                    onReload={() => {
+                      stopEditing();
+                      void load();
+                    }}
+                    onCancel={stopEditing}
                   />
                 ) : null}
-
-                {editing && formValues && editRules ? (
-                  <div className="space-y-6">
-                    <AttendancePolicyForm
-                      values={formValues}
-                      errors={formErrors}
-                      onChange={setFormValues}
-                    />
-                    <AttendancePolicyVersionForm
-                      values={editRules}
-                      errors={editRuleErrors}
-                      onChange={setEditRules}
-                    />
-                    <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-                      <Button type="button" onClick={() => void handleSave()} disabled={saving}>
-                        {saving ? "Saving…" : "Save"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={cancelEditing}
-                        disabled={saving}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <div>
-                        <dt className="text-xs font-medium text-foreground-muted">Policy name</dt>
-                        <dd className="mt-0.5 text-sm font-medium text-foreground">
-                          {policy.name}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs font-medium text-foreground-muted">Policy code</dt>
-                        <dd className="mt-0.5 font-mono text-sm text-foreground">
-                          {policy.code ?? "—"}
-                        </dd>
-                      </div>
-                    </dl>
-                    <p className="text-xs text-foreground-muted">
-                      Click Edit to set the name and all rules. Publish and history are on the{" "}
-                      <button
-                        type="button"
-                        className="font-medium text-primary hover:underline"
-                        onClick={() => setTab("versions")}
-                      >
-                        Versions tab
-                      </button>
-                      .
-                    </p>
-                  </div>
-                )}
+                <AttendancePolicyForm
+                  values={{ name }}
+                  errors={nameErrors}
+                  onChange={(values) => setName(values.name)}
+                />
+                <AttendancePolicyVersionForm
+                  values={rules}
+                  errors={ruleErrors}
+                  onChange={setRules}
+                  shiftTypesInUse={shiftTypes}
+                />
+                <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+                  <Button type="button" onClick={openPublish} disabled={saving}>
+                    Save &amp; publish…
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleSaveDraft()}
+                    disabled={saving}
+                  >
+                    {saving ? "Saving…" : "Save as draft"}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={stopEditing} disabled={saving}>
+                    Cancel
+                  </Button>
+                  {draft ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="ml-auto text-danger"
+                      onClick={() => setDiscardOpen(true)}
+                      disabled={saving}
+                    >
+                      Discard draft
+                    </Button>
+                  ) : null}
+                </div>
               </CardContent>
             </Card>
           ) : null}
 
-          {tab === "versions" ? (
-            <div className="space-y-6">
-              {versionsLoading && versions === null ? (
+          {tab === "rules" && !editing ? (
+            <div className="space-y-4">
+              {draft && canManage ? (
                 <Card>
-                  <CardContent>
-                    <LoadingState label="Loading versions…" />
+                  <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+                    <p className="text-sm text-foreground">
+                      There is an unpublished draft. Nobody follows it until it&apos;s published.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" onClick={openPublish}>
+                        Publish…
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setDiscardOpen(true)}
+                      >
+                        Discard
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               ) : null}
-
-              {versions !== null ? (
-                <>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Currently published</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {currentPublished ? (
-                        <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                          <div>
-                            <dt className="text-xs font-medium text-foreground-muted">
-                              Effective from
-                            </dt>
-                            <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                              <CompanyDate value={currentPublished.effective_from} />
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs font-medium text-foreground-muted">
-                              Grace in / out
-                            </dt>
-                            <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                              {currentPublished.grace_in_minutes}m /{" "}
-                              {currentPublished.grace_out_minutes}m
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs font-medium text-foreground-muted">
-                              Hour bands
-                            </dt>
-                            <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                              {currentPublished.hour_bands.length} configured
-                            </dd>
-                          </div>
-                        </dl>
-                      ) : (
-                        <p className="text-sm text-foreground-muted">
-                          No published version yet — resolution will report CONFIG_INCOMPLETE for
-                          anyone assigned this policy until a draft is published.
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="flex-row items-center justify-between space-y-0">
-                      <CardTitle>Draft</CardTitle>
-                      {canManage && !draft ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => void handleCreateDraft()}
-                          disabled={creatingDraft}
-                        >
-                          {creatingDraft ? "Creating…" : "New draft"}
-                        </Button>
-                      ) : null}
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      {!draft ? (
-                        <p className="text-sm text-foreground-muted">
-                          No open draft. Start one to change this policy&apos;s rules.
-                        </p>
-                      ) : null}
-
-                      {draft && draftValues ? (
-                        <div className="space-y-6">
-                          {draftStaleMessage ? (
-                            <ConcurrencyConflictBanner
-                              message={draftStaleMessage}
-                              onReload={() => void reloadDraftLatest()}
-                              onCancel={() => setDraftStaleMessage(null)}
-                            />
-                          ) : null}
-                          <AttendancePolicyVersionForm
-                            values={draftValues}
-                            errors={draftErrors}
-                            onChange={setDraftValues}
-                          />
-                          <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-                            {canManage ? (
-                              <>
-                                <Button
-                                  type="button"
-                                  onClick={() => void handleSaveDraft()}
-                                  disabled={savingDraft}
-                                >
-                                  {savingDraft ? "Saving…" : "Save draft"}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  onClick={() => void handlePublishClick()}
-                                  disabled={savingDraft}
-                                >
-                                  Publish…
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() => setDiscardConfirmOpen(true)}
-                                  disabled={savingDraft}
-                                >
-                                  Discard draft
-                                </Button>
-                              </>
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : null}
-                    </CardContent>
-                  </Card>
-
-                  {historical.length > 0 ? (
-                    <TableContainer>
-                      <TableToolbar>
-                        <h3 className="text-sm font-semibold text-foreground">History</h3>
-                      </TableToolbar>
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="hover:bg-transparent">
-                            <TableHead>Effective period</TableHead>
-                            <TableHead>Summary</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {historical.map((version) => (
-                            <TableRow key={version.id}>
-                              <TableCell className="tabular-nums text-foreground-secondary">
-                                <CompanyDate value={version.effective_from} /> –{" "}
-                                {version.effective_to ? (
-                                  <CompanyDate value={version.effective_to} />
-                                ) : (
-                                  "open"
-                                )}
-                              </TableCell>
-                              <TableCell className="font-medium text-foreground">
-                                Grace {version.grace_in_minutes}m / {version.grace_out_minutes}m —{" "}
-                                {version.hour_bands.length} hour bands
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    {liveToday ? (
+                      <>
+                        Live rules since <CompanyDate value={liveToday.effective_from} />
+                      </>
+                    ) : (
+                      "No live rules today"
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {liveToday ? (
+                    <AttendancePolicySummary version={liveToday} />
+                  ) : (
+                    <p className="text-sm text-foreground-muted">
+                      {scheduled
+                        ? "These rules haven't started yet."
+                        : draft
+                          ? "Publish the draft to make these rules live."
+                          : "Set the rules and publish them to make this policy usable."}
+                    </p>
+                  )}
+                  {current ? (
+                    <p className="text-xs text-foreground-muted">
+                      Choose who follows this policy in{" "}
+                      <Link
+                        href="/app/policy-assignments"
+                        className="font-medium text-primary hover:underline"
+                      >
+                        Policy Assignments
+                      </Link>
+                      .
+                    </p>
                   ) : null}
-                </>
+                </CardContent>
+              </Card>
+              {scheduled ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>
+                      New rules from <CompanyDate value={scheduled.effective_from} />
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <AttendancePolicySummary version={scheduled} />
+                  </CardContent>
+                </Card>
               ) : null}
             </div>
           ) : null}
+
+          {tab === "history" ? (
+            published.length === 0 ? (
+              <Card>
+                <CardContent className="pt-6">
+                  <p className="text-sm text-foreground-muted">Nothing has been published yet.</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <TableContainer>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Effective period</TableHead>
+                      <TableHead>Summary</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {published.map((version) => (
+                      <TableRow key={version.id}>
+                        <TableCell className="tabular-nums text-foreground-secondary">
+                          <CompanyDate value={version.effective_from} /> –{" "}
+                          {version.effective_to ? (
+                            <CompanyDate value={version.effective_to} />
+                          ) : (
+                            "open"
+                          )}
+                        </TableCell>
+                        <TableCell className="text-foreground">
+                          Grace {version.grace_in_minutes} / {version.grace_out_minutes} minutes,{" "}
+                          {version.hour_bands.length} hour bands
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )
+          ) : null}
         </>
+      ) : null}
+
+      {publishOpen ? (
+        <PublishAssignDialog
+          policyKind="ATTENDANCE_POLICY"
+          policyId={params.id}
+          today={today}
+          initialDate={initialPublishDate()}
+          notBefore={current?.effective_from ?? null}
+          saving={publishing}
+          error={publishError}
+          onCancel={() => setPublishOpen(false)}
+          onConfirm={(choice) => void handlePublish(choice)}
+        />
       ) : null}
 
       <Dialog
@@ -759,8 +635,8 @@ export default function AttendancePolicyDetailPage() {
             </DialogTitle>
             <DialogDescription>
               {policy?.is_active
-                ? "This policy will no longer be assignable to a new scope. Existing assignments are unaffected."
-                : "This policy becomes assignable again."}
+                ? "This policy can no longer be assigned to anyone new. Existing assignments are unaffected."
+                : "This policy can be assigned again."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -784,23 +660,19 @@ export default function AttendancePolicyDetailPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={discardConfirmOpen}
-        onOpenChange={(open) => (!discarding ? setDiscardConfirmOpen(open) : null)}
-      >
+      <Dialog open={discardOpen} onOpenChange={(open) => (!discarding ? setDiscardOpen(open) : null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Discard this draft?</DialogTitle>
             <DialogDescription>
-              This removes the unpublished changes. The currently published version (if any) is
-              unaffected.
+              This removes the unpublished changes. The live rules, if any, are unaffected.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setDiscardConfirmOpen(false)}
+              onClick={() => setDiscardOpen(false)}
               disabled={discarding}
             >
               Cancel
@@ -816,21 +688,6 @@ export default function AttendancePolicyDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {draft ? (
-        <PolicyVersionPublishDialog
-          open={publishDialogOpen}
-          onOpenChange={setPublishDialogOpen}
-          versionsPath={`/attendance-policies/${params.id}/versions`}
-          draft={draft}
-          currentPublished={currentPublished}
-          onPublished={handlePublished}
-          onStale={(message) => {
-            setPublishDialogOpen(false);
-            setDraftStaleMessage(message);
-          }}
-        />
-      ) : null}
     </div>
   );
 }

@@ -354,3 +354,14 @@ export function mapAttendancePolicyVersionApiErrors(
   }
   return errors;
 }
+
+/** Publishing needs more than saving a draft; catches the common miss before the date step. */
+export function validateAttendancePolicyForPublish(
+  values: AttendancePolicyVersionFormValues,
+): AttendancePolicyVersionFormErrors {
+  const errors = validateAttendancePolicyVersionForm(values);
+  if (values.hourBands.length === 0) {
+    errors.hourBands = "Add at least one band to publish.";
+  }
+  return errors;
+}

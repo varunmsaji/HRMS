@@ -2,6 +2,7 @@ import { FormField } from "@/components/common/form-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { BAND_RESULT_LABELS, labelOf } from "@/lib/attendance-policy/labels";
 import {
   emptyBandRow,
   type PolicyBandFormRow,
@@ -136,7 +137,7 @@ export function PolicyBandsEditor({
                 >
                   {statusOptions.map((option) => (
                     <option key={option} value={option}>
-                      {option.replaceAll("_", " ")}
+                      {labelOf(BAND_RESULT_LABELS, option)}
                     </option>
                   ))}
                 </NativeSelect>

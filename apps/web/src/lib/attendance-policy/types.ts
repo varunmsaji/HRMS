@@ -9,6 +9,11 @@ export interface AttendancePolicy {
   version: number;
   created_at: string;
   updated_at: string;
+  /** Filled by the list endpoint. */
+  live_from?: string | null;
+  has_draft?: boolean;
+  assigned_company_wide?: boolean;
+  assigned_group_count?: number;
 }
 
 export const HOUR_BAND_STATUSES = ["PRESENT", "HALF_DAY", "ABSENT"] as const;
