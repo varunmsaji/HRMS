@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 290" role="img" aria-label="Krewoxa penguin mascot — holding-hands"><title>Krewoxa penguin mascot — holding-hands</title><defs>
+  <linearGradient id="kp-body" x1="0.2" y1="0" x2="0.8" y2="1">
+    <stop offset="0" stop-color="#34405F"/><stop offset="0.55" stop-color="#1A2135"/><stop offset="1" stop-color="#0C101C"/>
+  </linearGradient>
+  <linearGradient id="kp-fl" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#2C3651"/><stop offset="1" stop-color="#0E1322"/>
+  </linearGradient>
+  <radialGradient id="kp-belly" cx="0.42" cy="0.32" r="0.8">
+    <stop offset="0" stop-color="#FFFFFF"/><stop offset="0.7" stop-color="#F3F6FB"/><stop offset="1" stop-color="#DCE3EE"/>
+  </radialGradient>
+  <linearGradient id="kp-beak" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#FFC24A"/><stop offset="1" stop-color="#FF8A1F"/>
+  </linearGradient>
+  <radialGradient id="kp-chest" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#FFD873" stop-opacity="0.55"/><stop offset="1" stop-color="#FFD873" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="kp-brand" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#0B3D91"/><stop offset="1" stop-color="#1E6BFF"/>
+  </linearGradient>
+</defs><clipPath id="kp-tip"><rect x="-40" y="66" width="80" height="50"/></clipPath><g transform="translate(62 132) rotate(-16) scale(1 1.04)"><path d="M-7 0 C-24 22,-27 62,-15 92 C-10 101,-1 99,3 88 C11 62,14 26,8 0 Z" fill="url(#kp-fl)"/><path d="M-7 0 C-24 22,-27 62,-15 92 C-10 101,-1 99,3 88 C11 62,14 26,8 0 Z" fill="none" stroke="#DCE6FA" stroke-opacity=".75" stroke-width="1.6" clip-path="url(#kp-tip)"/></g><g transform="translate(178 132) rotate(16) scale(-1,1) scale(1 1.04)"><path d="M-7 0 C-24 22,-27 62,-15 92 C-10 101,-1 99,3 88 C11 62,14 26,8 0 Z" fill="url(#kp-fl)"/><path d="M-7 0 C-24 22,-27 62,-15 92 C-10 101,-1 99,3 88 C11 62,14 26,8 0 Z" fill="none" stroke="#DCE6FA" stroke-opacity=".75" stroke-width="1.6" clip-path="url(#kp-tip)"/></g></svg>

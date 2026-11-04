@@ -33,6 +33,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { HeroDashboard } from "./hero-dashboard";
+import { Tilt } from "./tilt";
 import "./landing.css";
 
 // Display face for headings; self-hosted by next/font so the CSP is unaffected.
@@ -128,7 +130,15 @@ const FAQS: [string, string][] = [
 
 const FOOT_PRODUCT: [string, string][] = [["Platform", "#platform"], ["Payroll", "#payroll"], ["Workflows", "#workflows"], ["Mobile", "#mobile"], ["Security", "#security"]];
 
-type MascotPose = "standing" | "waving" | "thinking" | "clipboard" | "celebrating" | "explaining" | "welcome";
+// Illustrative, like the figures in the hero dashboard.
+const HERO_CHIPS: { icon: LucideIcon; tint: string; title: string; note: string }[] = [
+  { icon: ScanFace, tint: "green", title: "Arjun checked in", note: "Face verified · 9:24 AM" },
+  { icon: Wallet, tint: "blue", title: "Pay run ready", note: "64 employees ready" },
+  { icon: CalendarCheck, tint: "amber", title: "Leave approved", note: "Sara Thomas · 2 days" },
+  { icon: BarChart3, tint: "cyan", title: "96% on time", note: "Up 3% this week" },
+];
+
+type MascotPose = "standing" | "waving" | "thinking" | "clipboard" | "celebrating" | "explaining" | "welcome" | "holding" | "holding-hands";
 
 // Decorative only: the penguin never carries information the copy doesn't.
 function Mascot({ pose, className }: { pose: MascotPose; className: string }) {
@@ -193,12 +203,24 @@ export function Landing() {
             </div>
 
             <div className="win-stage up d3">
-              <Mascot pose="waving" className="mascot-hero" />
-              <div className="win">
-                <div className="win-bar"><i /><i /><i /></div>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img className="shot-img" src="/landing/product-roster.webp" width={1600} height={1000} alt="The Krewoxa team roster grid: every employee's shift by date, with week offs marked" />
-              </div>
+              <Tilt className="hold-stage" maxDegrees={2.5}>
+                <Mascot pose="holding" className="mascot-hero" />
+                <div className="win">
+                  <div className="win-bar"><i /><i /><i /></div>
+                  <HeroDashboard />
+                  {/* Shown instead of the animation under prefers-reduced-motion. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img className="shot-img hd-still" src="/landing/product-dashboard.webp" width={1600} height={1000} loading="lazy" alt="The Krewoxa company dashboard: today's attendance, leave and items waiting on HR" />
+                  <noscript><style>{".kx .hd *{animation:none!important}"}</style></noscript>
+                </div>
+                <Mascot pose="holding-hands" className="mascot-hero mascot-hands" />
+                {HERO_CHIPS.map(({ icon: Icon, tint, title, note }, i) => (
+                  <div key={title} className={`hero-chip hero-chip-${i + 1}`} aria-hidden="true">
+                    <span className={`hero-chip-ico ${tint}`}><Icon size={18} /></span>
+                    <span><b>{title}</b><small>{note}</small></span>
+                  </div>
+                ))}
+              </Tilt>
             </div>
           </div>
         </section>
@@ -215,10 +237,10 @@ export function Landing() {
               </ul>
               <a href="#workflows" className="btn btn-dark">See how it works <ArrowRight size={16} /></a>
             </div>
-            <div className="card shot">
+            <Tilt className="card shot">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img className="shot-img" src="/landing/product-employees.webp" width={1600} height={1000} loading="lazy" alt="The Krewoxa employee directory with role, department, reporting manager, shift and status" />
-            </div>
+            </Tilt>
           </div>
         </section>
 
@@ -229,10 +251,10 @@ export function Landing() {
             <h2 className="h2" style={{ margin: "18px 0 16px" }}>Payroll inputs, reconciled<br /><span className="mute">before they reach finance.</span></h2>
             <p className="lead">Attendance, leave and approvals come together in one summary. Managers review it once, and every change is on record.</p>
 
-            <div className="card shot shot-center">
+            <Tilt className="card shot shot-center" maxDegrees={3}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img className="shot-img" src="/landing/product-payroll.webp" width={1600} height={705} loading="lazy" alt="The Krewoxa pay runs list with month, status, employees paid and net pay" />
-            </div>
+            </Tilt>
 
             <div className="grid3" style={{ marginTop: 20, textAlign: "left" }}>
               {FEATS.map(([Icon, t, p]) => (

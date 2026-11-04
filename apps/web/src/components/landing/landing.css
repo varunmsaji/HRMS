@@ -258,8 +258,162 @@ html:has(.kx){scroll-behavior:smooth;scroll-padding-top:84px}
 .kx .mascot{display:block;height:auto;pointer-events:none;user-select:none}
 .kx .win-stage{position:relative;max-width:1060px;margin:clamp(40px,5vw,64px) auto 0}
 .kx .win-stage .win{margin:0;position:relative}
-.kx .mascot-hero{position:absolute;right:7%;bottom:100%;width:clamp(86px,11vw,150px);margin-bottom:-6px;z-index:1;animation:kBob 4s ease-in-out infinite}
+/* The penguin stands behind the window and its hands sit in front, gripping the top edge (y=212 of 290 in the SVG). */
+.kx .hold-stage{position:relative}
+.kx .hold-stage .win{z-index:1;box-shadow:0 50px 90px -40px rgba(10,18,48,.7)}
+.kx .mascot-hero{--mascot-w:clamp(100px,12.5vw,180px);position:absolute;right:4%;bottom:100%;width:var(--mascot-w);margin-bottom:calc(var(--mascot-w)*-.325);animation:kPeek .9s .5s cubic-bezier(.16,1,.3,1) both,kBob 4s 1.5s ease-in-out infinite}
+.kx .mascot-hands{z-index:2;pointer-events:none!important;animation:kGrip .4s .95s ease-out both}
 .kx .mascot-faq{width:112px;margin:0 auto 8px}
 .kx .mascot-cta{position:absolute;right:clamp(12px,4vw,56px);bottom:-14px;width:clamp(120px,14vw,170px)}
-@keyframes kBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes kBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes kPeek{from{transform:translateY(62%)}to{transform:translateY(0)}}
+@keyframes kGrip{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 @media(max-width:880px){.kx .mascot-cta{display:none}}
+@media(max-width:560px){.kx .mascot-hero{--mascot-w:76px}}
+
+/* animated hero dashboard: sized in --u (1/1280 of its own width) so it scales like a screenshot */
+.kx .hd{container-type:inline-size;aspect-ratio:16/9;overflow:hidden;border-radius:0 0 21px 21px;--u:calc(100cqw/1280)}
+.kx .hd-still{display:none}
+.kx .hd-app{display:grid;grid-template-columns:calc(var(--u)*210) 1fr;height:100%;background:#F8FAFC;color:#0F172A;font-size:calc(var(--u)*12.5);line-height:1.3}
+.kx .hd svg{flex:none}
+.kx .hd p{margin:0}
+.kx .hd small{font-size:calc(var(--u)*11);font-weight:500;color:#64748B}
+.kx .hd small.up{color:#15803D;font-weight:600}
+.kx .hd small.down{color:#B45309;font-weight:600}
+.kx .hd-side{background:#0B1533;padding:calc(var(--u)*18) calc(var(--u)*10);color:#CBD5E1;overflow:hidden}
+.kx .hd-side img{display:block;height:calc(var(--u)*26);width:auto;margin:0 0 calc(var(--u)*8) calc(var(--u)*8)}
+.kx .hd-side p{font-size:calc(var(--u)*10);letter-spacing:.06em;text-transform:uppercase;color:#7F8CAD;margin:calc(var(--u)*14) calc(var(--u)*10) calc(var(--u)*5)}
+.kx .hd-side span{display:flex;align-items:center;gap:calc(var(--u)*10);padding:calc(var(--u)*6.5) calc(var(--u)*10);border-radius:calc(var(--u)*20)}
+.kx .hd-side span.on{background:#00C2FF;color:#07132F;font-weight:600}
+.kx .hd-side svg{width:calc(var(--u)*15);height:calc(var(--u)*15)}
+.kx .hd-main{min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.kx .hd-top{display:flex;align-items:center;gap:calc(var(--u)*10);height:calc(var(--u)*52);flex:none;padding:0 calc(var(--u)*22);background:#fff;border-bottom:1px solid #E2E8F0}
+.kx .hd-top b{font-weight:600}
+.kx .hd-top>i{width:1px;height:calc(var(--u)*16);background:#E2E8F0}
+.kx .hd-top>svg{width:calc(var(--u)*16);height:calc(var(--u)*16);color:#475569}
+.kx .hd-search{display:flex;align-items:center;gap:calc(var(--u)*8);width:calc(var(--u)*240);margin:0 auto;padding:calc(var(--u)*7) calc(var(--u)*11);border-radius:calc(var(--u)*7);background:#F1F5F9;color:#64748B}
+.kx .hd-search svg{width:calc(var(--u)*14);height:calc(var(--u)*14)}
+.kx .hd-av{display:grid;place-items:center;flex:none;width:calc(var(--u)*28);height:calc(var(--u)*28);border-radius:50%;background:#EFF6FF;color:#1D4ED8;font-size:calc(var(--u)*10);font-weight:600}
+.kx .hd-body{padding:calc(var(--u)*16) calc(var(--u)*22);display:flex;flex-direction:column;gap:calc(var(--u)*13)}
+.kx .hd-head{display:flex;align-items:center;gap:calc(var(--u)*10)}
+.kx .hd-head>div{margin-right:auto}
+.kx .hd-head h4{margin:0;font-size:calc(var(--u)*20);font-weight:600;color:#0F172A}
+.kx .hd-head p{color:#475569}
+.kx .hd-live{display:flex;align-items:center;gap:calc(var(--u)*6);padding:calc(var(--u)*5) calc(var(--u)*10);border-radius:calc(var(--u)*20);background:#ECFDF5;color:#15803D;font-weight:600}
+.kx .hd-live i{width:calc(var(--u)*7);height:calc(var(--u)*7);border-radius:50%;background:#16A34A;animation:kPulse 1.8s ease-in-out infinite}
+.kx .hd-range{display:flex;align-items:center;gap:calc(var(--u)*7);padding:calc(var(--u)*6) calc(var(--u)*10);border-radius:calc(var(--u)*7);background:#fff;border:1px solid #E2E8F0}
+.kx .hd-range svg{width:calc(var(--u)*14);height:calc(var(--u)*14);color:#2563EB}
+.kx .hd-card{background:#fff;border:1px solid #E2E8F0;border-radius:calc(var(--u)*12);padding:calc(var(--u)*14);min-width:0}
+.kx .hd em{display:grid;place-items:center;flex:none;width:calc(var(--u)*32);height:calc(var(--u)*32);border-radius:calc(var(--u)*8)}
+.kx .hd em svg{width:calc(var(--u)*16);height:calc(var(--u)*16)}
+.kx .hd em.blue{background:#EFF6FF;color:#2563EB}
+.kx .hd em.green{background:#F0FDF4;color:#15803D}
+.kx .hd em.amber{background:#FFFBEB;color:#B45309}
+.kx .hd em.sky{background:#F0F9FF;color:#0369A1}
+.kx .hd-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:calc(var(--u)*13)}
+.kx .hd-kpis em{margin-bottom:calc(var(--u)*9)}
+.kx .hd-kpi{display:flex;align-items:baseline;gap:calc(var(--u)*5);color:#64748B;font-size:calc(var(--u)*11);white-space:nowrap}
+.kx .hd-kpi strong,.kx .hd-big strong{display:inline-block;font-size:calc(var(--u)*28);font-weight:700;color:#0F172A;font-variant-numeric:tabular-nums;line-height:1.25}
+.kx .hd-note{color:#64748B;font-size:calc(var(--u)*11);white-space:nowrap}
+.kx .hd-charts{display:grid;grid-template-columns:1fr 1fr 1fr;gap:calc(var(--u)*13)}
+.kx .hd-title{display:flex;align-items:center;gap:calc(var(--u)*7);font-weight:600;font-size:calc(var(--u)*13);white-space:nowrap;margin-bottom:calc(var(--u)*8)}
+.kx .hd-title>svg{width:calc(var(--u)*15);height:calc(var(--u)*15);color:#2563EB}
+.kx .hd-sel,.kx .hd-link{display:flex;align-items:center;gap:calc(var(--u)*3);margin-left:auto;font-size:calc(var(--u)*11);font-weight:500}
+.kx .hd-sel{padding:calc(var(--u)*4) calc(var(--u)*7);border:1px solid #E2E8F0;border-radius:calc(var(--u)*6)}
+.kx .hd-link{color:#2563EB}
+.kx .hd-sel svg,.kx .hd-link svg{width:calc(var(--u)*12);height:calc(var(--u)*12)}
+.kx .hd-big{display:flex;align-items:baseline;gap:calc(var(--u)*6);color:#475569}
+.kx .hd-growth{display:block;width:100%;height:auto;margin-top:calc(var(--u)*2)}
+.kx .hd-growth text{font-size:8.5px;fill:#64748B}
+.kx .hd-line{fill:none;stroke:#2563EB;stroke-width:1.8;stroke-linejoin:round;stroke-dasharray:1;animation:kHdLine 1.2s ease-out both paused}
+.kx .hd-area{fill:#DBEAFE;fill-opacity:.65;animation:kHdFade .7s ease-out both paused}
+.kx .hd-point circle{fill:#2563EB;stroke:#fff;stroke-width:1.2}
+.kx .hd-point{animation:kHdFade .35s ease-out both paused}
+.kx .hd-split{display:flex;align-items:center;gap:calc(var(--u)*12)}
+.kx .hd-donut{width:calc(var(--u)*118);height:calc(var(--u)*118)}
+.kx .hd-sweep{stroke-dasharray:100;animation:kHdDraw 1.1s cubic-bezier(.4,0,.2,1) both paused}
+.kx .hd-slice{transition:stroke-dasharray .6s ease,stroke-dashoffset .6s ease}
+.kx .hd-donut-n{font-size:7.5px;font-weight:700;fill:#0F172A;font-variant-numeric:tabular-nums}
+.kx .hd-donut-l{font-size:3.2px;fill:#64748B}
+.kx .hd-split ul{flex:1;min-width:0;list-style:none;margin:0;padding:0;display:grid;gap:calc(var(--u)*5)}
+.kx .hd-split li{display:grid;grid-template-columns:calc(var(--u)*14) 1fr auto calc(var(--u)*38);align-items:center;white-space:nowrap;font-size:calc(var(--u)*11.5)}
+.kx .hd-split li i{width:calc(var(--u)*8);height:calc(var(--u)*8);border-radius:50%}
+.kx .hd-split li b{font-weight:600;font-variant-numeric:tabular-nums}
+.kx .hd-split li small{text-align:right}
+.kx .hd-lists{display:grid;grid-template-columns:repeat(4,1fr);gap:calc(var(--u)*13)}
+.kx .hd-row{display:flex;align-items:center;gap:calc(var(--u)*9);padding:calc(var(--u)*5) 0}
+.kx .hd-row>div{flex:1;min-width:0}
+.kx .hd-row b,.kx .hd-row small{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kx .hd-row small{font-weight:500}
+.kx .hd-row>small{flex:none}
+.kx .hd-row>u{text-decoration:none;padding:calc(var(--u)*2) calc(var(--u)*7);border-radius:calc(var(--u)*5);background:#EFF6FF;color:#2563EB;font-size:calc(var(--u)*11)}
+.kx .hd-row>svg{width:calc(var(--u)*14);height:calc(var(--u)*14);color:#64748B}
+.kx .hd-dept{margin-bottom:calc(var(--u)*9)}
+.kx .hd-dept span{display:flex;justify-content:space-between;margin-bottom:calc(var(--u)*4)}
+.kx .hd-dept b{font-weight:600}
+.kx .hd-dept div{height:calc(var(--u)*5);border-radius:calc(var(--u)*3);background:#E2E8F0;overflow:hidden}
+.kx .hd-dept i{display:block;height:100%;border-radius:inherit;background:#2563EB;transform-origin:left;animation:kGrow .8s cubic-bezier(.16,1,.3,1) both paused}
+.kx .hd-in{animation:kHdIn .7s cubic-bezier(.16,1,.3,1) both paused}
+.kx .hd.play .hd-in,.kx .hd.play .hd-line,.kx .hd.play .hd-area,.kx .hd.play .hd-point,.kx .hd.play .hd-sweep,.kx .hd.play .hd-dept i{animation-play-state:running}
+.kx .hd-bump{animation:kHdBump .55s ease-out}
+.kx .hd-new{animation:kHdRow .5s cubic-bezier(.16,1,.3,1) both}
+@keyframes kHdIn{from{opacity:0;transform:translateY(calc(var(--u)*14))}to{opacity:1;transform:none}}
+@keyframes kHdDraw{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+@keyframes kHdLine{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes kHdFade{from{opacity:0}to{opacity:1}}
+@keyframes kHdBump{0%{transform:scale(1)}40%{transform:scale(1.14);color:#15803D}100%{transform:scale(1)}}
+@keyframes kHdRow{from{opacity:0;transform:translateX(calc(var(--u)*12))}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){
+  .kx .hd{display:none}
+  .kx .hd-still{display:block}
+}
+
+/* hover: screenshots lean towards the mouse, dashboard cards lift, the penguin hops */
+@media(hover:hover) and (prefers-reduced-motion:no-preference){
+  .kx .tilt{position:relative;overflow:hidden;transform:perspective(1400px) rotateX(var(--tilt-x,0deg)) rotateY(var(--tilt-y,0deg));transition:transform .5s cubic-bezier(.16,1,.3,1),box-shadow .3s ease}
+  .kx .tilt.is-tilting{transition:transform .1s linear,box-shadow .3s ease;box-shadow:0 40px 70px -30px rgba(10,18,48,.45)}
+  .kx .tilt::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:0;background:radial-gradient(circle 340px at var(--sheen-x,50%) var(--sheen-y,50%),rgba(255,255,255,.14),transparent 70%);transition:opacity .3s ease}
+  .kx .tilt.is-tilting::after{opacity:1}
+  .kx .tilt .shot-img{transition:scale .5s cubic-bezier(.16,1,.3,1)}
+  .kx .tilt.is-tilting .shot-img{scale:1.02}
+  .kx .hd-card{transition:translate .25s ease,box-shadow .25s ease,border-color .25s ease}
+  .kx .hd-card:hover{translate:0 calc(var(--u)*-3);border-color:#BFDBFE;box-shadow:0 calc(var(--u)*10) calc(var(--u)*22) calc(var(--u)*-10) rgba(37,99,235,.35)}
+  .kx .hd-side span{transition:background-color .2s ease,color .2s ease}
+  .kx .hd-side span:not(.on):hover{background:rgba(255,255,255,.09);color:#fff}
+  .kx .mascot{pointer-events:auto;transition:scale .25s ease}
+  .kx .mascot:hover{scale:1.07;animation:kHop .7s ease-in-out}
+}
+@keyframes kHop{0%,100%{transform:translateY(0) rotate(0)}30%{transform:translateY(-12px) rotate(-5deg)}60%{transform:translateY(-3px) rotate(4deg)}}
+@media(hover:hover) and (prefers-reduced-motion:no-preference){
+  /* The whole holding group leans as one, so only the window itself gets the frame effects. */
+  .kx .tilt.hold-stage{overflow:visible}
+  .kx .tilt.hold-stage::after{display:none}
+  .kx .tilt.hold-stage.is-tilting{box-shadow:none}
+  .kx .hold-stage .win::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;background:radial-gradient(circle 340px at var(--sheen-x,50%) var(--sheen-y,50%),rgba(255,255,255,.14),transparent 70%);transition:opacity .3s ease}
+  .kx .hold-stage.is-tilting .win::after{opacity:1}
+  /* Hands stay on the edge, so the hover is a peek up rather than the usual hop. */
+  .kx .mascot.mascot-hero:hover{scale:none;animation:kPeekUp .8s ease-in-out}
+}
+@keyframes kPeekUp{0%,100%{transform:translateY(0)}45%{transform:translateY(-12px)}}
+
+/* hero setting: a soft tinted band behind the window's lower half, and cards floating over its edges */
+.kx .hero::after{content:"";position:absolute;inset:auto 0 0;height:calc(clamp(40px,5vw,72px) + min(30vw,318px));border-radius:50% 50% 0 0/clamp(24px,5vw,72px) clamp(24px,5vw,72px) 0 0;background:radial-gradient(rgba(7,128,242,.16) 1.2px,transparent 1.3px) 0 0/22px 22px,radial-gradient(55% 80% at 50% 0,rgba(0,194,255,.2),transparent 75%),linear-gradient(180deg,#E6F0FF,#F4F7FD)}
+.kx .hero .wrap{position:relative;z-index:1}
+.kx .hero-chip{display:none}
+@media(min-width:1360px){
+  .kx .hero-chip{position:absolute;z-index:3;display:flex;align-items:center;gap:11px;width:206px;padding:11px 13px;background:#fff;border:1px solid #E3E8F2;border-radius:14px;box-shadow:0 22px 44px -18px rgba(10,18,48,.45);text-align:left;pointer-events:none;--chip-out:calc(-1*min(176px,(100vw - 1092px)/2));animation:kChipIn .7s var(--chip-at) cubic-bezier(.16,1,.3,1) both,kFloat 5s calc(var(--chip-at) + .7s) ease-in-out infinite}
+  .kx .hero-chip b,.kx .hero-chip small{display:block;white-space:nowrap}
+  .kx .hero-chip b{font-size:13.5px;font-weight:600;color:#111827}
+  .kx .hero-chip small{font-size:11.5px;color:#5B6578}
+  .kx .hero-chip-ico{display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:10px}
+  .kx .hero-chip-ico.green{background:#ECFDF5;color:#15803D}
+  .kx .hero-chip-ico.blue{background:#EFF6FF;color:#2563EB}
+  .kx .hero-chip-ico.amber{background:#FFFBEB;color:#B45309}
+  .kx .hero-chip-ico.cyan{background:#ECFEFF;color:#0E7490}
+  .kx .hero-chip-1{--chip-at:.9s;left:var(--chip-out);top:17%}
+  .kx .hero-chip-2{--chip-at:1.15s;left:var(--chip-out);top:68%}
+  .kx .hero-chip-3{--chip-at:1.05s;right:var(--chip-out);top:30%}
+  .kx .hero-chip-4{--chip-at:1.3s;right:var(--chip-out);top:76%}
+}
+@keyframes kChipIn{from{opacity:0;transform:translateY(18px) scale(.94)}to{opacity:1;transform:none}}
+@keyframes kFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}

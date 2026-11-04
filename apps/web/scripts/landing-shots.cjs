@@ -2,6 +2,7 @@
  *
  *   HR_EMAIL=you@company.com HR_PASS='...' npm run landing:shots
  *
+ * Set SHOTS_ONLY=product-dashboard to regenerate a single image.
  * Needs the web (3000) and API (8000) dev servers running and Google Chrome installed. Credentials
  * come from the environment only. The login email is masked and the Next.js dev badge hidden.
  * Run it during working hours (about 10:00-17:00 company time): the dashboard's "Present today"
@@ -16,7 +17,7 @@ const OUT = path.join(__dirname, "..", "public", "landing");
 const SHOTS = [
   // A narrower window than a real desktop, so the text stays legible once the image is scaled to
   // the page. Height is chosen to end the shot on content, with no empty space below it.
-  { name: "product-roster", path: "/app/rosters/grid", viewport: { width: 1280, height: 800 }, hideRowsContaining: ["EMP-0001"] },
+  { name: "product-dashboard", path: "/app/dashboard", viewport: { width: 1520, height: 950 } },
   { name: "product-employees", path: "/app/employees", viewport: { width: 1360, height: 850 }, hideRowsContaining: ["EMP-0001"] },
   { name: "product-payroll", path: "/app/payroll/pay-runs", viewport: { width: 1180, height: 520 } },
 ];
@@ -33,7 +34,7 @@ const SHOTS = [
   await page.click('button[type="submit"]');
   await page.waitForURL(/\/app\//, { timeout: 60000 });
 
-  for (const shot of SHOTS) {
+  for (const shot of SHOTS.filter((s) => !process.env.SHOTS_ONLY || s.name === process.env.SHOTS_ONLY)) {
     await page.setViewportSize(shot.viewport);
     await page.goto(BASE + shot.path, { waitUntil: "networkidle" });
     await page.addStyleTag({ content: "nextjs-portal,[data-nextjs-toast],[data-next-badge-root]{display:none!important}" });
