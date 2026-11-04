@@ -136,6 +136,17 @@ class LeavePolicyRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def list_open_and_draft_versions(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[LeavePolicyVersion]:
+        """Every draft and open published version, for list status in one query."""
+        stmt = select(LeavePolicyVersion).where(
+            LeavePolicyVersion.company_id == company_id,
+            LeavePolicyVersion.deleted_at.is_(None),
+            LeavePolicyVersion.effective_to.is_(None),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def list_policies(
         self, session: AsyncSession, *, company_id: UUID, assignable_only: bool = False
     ) -> list[LeavePolicy]:

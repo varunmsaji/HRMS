@@ -180,6 +180,11 @@ class LeavePolicyRead(BaseModel):
     version: int
     created_at: str
     updated_at: str
+    # Filled by the list endpoint so a table can show status without a request per row.
+    live_from: date | None = None
+    has_draft: bool = False
+    assigned_company_wide: bool = False
+    assigned_group_count: int = 0
 
 
 def leave_policy_to_read(row: "LeavePolicy") -> LeavePolicyRead:
@@ -405,6 +410,33 @@ def leave_policy_version_to_read(row: "LeavePolicyVersion") -> LeavePolicyVersio
         created_at=_format_timestamp(row.created_at) or "",
         updated_at=_format_timestamp(row.updated_at) or "",
     )
+
+
+class LeavePolicySetupAssign(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope_type: str
+    scope_id: UUID | None = None
+    # Version of the open assignment being replaced at that scope, when there is one.
+    expected_version: int | None = None
+
+
+class LeavePolicySetup(BaseModel):
+    """A leave policy, its rules, and optionally its publication and assignment, in one request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    leave_type_id: UUID
+    name: str = Field(min_length=1, max_length=150)
+    rules: LeavePolicyVersionCreate
+    publish: bool = False
+    publish_reason: str | None = Field(default=None, max_length=2000)
+    assign: LeavePolicySetupAssign | None = None
+
+
+class LeavePolicySetupRead(BaseModel):
+    policy: LeavePolicyRead
+    version: LeavePolicyVersionRead
 
 
 def leave_policy_version_to_audit_dict(read: LeavePolicyVersionRead) -> dict[str, Any]:

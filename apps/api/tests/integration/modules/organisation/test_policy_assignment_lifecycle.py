@@ -558,3 +558,82 @@ async def test_setup_checklist_follows_the_real_state(client: AsyncClient) -> No
         assert not (await items())["by_code"]["OVERTIME_POLICY"]["is_complete"]
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_leave_policy_setup_publishes_and_assigns_for_its_leave_type(
+    client: AsyncClient,
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        leave_type = await client.post(
+            "/v1/leave-types", headers=headers, json={"name": "Casual", "code": "CL"}
+        )
+        assert leave_type.status_code == 201, leave_type.text
+        type_id = leave_type.json()["data"]["id"]
+
+        made = await client.post(
+            "/v1/leave-policies/setup",
+            headers=headers,
+            json={
+                "leave_type_id": type_id,
+                "name": "Casual leave",
+                "rules": {
+                    "effective_from": "2026-01-01",
+                    "accrual_frequency": "MONTHLY",
+                    "accrual_rate_per_cycle": "1",
+                },
+                "publish": True,
+                "assign": {"scope_type": "COMPANY"},
+            },
+        )
+        assert made.status_code == 201, made.text
+        assert made.json()["data"]["version"]["status"] == "PUBLISHED"
+
+        listed = (await client.get("/v1/leave-policies", headers=headers)).json()["data"]
+        assert listed[0]["live_from"] == "2026-01-01"
+        assert listed[0]["assigned_company_wide"] is True
+        coverage = await client.get(
+            "/v1/policy-assignments/coverage",
+            headers=headers,
+            params={"scope_type": "COMPANY", "as_of": "2026-06-01"},
+        )
+        row = next(
+            x
+            for x in coverage.json()["data"]["rows"]
+            if x["policy_kind"] == "LEAVE_POLICY" and x["leave_type_id"] == type_id
+        )
+        assert row["applied"]["policy_name"] == "Casual leave"
+
+        # A second company-wide policy for the same type needs the open row's version
+        clash = await client.post(
+            "/v1/leave-policies/setup",
+            headers=headers,
+            json={
+                "leave_type_id": type_id,
+                "name": "Second",
+                "rules": {"effective_from": "2026-03-01"},
+                "publish": True,
+                "assign": {"scope_type": "COMPANY"},
+            },
+        )
+        assert clash.status_code == 422, clash.text
+        assert clash.json()["error"]["code"] == "POLICY_ASSIGNMENT_VERSION_REQUIRED"
+        names = [
+            p["name"]
+            for p in (await client.get("/v1/leave-policies", headers=headers)).json()["data"]
+        ]
+        assert names == ["Casual leave"]
+
+        unpublished = await client.post(
+            "/v1/leave-policies/setup",
+            headers=headers,
+            json={
+                "leave_type_id": type_id,
+                "name": "Nope",
+                "rules": {},
+                "assign": {"scope_type": "COMPANY"},
+            },
+        )
+        assert unpublished.status_code == 422, unpublished.text
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
