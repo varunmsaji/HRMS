@@ -24,4 +24,16 @@ paths = [
   # token shape, not content; hand-verified, this line contains no credential of any kind.
   # Scoped to this one file, not a blanket rule disable.
   '''docs/product/25_Project_Plan_Estimation_and_Team\.md''',
+  # Made-up values the redaction/security tests assert never reach a log (sentinel passwords,
+  # fake tokens, a dummy JWT), plus example IDs in two docs. Each file hand-verified 2026-11-04.
+  # Listed one by one on purpose: a new test file is still scanned.
+  '''apps/api/tests/integration/auth/test_security_events\.py''',
+  '''apps/api/tests/integration/core/test_token_path_redaction\.py''',
+  '''apps/api/tests/integration/modules/account_invite/test_session_lifecycle\.py''',
+  '''apps/api/tests/integration/modules/account_invite/test_invite_accept_hardening\.py''',
+  '''apps/api/tests/unit/modules/attendance/test_face_verification\.py''',
+  '''apps/api/tests/unit/core/test_log_redaction\.py''',
+  '''apps/mobile/test/face_liveness_capture_test\.dart''',
+  '''docs/api/examples/conventions-and-errors\.md''',
+  '''docs/operations/FACE_ATTENDANCE_STAGING_SECURITY_CHECKLIST\.md''',
 ]
