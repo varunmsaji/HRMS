@@ -9,6 +9,7 @@ import '../forms/spec_form_screen.dart';
 import '../providers.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/shell/more_action.dart';
+import '../theme/employee_theme_scope.dart';
 import '../widgets/ui.dart';
 import 'resource_config.dart';
 import 'versions_section.dart';
@@ -51,8 +52,12 @@ List<String> rowLines(FieldSpec f, dynamic raw, Map<String, Map<String, String>>
 /// Mirrors the web list pages (`apps/web/src/app/app/<resource>/page.tsx`): every record, an
 /// active/inactive badge, and a create form for users who may manage the resource.
 class ResourceListScreen extends ConsumerStatefulWidget {
-  const ResourceListScreen({super.key, required this.config});
+  const ResourceListScreen({super.key, required this.config, this.createScreen});
   final ResourceConfig config;
+
+  /// A purpose-built create screen (templates, one-step publish) used instead of the generic form.
+  /// It pops `true` once something was saved.
+  final Widget Function()? createScreen;
 
   @override
   ConsumerState<ResourceListScreen> createState() => _ResourceListScreenState();
@@ -94,6 +99,12 @@ class _ResourceListScreenState extends ConsumerState<ResourceListScreen> {
   }
 
   Future<void> _create() async {
+    final custom = widget.createScreen;
+    if (custom != null) {
+      final saved = await pushKeepingTheme<bool>(context, (_) => custom());
+      if (saved == true && mounted) _load();
+      return;
+    }
     final saved = await openSpecForm(
       context,
       title: 'New ${_c.singular.toLowerCase()}',
