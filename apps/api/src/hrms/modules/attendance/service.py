@@ -1973,6 +1973,23 @@ class AttendanceService:
         )
         return version is not None
 
+    async def policy_has_version_as_of(
+        self, company_id: UUID, policy_kind: str, policy_id: UUID, as_of: date
+    ) -> bool:
+        repo: Any
+        if policy_kind == "ATTENDANCE_POLICY":
+            repo = self._attendance_repo
+        elif policy_kind == "OVERTIME_POLICY":
+            repo = self._overtime_repo
+        elif policy_kind == "REGULARIZATION_POLICY":
+            repo = self._regularization_repo
+        else:
+            return False
+        version = await repo.find_effective_as_of(
+            self._session, company_id=company_id, policy_id=policy_id, as_of=as_of
+        )
+        return version is not None
+
     async def has_computed_attendance_blocking_timezone_change(
         self, company_id: UUID, *, employee_ids: list[UUID] | None = None
     ) -> bool:

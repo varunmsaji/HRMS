@@ -190,3 +190,135 @@ async def test_ending_an_override_falls_back_to_the_company_policy(client: Async
         assert r.status_code == 404, r.text
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_coverage_shows_what_applies_and_where_it_comes_from(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        company_policy = await _publish_attendance_policy(client, headers, "Company")
+        dept_policy = await _publish_attendance_policy(client, headers, "Department")
+        department_id = await _department(client, headers)
+        await client.post(
+            "/v1/policy-assignments",
+            headers=headers,
+            json=_body(company_policy["id"], "2026-01-01"),
+        )
+
+        async def row(scope: str, scope_id: str | None) -> dict:
+            params = {"scope_type": scope, "as_of": "2026-06-01"}
+            if scope_id:
+                params["scope_id"] = scope_id
+            r = await client.get("/v1/policy-assignments/coverage", headers=headers, params=params)
+            assert r.status_code == 200, r.text
+            rows = r.json()["data"]["rows"]
+            assert {x["policy_kind"] for x in rows} >= {"WORK_CALENDAR", "ATTENDANCE_POLICY"}
+            return next(x for x in rows if x["policy_kind"] == "ATTENDANCE_POLICY")
+
+        # nothing set on the department: it inherits the company's
+        inherited = await row("DEPARTMENT", department_id)
+        assert inherited["own"] is None
+        assert inherited["applied"]["policy_name"] == "Company"
+        assert inherited["applied"]["scope_type"] == "COMPANY"
+        assert inherited["applied"]["has_rules"] is True
+
+        created = await client.post(
+            "/v1/policy-assignments",
+            headers=headers,
+            json=_body(dept_policy["id"], "2026-02-01", "DEPARTMENT", department_id),
+        )
+        assert created.status_code == 201, created.text
+        own = await row("DEPARTMENT", department_id)
+        assert own["own"]["policy_name"] == "Department"
+        assert own["own"]["version"] == created.json()["data"]["version"]
+        assert own["applied"]["scope_type"] == "DEPARTMENT"
+        assert own["applied"]["scope_name"] == "Ops"
+        assert own["applied"]["effective_to"] is None
+
+        # a future assignment is set here, but the company's still applies until it starts
+        later = await _publish_attendance_policy(client, headers, "Later")
+        grade = await client.post("/v1/grades", headers=headers, json={"name": "G1"})
+        assert grade.status_code == 201, grade.text
+        grade_id = grade.json()["data"]["id"]
+        await client.post(
+            "/v1/policy-assignments",
+            headers=headers,
+            json=_body(later["id"], "2026-09-01", "GRADE", grade_id),
+        )
+        future = await row("GRADE", grade_id)
+        assert future["own"]["policy_name"] == "Later"
+        assert future["applied"]["policy_name"] == "Company"
+
+        # scope must exist and match its type
+        r = await client.get(
+            "/v1/policy-assignments/coverage",
+            headers=headers,
+            params={"scope_type": "DEPARTMENT", "scope_id": str(uuid4()), "as_of": "2026-06-01"},
+        )
+        assert r.status_code == 422, r.text
+        r = await client.get(
+            "/v1/policy-assignments/coverage",
+            headers=headers,
+            params={"scope_type": "DEPARTMENT", "as_of": "2026-06-01"},
+        )
+        assert r.status_code == 422, r.text
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_batch_is_all_or_nothing(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        attendance = await _publish_attendance_policy(client, headers, "Attendance")
+        unpublished = (
+            await client.post("/v1/overtime-policies", headers=headers, json={"name": "OT draft"})
+        ).json()["data"]
+
+        def batch(*changes: dict, eff: str = "2027-01-01") -> dict:
+            return {"scope_type": "COMPANY", "effective_from": eff, "changes": list(changes)}
+
+        good = {"policy_kind": "ATTENDANCE_POLICY", "policy_id": attendance["id"]}
+        bad = {"policy_kind": "OVERTIME_POLICY", "policy_id": unpublished["id"]}
+
+        r = await client.post(
+            "/v1/policy-assignments/batch", headers=headers, json=batch(good, bad)
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "POLICY_NOT_PUBLISHED"
+        assert r.json()["error"]["details"][0]["context"]["policy_kind"] == "OVERTIME_POLICY"
+        listed = await client.get("/v1/policy-assignments", headers=headers)
+        assert listed.json()["data"] == []
+
+        r = await client.post("/v1/policy-assignments/batch", headers=headers, json=batch(good))
+        assert r.status_code == 201, r.text
+        version = r.json()["data"][0]["version"]
+
+        # replacing needs the open row's version
+        r = await client.post(
+            "/v1/policy-assignments/batch", headers=headers, json=batch(good, eff="2027-02-01")
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "POLICY_ASSIGNMENT_VERSION_REQUIRED"
+        r = await client.post(
+            "/v1/policy-assignments/batch",
+            headers=headers,
+            json=batch({**good, "expected_version": version}, eff="2027-02-01"),
+        )
+        assert r.status_code == 201, r.text
+
+        # calendars go through the impact preview
+        r = await client.post(
+            "/v1/policy-assignments/batch",
+            headers=headers,
+            json=batch({"policy_kind": "WORK_CALENDAR", "policy_id": str(uuid4())}),
+        )
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "POLICY_BATCH_KIND_NOT_ALLOWED"
+
+        r = await client.post(
+            "/v1/policy-assignments/batch",
+            headers=headers,
+            json={"scope_type": "COMPANY", "effective_from": "2027-03-01", "changes": []},
+        )
+        assert r.status_code == 422, r.text
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)

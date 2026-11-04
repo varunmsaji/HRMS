@@ -2058,6 +2058,67 @@ class PolicyAssignmentCreate(BaseModel):
         return self
 
 
+class PolicyAssignmentBatchChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy_kind: str
+    policy_id: UUID
+    leave_type_id: UUID | None = None
+    # Version of the open assignment being replaced, when there is one.
+    expected_version: int | None = None
+
+
+class PolicyAssignmentBatch(BaseModel):
+    """The same scope, date and reason for several changes, saved in one transaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_type: str
+    scope_id: UUID | None = None
+    effective_from: date
+    reason: str | None = None
+    changes: list[PolicyAssignmentBatchChange] = Field(min_length=1, max_length=100)
+
+
+class PolicyCoverageOwn(BaseModel):
+    """The open assignment set at exactly this scope. It may start in the future."""
+
+    assignment_id: UUID
+    policy_id: UUID
+    policy_name: str | None
+    effective_from: date
+    version: int
+
+
+class PolicyCoverageApplied(BaseModel):
+    """What applies on `as_of`, and the scope it comes from."""
+
+    policy_id: UUID
+    policy_name: str | None
+    scope_type: str
+    scope_id: UUID | None
+    scope_name: str | None
+    effective_from: date
+    effective_to: date | None
+    # False when the policy has no published version effective on `as_of`.
+    has_rules: bool
+
+
+class PolicyCoverageRow(BaseModel):
+    policy_kind: str
+    leave_type_id: UUID | None
+    leave_type_name: str | None
+    own: PolicyCoverageOwn | None
+    applied: PolicyCoverageApplied | None
+
+
+class PolicyCoverageRead(BaseModel):
+    scope_type: str
+    scope_id: UUID | None
+    as_of: date
+    rows: list[PolicyCoverageRow]
+
+
 class PolicyAssignmentEnd(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

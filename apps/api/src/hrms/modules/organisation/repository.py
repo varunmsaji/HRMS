@@ -1740,6 +1740,35 @@ class PolicyAssignmentRepository:
         stmt = select(func.count()).select_from(PolicyAssignment).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
 
+    async def list_effective_at_scopes(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        scopes: list[tuple[str, UUID | None]],
+        as_of: date,
+    ) -> list[PolicyAssignment]:
+        """Every assignment active on `as_of` at any of `scopes`, in one query."""
+        stmt = select(PolicyAssignment).where(
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.deleted_at.is_(None),
+            PolicyAssignment.is_active.is_(True),
+            PolicyAssignment.effective_from <= as_of,
+            or_(PolicyAssignment.effective_to.is_(None), PolicyAssignment.effective_to >= as_of),
+            or_(
+                *(
+                    and_(
+                        PolicyAssignment.scope_type == scope_type,
+                        PolicyAssignment.scope_id == scope_id
+                        if scope_id is not None
+                        else PolicyAssignment.scope_id.is_(None),
+                    )
+                    for scope_type, scope_id in scopes
+                )
+            ),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def list_overlapping(
         self,
         session: AsyncSession,

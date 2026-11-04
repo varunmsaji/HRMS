@@ -68,6 +68,13 @@ from hrms.modules.organisation.permissions import (
     ORG_LEGAL_ENTITY_MANAGE,
     ORG_SHIFT_MANAGE,
 )
+from hrms.modules.organisation.policy_coverage import (
+    ATTENDANCE_KINDS,
+    CALENDAR_KINDS,
+    LEAVE_KIND,
+    PolicyCoverageService,
+    get_policy_coverage_service,
+)
 from hrms.modules.organisation.schemas import (
     BranchCreate,
     BranchRead,
@@ -100,9 +107,11 @@ from hrms.modules.organisation.schemas import (
     LegalEntityCreate,
     LegalEntityRead,
     LegalEntityUpdate,
+    PolicyAssignmentBatch,
     PolicyAssignmentCreate,
     PolicyAssignmentEnd,
     PolicyAssignmentRead,
+    PolicyCoverageRead,
     RegistrationConfigRead,
     ShiftCreate,
     ShiftDeleteRequest,
@@ -1446,6 +1455,70 @@ async def create_policy_assignment(
         tenant.company_id,
         body,
         expected_version=parse_if_match(if_match) if if_match is not None else None,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+async def _coverage_kinds_for(user: "AuthenticatedUser", rbac: "RbacService") -> list[str]:
+    """The kinds this user may see, by the same rule as listing them: calendars need the calendar
+    grant, attendance kinds the attendance grant, and leave both."""
+    from hrms.modules.attendance.permissions import ATTENDANCE_POLICY_MANAGE
+
+    calendar = await rbac.resolve_data_scope(user.user_id, user.company_id, ORG_CALENDAR_MANAGE)
+    attendance = await rbac.resolve_data_scope(
+        user.user_id, user.company_id, ATTENDANCE_POLICY_MANAGE
+    )
+    kinds: list[str] = []
+    if calendar.levels:
+        kinds += CALENDAR_KINDS
+    if attendance.levels:
+        kinds += ATTENDANCE_KINDS
+    if calendar.levels and attendance.levels:
+        kinds.append(LEAVE_KIND)
+    if not kinds:
+        raise PermissionDeniedError(
+            f"Permission {ATTENDANCE_POLICY_MANAGE} is required", code="PERMISSION_DENIED"
+        )
+    return kinds
+
+
+@router.get("/policy-assignments/coverage", status_code=status.HTTP_200_OK)
+async def get_policy_coverage(
+    scope_type: Annotated[str, Query()],
+    as_of: Annotated[date, Query()],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated["AuthenticatedUser", Depends(get_current_user)],
+    rbac: Annotated["RbacService", Depends(get_rbac_service)],
+    service: Annotated[PolicyCoverageService, Depends(get_policy_coverage_service)],
+    scope_id: Annotated[UUID | None, Query()] = None,
+) -> DataEnvelope[PolicyCoverageRead]:
+    """For one scope: what is set there and what applies on `as_of`, one row per kind (per leave
+    type for leave). Only the kinds this user may manage are returned."""
+    kinds = await _coverage_kinds_for(user, rbac)
+    data = await service.coverage(
+        tenant.company_id, scope_type=scope_type, scope_id=scope_id, as_of=as_of, kinds=kinds
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/policy-assignments/batch", status_code=status.HTTP_201_CREATED)
+async def save_policy_assignment_batch(
+    body: PolicyAssignmentBatch,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated["AuthenticatedUser", Depends(get_current_user)],
+    rbac: Annotated["RbacService", Depends(get_rbac_service)],
+    service: Annotated[PolicyCoverageService, Depends(get_policy_coverage_service)],
+) -> DataEnvelope[list[PolicyAssignmentRead]]:
+    """Attendance, overtime, regularization and leave changes for one scope, all or nothing."""
+    for kind in {change.policy_kind for change in body.changes}:
+        await _require_policy_assignment_permission(kind, user, rbac)
+    data = await service.save_batch(
+        tenant.company_id,
+        body,
         actor_user_id=tenant.user_id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("User-Agent"),
