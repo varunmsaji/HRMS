@@ -261,7 +261,7 @@ export default function ShiftDetailPage() {
     setStaleMessage(null);
   }
 
-  async function handleSave() {
+  async function handleSave(thenPublish = false) {
     if (!shift || !formValues || !editSchedule) return;
 
     const clientErrors = validateShiftForm(formValues);
@@ -288,6 +288,7 @@ export default function ShiftDetailPage() {
       }
 
       if (!rulesChanged) {
+        if (thenPublish && draft) setPublishDialogOpen(true);
         setEditing(false);
         setFormValues(null);
         setEditSchedule(null);
@@ -318,7 +319,14 @@ export default function ShiftDetailPage() {
       setFormValues(null);
       setEditSchedule(null);
       setEditBaseline(null);
-      toast({ title: "Saved as a draft — publish it from the Versions tab", variant: "success" });
+      if (thenPublish) {
+        setPublishDialogOpen(true);
+      } else {
+        toast({
+          title: "Saved as a draft — publish it from the Versions tab",
+          variant: "success",
+        });
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409 && err.code === "STALE_RESOURCE") {
@@ -539,7 +547,7 @@ export default function ShiftDetailPage() {
 
       <PageHeader
         title={shift?.name ?? "Shift"}
-        description="Edit the name and the whole schedule (timings, breaks, duty blocks) together; publish the saved draft from the Versions tab."
+        description="Edit the name and the whole schedule together, then save and publish in one go. Drafts and past versions are on the Versions tab."
         actions={
           canManage && shift && !editing && tab === "overview" ? (
             <div className="flex items-center gap-2">
@@ -643,10 +651,18 @@ export default function ShiftDetailPage() {
                     <div className="flex flex-wrap gap-2">
                       <Button
                         type="button"
+                        onClick={() => void handleSave(true)}
+                        disabled={saving}
+                      >
+                        Save &amp; publish…
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
                         onClick={() => void handleSave()}
                         disabled={saving}
                       >
-                        {saving ? "Saving…" : "Save"}
+                        {saving ? "Saving…" : "Save as draft"}
                       </Button>
                       <Button
                         type="button"
