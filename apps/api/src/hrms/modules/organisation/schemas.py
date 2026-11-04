@@ -1434,6 +1434,17 @@ class ShiftVersionUpdate(BaseModel):
         return validate_iana_timezone(value)
 
 
+class ShiftSetup(BaseModel):
+    """A shift and its schedule in one request, published unless `publish` is false."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    rules: ShiftVersionCreate
+    publish: bool = True
+    publish_reason: str | None = None
+
+
 class ShiftVersionPublishRequest(BaseModel):
     """Body for `POST /shifts/{shift_id}/versions/{version_id}/publish`. `If-Match` (header,
     handled at the router layer) carries the draft's own `expected_version`;
@@ -1482,6 +1493,11 @@ class ShiftVersionRead(BaseModel):
     updated_at: str
     breaks: list[ShiftBreakRead]
     duty_blocks: list[ShiftDutyBlockRead]
+
+
+class ShiftSetupRead(BaseModel):
+    shift: ShiftRead
+    version: ShiftVersionRead
 
 
 def shift_version_to_read(

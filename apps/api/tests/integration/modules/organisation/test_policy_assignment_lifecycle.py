@@ -637,3 +637,55 @@ async def test_leave_policy_setup_publishes_and_assigns_for_its_leave_type(
         assert unpublished.status_code == 422, unpublished.text
     finally:
         await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
+async def test_shift_setup_creates_and_publishes_in_one_call(client: AsyncClient) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        made = await client.post(
+            "/v1/shifts/setup",
+            headers=headers,
+            json={
+                "name": "General",
+                "rules": {
+                    "shift_type": "FIXED",
+                    "effective_from": "2026-01-01",
+                    "start_time": "09:00",
+                    "end_time": "18:00",
+                    "timezone": "Asia/Kolkata",
+                },
+            },
+        )
+        assert made.status_code == 201, made.text
+        data = made.json()["data"]
+        assert data["version"]["status"] == "PUBLISHED"
+        assert data["shift"]["current_version_id"] == data["version"]["id"]
+        assert data["shift"]["draft_version_id"] is None
+
+        # an incomplete schedule is rejected and the shift is not left behind
+        bad = await client.post(
+            "/v1/shifts/setup",
+            headers=headers,
+            json={"name": "Half made", "rules": {"shift_type": "FIXED"}},
+        )
+        assert bad.status_code == 422, bad.text
+        names = [
+            s["name"] for s in (await client.get("/v1/shifts", headers=headers)).json()["data"]
+        ]
+        assert names == ["General"]
+
+        # unpublished: the filled draft is kept for later
+        draft = await client.post(
+            "/v1/shifts/setup",
+            headers=headers,
+            json={
+                "name": "Later",
+                "publish": False,
+                "rules": {"shift_type": "FIXED", "start_time": "10:00", "end_time": "19:00"},
+            },
+        )
+        assert draft.status_code == 201, draft.text
+        assert draft.json()["data"]["version"]["status"] == "DRAFT"
+        assert draft.json()["data"]["shift"]["draft_version_id"] is not None
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)

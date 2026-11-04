@@ -117,6 +117,8 @@ from hrms.modules.organisation.schemas import (
     ShiftDeleteRequest,
     ShiftDeletionCheck,
     ShiftRead,
+    ShiftSetup,
+    ShiftSetupRead,
     ShiftUpdate,
     ShiftVersionCreate,
     ShiftVersionPublishRequest,
@@ -136,6 +138,7 @@ from hrms.modules.organisation.setup_checklist import (
     SetupChecklistService,
     get_setup_checklist_service,
 )
+from hrms.modules.organisation.shift_setup import setup_shift
 from hrms.shared.if_match import parse_if_match
 from hrms.shared.pagination import (
     DataEnvelope,
@@ -706,6 +709,26 @@ async def list_shifts(
 ) -> ListEnvelope[ShiftRead]:
     data = await service.list_shifts(tenant.company_id)
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/shifts/setup", status_code=status.HTTP_201_CREATED)
+async def setup_shift_route(
+    body: ShiftSetup,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(ORG_SHIFT_MANAGE))],
+    service: Annotated[OrganisationService, Depends(get_organisation_service)],
+) -> DataEnvelope[ShiftSetupRead]:
+    """Creates the shift and its schedule, and publishes it, all or nothing."""
+    data = await setup_shift(
+        service,
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/shifts", status_code=status.HTTP_201_CREATED)
