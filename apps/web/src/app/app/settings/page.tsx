@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { PageHeader } from "@/components/common/page-header";
+import { SetupChecklistBanner } from "@/components/company/setup-checklist-card";
 import { SETTINGS_NAV_GROUPS } from "@/components/layout/nav-items";
 import { Input } from "@/components/ui/input";
 
@@ -17,6 +18,7 @@ const ITEM_DESCRIPTIONS: Record<string, string> = {
   "/app/grades": "Levels and pay bands",
   "/app/shifts": "Working hours and shift timings",
   "/app/attendance-periods": "Open and lock attendance months",
+  "/app/attendance-geofences": "Approved workplaces for location checks",
   "/app/work-calendars": "Working days per location or team",
   "/app/holiday-calendars": "Public and company holidays",
   "/app/weekly-off-patterns": "Weekly rest-day rules",
@@ -39,19 +41,26 @@ const ITEM_DESCRIPTIONS: Record<string, string> = {
 
 export default function SettingsPage() {
   const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const q = query.trim().toLowerCase();
 
+  // Rarely needed settings stay behind "Show more" until the group is expanded or searched for.
   const groups = useMemo(
     () =>
-      SETTINGS_NAV_GROUPS.map((group) => ({
-        ...group,
-        items: group.items.filter((item) => {
+      SETTINGS_NAV_GROUPS.map((group) => {
+        const matching = group.items.filter((item) => {
           if (!q) return true;
           const hay = `${item.label} ${ITEM_DESCRIPTIONS[item.href] ?? ""} ${group.label}`;
           return hay.toLowerCase().includes(q);
-        }),
-      })).filter((group) => group.items.length > 0),
-    [q],
+        });
+        const showAdvanced = Boolean(q) || expanded[group.label];
+        return {
+          ...group,
+          items: matching.filter((item) => !item.advanced || showAdvanced),
+          hiddenCount: matching.filter((item) => item.advanced && !showAdvanced).length,
+        };
+      }).filter((group) => group.items.length > 0),
+    [q, expanded],
   );
 
   return (
@@ -85,6 +94,8 @@ export default function SettingsPage() {
           </div>
         }
       />
+
+      <SetupChecklistBanner />
 
       <div className="grid gap-8 lg:grid-cols-[14rem_minmax(0,1fr)]">
         <nav
@@ -167,6 +178,15 @@ export default function SettingsPage() {
                   );
                 })}
               </div>
+              {group.hiddenCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((current) => ({ ...current, [group.label]: true }))}
+                  className="mt-3 text-sm font-medium text-primary hover:underline"
+                >
+                  Show {group.hiddenCount} more
+                </button>
+              ) : null}
             </section>
           ))}
         </div>
