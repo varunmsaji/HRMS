@@ -1,6 +1,8 @@
 import { FormField } from "@/components/common/form-field";
+import { PolicyCheckbox } from "@/components/policy/policy-checkbox";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { ACCRUAL_LABELS, LEAVE_APPROVAL_LABELS } from "@/lib/leave-policy/labels";
 import {
   ACCRUAL_FREQUENCIES,
   APPROVAL_CHAINS,
@@ -18,30 +20,10 @@ interface LeavePolicyVersionFormProps {
   onChange: (values: LeavePolicyVersionFormValues) => void;
 }
 
-function Checkbox({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-sm text-foreground">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="rounded border-border"
-      />
-      {label}
-    </label>
-  );
-}
-
-/** The rule configuration for a leave policy — request/approval limits, accrual, sandwich rule.
- * Mirrors `AttendancePolicyVersionForm`'s shape (no band editors here, Leave has none). */
+/** Who can apply, who approves, how days are credited and what happens at year end come first.
+ * Limits, probation, negative balance, encashment and the maternity split sit under Advanced,
+ * which opens by itself when one of them has an error. The effective date is asked for when
+ * publishing. */
 export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicyVersionFormProps) {
   function update<K extends keyof LeavePolicyVersionFormValues>(
     key: K,
@@ -50,163 +32,96 @@ export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicy
     onChange({ ...values, [key]: value });
   }
 
+  const credits = values.accrualFrequency !== "NONE";
+
   return (
     <div className="space-y-6">
-      <FormField id="lpv-effective-from" label="Effective from" required error={errors.effectiveFrom}>
-        <Input
-          type="date"
-          value={values.effectiveFrom}
-          onChange={(e) => update("effectiveFrom", e.target.value)}
-        />
-      </FormField>
-
-      <div>
-        <h4 className="mb-2 text-sm font-medium text-foreground">Who can submit</h4>
-        <div className="flex flex-col gap-2">
-          <Checkbox
-            label="Employee self-service"
+      <section>
+        <h3 className="text-sm font-medium text-foreground">Applying and approval</h3>
+        <div className="mt-3 flex flex-col gap-2">
+          <PolicyCheckbox
+            label="Employees can apply for themselves"
             checked={values.allowEmployeeRequest}
             onChange={(checked) => update("allowEmployeeRequest", checked)}
           />
-          <Checkbox
-            label="Manager on behalf of a report"
+          <PolicyCheckbox
+            label="Managers can apply for their reports"
             checked={values.allowManagerRequestOnBehalf}
             onChange={(checked) => update("allowManagerRequestOnBehalf", checked)}
           />
-          <Checkbox
-            label="HR on behalf of anyone"
+          <PolicyCheckbox
+            label="HR can apply for anyone"
             checked={values.allowHrRequestOnBehalf}
             onChange={(checked) => update("allowHrRequestOnBehalf", checked)}
           />
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <FormField
-          id="lpv-max-backdated"
-          label="Max backdated days"
-          description="Leave blank for no limit."
-        >
-          <Input
-            type="number"
-            min={0}
-            value={values.maxBackdatedDays}
-            onChange={(e) => update("maxBackdatedDays", e.target.value)}
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FormField id="lpv-approval-chain" label="Who approves">
+            <NativeSelect
+              value={values.approvalChain}
+              onChange={(e) => update("approvalChain", e.target.value)}
+            >
+              {APPROVAL_CHAINS.map((chain) => (
+                <option key={chain} value={chain}>
+                  {LEAVE_APPROVAL_LABELS[chain]}
+                </option>
+              ))}
+            </NativeSelect>
+          </FormField>
+        </div>
+        <div className="mt-3 flex flex-col gap-2">
+          <PolicyCheckbox
+            label="Employees must give a reason"
+            checked={values.reasonRequired}
+            onChange={(checked) => update("reasonRequired", checked)}
           />
-        </FormField>
-        <FormField
-          id="lpv-max-per-month"
-          label="Max requests per month"
-          description="Leave blank for no limit."
-        >
-          <Input
-            type="number"
-            min={0}
-            value={values.maxRequestsPerMonth}
-            onChange={(e) => update("maxRequestsPerMonth", e.target.value)}
+          <PolicyCheckbox
+            label="Half-day leave is allowed"
+            checked={values.halfDayAllowed}
+            onChange={(checked) => update("halfDayAllowed", checked)}
           />
-        </FormField>
-        <FormField id="lpv-approval-chain" label="Approval chain">
-          <NativeSelect
-            value={values.approvalChain}
-            onChange={(e) => update("approvalChain", e.target.value)}
-          >
-            {APPROVAL_CHAINS.map((chain) => (
-              <option key={chain} value={chain}>
-                {chain}
-              </option>
-            ))}
-          </NativeSelect>
-        </FormField>
-      </div>
+          <PolicyCheckbox
+            label="Count weekly offs and holidays between two leave days"
+            description="If someone takes leave on both sides of a weekend or holiday, that day is counted as leave too."
+            checked={values.sandwichRuleEnabled}
+            onChange={(checked) => update("sandwichRuleEnabled", checked)}
+          />
+        </div>
+      </section>
 
-      <div className="flex flex-col gap-2">
-        <Checkbox
-          label="Reason required"
-          checked={values.reasonRequired}
-          onChange={(checked) => update("reasonRequired", checked)}
-        />
-        <Checkbox
-          label="Attachment required"
-          checked={values.attachmentRequired}
-          onChange={(checked) => update("attachmentRequired", checked)}
-        />
-        <Checkbox
-          label="Half-day applications allowed"
-          checked={values.halfDayAllowed}
-          onChange={(checked) => update("halfDayAllowed", checked)}
-        />
-        <Checkbox
-          label="Sandwich rule — a weekend/holiday bracketed between two leave days also counts as leave"
-          checked={values.sandwichRuleEnabled}
-          onChange={(checked) => update("sandwichRuleEnabled", checked)}
-        />
-        <Checkbox
-          label="Reserve balance on submission — a pending (not yet approved) application blocks further balance for this leave type, not just the ledger"
-          checked={values.reserveBalanceOnSubmission}
-          onChange={(checked) => update("reserveBalanceOnSubmission", checked)}
-        />
-        <Checkbox
-          label="Allowed during probation — uncheck to block employees on probation from applying for this leave type"
-          checked={values.allowedDuringProbation}
-          onChange={(checked) => update("allowedDuringProbation", checked)}
-        />
-        <Checkbox
-          label="Accrue during probation — uncheck to skip monthly accrual for employees on probation"
-          checked={values.accrueDuringProbation}
-          onChange={(checked) => update("accrueDuringProbation", checked)}
-        />
-      </div>
-
-      <div>
-        <h4 className="mb-2 text-sm font-medium text-foreground">Accrual</h4>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <FormField id="lpv-accrual-frequency" label="Frequency">
+      <section>
+        <h3 className="text-sm font-medium text-foreground">Balance</h3>
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FormField id="lpv-accrual-frequency" label="Days are credited">
             <NativeSelect
               value={values.accrualFrequency}
               onChange={(e) => update("accrualFrequency", e.target.value)}
             >
               {ACCRUAL_FREQUENCIES.map((freq) => (
                 <option key={freq} value={freq}>
-                  {freq}
+                  {ACCRUAL_LABELS[freq]}
                 </option>
               ))}
             </NativeSelect>
           </FormField>
-          <FormField
-            id="lpv-accrual-rate"
-            label="Rate per cycle"
-            error={errors.accrualRatePerCycle}
-            description="Days credited each cycle."
-          >
-            <Input
-              value={values.accrualRatePerCycle}
-              onChange={(e) => update("accrualRatePerCycle", e.target.value)}
-              placeholder="1.50"
-            />
-          </FormField>
-          <FormField
-            id="lpv-max-carry-forward"
-            label="Max carry-forward days"
-            error={errors.maxCarryForwardDays}
-            description={
-              values.yearEndAction === "ENCASH_EXCESS"
-                ? "Required — days above it are encashed at year end."
-                : "Leave blank for unlimited."
-            }
-          >
-            <Input
-              value={values.maxCarryForwardDays}
-              onChange={(e) => update("maxCarryForwardDays", e.target.value)}
-              placeholder="30"
-            />
-          </FormField>
-        </div>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {credits ? (
+            <FormField
+              id="lpv-accrual-rate"
+              label="Days credited each time"
+              required
+              error={errors.accrualRatePerCycle}
+            >
+              <Input
+                value={values.accrualRatePerCycle}
+                onChange={(e) => update("accrualRatePerCycle", e.target.value)}
+                placeholder="1.5"
+              />
+            </FormField>
+          ) : null}
           <FormField
             id="lpv-year-end-action"
-            label="At leave year end"
-            description="E.g. casual leave lapses; earned leave carries forward to a cap (30–45 days)."
+            label="At the end of the leave year"
+            description="For example casual leave lapses, and earned leave carries forward up to a limit."
           >
             <NativeSelect
               value={values.yearEndAction}
@@ -219,117 +134,189 @@ export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicy
               ))}
             </NativeSelect>
           </FormField>
-        </div>
-        <div className="mt-3 flex flex-col gap-2">
-          <Checkbox
-            label="Encashment allowed"
-            checked={values.encashmentAllowed}
-            onChange={(checked) => update("encashmentAllowed", checked)}
-          />
-          <Checkbox
-            label="Allow negative balance"
-            checked={values.allowNegativeBalance}
-            onChange={(checked) => update("allowNegativeBalance", checked)}
-          />
-        </div>
-        {values.allowNegativeBalance ? (
-          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {values.yearEndAction !== "LAPSE" ? (
             <FormField
-              id="lpv-negative-balance-floor"
-              label="Days below zero allowed"
-              required
-              error={errors.negativeBalanceFloor}
-              description="E.g. 3 lets the balance go down to −3. The deficit is recovered at exit."
+              id="lpv-max-carry-forward"
+              label="Most days that carry forward"
+              required={values.yearEndAction === "ENCASH_EXCESS"}
+              error={errors.maxCarryForwardDays}
+              description={
+                values.yearEndAction === "ENCASH_EXCESS"
+                  ? "Days above this are encashed."
+                  : "Leave blank to carry everything forward."
+              }
             >
               <Input
-                value={values.negativeBalanceFloor}
-                onChange={(e) => update("negativeBalanceFloor", e.target.value)}
-                placeholder="3"
+                value={values.maxCarryForwardDays}
+                onChange={(e) => update("maxCarryForwardDays", e.target.value)}
+                placeholder="30"
+              />
+            </FormField>
+          ) : null}
+        </div>
+      </section>
+
+      <details
+        open={Boolean(errors.negativeBalanceFloor) || undefined}
+        className="rounded-md border border-border"
+      >
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
+          Advanced settings
+        </summary>
+        <div className="space-y-6 border-t border-border p-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField
+              id="lpv-max-backdated"
+              label="Furthest back an application can start (days)"
+              description="Leave blank for no limit."
+            >
+              <Input
+                type="number"
+                min={0}
+                value={values.maxBackdatedDays}
+                onChange={(e) => update("maxBackdatedDays", e.target.value)}
+              />
+            </FormField>
+            <FormField
+              id="lpv-max-per-month"
+              label="Most applications per month"
+              description="Leave blank for no limit."
+            >
+              <Input
+                type="number"
+                min={0}
+                value={values.maxRequestsPerMonth}
+                onChange={(e) => update("maxRequestsPerMonth", e.target.value)}
               />
             </FormField>
           </div>
-        ) : null}
-      </div>
 
-      <div>
-        <h4 className="mb-2 text-sm font-medium text-foreground">Encashment</h4>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField
-            id="lpv-max-encashment-days"
-            label="Max encashment days"
-            description="Leave blank for no limit. Enforced when an encashment is requested."
-          >
-            <Input
-              value={values.maxEncashmentDays}
-              onChange={(e) => update("maxEncashmentDays", e.target.value)}
-              placeholder="10"
+          <div className="flex flex-col gap-2">
+            <PolicyCheckbox
+              label="Employees must attach a document"
+              checked={values.attachmentRequired}
+              onChange={(checked) => update("attachmentRequired", checked)}
             />
-          </FormField>
-          <FormField
-            id="lpv-min-balance-after-encashment"
-            label="Minimum balance after encashment"
-            description="Leave blank for no minimum. Enforced when an encashment is requested."
-          >
-            <Input
-              value={values.minBalanceAfterEncashment}
-              onChange={(e) => update("minBalanceAfterEncashment", e.target.value)}
-              placeholder="5"
+            <PolicyCheckbox
+              label="Hold the days as soon as someone applies"
+              description="Pending applications reduce the balance that can be used for other applications."
+              checked={values.reserveBalanceOnSubmission}
+              onChange={(checked) => update("reserveBalanceOnSubmission", checked)}
             />
-          </FormField>
-          <FormField
-            id="lpv-encashment-frequency"
-            label="Encashment frequency"
-            description="Documented only — not enforced (needs a leave-year concept not yet decided)."
-          >
-            <Input
-              value={values.encashmentFrequency}
-              onChange={(e) => update("encashmentFrequency", e.target.value)}
-              placeholder="ANNUAL"
+            <PolicyCheckbox
+              label="Employees on probation can apply"
+              checked={values.allowedDuringProbation}
+              onChange={(checked) => update("allowedDuringProbation", checked)}
             />
-          </FormField>
-          <FormField
-            id="lpv-encashment-calculation-basis"
-            label="Calculation basis"
-            description="Documented only — for Payroll to read once it exists; Leave never computes an amount."
-          >
-            <Input
-              value={values.encashmentCalculationBasis}
-              onChange={(e) => update("encashmentCalculationBasis", e.target.value)}
-              placeholder="BASIC_PAY_PER_DAY"
+            <PolicyCheckbox
+              label="Employees on probation earn days"
+              checked={values.accrueDuringProbation}
+              onChange={(checked) => update("accrueDuringProbation", checked)}
             />
-          </FormField>
-        </div>
-      </div>
+            <PolicyCheckbox
+              label="Balance can go below zero"
+              checked={values.allowNegativeBalance}
+              onChange={(checked) => update("allowNegativeBalance", checked)}
+            />
+          </div>
+          {values.allowNegativeBalance ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                id="lpv-negative-balance-floor"
+                label="Days below zero allowed"
+                required
+                error={errors.negativeBalanceFloor}
+                description="For example 3 lets the balance go down to −3. The deficit is recovered at exit."
+              >
+                <Input
+                  value={values.negativeBalanceFloor}
+                  onChange={(e) => update("negativeBalanceFloor", e.target.value)}
+                  placeholder="3"
+                />
+              </FormField>
+            </div>
+          ) : null}
 
-      <div>
-        <h4 className="mb-2 text-sm font-medium text-foreground">
-          Maternity entitlement split (informational)
-        </h4>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField
-            id="lpv-pre-delivery-days"
-            label="Pre-delivery days"
-            description="Documented entitlement split only — never checked against an application's dates."
-          >
-            <Input
-              value={values.preDeliveryDays}
-              onChange={(e) => update("preDeliveryDays", e.target.value)}
-              placeholder="42"
+          <div>
+            <PolicyCheckbox
+              label="Unused days can be encashed"
+              checked={values.encashmentAllowed}
+              onChange={(checked) => update("encashmentAllowed", checked)}
             />
-          </FormField>
-          <FormField
-            id="lpv-post-delivery-days"
-            label="Post-delivery days"
-            description="Documented entitlement split only — never checked against an application's dates."
-          >
-            <Input
-              value={values.postDeliveryDays}
-              onChange={(e) => update("postDeliveryDays", e.target.value)}
-              placeholder="84"
-            />
-          </FormField>
+            {values.encashmentAllowed ? (
+              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FormField
+                  id="lpv-max-encashment-days"
+                  label="Most days that can be encashed"
+                  description="Leave blank for no limit."
+                >
+                  <Input
+                    value={values.maxEncashmentDays}
+                    onChange={(e) => update("maxEncashmentDays", e.target.value)}
+                    placeholder="10"
+                  />
+                </FormField>
+                <FormField
+                  id="lpv-min-balance-after-encashment"
+                  label="Balance that must stay after encashing"
+                  description="Leave blank for no minimum."
+                >
+                  <Input
+                    value={values.minBalanceAfterEncashment}
+                    onChange={(e) => update("minBalanceAfterEncashment", e.target.value)}
+                    placeholder="5"
+                  />
+                </FormField>
+                <FormField
+                  id="lpv-encashment-frequency"
+                  label="How often (note only)"
+                  description="Recorded for reference. Not enforced."
+                >
+                  <Input
+                    value={values.encashmentFrequency}
+                    onChange={(e) => update("encashmentFrequency", e.target.value)}
+                    placeholder="ANNUAL"
+                  />
+                </FormField>
+                <FormField
+                  id="lpv-encashment-calculation-basis"
+                  label="How it is paid (note only)"
+                  description="Recorded for payroll to read. Leave never works out an amount."
+                >
+                  <Input
+                    value={values.encashmentCalculationBasis}
+                    onChange={(e) => update("encashmentCalculationBasis", e.target.value)}
+                    placeholder="BASIC_PAY_PER_DAY"
+                  />
+                </FormField>
+              </div>
+            ) : null}
+          </div>
+
+          <div>
+            <h4 className="text-sm font-medium text-foreground">Maternity split (note only)</h4>
+            <p className="text-xs text-foreground-muted">
+              Recorded for reference. Never checked against an application&apos;s dates.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField id="lpv-pre-delivery-days" label="Days before delivery">
+                <Input
+                  value={values.preDeliveryDays}
+                  onChange={(e) => update("preDeliveryDays", e.target.value)}
+                  placeholder="42"
+                />
+              </FormField>
+              <FormField id="lpv-post-delivery-days" label="Days after delivery">
+                <Input
+                  value={values.postDeliveryDays}
+                  onChange={(e) => update("postDeliveryDays", e.target.value)}
+                  placeholder="84"
+                />
+              </FormField>
+            </div>
+          </div>
         </div>
-      </div>
+      </details>
     </div>
   );
 }

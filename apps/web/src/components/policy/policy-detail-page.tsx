@@ -46,6 +46,7 @@ import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { useLeaveTypes } from "@/lib/leave-type/use-leave-types";
 import { cn } from "@/lib/utils";
 
 type TabKey = "rules" | "history";
@@ -77,10 +78,11 @@ export function PolicyDetailPage<
   const { toast } = useToast();
   const { can } = usePermissions();
   const { user } = useAuth();
-  const canManage = can("ATTENDANCE.POLICY_MANAGE");
+  const canManage = can(config.managePermission ?? "ATTENDANCE.POLICY_MANAGE");
   const Form = config.Form;
   const Summary = config.Summary;
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
+  const leaveTypes = useLeaveTypes(Boolean(config.leaveTyped));
 
   const [tab, setTab] = useState<TabKey>("rules");
   const [policy, setPolicy] = useState<P | null>(null);
@@ -281,6 +283,7 @@ export function PolicyDetailPage<
               {
                 policy_kind: config.kind,
                 policy_id: policy.id,
+                ...(config.leaveTyped ? { leave_type_id: policy.leave_type_id } : {}),
                 expected_version: choice.assign.expectedVersion,
               },
             ],
@@ -366,6 +369,11 @@ export function PolicyDetailPage<
         backHref={`/app${config.path}`}
         backLabel={config.pluralLabel}
         title={policy?.name ?? config.pluralLabel.replace(/ies$/, "y")}
+        description={
+          config.leaveTyped && policy?.leave_type_id
+            ? `Leave type: ${leaveTypes.find((t) => t.id === policy.leave_type_id)?.name ?? "…"}`
+            : undefined
+        }
         badge={
           policy ? (
             <Badge variant={policy.is_active ? "secondary" : "outline"}>
@@ -602,6 +610,7 @@ export function PolicyDetailPage<
       {publishOpen ? (
         <PublishAssignDialog
           policyKind={config.kind}
+          leaveTypeId={config.leaveTyped ? (policy?.leave_type_id ?? null) : null}
           policyId={params.id}
           today={today}
           initialDate={initialPublishDate()}

@@ -10,6 +10,8 @@ export interface PolicyBase {
   code: string | null;
   is_active: boolean;
   version: number;
+  /** Only leave policies: the leave type they cover. */
+  leave_type_id?: string;
   /** Filled by the list endpoint. */
   live_from?: string | null;
   has_draft?: boolean;
@@ -52,6 +54,10 @@ export interface PolicyKindConfig<
   listDescription: string;
   emptyListTitle: string;
   icon: LucideIcon;
+  /** Each policy covers one leave type, chosen when it is created and never changed. */
+  leaveTyped?: boolean;
+  /** Permission needed to change policies. Defaults to the attendance one. */
+  managePermission?: string;
   /** Shown above the list, for related settings. */
   ListExtras?: ComponentType;
 

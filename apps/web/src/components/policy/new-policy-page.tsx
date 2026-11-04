@@ -18,10 +18,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useLeaveTypes } from "@/lib/leave-type/use-leave-types";
 import { cn } from "@/lib/utils";
 
 export function NewPolicyPage<
@@ -36,6 +38,9 @@ export function NewPolicyPage<
   const { user } = useAuth();
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
   const first = config.templates[0];
+  const leaveTypes = useLeaveTypes(Boolean(config.leaveTyped));
+  const [leaveTypeId, setLeaveTypeId] = useState("");
+  const [leaveTypeError, setLeaveTypeError] = useState<string | undefined>();
 
   const [templateKey, setTemplateKey] = useState(first.key);
   const [name, setName] = useState(first.defaultName);
@@ -70,7 +75,9 @@ export function NewPolicyPage<
   function checkName(): boolean {
     const missing = !name.trim();
     setNameError(missing ? "Name is required." : undefined);
-    return !missing;
+    const noType = Boolean(config.leaveTyped) && !leaveTypeId;
+    setLeaveTypeError(noType ? "Choose a leave type." : undefined);
+    return !missing && !noType;
   }
 
   async function save(choice: PublishChoice | null) {
@@ -78,6 +85,7 @@ export function NewPolicyPage<
     setPublishError(null);
     try {
       const data = await apiClient.post<{ policy: P }>(`${config.path}/setup`, {
+        ...(config.leaveTyped ? { leave_type_id: leaveTypeId } : {}),
         name: name.trim(),
         rules: config.toPayload({ ...rules, effectiveFrom: choice?.effectiveFrom ?? "" }),
         publish: choice !== null,
@@ -96,6 +104,8 @@ export function NewPolicyPage<
       if (err instanceof ApiError && err.status === 422) {
         const nameProblem = getFieldError(err.details, "name");
         if (nameProblem) setNameError(nameProblem);
+        const typeProblem = getFieldError(err.details, "leave_type_id");
+        if (typeProblem) setLeaveTypeError(typeProblem);
         setRuleErrors(config.mapApiErrors(err.details));
       }
       if (choice) {
@@ -182,6 +192,26 @@ export function NewPolicyPage<
 
       <Card>
         <CardContent className="space-y-6 pt-6">
+          {config.leaveTyped ? (
+            <FormField
+              id="policy-leave-type"
+              label="Leave type"
+              required
+              error={leaveTypeError}
+              description="Each policy covers one leave type, and this can't be changed later."
+            >
+              <NativeSelect value={leaveTypeId} onChange={(e) => setLeaveTypeId(e.target.value)}>
+                <option value="">Choose…</option>
+                {leaveTypes
+                  .filter((type) => type.is_active)
+                  .map((type) => (
+                    <option key={type.id} value={type.id}>
+                      {type.name} ({type.code})
+                    </option>
+                  ))}
+              </NativeSelect>
+            </FormField>
+          ) : null}
           <FormField id="policy-name" label="Policy name" required error={nameError}>
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </FormField>
@@ -200,6 +230,7 @@ export function NewPolicyPage<
       {publishOpen ? (
         <PublishAssignDialog
           policyKind={config.kind}
+          leaveTypeId={config.leaveTyped ? leaveTypeId : null}
           today={today}
           initialDate={today}
           notBefore={null}

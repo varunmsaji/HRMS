@@ -30,6 +30,7 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useLeaveTypes } from "@/lib/leave-type/use-leave-types";
 
 function appliesToLabel(policy: PolicyBase): string {
   const groups = policy.assigned_group_count ?? 0;
@@ -72,6 +73,8 @@ export function PolicyListPage<
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const { path, ListExtras } = config;
+  const leaveTypes = useLeaveTypes(Boolean(config.leaveTyped));
+  const leaveTypeName = (id?: string) => leaveTypes.find((t) => t.id === id)?.name ?? null;
 
   const loadPolicies = useCallback(async () => {
     setLoading(true);
@@ -155,6 +158,7 @@ export function PolicyListPage<
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Policy</TableHead>
+                {config.leaveTyped ? <TableHead>Leave type</TableHead> : null}
                 <TableHead>Status</TableHead>
                 <TableHead>Applies to</TableHead>
                 <TableHead align="right">Actions</TableHead>
@@ -171,6 +175,11 @@ export function PolicyListPage<
                       {policy.name}
                     </Link>
                   </TableCell>
+                  {config.leaveTyped ? (
+                    <TableCell className="text-sm text-foreground-secondary">
+                      {leaveTypeName(policy.leave_type_id) ?? "—"}
+                    </TableCell>
+                  ) : null}
                   <TableCell>
                     <PolicyStatus policy={policy} today={today} />
                   </TableCell>
