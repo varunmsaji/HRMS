@@ -85,7 +85,11 @@ class AttendancePolicySetupService:
         user_agent: str | None = None,
     ) -> AttendancePolicySetupRead:
         self._check(body.publish, body.assign)
-        audit = {"actor_user_id": actor_user_id, "ip_address": ip_address, "user_agent": user_agent}
+        audit: dict[str, Any] = {
+            "actor_user_id": actor_user_id,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+        }
         service = self._attendance
         policy = await service.create_attendance_policy(
             company_id, AttendancePolicyCreate(name=body.name), **audit
@@ -124,7 +128,11 @@ class AttendancePolicySetupService:
         user_agent: str | None = None,
     ) -> OvertimePolicySetupRead:
         self._check(body.publish, body.assign)
-        audit = {"actor_user_id": actor_user_id, "ip_address": ip_address, "user_agent": user_agent}
+        audit: dict[str, Any] = {
+            "actor_user_id": actor_user_id,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+        }
         service = self._attendance
         policy = await service.create_overtime_policy(
             company_id, OvertimePolicyCreate(name=body.name), **audit
@@ -158,7 +166,11 @@ class AttendancePolicySetupService:
         user_agent: str | None = None,
     ) -> RegularizationPolicySetupRead:
         self._check(body.publish, body.assign)
-        audit = {"actor_user_id": actor_user_id, "ip_address": ip_address, "user_agent": user_agent}
+        audit: dict[str, Any] = {
+            "actor_user_id": actor_user_id,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+        }
         service = self._attendance
         policy = await service.create_regularization_policy(
             company_id, RegularizationPolicyCreate(name=body.name), **audit

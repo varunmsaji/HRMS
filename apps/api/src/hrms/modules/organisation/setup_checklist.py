@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.db.session import get_session
+from hrms.modules.organisation.models import PolicyAssignment
 from hrms.modules.organisation.repository import (
     OrganisationRepository,
     PolicyAssignmentRepository,
@@ -43,7 +44,7 @@ class SetupChecklistService:
         self._session = session
         self._assignments = PolicyAssignmentRepository()
 
-    async def _company_wide(self, company_id: UUID, policy_kind: str) -> list:
+    async def _company_wide(self, company_id: UUID, policy_kind: str) -> list[PolicyAssignment]:
         return await self._assignments.list_assignments(
             self._session,
             company_id=company_id,

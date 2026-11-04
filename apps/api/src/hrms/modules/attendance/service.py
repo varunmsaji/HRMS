@@ -6897,8 +6897,8 @@ class AttendancePeriodService:
                 if visible_ids is None or row.employee_id in visible_ids
             ]
 
-        scope = await self._scope(company_id, period)
-        day_rows = await self._owned_day_rows(company_id, period, scope)
+        period_scope = await self._scope(company_id, period)
+        day_rows = await self._owned_day_rows(company_id, period, period_scope)
         now_str = _format_timestamp(datetime.now(UTC)) or ""
         aggregates = self._aggregate_day_rows(day_rows)
         return [

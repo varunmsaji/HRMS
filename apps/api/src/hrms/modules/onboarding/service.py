@@ -793,7 +793,7 @@ class OnboardingTokenService:
         company_id: UUID,
         case_id: UUID,
         *,
-        actor_user_id: UUID,
+        actor_user_id: UUID | None,
         reason: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,

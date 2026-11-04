@@ -2,6 +2,7 @@
 it, so a failure at any step leaves nothing half-made. Reuses the same service methods as the
 step-by-step routes, so the same validation and audit records apply."""
 
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,11 @@ class LeavePolicySetupService:
             raise ValidationError(
                 "A policy must be published to be assigned", code="POLICY_NOT_PUBLISHED"
             )
-        audit = {"actor_user_id": actor_user_id, "ip_address": ip_address, "user_agent": user_agent}
+        audit: dict[str, Any] = {
+            "actor_user_id": actor_user_id,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+        }
         service = self._leave
         policy = await service.create_policy(
             company_id,
