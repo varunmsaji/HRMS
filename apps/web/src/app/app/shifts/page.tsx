@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { ShiftForm } from "@/components/shift/shift-form";
+import { SHIFT_TEMPLATES } from "@/lib/shift/templates";
+import { cn } from "@/lib/utils";
 import { ShiftVersionForm } from "@/components/shift/shift-version-form";
 import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
@@ -31,7 +33,6 @@ import {
   TableRowAction,
 } from "@/components/ui/table";
 import { apiClient } from "@/lib/api/client";
-import { DEFAULT_TIMEZONE } from "@/lib/timezones";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { Shift, ShiftVersion } from "@/lib/shift/types";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
@@ -71,13 +72,7 @@ export default function ShiftsPage() {
   const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<
     WeeklyOffPattern[]
   >([]);
-  // A multi-step create can fail part-way (shift created, publish rejected). Remember what
-  // already succeeded so a retry from the same dialog resumes instead of duplicating rows.
-  const [createdShift, setCreatedShift] = useState<Shift | null>(null);
-  const [createdDraft, setCreatedDraft] = useState<{
-    id: string;
-    version: number;
-  } | null>(null);
+  const [templateKey, setTemplateKey] = useState(SHIFT_TEMPLATES[0].key);
   const [saving, setSaving] = useState(false);
 
   const loadShifts = useCallback(async () => {
@@ -106,21 +101,29 @@ export default function ShiftsPage() {
     void loadShifts();
   }, [loadShifts]);
 
+  function applyTemplate(key: string, currentName: string, currentKey: string) {
+    const template = SHIFT_TEMPLATES.find((t) => t.key === key);
+    if (!template) return;
+    const nameIsUntouched = SHIFT_TEMPLATES.some(
+      (t) => t.key === currentKey && t.defaultName === currentName,
+    );
+    setTemplateKey(key);
+    setVersionValues((prev) => ({ ...template.values, effectiveFrom: prev.effectiveFrom }));
+    setVersionErrors({});
+    if (nameIsUntouched) setFormValues((prev) => ({ ...prev, name: template.defaultName }));
+  }
+
   function openCreate() {
-    setFormValues(EMPTY_SHIFT_FORM_VALUES);
-    setFormErrors({});
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
       now.getDate(),
     ).padStart(2, "0")}`;
-    setVersionValues({
-      ...EMPTY_SHIFT_VERSION_FORM_VALUES,
-      timezone: DEFAULT_TIMEZONE,
-      effectiveFrom: today,
-    });
+    const first = SHIFT_TEMPLATES[0];
+    setFormValues({ ...EMPTY_SHIFT_FORM_VALUES, name: first.defaultName });
+    setFormErrors({});
+    setTemplateKey(first.key);
+    setVersionValues({ ...first.values, effectiveFrom: today });
     setVersionErrors({});
-    setCreatedShift(null);
-    setCreatedDraft(null);
     setCreateOpen(true);
     apiClient
       .get<WeeklyOffPattern[]>("/weekly-off-patterns")
@@ -143,70 +146,29 @@ export default function ShiftsPage() {
     setSaving(true);
     setFormErrors({});
     setVersionErrors({});
-    let shift = createdShift;
-    let draft = createdDraft;
     try {
-      if (!shift) {
-        shift = await apiClient.post<Shift>(
-          "/shifts",
-          buildCreatePayload(formValues),
-        );
-        setCreatedShift(shift);
-      }
-      // `POST /shifts` already opened an empty draft version — fill it rather than creating one.
-      if (!draft) {
-        if (!shift.draft_version_id)
-          throw new Error("The new shift has no draft schedule.");
-        draft = { id: shift.draft_version_id, version: 1 };
-      }
-      const filled = await apiClient.patch<ShiftVersion>(
-        `/shifts/${shift.id}/versions/${draft.id}`,
-        buildShiftVersionPatch(versionValues, null),
-        { ifMatch: String(draft.version) },
-      );
-      draft = { id: filled.id, version: filled.version };
-      setCreatedDraft(draft);
-      await apiClient.post<ShiftVersion>(
-        `/shifts/${shift.id}/versions/${draft.id}/publish`,
-        { publish_reason: null },
-        { ifMatch: String(draft.version) },
-      );
-      setCreateOpen(false);
-      toast({
-        title: "Shift added and schedule published",
-        variant: "success",
+      // One request: either the shift exists with its published schedule, or nothing was saved.
+      await apiClient.post("/shifts/setup", {
+        name: buildCreatePayload(formValues).name,
+        rules: buildShiftVersionPatch(versionValues, null),
+        publish: true,
       });
+      setCreateOpen(false);
+      toast({ title: "Shift added and schedule published", variant: "success" });
       await loadShifts();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 422) {
-        if (!shift) {
-          setFormErrors({ name: getFieldError(err.details, "name") });
-        } else {
-          setVersionErrors(mapShiftVersionApiErrors(err.details));
-        }
-        return;
-      }
       if (err instanceof ApiError && err.status === 403) {
         setCreateOpen(false);
-        toast({
-          title: "You don't have permission to add shifts",
-          variant: "danger",
-        });
+        toast({ title: "You don't have permission to add shifts", variant: "danger" });
         return;
       }
-      if (shift) {
-        // The shift (and possibly its draft) exist; keep the dialog open so the user can fix
-        // the schedule and retry, and make sure the list shows what was already created.
-        await loadShifts();
-        toast({
-          title: "Shift added, but its schedule isn't published yet",
-          description: describeApiError(err),
-          variant: "danger",
-        });
-        return;
+      if (err instanceof ApiError && err.status === 422) {
+        const nameProblem = getFieldError(err.details, "name");
+        if (nameProblem) setFormErrors({ name: nameProblem });
+        setVersionErrors(mapShiftVersionApiErrors(err.details));
       }
       toast({
-        title: "Could not add shift",
+        title: "Nothing was saved",
         description: describeApiError(err),
         variant: "danger",
       });
@@ -325,6 +287,38 @@ export default function ShiftsPage() {
             <DialogTitle>Add Shift</DialogTitle>
           </DialogHeader>
           <div className="max-h-[70vh] overflow-y-auto pr-1">
+            <div className="mb-6 space-y-2">
+              <h3 className="text-sm font-medium text-foreground">Start from</h3>
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Start from">
+                {SHIFT_TEMPLATES.map((template) => (
+                  <label
+                    key={template.key}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+                      templateKey === template.key
+                        ? "border-primary bg-primary-subtle"
+                        : "border-border hover:border-primary/40",
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="shift-template"
+                      className="mt-1"
+                      checked={templateKey === template.key}
+                      onChange={() => applyTemplate(template.key, formValues.name, templateKey)}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-foreground">
+                        {template.label}
+                      </span>
+                      <span className="block text-xs text-foreground-secondary">
+                        {template.description}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
             <ShiftForm
               values={formValues}
               errors={formErrors}
@@ -354,11 +348,7 @@ export default function ShiftsPage() {
               onClick={() => void handleCreate()}
               disabled={saving}
             >
-              {saving
-                ? "Adding…"
-                : createdShift
-                  ? "Retry publish"
-                  : "Add & publish"}
+              {saving ? "Adding…" : "Add & publish"}
             </Button>
           </DialogFooter>
         </DialogContent>
