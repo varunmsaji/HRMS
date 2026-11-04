@@ -540,7 +540,7 @@ export function PolicyDetailPage<
                   )}
                   {current ? (
                     <p className="text-xs text-foreground-muted">
-                      Choose who follows this policy in{" "}
+                      See or change who follows this policy in{" "}
                       <Link
                         href="/app/policy-assignments"
                         className="font-medium text-primary hover:underline"
