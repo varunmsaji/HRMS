@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, delete, func, or_, select, true, update
+from sqlalchemy import CursorResult, delete, exists, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,12 +136,35 @@ class LeavePolicyRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
-    async def list_policies(self, session: AsyncSession, *, company_id: UUID) -> list[LeavePolicy]:
+    async def list_open_and_draft_versions(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[LeavePolicyVersion]:
+        """Every draft and open published version, for list status in one query."""
+        stmt = select(LeavePolicyVersion).where(
+            LeavePolicyVersion.company_id == company_id,
+            LeavePolicyVersion.deleted_at.is_(None),
+            LeavePolicyVersion.effective_to.is_(None),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def list_policies(
+        self, session: AsyncSession, *, company_id: UUID, assignable_only: bool = False
+    ) -> list[LeavePolicy]:
         stmt = (
             select(LeavePolicy)
             .where(LeavePolicy.company_id == company_id, LeavePolicy.deleted_at.is_(None))
             .order_by(LeavePolicy.name)
         )
+        if assignable_only:
+            stmt = stmt.where(
+                LeavePolicy.is_active.is_(True),
+                exists().where(
+                    LeavePolicyVersion.policy_id == LeavePolicy.id,
+                    LeavePolicyVersion.status == "PUBLISHED",
+                    LeavePolicyVersion.effective_to.is_(None),
+                    LeavePolicyVersion.deleted_at.is_(None),
+                ),
+            )
         return list((await session.execute(stmt)).scalars().all())
 
     async def update_policy(

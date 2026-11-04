@@ -55,9 +55,15 @@ export function ShiftVersionForm({
   const isLegacySplit = values.shiftType === "SPLIT";
 
   return (
-    <fieldset disabled={isLegacySplit} className="m-0 min-w-0 space-y-6 border-0 p-0">
+    <fieldset
+      disabled={isLegacySplit}
+      className="m-0 min-w-0 space-y-6 border-0 p-0"
+    >
       {isLegacySplit ? (
-        <p role="status" className="rounded-md border border-border bg-muted p-3 text-sm text-foreground">
+        <p
+          role="status"
+          className="rounded-md border border-border bg-muted p-3 text-sm text-foreground"
+        >
           {SPLIT_UNAVAILABLE_MESSAGE}
         </p>
       ) : null}
@@ -101,28 +107,6 @@ export function ShiftVersionForm({
               value={values.effectiveFrom}
               onChange={(e) => update("effectiveFrom", e.target.value)}
             />
-          </FormField>
-          <FormField
-            id="timezone"
-            label="Timezone"
-            description="Leave unset to inherit the branch's (or company's) timezone."
-          >
-            <NativeSelect
-              value={values.timezone}
-              onChange={(e) => update("timezone", e.target.value)}
-            >
-              <option value={DEFAULT_TIMEZONE}>
-                Asia/Kolkata (Indian Standard Time, IST)
-              </option>
-              <option value="">Inherit from branch/company</option>
-              {timezones
-                .filter((tz) => tz !== DEFAULT_TIMEZONE)
-                .map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-            </NativeSelect>
           </FormField>
         </div>
       </section>
@@ -246,40 +230,6 @@ export function ShiftVersionForm({
         </section>
       ) : null}
 
-      {values.shiftType ? (
-        <section>
-          <h3 className="text-sm font-medium text-foreground">
-            Scheduled duration
-          </h3>
-          <p className="mt-1 text-xs text-foreground-muted">
-            Informational only — not enforced.
-          </p>
-          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <FormField id="scheduled-minutes" label="Scheduled minutes">
-              <Input
-                type="number"
-                value={values.scheduledMinutes}
-                onChange={(e) => update("scheduledMinutes", e.target.value)}
-              />
-            </FormField>
-            <FormField id="min-scheduled-minutes" label="Min scheduled minutes">
-              <Input
-                type="number"
-                value={values.minScheduledMinutes}
-                onChange={(e) => update("minScheduledMinutes", e.target.value)}
-              />
-            </FormField>
-            <FormField id="max-scheduled-minutes" label="Max scheduled minutes">
-              <Input
-                type="number"
-                value={values.maxScheduledMinutes}
-                onChange={(e) => update("maxScheduledMinutes", e.target.value)}
-              />
-            </FormField>
-          </div>
-        </section>
-      ) : null}
-
       <section>
         <h3 className="text-sm font-medium text-foreground">Flags</h3>
         <div className="mt-3 flex flex-wrap gap-4">
@@ -301,46 +251,6 @@ export function ShiftVersionForm({
             />
             Overtime eligible
           </label>
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
-              type="checkbox"
-              checked={values.operatesOnHoliday}
-              onChange={(e) => update("operatesOnHoliday", e.target.checked)}
-              className="rounded border-border"
-            />
-            Operates on holidays
-          </label>
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
-              type="checkbox"
-              checked={values.operatesOnWeeklyOff}
-              onChange={(e) => update("operatesOnWeeklyOff", e.target.checked)}
-              className="rounded border-border"
-            />
-            Operates on weekly-off days
-          </label>
-        </div>
-      </section>
-
-      <section>
-        <h3 className="text-sm font-medium text-foreground">Weekly off</h3>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField
-            id="weekly-off-pattern"
-            label="Shift-specific weekly-off pattern"
-          >
-            <NativeSelect
-              value={values.weeklyOffPatternId}
-              onChange={(e) => update("weeklyOffPatternId", e.target.value)}
-            >
-              <option value="">Use the employee's assigned calendar</option>
-              {weeklyOffPatterns.map((pattern) => (
-                <option key={pattern.id} value={pattern.id}>
-                  {pattern.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
         </div>
       </section>
 
@@ -351,6 +261,128 @@ export function ShiftVersionForm({
           onChange={(breaks) => update("breaks", breaks)}
         />
       </section>
+
+      <details
+        open={Boolean(errors.dutyBlocks) || undefined}
+        className="rounded-md border border-border"
+      >
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
+          Advanced settings
+        </summary>
+        <div className="space-y-6 border-t border-border p-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField
+              id="timezone"
+              label="Timezone"
+              description="Leave unset to inherit the branch's (or company's) timezone."
+            >
+              <NativeSelect
+                value={values.timezone}
+                onChange={(e) => update("timezone", e.target.value)}
+              >
+                <option value={DEFAULT_TIMEZONE}>
+                  Asia/Kolkata (Indian Standard Time, IST)
+                </option>
+                <option value="">Inherit from branch/company</option>
+                {timezones
+                  .filter((tz) => tz !== DEFAULT_TIMEZONE)
+                  .map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz}
+                    </option>
+                  ))}
+              </NativeSelect>
+            </FormField>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={values.operatesOnHoliday}
+                onChange={(e) => update("operatesOnHoliday", e.target.checked)}
+                className="rounded border-border"
+              />
+              Operates on holidays
+            </label>
+            <label className="flex items-center gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={values.operatesOnWeeklyOff}
+                onChange={(e) =>
+                  update("operatesOnWeeklyOff", e.target.checked)
+                }
+                className="rounded border-border"
+              />
+              Operates on weekly-off days
+            </label>
+          </div>
+          <section>
+            <h3 className="text-sm font-medium text-foreground">Weekly off</h3>
+            <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField
+                id="weekly-off-pattern"
+                label="Shift-specific weekly-off pattern"
+              >
+                <NativeSelect
+                  value={values.weeklyOffPatternId}
+                  onChange={(e) => update("weeklyOffPatternId", e.target.value)}
+                >
+                  <option value="">Use the employee's assigned calendar</option>
+                  {weeklyOffPatterns.map((pattern) => (
+                    <option key={pattern.id} value={pattern.id}>
+                      {pattern.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </FormField>
+            </div>
+          </section>
+
+          {values.shiftType ? (
+            <section>
+              <h3 className="text-sm font-medium text-foreground">
+                Scheduled duration
+              </h3>
+              <p className="mt-1 text-xs text-foreground-muted">
+                Informational only — not enforced.
+              </p>
+              <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <FormField id="scheduled-minutes" label="Scheduled minutes">
+                  <Input
+                    type="number"
+                    value={values.scheduledMinutes}
+                    onChange={(e) => update("scheduledMinutes", e.target.value)}
+                  />
+                </FormField>
+                <FormField
+                  id="min-scheduled-minutes"
+                  label="Min scheduled minutes"
+                >
+                  <Input
+                    type="number"
+                    value={values.minScheduledMinutes}
+                    onChange={(e) =>
+                      update("minScheduledMinutes", e.target.value)
+                    }
+                  />
+                </FormField>
+                <FormField
+                  id="max-scheduled-minutes"
+                  label="Max scheduled minutes"
+                >
+                  <Input
+                    type="number"
+                    value={values.maxScheduledMinutes}
+                    onChange={(e) =>
+                      update("maxScheduledMinutes", e.target.value)
+                    }
+                  />
+                </FormField>
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </details>
     </fieldset>
   );
 }

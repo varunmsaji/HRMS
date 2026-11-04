@@ -138,7 +138,7 @@ const HERO_CHIPS: { icon: LucideIcon; tint: string; title: string; note: string 
   { icon: BarChart3, tint: "cyan", title: "96% on time", note: "Up 3% this week" },
 ];
 
-type MascotPose = "standing" | "waving" | "thinking" | "clipboard" | "celebrating" | "explaining" | "welcome" | "holding" | "holding-hands";
+type MascotPose = "standing" | "waving" | "thinking" | "clipboard" | "celebrating" | "explaining" | "welcome";
 
 // Decorative only: the penguin never carries information the copy doesn't.
 function Mascot({ pose, className }: { pose: MascotPose; className: string }) {
@@ -204,7 +204,6 @@ export function Landing() {
 
             <div className="win-stage up d3">
               <Tilt className="hold-stage" maxDegrees={2.5}>
-                <Mascot pose="holding" className="mascot-hero" />
                 <div className="win">
                   <div className="win-bar"><i /><i /><i /></div>
                   <HeroDashboard />
@@ -213,7 +212,6 @@ export function Landing() {
                   <img className="shot-img hd-still" src="/landing/product-dashboard.webp" width={1600} height={1000} loading="lazy" alt="The Krewoxa company dashboard: today's attendance, leave and items waiting on HR" />
                   <noscript><style>{".kx .hd *{animation:none!important}"}</style></noscript>
                 </div>
-                <Mascot pose="holding-hands" className="mascot-hero mascot-hands" />
                 {HERO_CHIPS.map(({ icon: Icon, tint, title, note }, i) => (
                   <div key={title} className={`hero-chip hero-chip-${i + 1}`} aria-hidden="true">
                     <span className={`hero-chip-ico ${tint}`}><Icon size={18} /></span>

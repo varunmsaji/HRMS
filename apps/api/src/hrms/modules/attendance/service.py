@@ -140,6 +140,7 @@ from hrms.modules.attendance.schemas import (
     AttendancePeriodSummaryRead,
     AttendancePeriodValidationRead,
     AttendancePolicyCreate,
+    AttendancePolicyFormContext,
     AttendancePolicyRead,
     AttendancePolicyUpdate,
     AttendancePolicyVersionCreate,
@@ -319,9 +320,76 @@ class AttendanceService:
         )
         return read
 
-    async def list_attendance_policies(self, company_id: UUID) -> list[AttendancePolicyRead]:
-        rows = await self._attendance_repo.list_policies(self._session, company_id=company_id)
+    async def list_attendance_policies(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[AttendancePolicyRead]:
+        rows = await self._attendance_repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [attendance_policy_to_read(r) for r in rows]
+
+    async def _with_status(
+        self,
+        company_id: UUID,
+        policy_kind: str,
+        policies: list[Any],
+        repo: Any,
+    ) -> list[Any]:
+        from hrms.modules.organisation.repository import PolicyAssignmentRepository
+
+        versions = await repo.list_open_and_draft_versions(self._session, company_id=company_id)
+        assignments = await PolicyAssignmentRepository().list_assignments(
+            self._session, company_id=company_id, policy_kind=policy_kind, current_only=True
+        )
+        for policy in policies:
+            for version in versions:
+                if version.policy_id != policy.id:
+                    continue
+                if version.status == "PUBLISHED":
+                    policy.live_from = version.effective_from
+                else:
+                    policy.has_draft = True
+            for assignment in assignments:
+                if assignment.policy_id != policy.id:
+                    continue
+                if assignment.scope_type == "COMPANY":
+                    policy.assigned_company_wide = True
+                else:
+                    policy.assigned_group_count += 1
+        return policies
+
+    async def list_attendance_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[AttendancePolicyRead]:
+        policies = await self.list_attendance_policies(company_id, assignable_only=assignable_only)
+        return await self._with_status(
+            company_id, "ATTENDANCE_POLICY", policies, self._attendance_repo
+        )
+
+    async def list_overtime_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[OvertimePolicyRead]:
+        policies = await self.list_overtime_policies(company_id, assignable_only=assignable_only)
+        return await self._with_status(company_id, "OVERTIME_POLICY", policies, self._overtime_repo)
+
+    async def list_regularization_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[RegularizationPolicyRead]:
+        policies = await self.list_regularization_policies(
+            company_id, assignable_only=assignable_only
+        )
+        return await self._with_status(
+            company_id, "REGULARIZATION_POLICY", policies, self._regularization_repo
+        )
+
+    async def attendance_policy_form_context(self, company_id: UUID) -> AttendancePolicyFormContext:
+        from hrms.modules.organisation.repository import ShiftVersionRepository
+
+        return AttendancePolicyFormContext(
+            shift_types_in_use=await ShiftVersionRepository().list_open_shift_types(
+                self._session, company_id=company_id
+            )
+        )
 
     async def get_attendance_policy(
         self, company_id: UUID, policy_id: UUID
@@ -958,8 +1026,12 @@ class AttendanceService:
         )
         return read
 
-    async def list_overtime_policies(self, company_id: UUID) -> list[OvertimePolicyRead]:
-        rows = await self._overtime_repo.list_policies(self._session, company_id=company_id)
+    async def list_overtime_policies(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[OvertimePolicyRead]:
+        rows = await self._overtime_repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [overtime_policy_to_read(r) for r in rows]
 
     async def get_overtime_policy(self, company_id: UUID, policy_id: UUID) -> OvertimePolicyRead:
@@ -1466,9 +1538,11 @@ class AttendanceService:
         return read
 
     async def list_regularization_policies(
-        self, company_id: UUID
+        self, company_id: UUID, *, assignable_only: bool = False
     ) -> list[RegularizationPolicyRead]:
-        rows = await self._regularization_repo.list_policies(self._session, company_id=company_id)
+        rows = await self._regularization_repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [regularization_policy_to_read(r) for r in rows]
 
     async def get_regularization_policy(
@@ -1928,23 +2002,57 @@ class AttendanceService:
     # Cross-module hook — called from `organisation.service._validate_policy_reference`
     # -----------------------------------------------------------------
 
-    async def policy_exists(self, company_id: UUID, policy_kind: str, policy_id: UUID) -> bool:
-        row: Any
+    async def find_policy(self, company_id: UUID, policy_kind: str, policy_id: UUID) -> Any:
         if policy_kind == "ATTENDANCE_POLICY":
-            row = await self._attendance_repo.get_policy(
+            return await self._attendance_repo.get_policy(
                 self._session, company_id=company_id, policy_id=policy_id
             )
+        if policy_kind == "OVERTIME_POLICY":
+            return await self._overtime_repo.get_policy(
+                self._session, company_id=company_id, policy_id=policy_id
+            )
+        if policy_kind == "REGULARIZATION_POLICY":
+            return await self._regularization_repo.get_policy(
+                self._session, company_id=company_id, policy_id=policy_id
+            )
+        return None
+
+    async def policy_exists(self, company_id: UUID, policy_kind: str, policy_id: UUID) -> bool:
+        return await self.find_policy(company_id, policy_kind, policy_id) is not None
+
+    async def policy_is_published(
+        self, company_id: UUID, policy_kind: str, policy_id: UUID
+    ) -> bool:
+        repo: Any
+        if policy_kind == "ATTENDANCE_POLICY":
+            repo = self._attendance_repo
         elif policy_kind == "OVERTIME_POLICY":
-            row = await self._overtime_repo.get_policy(
-                self._session, company_id=company_id, policy_id=policy_id
-            )
+            repo = self._overtime_repo
         elif policy_kind == "REGULARIZATION_POLICY":
-            row = await self._regularization_repo.get_policy(
-                self._session, company_id=company_id, policy_id=policy_id
-            )
+            repo = self._regularization_repo
         else:
             return False
-        return row is not None
+        version = await repo.get_current_published(
+            self._session, company_id=company_id, policy_id=policy_id
+        )
+        return version is not None
+
+    async def policy_has_version_as_of(
+        self, company_id: UUID, policy_kind: str, policy_id: UUID, as_of: date
+    ) -> bool:
+        repo: Any
+        if policy_kind == "ATTENDANCE_POLICY":
+            repo = self._attendance_repo
+        elif policy_kind == "OVERTIME_POLICY":
+            repo = self._overtime_repo
+        elif policy_kind == "REGULARIZATION_POLICY":
+            repo = self._regularization_repo
+        else:
+            return False
+        version = await repo.find_effective_as_of(
+            self._session, company_id=company_id, policy_id=policy_id, as_of=as_of
+        )
+        return version is not None
 
     async def has_computed_attendance_blocking_timezone_change(
         self, company_id: UUID, *, employee_ids: list[UUID] | None = None

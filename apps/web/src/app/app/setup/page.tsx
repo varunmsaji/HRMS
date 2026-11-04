@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { SetupChecklistList } from "@/components/company/setup-checklist-card";
 import { SetupProgress } from "@/components/company/setup-progress";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,18 +62,23 @@ export default function CompanySetupPage() {
         backHref="/app/settings"
         backLabel="Settings"
         title="Company setup"
-        description="Track onboarding progress for your company."
+        description="What is left to set up, and where to do it."
         actions={
           progress ? (
             <Badge variant={isComplete ? "success" : "secondary"} dot={isComplete}>
-              {isComplete ? "Setup complete" : `${completedCount} of ${totalCount} complete`}
+              {isComplete
+                ? "Registration complete"
+                : `${completedCount} of ${totalCount} registration steps done`}
             </Badge>
           ) : null
         }
       />
 
+      <SetupChecklistList />
+
       <Card>
         <CardContent className="space-y-4 pt-6">
+          <h2 className="text-sm font-semibold text-foreground">Registration</h2>
           {loading ? <LoadingState label="Loading setup progress…" /> : null}
           {error && !loading ? (
             <ErrorState

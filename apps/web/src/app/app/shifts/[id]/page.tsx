@@ -422,13 +422,13 @@ export default function ShiftDetailPage() {
     }
   }
 
-  async function handleSaveDraft() {
-    if (!draft || !draftValues) return;
+  async function handleSaveDraft(): Promise<boolean> {
+    if (!draft || !draftValues) return false;
     const clientErrors = validateShiftVersionForm(draftValues);
     if (Object.keys(clientErrors).length > 0) {
       setDraftErrors(clientErrors);
       toast({ title: "Fix the highlighted fields", variant: "danger" });
-      return;
+      return false;
     }
 
     setSavingDraft(true);
@@ -449,15 +449,16 @@ export default function ShiftDetailPage() {
       );
       setDraftValues(shiftVersionToFormValues(updated));
       toast({ title: "Draft saved", variant: "success" });
+      return true;
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 409 && err.code === "STALE_RESOURCE") {
           setDraftStaleMessage("This draft was changed by someone else.");
-          return;
+          return false;
         }
         if (err.status === 422) {
           setDraftErrors(mapShiftVersionApiErrors(err.details));
-          return;
+          return false;
         }
       }
       toast({
@@ -465,9 +466,18 @@ export default function ShiftDetailPage() {
         description: describeApiError(err),
         variant: "danger",
       });
+      return false;
     } finally {
       setSavingDraft(false);
     }
+  }
+
+  /** Publish acts on the saved draft, so unsaved edits are saved first; a failed save stops here. */
+  async function handlePublishClick() {
+    if (!draft || !draftValues) return;
+    const hasUnsavedEdits = JSON.stringify(draftValues) !== JSON.stringify(shiftVersionToFormValues(draft));
+    if (hasUnsavedEdits && !(await handleSaveDraft())) return;
+    setPublishDialogOpen(true);
   }
 
   async function reloadDraftLatest() {
@@ -823,7 +833,7 @@ export default function ShiftDetailPage() {
                                 </Button>
                                 <Button
                                   type="button"
-                                  onClick={() => setPublishDialogOpen(true)}
+                                  onClick={() => void handlePublishClick()}
                                   disabled={savingDraft}
                                 >
                                   Publish…

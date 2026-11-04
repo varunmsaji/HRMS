@@ -42,6 +42,7 @@ from hrms.modules.leave.dependencies import (
     get_leave_combination_rule_service,
     get_leave_ledger_service,
     get_leave_policy_service,
+    get_leave_policy_setup_service,
     get_leave_type_service,
     get_leave_year_setting_service,
     get_statutory_leave_minimum_service,
@@ -61,6 +62,7 @@ from hrms.modules.leave.permissions import (
     LEAVE_TYPE_MANAGE,
     LEAVE_YEAR_SETTING_MANAGE,
 )
+from hrms.modules.leave.policy_setup import LeavePolicySetupService
 from hrms.modules.leave.schemas import (
     LeaveApplicationCancelInput,
     LeaveApplicationCreate,
@@ -75,6 +77,8 @@ from hrms.modules.leave.schemas import (
     LeaveLedgerEntryRead,
     LeavePolicyCreate,
     LeavePolicyRead,
+    LeavePolicySetup,
+    LeavePolicySetupRead,
     LeavePolicyUpdate,
     LeavePolicyVersionCreate,
     LeavePolicyVersionPublishRequest,
@@ -199,9 +203,29 @@ async def list_leave_policies(
     tenant: Annotated[TenantContext, Depends(get_tenant_context)],
     _scope: Annotated[object, Depends(require_permission(LEAVE_POLICY_MANAGE))],
     service: Annotated[LeavePolicyService, Depends(get_leave_policy_service)],
+    assignable: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[LeavePolicyRead]:
-    data = await service.list_policies(tenant.company_id)
+    data = await service.list_policies_with_status(tenant.company_id, assignable_only=assignable)
     return ListEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
+
+
+@router.post("/leave-policies/setup", status_code=status.HTTP_201_CREATED)
+async def setup_leave_policy(
+    body: LeavePolicySetup,
+    request: Request,
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    _scope: Annotated[object, Depends(require_permission(LEAVE_POLICY_MANAGE))],
+    service: Annotated[LeavePolicySetupService, Depends(get_leave_policy_setup_service)],
+) -> DataEnvelope[LeavePolicySetupRead]:
+    """Creates the policy and its rules, optionally publishing and assigning it, all or nothing."""
+    data = await service.setup(
+        tenant.company_id,
+        body,
+        actor_user_id=tenant.user_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("User-Agent"),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.post("/leave-policies", status_code=status.HTTP_201_CREATED)

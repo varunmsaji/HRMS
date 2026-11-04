@@ -614,6 +614,32 @@ class PolicyAssignmentOverlapError(ConflictError):
         )
 
 
+class PolicyNotPublishedError(ValidationError):
+    """The policy exists but has no open published version, so anyone it was assigned to would
+    resolve to `CONFIG_INCOMPLETE` instead of following the policy."""
+
+    code = "POLICY_NOT_PUBLISHED"
+
+    def __init__(self, message: str = "Publish this policy before assigning it") -> None:
+        super().__init__(
+            message,
+            details=[{"field": "policy_id", "code": "POLICY_NOT_PUBLISHED", "message": message}],
+        )
+
+
+class PolicyAssignmentNotEndableError(ValidationError):
+    """Only an open assignment below company level, of a kind that does not change day
+    classification, can be ended directly."""
+
+    code = "POLICY_ASSIGNMENT_NOT_ENDABLE"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            message,
+            details=[{"field": None, "code": "POLICY_ASSIGNMENT_NOT_ENDABLE", "message": message}],
+        )
+
+
 class PolicyAssignmentVersionRequiredError(ValidationError):
     """Mirrors `AssignmentVersionRequiredError` — when a current (open) assignment already
     exists at this exact `(policy_kind, scope_type, scope_id)`, the caller must supply

@@ -1434,6 +1434,17 @@ class ShiftVersionUpdate(BaseModel):
         return validate_iana_timezone(value)
 
 
+class ShiftSetup(BaseModel):
+    """A shift and its schedule in one request, published unless `publish` is false."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    rules: ShiftVersionCreate
+    publish: bool = True
+    publish_reason: str | None = None
+
+
 class ShiftVersionPublishRequest(BaseModel):
     """Body for `POST /shifts/{shift_id}/versions/{version_id}/publish`. `If-Match` (header,
     handled at the router layer) carries the draft's own `expected_version`;
@@ -1482,6 +1493,11 @@ class ShiftVersionRead(BaseModel):
     updated_at: str
     breaks: list[ShiftBreakRead]
     duty_blocks: list[ShiftDutyBlockRead]
+
+
+class ShiftSetupRead(BaseModel):
+    shift: ShiftRead
+    version: ShiftVersionRead
 
 
 def shift_version_to_read(
@@ -2056,6 +2072,73 @@ class PolicyAssignmentCreate(BaseModel):
         if self.policy_kind != "LEAVE_POLICY" and self.leave_type_id is not None:
             raise ValueError("leave_type_id must be omitted unless policy_kind is LEAVE_POLICY")
         return self
+
+
+class PolicyAssignmentBatchChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy_kind: str
+    policy_id: UUID
+    leave_type_id: UUID | None = None
+    # Version of the open assignment being replaced, when there is one.
+    expected_version: int | None = None
+
+
+class PolicyAssignmentBatch(BaseModel):
+    """The same scope, date and reason for several changes, saved in one transaction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_type: str
+    scope_id: UUID | None = None
+    effective_from: date
+    reason: str | None = None
+    changes: list[PolicyAssignmentBatchChange] = Field(min_length=1, max_length=100)
+
+
+class PolicyCoverageOwn(BaseModel):
+    """The open assignment set at exactly this scope. It may start in the future."""
+
+    assignment_id: UUID
+    policy_id: UUID
+    policy_name: str | None
+    effective_from: date
+    version: int
+
+
+class PolicyCoverageApplied(BaseModel):
+    """What applies on `as_of`, and the scope it comes from."""
+
+    policy_id: UUID
+    policy_name: str | None
+    scope_type: str
+    scope_id: UUID | None
+    scope_name: str | None
+    effective_from: date
+    effective_to: date | None
+    # False when the policy has no published version effective on `as_of`.
+    has_rules: bool
+
+
+class PolicyCoverageRow(BaseModel):
+    policy_kind: str
+    leave_type_id: UUID | None
+    leave_type_name: str | None
+    own: PolicyCoverageOwn | None
+    applied: PolicyCoverageApplied | None
+
+
+class PolicyCoverageRead(BaseModel):
+    scope_type: str
+    scope_id: UUID | None
+    as_of: date
+    rows: list[PolicyCoverageRow]
+
+
+class PolicyAssignmentEnd(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    effective_to: date
 
 
 class PolicyAssignmentRead(BaseModel):

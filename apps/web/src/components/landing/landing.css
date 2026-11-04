@@ -258,18 +258,11 @@ html:has(.kx){scroll-behavior:smooth;scroll-padding-top:84px}
 .kx .mascot{display:block;height:auto;pointer-events:none;user-select:none}
 .kx .win-stage{position:relative;max-width:1060px;margin:clamp(40px,5vw,64px) auto 0}
 .kx .win-stage .win{margin:0;position:relative}
-/* The penguin stands behind the window and its hands sit in front, gripping the top edge (y=212 of 290 in the SVG). */
 .kx .hold-stage{position:relative}
 .kx .hold-stage .win{z-index:1;box-shadow:0 50px 90px -40px rgba(10,18,48,.7)}
-.kx .mascot-hero{--mascot-w:clamp(100px,12.5vw,180px);position:absolute;right:4%;bottom:100%;width:var(--mascot-w);margin-bottom:calc(var(--mascot-w)*-.325);animation:kPeek .9s .5s cubic-bezier(.16,1,.3,1) both,kBob 4s 1.5s ease-in-out infinite}
-.kx .mascot-hands{z-index:2;pointer-events:none!important;animation:kGrip .4s .95s ease-out both}
 .kx .mascot-faq{width:112px;margin:0 auto 8px}
 .kx .mascot-cta{position:absolute;right:clamp(12px,4vw,56px);bottom:-14px;width:clamp(120px,14vw,170px)}
-@keyframes kBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
-@keyframes kPeek{from{transform:translateY(62%)}to{transform:translateY(0)}}
-@keyframes kGrip{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 @media(max-width:880px){.kx .mascot-cta{display:none}}
-@media(max-width:560px){.kx .mascot-hero{--mascot-w:76px}}
 
 /* animated hero dashboard: sized in --u (1/1280 of its own width) so it scales like a screenshot */
 .kx .hd{container-type:inline-size;aspect-ratio:16/9;overflow:hidden;border-radius:0 0 21px 21px;--u:calc(100cqw/1280)}
@@ -391,10 +384,7 @@ html:has(.kx){scroll-behavior:smooth;scroll-padding-top:84px}
   .kx .tilt.hold-stage.is-tilting{box-shadow:none}
   .kx .hold-stage .win::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;opacity:0;background:radial-gradient(circle 340px at var(--sheen-x,50%) var(--sheen-y,50%),rgba(255,255,255,.14),transparent 70%);transition:opacity .3s ease}
   .kx .hold-stage.is-tilting .win::after{opacity:1}
-  /* Hands stay on the edge, so the hover is a peek up rather than the usual hop. */
-  .kx .mascot.mascot-hero:hover{scale:none;animation:kPeekUp .8s ease-in-out}
 }
-@keyframes kPeekUp{0%,100%{transform:translateY(0)}45%{transform:translateY(-12px)}}
 
 /* hero setting: a soft tinted band behind the window's lower half, and cards floating over its edges */
 .kx .hero::after{content:"";position:absolute;inset:auto 0 0;height:calc(clamp(40px,5vw,72px) + min(30vw,318px));border-radius:50% 50% 0 0/clamp(24px,5vw,72px) clamp(24px,5vw,72px) 0 0;background:radial-gradient(rgba(7,128,242,.16) 1.2px,transparent 1.3px) 0 0/22px 22px,radial-gradient(55% 80% at 50% 0,rgba(0,194,255,.2),transparent 75%),linear-gradient(180deg,#E6F0FF,#F4F7FD)}

@@ -1082,6 +1082,21 @@ class ShiftVersionRepository:
         await session.flush()
         return created
 
+    async def list_open_shift_types(self, session: AsyncSession, *, company_id: UUID) -> list[str]:
+        """The distinct types of shifts' open published versions."""
+        stmt = (
+            select(ShiftVersion.shift_type)
+            .where(
+                ShiftVersion.company_id == company_id,
+                ShiftVersion.status == "PUBLISHED",
+                ShiftVersion.effective_to.is_(None),
+                ShiftVersion.deleted_at.is_(None),
+                ShiftVersion.shift_type.is_not(None),
+            )
+            .distinct()
+        )
+        return [str(value) for value in (await session.execute(stmt)).scalars().all()]
+
     async def list_open_and_draft_for_shifts(
         self, session: AsyncSession, *, company_id: UUID, shift_ids: list[UUID]
     ) -> list[ShiftVersion]:
@@ -1664,6 +1679,8 @@ class PolicyAssignmentRepository:
         policy_kind: str | None,
         scope_type: str | None,
         scope_id: UUID | None,
+        leave_type_id: UUID | None = None,
+        current_only: bool = False,
     ) -> list[Any]:
         conditions = [
             PolicyAssignment.company_id == company_id,
@@ -1675,6 +1692,10 @@ class PolicyAssignmentRepository:
             conditions.append(PolicyAssignment.scope_type == scope_type)
         if scope_id is not None:
             conditions.append(PolicyAssignment.scope_id == scope_id)
+        if leave_type_id is not None:
+            conditions.append(PolicyAssignment.leave_type_id == leave_type_id)
+        if current_only:
+            conditions.append(PolicyAssignment.effective_to.is_(None))
         return conditions
 
     async def list_assignments(
@@ -1685,11 +1706,18 @@ class PolicyAssignmentRepository:
         policy_kind: str | None = None,
         scope_type: str | None = None,
         scope_id: UUID | None = None,
+        leave_type_id: UUID | None = None,
+        current_only: bool = False,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[PolicyAssignment]:
         conditions = self._assignment_conditions(
-            company_id=company_id, policy_kind=policy_kind, scope_type=scope_type, scope_id=scope_id
+            company_id=company_id,
+            policy_kind=policy_kind,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            leave_type_id=leave_type_id,
+            current_only=current_only,
         )
         # `id` is a stable secondary key — `effective_from` (a plain `Date`) ties constantly
         # across assignments created the same day, which would make page boundaries
@@ -1711,14 +1739,50 @@ class PolicyAssignmentRepository:
         policy_kind: str | None = None,
         scope_type: str | None = None,
         scope_id: UUID | None = None,
+        leave_type_id: UUID | None = None,
+        current_only: bool = False,
     ) -> int:
         """Same predicates as `list_assignments`, no `ORDER BY`/`LIMIT` — the paired COUNT query
         for `GET /policy-assignments`'s `pagination.total` (API-01 §6)."""
         conditions = self._assignment_conditions(
-            company_id=company_id, policy_kind=policy_kind, scope_type=scope_type, scope_id=scope_id
+            company_id=company_id,
+            policy_kind=policy_kind,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            leave_type_id=leave_type_id,
+            current_only=current_only,
         )
         stmt = select(func.count()).select_from(PolicyAssignment).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
+
+    async def list_effective_at_scopes(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        scopes: list[tuple[str, UUID | None]],
+        as_of: date,
+    ) -> list[PolicyAssignment]:
+        """Every assignment active on `as_of` at any of `scopes`, in one query."""
+        stmt = select(PolicyAssignment).where(
+            PolicyAssignment.company_id == company_id,
+            PolicyAssignment.deleted_at.is_(None),
+            PolicyAssignment.is_active.is_(True),
+            PolicyAssignment.effective_from <= as_of,
+            or_(PolicyAssignment.effective_to.is_(None), PolicyAssignment.effective_to >= as_of),
+            or_(
+                *(
+                    and_(
+                        PolicyAssignment.scope_type == scope_type,
+                        PolicyAssignment.scope_id == scope_id
+                        if scope_id is not None
+                        else PolicyAssignment.scope_id.is_(None),
+                    )
+                    for scope_type, scope_id in scopes
+                )
+            ),
+        )
+        return list((await session.execute(stmt)).scalars().all())
 
     async def list_overlapping(
         self,

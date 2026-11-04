@@ -125,7 +125,7 @@ describe("ShiftsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("creates a shift from the empty state and refreshes the list", async () => {
+  it("creates a shift from a template in one request and refreshes the list", async () => {
     let shifts: Shift[] = [];
     mockedGet.mockImplementation((path: string) => {
       if (path === "/shifts") return Promise.resolve(shifts);
@@ -134,49 +134,53 @@ describe("ShiftsPage", () => {
     });
     mockedPost.mockImplementationOnce(async () => {
       shifts = [sampleShift];
-      return { ...sampleShift, code: "SHF-001", draft_version_id: "ver-1" };
+      return { shift: sampleShift, version: { id: "ver-1" } };
     });
-    mockedPatch.mockResolvedValueOnce({ id: "ver-1", version: 2 });
-    mockedPost.mockResolvedValueOnce({ id: "ver-1", version: 3 });
     const user = userEvent.setup();
     render(<ShiftsPage />);
 
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(
-      within(dialog).getByLabelText(/shift name/i),
-      "General Shift",
-    );
-    await user.selectOptions(within(dialog).getByLabelText(/^type/i), "FIXED");
-    await user.type(within(dialog).getByLabelText(/start time/i), "09:00");
-    await user.type(within(dialog).getByLabelText(/end time/i), "18:00");
-    await user.click(
-      within(dialog).getByRole("button", { name: /^add & publish$/i }),
-    );
+    // The first template (General, 9 to 6) is already filled in.
+    expect(within(dialog).getByLabelText(/shift name/i)).toHaveValue("General shift");
+    expect(within(dialog).getByLabelText(/start time/i)).toHaveValue("09:00");
+    await user.click(within(dialog).getByRole("radio", { name: /Night/ }));
+    expect(within(dialog).getByLabelText(/shift name/i)).toHaveValue("Night shift");
+    expect(within(dialog).getByLabelText(/start time/i)).toHaveValue("22:00");
+    await user.click(within(dialog).getByRole("button", { name: /^add & publish$/i }));
 
-    await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(2));
-    expect(mockedPost).toHaveBeenNthCalledWith(1, "/shifts", {
-      name: "General Shift",
-    });
-    expect(mockedPatch).toHaveBeenCalledWith(
-      "/shifts/shift-1/versions/ver-1",
+    await waitFor(() => expect(mockedPost).toHaveBeenCalledTimes(1));
+    expect(mockedPost).toHaveBeenCalledWith(
+      "/shifts/setup",
       expect.objectContaining({
-        shift_type: "FIXED",
-        start_time: "09:00",
-        end_time: "18:00",
+        name: "Night shift",
+        publish: true,
+        rules: expect.objectContaining({
+          shift_type: "FIXED",
+          start_time: "22:00",
+          end_time: "06:00",
+          is_night_shift: true,
+        }),
       }),
-      { ifMatch: "1" },
     );
-    expect(mockedPost).toHaveBeenNthCalledWith(
-      2,
-      "/shifts/shift-1/versions/ver-1/publish",
-      { publish_reason: null },
-      { ifMatch: "2" },
-    );
+    expect(mockedPatch).not.toHaveBeenCalled();
     expect(screen.queryByLabelText(/shift code/i)).not.toBeInTheDocument();
-    expect(toastMock).toHaveBeenCalledWith(
-      expect.objectContaining({ variant: "success" }),
-    );
+    expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
+  });
+
+  it("keeps a name the user typed when switching templates", async () => {
+    mockLoad([]);
+    const user = userEvent.setup();
+    render(<ShiftsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /add shift/i }));
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByLabelText(/shift name/i);
+    await user.clear(name);
+    await user.type(name, "Warehouse A");
+    await user.click(within(dialog).getByRole("radio", { name: /Morning/ }));
+    expect(name).toHaveValue("Warehouse A");
+    expect(within(dialog).getByLabelText(/start time/i)).toHaveValue("06:00");
   });
 
   it("shows a validation error when name is missing", async () => {
@@ -186,48 +190,30 @@ describe("ShiftsPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(
-      within(dialog).getByRole("button", { name: /^add & publish$/i }),
-    );
+    await user.clear(within(dialog).getByLabelText(/shift name/i));
+    await user.click(within(dialog).getByRole("button", { name: /^add & publish$/i }));
 
-    expect(
-      await within(dialog).findByText(/shift name is required/i),
-    ).toBeInTheDocument();
+    expect(await within(dialog).findByText(/shift name is required/i)).toBeInTheDocument();
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
-  it("surfaces an API error toast when creation fails", async () => {
+  it("says nothing was saved when creation fails", async () => {
     mockLoad([]);
     mockedPost.mockRejectedValueOnce(
-      new ApiError({
-        status: 500,
-        code: "INTERNAL_ERROR",
-        message: "Something broke",
-      }),
+      new ApiError({ status: 500, code: "INTERNAL_ERROR", message: "Something broke" }),
     );
     const user = userEvent.setup();
     render(<ShiftsPage />);
 
     await user.click(await screen.findByRole("button", { name: /add shift/i }));
     const dialog = await screen.findByRole("dialog");
-    await user.type(
-      within(dialog).getByLabelText(/shift name/i),
-      "General Shift",
-    );
-    await user.selectOptions(within(dialog).getByLabelText(/^type/i), "FIXED");
-    await user.type(within(dialog).getByLabelText(/start time/i), "09:00");
-    await user.type(within(dialog).getByLabelText(/end time/i), "18:00");
-    await user.click(
-      within(dialog).getByRole("button", { name: /^add & publish$/i }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: /^add & publish$/i }));
 
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Could not add shift",
-          variant: "danger",
-        }),
+        expect.objectContaining({ title: "Nothing was saved", variant: "danger" }),
       ),
     );
+    expect(within(dialog).getByRole("button", { name: /^add & publish$/i })).toBeInTheDocument();
   });
 });

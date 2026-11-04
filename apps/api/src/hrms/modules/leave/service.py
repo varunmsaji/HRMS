@@ -698,9 +698,42 @@ class LeavePolicyService:
         )
         return read
 
-    async def list_policies(self, company_id: UUID) -> list[LeavePolicyRead]:
-        rows = await self._repo.list_policies(self._session, company_id=company_id)
+    async def list_policies(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[LeavePolicyRead]:
+        rows = await self._repo.list_policies(
+            self._session, company_id=company_id, assignable_only=assignable_only
+        )
         return [leave_policy_to_read(r) for r in rows]
+
+    async def list_policies_with_status(
+        self, company_id: UUID, *, assignable_only: bool = False
+    ) -> list[LeavePolicyRead]:
+        from hrms.modules.organisation.repository import PolicyAssignmentRepository
+
+        policies = await self.list_policies(company_id, assignable_only=assignable_only)
+        versions = await self._repo.list_open_and_draft_versions(
+            self._session, company_id=company_id
+        )
+        assignments = await PolicyAssignmentRepository().list_assignments(
+            self._session, company_id=company_id, policy_kind="LEAVE_POLICY", current_only=True
+        )
+        for policy in policies:
+            for version in versions:
+                if version.policy_id != policy.id:
+                    continue
+                if version.status == "PUBLISHED":
+                    policy.live_from = version.effective_from
+                else:
+                    policy.has_draft = True
+            for assignment in assignments:
+                if assignment.policy_id != policy.id:
+                    continue
+                if assignment.scope_type == "COMPANY":
+                    policy.assigned_company_wide = True
+                else:
+                    policy.assigned_group_count += 1
+        return policies
 
     async def get_policy(self, company_id: UUID, policy_id: UUID) -> LeavePolicyRead:
         row = await self._repo.get_policy(self._session, company_id=company_id, policy_id=policy_id)
@@ -1146,6 +1179,20 @@ class LeavePolicyService:
             return False
         row = await self._repo.get_policy(self._session, company_id=company_id, policy_id=policy_id)
         return row is not None
+
+    async def policy_has_version_as_of(
+        self, company_id: UUID, policy_id: UUID, as_of: date
+    ) -> bool:
+        version = await self._repo.find_effective_as_of(
+            self._session, company_id=company_id, policy_id=policy_id, as_of=as_of
+        )
+        return version is not None
+
+    async def policy_is_published(self, company_id: UUID, policy_id: UUID) -> bool:
+        version = await self._repo.get_current_published(
+            self._session, company_id=company_id, policy_id=policy_id
+        )
+        return version is not None
 
 
 async def _ensure_within_employment(

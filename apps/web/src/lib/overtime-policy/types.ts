@@ -9,6 +9,11 @@ export interface OvertimePolicy {
   version: number;
   created_at: string;
   updated_at: string;
+  /** Filled by the list endpoint. */
+  live_from?: string | null;
+  has_draft?: boolean;
+  assigned_company_wide?: boolean;
+  assigned_group_count?: number;
 }
 
 export const OT_ELIGIBILITY_OPTIONS = [

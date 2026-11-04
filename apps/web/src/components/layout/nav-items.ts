@@ -53,6 +53,8 @@ export interface NavItem {
   requiresEmployeeId?: boolean;
   /** Highlight this item for every path under this prefix, when it differs from `href` (the landing view). */
   matchPrefix?: string;
+  /** Rarely needed. The Settings hub tucks these behind "Show more" until searched for. */
+  advanced?: boolean;
 }
 
 export interface PrimaryNavGroup {
@@ -127,41 +129,71 @@ export interface SettingsNavGroup {
  * primary sidebar. Grouping mirrors the categories on that hub page. */
 export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
   {
-    label: "Organisation",
-    description: "Company profile, legal entities, branches, departments, designations, and grades.",
+    label: "Company",
+    description: "Your company, its legal entities and offices.",
     items: [
       { href: "/app/company", label: "Company Profile", icon: Building2 },
       { href: "/app/legal-entities", label: "Companies", icon: Landmark },
       { href: "/app/branches", label: "Branches", icon: Building },
+      { href: "/app/attendance-geofences", label: "Workplace Geofences", icon: MapPin },
+    ],
+  },
+  {
+    label: "People structure",
+    description: "Departments, job titles and pay levels.",
+    items: [
       { href: "/app/departments", label: "Departments", icon: Network },
       { href: "/app/designations", label: "Designations", icon: Briefcase },
       { href: "/app/grades", label: "Grades", icon: Layers },
     ],
   },
   {
-    label: "Attendance & Time",
-    description: "Shift schedules, attendance periods, work calendars, holidays, and time policies.",
+    label: "Working time",
+    description: "Shifts, working days, holidays and closing the month.",
     items: [
       { href: "/app/shifts", label: "Shifts", icon: Clock },
-      { href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock },
       { href: "/app/work-calendars", label: "Work Calendars", icon: CalendarRange },
       { href: "/app/holiday-calendars", label: "Holiday Calendars", icon: CalendarDays },
       { href: "/app/weekly-off-patterns", label: "Weekly-Off Patterns", icon: CalendarOff },
+      { href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock },
+    ],
+  },
+  {
+    label: "Attendance rules",
+    description: "How punches, overtime and corrections are judged and approved.",
+    items: [
       { href: "/app/attendance-policies", label: "Attendance Policies", icon: ClipboardList },
-      { href: "/app/attendance-geofences", label: "Workplace Geofences", icon: MapPin },
       { href: "/app/overtime-policies", label: "Overtime Policies", icon: Timer },
       { href: "/app/regularization-policies", label: "Regularization Policies", icon: FileClock },
     ],
   },
   {
     label: "Leave",
-    description: "Leave types, accrual policies, combination rules, leave year, and statutory minimums.",
+    description: "Leave types and the rules for earning and using them.",
     items: [
       { href: "/app/leave-types", label: "Leave Types", icon: Tag },
       { href: "/app/leave-policies", label: "Leave Policies", icon: ClipboardCheck },
-      { href: "/app/leave-combination-rules", label: "Leave Combination Rules", icon: GitMerge },
-      { href: "/app/leave-year-setting", label: "Leave Year", icon: CalendarHeart },
-      { href: "/app/statutory-leave-minimums", label: "Statutory Minimums", icon: Scale },
+      { href: "/app/leave-year-setting", label: "Leave Year", icon: CalendarHeart, advanced: true },
+      {
+        href: "/app/leave-combination-rules",
+        label: "Leave Combination Rules",
+        icon: GitMerge,
+        advanced: true,
+      },
+      {
+        href: "/app/statutory-leave-minimums",
+        label: "Statutory Minimums",
+        icon: Scale,
+        advanced: true,
+      },
+    ],
+  },
+  {
+    label: "Who follows what",
+    description: "Choose which rules each group follows, and check what applies to a person.",
+    items: [
+      { href: "/app/policy-assignments", label: "Policy Assignments", icon: Link2 },
+      { href: "/app/policy-resolution", label: "Policy Resolution", icon: Search },
     ],
   },
   {
@@ -174,16 +206,8 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     ],
   },
   {
-    label: "Policies",
-    description: "Scope-based policy assignments and effective policy resolution inspector.",
-    items: [
-      { href: "/app/policy-assignments", label: "Policy Assignments", icon: Link2 },
-      { href: "/app/policy-resolution", label: "Policy Resolution", icon: Search },
-    ],
-  },
-  {
     label: "Administration",
-    description: "Initial tenant setup checklist and user account access management.",
+    description: "Setup progress and user account access.",
     items: [
       { href: "/app/setup", label: "Setup", icon: ListChecks },
       { href: "/app/users", label: "Users", icon: UserCog },
