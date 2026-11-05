@@ -6819,6 +6819,10 @@ class AttendancePeriodService:
                         agg["holiday_days"] += rest
                     else:  # WEEKLY_OFF, or a roster week-off on a calendar WORKING day
                         agg["weekly_off_days"] += rest
+                elif status == "INCOMPLETE" and leave_part > zero:
+                    # Half-day leave resolved at lock. Paid leave reads exactly; unpaid leave plus
+                    # TREAT_PRESENT also has LOP, so it lands here too. Pay figures are unaffected.
+                    agg["absent_days" if lop > zero else "present_days"] += rest
                 elif status == "INCOMPLETE" and paid > zero:
                     agg["present_days"] += rest  # resolved TREAT_PRESENT at lock
                 elif status == "INCOMPLETE" and lop > zero:
@@ -7034,7 +7038,18 @@ class AttendancePeriodService:
             # daily-wage employee that half is unpaid rather than paid.
             off = Decimal(str(row.weekly_off_fraction or 0)).quantize(Decimal("0.01"))
             unpaid_off = Decimal(str(row.unpaid_off_fraction or 0)).quantize(Decimal("0.01"))
-            if behaviour == "TREAT_PRESENT":
+            if Decimal(str(row.leave_fraction or 0)) > 0:
+                # Half-day leave: the leave half is already settled on the row, so only the
+                # worked half is left to resolve.
+                paid_day_fraction = Decimal(str(row.paid_day_fraction))
+                lop_fraction = Decimal(str(row.lop_fraction))
+                undecided = Decimal("1.00") - paid_day_fraction - lop_fraction - unpaid_off
+                if behaviour == "TREAT_PRESENT":
+                    paid_day_fraction += undecided
+                else:
+                    behaviour = "TREAT_ABSENT"
+                    lop_fraction += undecided
+            elif behaviour == "TREAT_PRESENT":
                 paid_day_fraction, lop_fraction = Decimal("1.00") - unpaid_off, Decimal("0.00")
             else:  # TREAT_ABSENT (default) — KEEP_INCOMPLETE already blocked validation
                 behaviour = "TREAT_ABSENT"

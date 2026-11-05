@@ -56,8 +56,9 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: ATT-005, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decisions 1/4/5); 3 = break management
 #: V1 (break events, automatic deduction, unresolved/excess breaks). Breaks with `mode=None`
 #: (every break configured before V1) calculate exactly as under 2. 4 = flexible-shift lateness
-#: runs from the end of the start window; on-duty clears an unpaid off day.
-ENGINE_VERSION = 4
+#: runs from the end of the start window; on-duty clears an unpaid off day. 5 = half-day leave:
+#: the worked half is judged on its own (`_half_day_leave_half`, `_apply_leave_overlay`).
+ENGINE_VERSION = 5
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -1760,11 +1761,12 @@ def _apply_leave_overlay(
     `PRESENT_CANCEL_LEAVE_HINT` mode paid the day as present while the leave stayed debited.
     Attendance never cancels the leave itself.
 
-    Half-day leave (0 < fraction < 1.00): the remaining half of the day is whatever the
-    punch-derived outcome already computed, contributed as a flat 0.50 (documented
-    simplification, module docstring) — `status="HALF_DAY"` if punches produced any worked
-    minutes, else `"LEAVE"` (mirrors "if they do not punch, LEAVE not ABSENT", scaled to a half
-    day)."""
+    Half-day leave (0 < fraction < 1.00): the remaining half follows the punch-derived outcome,
+    which judged only the worked half (`_half_day_leave_half`). PRESENT is paid as `HALF_DAY`; a
+    HALF_DAY or ABSENT outcome loses that half to LOP (`LEAVE`, as if unworked); ON_DUTY keeps it
+    paid; a missing punch stays `INCOMPLETE` so period close resolves that half. SPLIT shifts and
+    days without a schedule have no such judgement, so any worked minutes pay the half. With no
+    punches at all the half is LOP (`LEAVE`, "if they do not punch, LEAVE not ABSENT")."""
     if not inputs.leave_entries:
         return result
     if result.attendance_status in ("NOT_JOINED", "EXITED", "CONFIG_ERROR"):
@@ -1817,16 +1819,33 @@ def _apply_leave_overlay(
     weekly_off = Decimal(result.weekly_off_fraction)
     paid_off = weekly_off - Decimal(result.unpaid_off_fraction)  # BUS-001
     remaining = max(Decimal("0.00"), Decimal("1.00") - total_fraction - weekly_off)
-    work_paid = remaining if has_work else Decimal("0.00")
-    work_lop = Decimal("0.00") if has_work else remaining
-    status = "HALF_DAY" if has_work else "LEAVE"
+    leave_fraction = str(total_fraction.quantize(Decimal("0.01")))
+    if result.attendance_status == "INCOMPLETE" and inputs.punches:
+        # Not paid and not LOP yet: `_apply_incomplete_lock_resolution` decides the worked half.
+        return replace(
+            result,
+            paid_day_fraction=str((paid_from_leave + paid_off).quantize(Decimal("0.01"))),
+            lop_fraction=str(lop_from_leave.quantize(Decimal("0.01"))),
+            work_on_leave_flagged=False,
+            leave_fraction=leave_fraction,
+        )
+    worked_half_judged = inputs.shift is not None and inputs.shift.shift_type in (
+        "FIXED",
+        "FLEXIBLE",
+    )
+    worked_half_lost = worked_half_judged and result.attendance_status in ("HALF_DAY", "ABSENT")
+    on_duty = result.attendance_status == "ON_DUTY"
+    work_counts = on_duty or (has_work and not worked_half_lost)
+    work_paid = remaining if work_counts else Decimal("0.00")
+    work_lop = Decimal("0.00") if work_counts else remaining
+    status = "ON_DUTY" if on_duty else "HALF_DAY" if work_counts else "LEAVE"
     return replace(
         result,
         attendance_status=status,
         paid_day_fraction=str((paid_from_leave + paid_off + work_paid).quantize(Decimal("0.01"))),
         lop_fraction=str((lop_from_leave + work_lop).quantize(Decimal("0.01"))),
         work_on_leave_flagged=False,
-        leave_fraction=str(total_fraction.quantize(Decimal("0.01"))),
+        leave_fraction=leave_fraction,
     )
 
 
@@ -1971,6 +1990,23 @@ def _evaluate_no_schedule(
     )
 
 
+def _half_day_leave_half(inputs: AttendanceCalculationInput) -> str | None:
+    """`FIRST`/`SECOND` when one half of a working day is on leave and the other is expected to be
+    worked, else `None`. A half-day weekly off leaves no half to work."""
+    if len(inputs.leave_entries) != 1 or _is_half_weekly_off(inputs):
+        return None
+    entry = inputs.leave_entries[0]
+    if Decimal(entry.fraction) >= Decimal("1.00"):
+        return None
+    return entry.half
+
+
+def _shift_midpoint(inputs: AttendanceCalculationInput) -> datetime | None:
+    if inputs.scheduled_start is None or inputs.scheduled_end is None:
+        return None
+    return inputs.scheduled_start + (inputs.scheduled_end - inputs.scheduled_start) / 2
+
+
 def _core_hours_breached(
     *,
     first_in: datetime | None,
@@ -2028,14 +2064,24 @@ def _evaluate_fixed_or_flex(
     # FLEXIBLE: `scheduled_start`/`scheduled_end` are the allowed start window, and any arrival
     # inside it is on time, so lateness runs from the end of the window (§11.8).
     late_from = inputs.scheduled_end if shift.shift_type == "FLEXIBLE" else inputs.scheduled_start
+    early_until = inputs.scheduled_end
+    # Half-day leave covers one half, so only the worked half can be late or left early. The shift
+    # midpoint divides the two; a flexible shift has no midpoint, so nothing is measured.
+    leave_half = _half_day_leave_half(inputs)
+    if leave_half is not None:
+        midpoint = _shift_midpoint(inputs) if shift.shift_type == "FIXED" else None
+        if leave_half == "FIRST":
+            late_from = midpoint
+        else:
+            early_until = midpoint
     if first_in is not None and late_from is not None:
         late_raw = int((first_in - late_from).total_seconds() // 60)
         late_minutes = max(0, late_raw - policy.grace_in_minutes)
         if late_minutes > 0:
             late_classification = lookup_band(late_minutes, inputs.late_bands)
 
-    if last_out is not None and inputs.scheduled_end is not None:
-        early_raw = int((inputs.scheduled_end - last_out).total_seconds() // 60)
+    if last_out is not None and early_until is not None:
+        early_raw = int((early_until - last_out).total_seconds() // 60)
         early_minutes = max(0, early_raw - policy.grace_out_minutes)
         if early_minutes > 0:
             early_classification = lookup_band(early_minutes, inputs.early_bands)
@@ -2061,6 +2107,8 @@ def _evaluate_fixed_or_flex(
         and shift.core_start is not None
         and shift.core_end is not None
         and policy.core_hours_breach_behaviour != "IGNORE"
+        # Core hours span the working day, so half-day leave would always breach them.
+        and leave_half is None
     ):
         is_core_hours_breach = _core_hours_breached(
             first_in=first_in,
@@ -2095,7 +2143,10 @@ def _evaluate_fixed_or_flex(
     ):
         cumulative_status_override = "HALF_DAY"
 
-    hour_band_status = lookup_band(worked_minutes, inputs.hour_bands) if worked_minutes else None
+    # Hour bands describe a full day, so the worked half is judged in proportion: 4.5 hours worked
+    # around a half-day leave counts as a full 9-hour day would.
+    band_minutes = worked_minutes * 2 if leave_half is not None else worked_minutes
+    hour_band_status = lookup_band(band_minutes, inputs.hour_bands) if worked_minutes else None
 
     status = _resolve_primary_status(
         day_type=day_type,
