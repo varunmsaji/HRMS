@@ -20,6 +20,8 @@ import 'package:hrms_mobile/features/attendance/presentation/attendance_day_deta
 import 'package:hrms_mobile/features/attendance/domain/employee_calendar.dart';
 import 'package:hrms_mobile/features/attendance/presentation/geofences_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/my_calendar_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/shift_board_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/workforce_roster_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/regularization_decision_center_screen.dart';
 import 'package:hrms_mobile/features/leave/presentation/leave_decision_center_screen.dart';
 import 'package:hrms_mobile/features/onboarding/presentation/invitation_composer_screen.dart';
@@ -149,6 +151,27 @@ Map<String, dynamic> _regularizationDecisionFixture() => {
         {'id': 'r-1', 'employee_id': 'e-2', 'employee_name': 'Ravi Iyer', 'employee_code': 'E-2', 'designation': 'Engineer', 'department': 'Platform', 'attendance_date': '2026-11-03', 'timezone': 'Asia/Kolkata', 'shift_name': 'General', 'request_type': 'MISSING_PUNCH', 'status': 'SUBMITTED', 'approval_stage': 'MANAGER', 'submitted_at': '2026-11-04T06:00:00Z', 'reason': 'Phone was off', 'recorded_first_in': '2026-11-03T03:45:00Z', 'recorded_last_out': null, 'recorded_worked_minutes': null, 'recorded_late_minutes': 15, 'recorded_status': 'INCOMPLETE', 'requested_punches': [{'direction': 'OUT', 'time': '2026-11-03T12:30:00Z'}], 'requested_span_minutes': 525},
       ],
     };
+
+Map<String, List<Map<String, dynamic>>> _rosterFixture() {
+  Map<String, dynamic> person(int n, String first, String last) => {'id': 'e-$n', 'employee_code': 'E-$n', 'first_name': first, 'last_name': last, 'display_name': '$first $last', 'status': 'ACTIVE', 'is_active': true, 'version': 1, 'company_id': 'c-1'};
+  Map<String, dynamic> entry(String id, String who, String date, {String? shift = 's-1', bool off = false, String status = 'PUBLISHED'}) =>
+      {'id': id, 'employee_id': who, 'roster_date': date, 'shift_id': shift, 'is_week_off_override': off, 'is_holiday_working_override': false, 'status': status, 'version': 1};
+  return {
+    '/shifts': const [
+      {'id': 's-1', 'name': 'General', 'code': 'GEN'},
+      {'id': 's-2', 'name': 'Night', 'code': 'NGT', 'is_night_shift': true},
+    ],
+    '/employees': [person(1, 'Asha', 'Rao'), person(2, 'Ravi', 'Iyer'), person(3, 'Meera', 'Nair')],
+    '/rosters': [
+      entry('r-1', 'e-1', '2026-11-05'),
+      entry('r-2', 'e-2', '2026-11-05', shift: 's-2', status: 'DRAFT'),
+      entry('r-3', 'e-1', '2026-11-02'),
+      entry('r-4', 'e-1', '2026-11-03'),
+      entry('r-5', 'e-2', '2026-11-03', shift: 's-2'),
+      entry('r-6', 'e-3', '2026-11-04', shift: null, off: true),
+    ],
+  };
+}
 
 void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true, List<String> permissions = const [attendancePunch, attendanceView, attendanceRegularizationRequest], bool wrap = false}) {
   for (final v in variants) {
@@ -308,6 +331,14 @@ void main() {
         'editable_body': 'Dear Asha,\n\nWe are delighted you are joining Acme on 1 December.\n\nPlease complete your details here:\n{{onboarding_url}}\n\nThe HR team',
       },
     })),
+  ]);
+
+  _golden('shift_board', (v) => ShiftBoardScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, employeeViewAll], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
+  ]);
+
+  _golden('workforce_roster', (v) => WorkforceRosterScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, employeeViewAll], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
   ]);
 
   _golden('correction_form_shifts_denied', (v) => RequestListScreen(config: regularizationConfig), overrides: [

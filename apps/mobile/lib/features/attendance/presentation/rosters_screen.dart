@@ -160,7 +160,7 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Shift Rosters'),
-        actions: [IconButton(tooltip: 'Roster calendar', icon: const Icon(Icons.calendar_view_month_outlined), onPressed: () => context.push('/app/roster-calendar')), const MoreAction()],
+        actions: [IconButton(tooltip: 'Shift board', icon: const Icon(Icons.view_column_outlined), onPressed: () => context.push('/app/rosters/board')), IconButton(tooltip: 'Workforce roster', icon: const Icon(Icons.grid_on_outlined), onPressed: () => context.push('/app/rosters/grid')), IconButton(tooltip: 'Roster calendar', icon: const Icon(Icons.calendar_view_month_outlined), onPressed: () => context.push('/app/roster-calendar')), const MoreAction()],
       ),
       floatingActionButton: canManage
           ? FloatingActionButton.extended(
