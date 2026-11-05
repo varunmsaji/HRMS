@@ -82,8 +82,12 @@ _VALUE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Email addresses — never needed to diagnose a failure; `user_id` identifies the account.
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"), "[EMAIL]"),
     # Indian mobile numbers in free text: 10 digits starting 6-9, optional `+91`, optional space or
-    # hyphen after the first five. Digit-run lookarounds keep longer numbers (ids, epochs) intact.
-    (re.compile(r"(?<!\d)(?:\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)"), "[PHONE]"),
+    # hyphen after the first five. The lookarounds keep longer numbers (ids, epochs) and digit runs
+    # inside identifiers (the last group of a UUID, `...-1e6960507696`) intact.
+    (
+        re.compile(r"(?<![0-9A-Za-z])(?:\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?![0-9A-Za-z])"),
+        "[PHONE]",
+    ),
     # Indian PAN (`ABCDE1234F`).
     (re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"), REDACTED),
     # Token-bearing URL path segments (same prefixes as `redact_path`), but not a route

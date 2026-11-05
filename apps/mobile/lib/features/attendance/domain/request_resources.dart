@@ -175,4 +175,6 @@ final overtimeConfig = RequestConfig(
   isPending: (r) => r['status'] == 'PENDING',
   selfApprovalCode: 'OVERTIME_SELF_APPROVAL_NOT_ALLOWED',
   approverMismatchCode: 'OVERTIME_APPROVER_MISMATCH',
+  // The manager step of a two-step chain only passes it on; the final approver sets the minutes.
+  editableMinutes: (r) => r['approval_chain'] == 'MANAGER_THEN_HR' && r['approval_stage'] == 'MANAGER' ? null : r['minutes_detected'] as int?,
 );

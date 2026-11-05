@@ -49,6 +49,7 @@ class RequestConfig {
     this.selfApprovalCode,
     this.approverMismatchCode,
     this.cancelLabel = 'Cancel request',
+    this.editableMinutes,
   });
 
   final String title;
@@ -93,4 +94,8 @@ class RequestConfig {
 
   final String? selfApprovalCode;
   final String? approverMismatchCode;
+
+  /// The most minutes an approver may approve on this record, when they may change them at all.
+  /// Null = approving takes the record as it is.
+  final int? Function(Rec row)? editableMinutes;
 }

@@ -1011,3 +1011,252 @@ async def test_cross_tenant_overtime_record_returns_404(
         await _cleanup_overtime(company_id=company_id_b)
         await _cleanup_attendance_day(company_id=company_id_b)
         await _cleanup(company_id=company_id_b, user_id=user_id_b)
+
+
+# ---------------------------------------------------------------------------
+# The final approver may approve fewer minutes than were detected
+# ---------------------------------------------------------------------------
+
+
+async def _pending_for_hr(
+    client: AsyncClient, headers: dict[str, str], company_id: UUID, **policy: Any
+) -> tuple[dict[str, str], dict[str, Any], dict[str, Any]]:
+    """60 minutes of overtime waiting for HR, plus headers for an HR approver."""
+    wired = await _build_wired_employee(client, headers)
+    employee_id = wired["employee"]["id"]
+    await _create_overtime_policy(client, headers, approval_chain="HR", **policy)
+    day = await _ot_calculate_day(client, headers, employee_id=employee_id)
+    record = await _get_overtime_record_for_day(
+        client, headers, employee_id=employee_id, day="2026-08-10"
+    )
+    from hrms.modules.attendance.permissions import ATTENDANCE_OVERTIME_APPROVE
+
+    hr_headers, _ = await _create_permission_scoped_user(
+        company_id=company_id,
+        permission_codes=[ATTENDANCE_OVERTIME_APPROVE],
+        data_scope="COMPANY",
+        caller_employee_id=None,
+    )
+    return hr_headers, record, day
+
+
+async def test_hr_approves_fewer_minutes_and_a_recompute_keeps_them(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        hr_headers, record, day = await _pending_for_hr(client, headers, company_id)
+        approved = await client.post(
+            f"/v1/overtime/{record['id']}/approve",
+            headers={**hr_headers, "If-Match": str(record["version"])},
+            json={"minutes_approved": 30, "reviewer_comment": "Stayed for 30 minutes only"},
+        )
+        assert approved.status_code == 200, approved.text
+        data = approved.json()["data"]
+        assert data["status"] == "APPROVED"
+        assert data["minutes_detected"] == 60
+        assert data["minutes_approved"] == 30
+        assert data["reviewer_comment"] == "Stayed for 30 minutes only"
+
+        read = await client.get(f"/v1/attendance/days/{day['id']}", headers=headers)
+        assert read.json()["data"]["ot_minutes_approved"] == 30
+
+        recomputed = await client.post(
+            f"/v1/attendance/days/{day['id']}/recompute", headers=headers
+        )
+        assert recomputed.status_code == 200, recomputed.text
+        assert recomputed.json()["data"]["ot_minutes_approved"] == 30
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "code"),
+    [
+        ({"minutes_approved": 61}, 422, "OVERTIME_MINUTES_ABOVE_DETECTED"),
+        ({"minutes_approved": 30}, 422, "OVERTIME_MINUTES_CHANGE_NEEDS_COMMENT"),
+        (
+            {"minutes_approved": 30, "reviewer_comment": "  "},
+            422,
+            "OVERTIME_MINUTES_CHANGE_NEEDS_COMMENT",
+        ),
+        ({"minutes_approved": 0}, 422, None),
+    ],
+)
+async def test_invalid_minutes_are_refused_and_nothing_changes(
+    client: AsyncClient,
+    seeded_plan_catalogue: None,
+    body: dict[str, Any],
+    status: int,
+    code: str | None,
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        hr_headers, record, _ = await _pending_for_hr(client, headers, company_id)
+        response = await client.post(
+            f"/v1/overtime/{record['id']}/approve",
+            headers={**hr_headers, "If-Match": str(record["version"])},
+            json=body,
+        )
+        assert response.status_code == status, response.text
+        if code is not None:
+            assert response.json()["error"]["code"] == code
+        reread = await client.get(f"/v1/overtime/{record['id']}", headers=headers)
+        assert reread.json()["data"]["status"] == "PENDING"
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_approving_all_the_minutes_needs_no_comment(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        hr_headers, record, _ = await _pending_for_hr(client, headers, company_id)
+        approved = await client.post(
+            f"/v1/overtime/{record['id']}/approve",
+            headers={**hr_headers, "If-Match": str(record["version"])},
+            json={"minutes_approved": 60},
+        )
+        assert approved.status_code == 200, approved.text
+        assert approved.json()["data"]["minutes_approved"] == 60
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_comp_off_follows_the_approved_minutes(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        hr_headers, record, day = await _pending_for_hr(
+            client, headers, company_id, comp_off_instead_of_pay=True
+        )
+        assert record["comp_off_minutes"] == 60
+        approved = await client.post(
+            f"/v1/overtime/{record['id']}/approve",
+            headers={**hr_headers, "If-Match": str(record["version"])},
+            json={"minutes_approved": 45, "reviewer_comment": "Agreed with the manager"},
+        )
+        assert approved.status_code == 200, approved.text
+        assert approved.json()["data"]["comp_off_minutes"] == 45
+        read = await client.get(f"/v1/attendance/days/{day['id']}", headers=headers)
+        assert read.json()["data"]["comp_off_minutes_earned"] == 45
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_the_manager_step_of_a_two_step_chain_cannot_change_minutes(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        manager_id = wired["employee"]["id"]
+        reportee = await _add_reportee_employee(
+            client,
+            headers,
+            wired=wired,
+            first_name="Reportee",
+            reporting_manager_id=UUID(manager_id),
+        )
+        await _create_overtime_policy(client, headers, approval_chain="MANAGER_THEN_HR")
+        await _ot_calculate_day(client, headers, employee_id=reportee["id"])
+        record = await _get_overtime_record_for_day(
+            client, headers, employee_id=reportee["id"], day="2026-08-10"
+        )
+        from hrms.modules.attendance.permissions import ATTENDANCE_OVERTIME_APPROVE
+
+        manager_headers, _ = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[ATTENDANCE_OVERTIME_APPROVE],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager_id),
+        )
+        response = await client.post(
+            f"/v1/overtime/{record['id']}/approve",
+            headers={**manager_headers, "If-Match": str(record["version"])},
+            json={"minutes_approved": 30, "reviewer_comment": "Less"},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "OVERTIME_MINUTES_NOT_FINAL_STAGE"
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+@pytest.mark.parametrize(("worked_more", "stage"), [(False, "HR"), (True, "MANAGER")])
+async def test_recompute_keeps_the_manager_step_unless_the_minutes_change(
+    client: AsyncClient, seeded_plan_catalogue: None, worked_more: bool, stage: str
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        manager_id = wired["employee"]["id"]
+        reportee = await _add_reportee_employee(
+            client,
+            headers,
+            wired=wired,
+            first_name="Reportee",
+            reporting_manager_id=UUID(manager_id),
+        )
+        employee_id = reportee["id"]
+        await _create_overtime_policy(client, headers, approval_chain="MANAGER_THEN_HR")
+        await _ot_calculate_day(client, headers, employee_id=employee_id)
+        record = await _get_overtime_record_for_day(
+            client, headers, employee_id=employee_id, day="2026-08-10"
+        )
+
+        from hrms.modules.attendance.permissions import ATTENDANCE_OVERTIME_APPROVE
+
+        manager_headers, _ = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[ATTENDANCE_OVERTIME_APPROVE],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager_id),
+        )
+        stage1 = await client.post(
+            f"/v1/overtime/{record['id']}/approve",
+            headers={**manager_headers, "If-Match": str(record["version"])},
+            json={},
+        )
+        assert stage1.status_code == 200, stage1.text
+
+        if worked_more:
+            await _punch(
+                client, headers, employee_id=employee_id, hour=19, minute=0, direction="IN"
+            )
+            await _punch(
+                client, headers, employee_id=employee_id, hour=19, minute=30, direction="OUT"
+            )
+        recalculated = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-10"},
+        )
+        assert recalculated.status_code == 200, recalculated.text
+
+        after = await _get_overtime_record_for_day(
+            client, headers, employee_id=employee_id, day="2026-08-10"
+        )
+        assert after["status"] == "PENDING"
+        assert after["approval_stage"] == stage
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()

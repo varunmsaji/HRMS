@@ -62,7 +62,7 @@ export const ATTENDANCE_POLICY_TEMPLATES: AttendancePolicyTemplate[] = [
     key: "strict",
     label: "Strict attendance",
     description:
-      "No grace, 8 hours for a full day. The third late day in a month is a half-day, and leaving early needs approval.",
+      "No grace, 8 hours for a full day. Every third late day in a month is a half-day, and leaving early needs approval.",
     defaultName: "Strict attendance",
     values: {
       ...BASE,

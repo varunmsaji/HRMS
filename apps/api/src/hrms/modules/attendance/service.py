@@ -4700,6 +4700,15 @@ class AttendanceDayService:
                     resolved_manager_id = assignment.reporting_manager_id if assignment else None
                 approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
                 approver_unresolved = resolved_manager_id is None
+                # A recompute must not undo the manager's step of a two-step chain. If the minutes
+                # changed, the manager approved something else, so it goes back to them.
+                if (
+                    existing_ot_record is not None
+                    and existing_ot_record.approval_chain == approval_chain
+                    and existing_ot_record.approval_stage == "HR"
+                    and existing_ot_record.minutes_detected == result.ot_minutes_detected
+                ):
+                    approval_stage = "HR"
 
         if needs_review:
             status = "PENDING"
@@ -6039,6 +6048,32 @@ class OvertimeRecordService:
             current=overtime_record_to_audit_dict(current_read),
         )
 
+    @staticmethod
+    def _minutes_to_approve(
+        row: OvertimeRecord, body: OvertimeReviewInput, *, is_final_stage: bool
+    ) -> int:
+        """The detected minutes unless the final approver entered fewer. Changing them changes
+        pay, so it needs a reason, which the record and the audit log keep."""
+        minutes = body.minutes_approved
+        if minutes is None:
+            return row.minutes_detected
+        if not is_final_stage:
+            raise ValidationError(
+                "Minutes can only be changed at the final approval step",
+                code="OVERTIME_MINUTES_NOT_FINAL_STAGE",
+            )
+        if minutes > row.minutes_detected:
+            raise ValidationError(
+                "Approved minutes cannot be more than the minutes detected",
+                code="OVERTIME_MINUTES_ABOVE_DETECTED",
+            )
+        if minutes < row.minutes_detected and not (body.reviewer_comment or "").strip():
+            raise ValidationError(
+                "Add a comment explaining why the minutes were changed",
+                code="OVERTIME_MINUTES_CHANGE_NEEDS_COMMENT",
+            )
+        return minutes
+
     @logged_operation("attendance.overtime.approve")
     async def approve(
         self,
@@ -6067,11 +6102,14 @@ class OvertimeRecordService:
         is_final_stage = not (
             row.approval_chain == "MANAGER_THEN_HR" and row.approval_stage == "MANAGER"
         )
+        minutes_approved = self._minutes_to_approve(row, body, is_final_stage=is_final_stage)
         values: dict[str, Any] = (
             {
                 "status": "APPROVED",
                 "approval_stage": None,
-                "minutes_approved": row.minutes_detected,
+                "minutes_approved": minutes_approved,
+                # A comp-off day earns what was approved, not what was detected.
+                "comp_off_minutes": minutes_approved if row.comp_off_minutes > 0 else 0,
                 "reviewed_by_user_id": actor_user_id,
                 "reviewed_at": now,
                 "reviewer_comment": body.reviewer_comment,
@@ -6819,6 +6857,10 @@ class AttendancePeriodService:
                         agg["holiday_days"] += rest
                     else:  # WEEKLY_OFF, or a roster week-off on a calendar WORKING day
                         agg["weekly_off_days"] += rest
+                elif status == "INCOMPLETE" and leave_part > zero:
+                    # Half-day leave resolved at lock. Paid leave reads exactly; unpaid leave plus
+                    # TREAT_PRESENT also has LOP, so it lands here too. Pay figures are unaffected.
+                    agg["absent_days" if lop > zero else "present_days"] += rest
                 elif status == "INCOMPLETE" and paid > zero:
                     agg["present_days"] += rest  # resolved TREAT_PRESENT at lock
                 elif status == "INCOMPLETE" and lop > zero:
@@ -7034,7 +7076,18 @@ class AttendancePeriodService:
             # daily-wage employee that half is unpaid rather than paid.
             off = Decimal(str(row.weekly_off_fraction or 0)).quantize(Decimal("0.01"))
             unpaid_off = Decimal(str(row.unpaid_off_fraction or 0)).quantize(Decimal("0.01"))
-            if behaviour == "TREAT_PRESENT":
+            if Decimal(str(row.leave_fraction or 0)) > 0:
+                # Half-day leave: the leave half is already settled on the row, so only the
+                # worked half is left to resolve.
+                paid_day_fraction = Decimal(str(row.paid_day_fraction))
+                lop_fraction = Decimal(str(row.lop_fraction))
+                undecided = Decimal("1.00") - paid_day_fraction - lop_fraction - unpaid_off
+                if behaviour == "TREAT_PRESENT":
+                    paid_day_fraction += undecided
+                else:
+                    behaviour = "TREAT_ABSENT"
+                    lop_fraction += undecided
+            elif behaviour == "TREAT_PRESENT":
                 paid_day_fraction, lop_fraction = Decimal("1.00") - unpaid_off, Decimal("0.00")
             else:  # TREAT_ABSENT (default) — KEEP_INCOMPLETE already blocked validation
                 behaviour = "TREAT_ABSENT"

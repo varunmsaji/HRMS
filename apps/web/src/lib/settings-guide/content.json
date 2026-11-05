@@ -917,11 +917,11 @@
           "items": [
             {
               "name": "Lates to half-day (per month)",
-              "text": "After this many late days in a month, the day that reaches the number becomes a half-day. For example, with 3 the third late day is a half-day. Blank turns it off."
+              "text": "Every time the late days in a month reach a multiple of this number, that day becomes a half-day. For example, with 3 the 3rd, 6th and 9th late days are half-days. Blank turns it off."
             },
             {
               "name": "Excess-break days to half-day (per month)",
-              "text": "The same idea for days where breaks ran too long."
+              "text": "The same rule for days where breaks ran too long. With 3, the 3rd, 6th and 9th such days are half-days."
             },
             {
               "name": "Incomplete at lock time",
@@ -970,7 +970,7 @@
           "intro": "When several rules apply on the same day, the harshest result wins: absent, then half-day, then the hour-band result."
         }
       ],
-      "example": "The General policy gives 10 minutes grace, treats a missing punch as incomplete, counts the third late day in a month as a half-day, and uses hour bands of under 4 hours absent, 4 to 8 half-day, 8 or more present.",
+      "example": "The General policy gives 10 minutes grace, treats a missing punch as incomplete, counts every third late day in a month as a half-day, and uses hour bands of under 4 hours absent, 4 to 8 half-day, 8 or more present.",
       "tips": [
         "Open a policy and click Edit. You see the name and every setting at once. Save stores it as a draft.",
         "A policy only takes effect after you publish the draft with an effective date and assign it in Policy Assignments.",

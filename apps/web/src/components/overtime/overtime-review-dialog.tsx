@@ -39,24 +39,48 @@ export function OvertimeReviewDialog({
   const { toast } = useToast();
   const [comment, setComment] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
+  const [minutes, setMinutes] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   function reset() {
     setComment("");
     setRejectionReason("");
+    setMinutes(null);
     setFormError(null);
   }
 
+  const detected = record?.minutes_detected ?? 0;
+  const canEditMinutes =
+    action === "approve" &&
+    record !== null &&
+    !(record.approval_chain === "MANAGER_THEN_HR" && record.approval_stage === "MANAGER");
+  const minutesText = minutes ?? String(detected);
+  const minutesChanged = canEditMinutes && minutesText.trim() !== String(detected);
+
   async function handleConfirm() {
     if (!record) return;
+    if (minutesChanged) {
+      const entered = Number(minutesText);
+      if (!Number.isInteger(entered) || entered < 1 || entered > detected) {
+        setFormError(`Enter whole minutes from 1 to ${detected}. To pay nothing, reject instead.`);
+        return;
+      }
+      if (!comment.trim()) {
+        setFormError("Add a comment explaining why the minutes were changed.");
+        return;
+      }
+    }
     setSaving(true);
     setFormError(null);
     try {
       const updated = await apiClient.post<OvertimeRecord>(
         `/overtime/${record.id}/${action}`,
         action === "approve"
-          ? { reviewer_comment: comment.trim() || undefined }
+          ? {
+              reviewer_comment: comment.trim() || undefined,
+              minutes_approved: minutesChanged ? Number(minutesText) : undefined,
+            }
           : {
               reviewer_comment: comment.trim() || undefined,
               rejection_reason: rejectionReason.trim() || undefined,
@@ -114,7 +138,9 @@ export function OvertimeReviewDialog({
           <DialogTitle>{action === "approve" ? "Approve overtime" : "Reject overtime"}</DialogTitle>
           {action === "approve" ? (
             <DialogDescription>
-              Approving confirms the system-detected overtime minutes for this day.
+              {canEditMinutes
+                ? "Approving pays these overtime minutes for this day."
+                : "Approving passes this overtime to HR for the final decision."}
             </DialogDescription>
           ) : (
             <DialogDescription>
@@ -123,7 +149,30 @@ export function OvertimeReviewDialog({
           )}
         </DialogHeader>
         <div className="space-y-4">
-          <FormField id="ot-review-comment" label="Comment" description="Optional, visible to the employee.">
+          {canEditMinutes ? (
+            <FormField
+              id="ot-review-minutes"
+              label="Minutes to approve"
+              description={`${detected} detected. You can approve fewer, not more.`}
+            >
+              <Input
+                type="number"
+                min={1}
+                max={detected}
+                value={minutesText}
+                onChange={(e) => setMinutes(e.target.value)}
+              />
+            </FormField>
+          ) : null}
+          <FormField
+            id="ot-review-comment"
+            label="Comment"
+            description={
+              minutesChanged
+                ? "Required when you change the minutes. Visible to the employee."
+                : "Optional, visible to the employee."
+            }
+          >
             <Input value={comment} onChange={(e) => setComment(e.target.value)} maxLength={2000} />
           </FormField>
           {action === "reject" ? (

@@ -493,8 +493,8 @@ An attendance policy is the rulebook for turning raw punches into a day's result
 
 ### Breaks, caps and lock behaviour
 
-- **Lates to half-day (per month):** After this many late days in a month, the day that reaches the number becomes a half-day. For example, with 3 the third late day is a half-day. Blank turns it off.
-- **Excess-break days to half-day (per month):** The same idea for days where breaks ran too long.
+- **Lates to half-day (per month):** Every time the late days in a month reach a multiple of this number, that day becomes a half-day. For example, with 3 the 3rd, 6th and 9th late days are half-days. Blank turns it off.
+- **Excess-break days to half-day (per month):** The same rule for days where breaks ran too long. With 3, the 3rd, 6th and 9th such days are half-days.
 - **Incomplete at lock time:** What happens to days still incomplete when the attendance period is closed. Treat as absent makes them unpaid. Treat as present makes them paid. Keep incomplete refuses to close the period until someone resolves them.
 - **Early departure requires approval:** Leaving early beyond grace without an approved request is given the harshest early-departure band instead of a graduated one.
 
@@ -514,7 +514,7 @@ When several rules apply on the same day, the harshest result wins: absent, then
 - **Late bands:** A table that turns minutes late, after grace, into a result: none, late, half-day or absent. Optional.
 - **Early departure bands:** The same idea for minutes of leaving early. Optional.
 
-**Example:** The General policy gives 10 minutes grace, treats a missing punch as incomplete, counts the third late day in a month as a half-day, and uses hour bands of under 4 hours absent, 4 to 8 half-day, 8 or more present.
+**Example:** The General policy gives 10 minutes grace, treats a missing punch as incomplete, counts every third late day in a month as a half-day, and uses hour bands of under 4 hours absent, 4 to 8 half-day, 8 or more present.
 
 **Good to know**
 

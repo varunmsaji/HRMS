@@ -320,3 +320,24 @@ def test_indian_mobile_numbers_in_free_text_are_masked(raw: str) -> None:
 )
 def test_other_numbers_are_not_mistaken_for_phone_numbers(raw: str) -> None:
     assert _redact(message=raw)["message"] == raw
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "batch 9503f4ad-1c07-4f4c-965f-1e6960507696 finished",  # a real one this mangled
+        "id ab6960507696",
+        "id 6960507696ab",
+    ],
+)
+def test_digit_runs_inside_identifiers_are_not_phone_numbers(raw: str) -> None:
+    assert _redact(message=raw)["message"] == raw
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["call 9876543210", "+919876543210", "+91 98765 43210", "phone:9876543210", "(9876543210)"],
+)
+def test_phone_numbers_in_text_are_still_redacted(raw: str) -> None:
+    out = _redact(message=raw)["message"]
+    assert "[PHONE]" in out and "98765" not in out
