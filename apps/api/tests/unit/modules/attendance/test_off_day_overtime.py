@@ -203,3 +203,35 @@ def test_split_shift_work_on_a_day_off_ignores_missed_blocks() -> None:
         policy=_policy(split_shift_missed_block_behaviour="ABSENT"),
     )
     assert _pay(result) == ("PRESENT", "1.00", "0.00", "0.00")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"calendar_day_type": "SHUTDOWN"},
+        {"calendar_day_type": "WORKING", "roster_week_off_override": True},
+    ],
+)
+@pytest.mark.parametrize(
+    ("punches", "day_class"),
+    [([(2, "IN"), (5, "OUT")], "NIGHT"), ([(10, "IN"), (12, "OUT")], "NORMAL")],
+)
+def test_night_overtime_on_a_day_off_looks_at_the_hours_actually_worked(
+    overrides: dict[str, Any], punches: list[tuple[int, str]], day_class: str
+) -> None:
+    """All of it is overtime, so night work before the shift's end still counts as night."""
+    result = _off_day(
+        punches, ot_policy=_ot_policy("WINDOW", start=time(22), end=time(6)), **overrides
+    )
+    assert result.ot_day_class == day_class
+
+
+def test_work_before_the_shift_start_on_a_day_off_counts() -> None:
+    result = _off_day([(7, "IN"), (12, "OUT")])
+    assert result.worked_minutes == 300
+    assert result.ot_minutes_detected == 300
+
+
+def test_work_before_the_shift_start_on_a_working_day_still_does_not_count() -> None:
+    result = _off_day([(7, "IN"), (12, "OUT")], calendar_day_type="WORKING")
+    assert result.worked_minutes == 180

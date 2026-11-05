@@ -1246,6 +1246,14 @@ class DayPresence:
     counter_excess_minutes: int
 
 
+def _is_non_operating_off_day(inputs: AttendanceCalculationInput) -> bool:
+    day_type = "WORKING" if _is_half_weekly_off(inputs) else inputs.calendar_day_type
+    not_expected = (
+        day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN") or inputs.roster_week_off_override
+    )
+    return not_expected and not _shift_operates(inputs, day_type)
+
+
 def evaluate_presence_and_breaks(
     inputs: AttendanceCalculationInput, pairing: PairingResult, snapshot: dict[str, Any]
 ) -> DayPresence:
@@ -1256,9 +1264,10 @@ def evaluate_presence_and_breaks(
     )
     cutoff = credit_cutoff_for(inputs, pairing.pairs)
     credit_pairs = clip_pairs_at(pairing.pairs, cutoff)
-    if inputs.shift.shift_type == "FIXED":
+    if inputs.shift.shift_type == "FIXED" and not _is_non_operating_off_day(inputs):
         # Early punch-in allowance is a punch permission, not credited work (see
-        # `clamp_pairs_to_start`). FLEXIBLE/SPLIT shifts have no single start to clamp to.
+        # `clamp_pairs_to_start`). FLEXIBLE/SPLIT shifts have no single start to clamp to, and a
+        # day off the shift does not operate has no start to arrive before.
         credit_pairs = clamp_pairs_to_start(credit_pairs, inputs.scheduled_start)
     _fi, _lo, gross_minutes, gaps = presence_span(credit_pairs, mode=policy.multi_punch_mode)
 
@@ -1996,7 +2005,7 @@ def _evaluate_no_schedule(
     )
 
 
-def _shift_operates(inputs: AttendanceCalculationInput, day_type: str) -> bool:
+def _shift_operates(inputs: AttendanceCalculationInput, day_type: str | None) -> bool:
     assert inputs.shift is not None
     return (
         (day_type == "HOLIDAY" and inputs.shift.operates_on_holiday)
@@ -2281,8 +2290,11 @@ def _evaluate_fixed_or_flex(
         shift=shift,
         policy=inputs.ot_policy,
         timezone=inputs.timezone,
-        # The window end is not the end of a flexible working day; the trailing excess is.
-        scheduled_end=None if flexible_required is not None else inputs.scheduled_end,
+        # The window end is not the end of a flexible working day, and all of a day off is
+        # overtime, not just what follows the shift. The trailing excess is what counts.
+        scheduled_end=None
+        if off_day_work or flexible_required is not None
+        else inputs.scheduled_end,
         last_out=last_out,
         worked_minutes=worked_minutes,
         scheduled_minutes=ot_scheduled_minutes,
@@ -2461,7 +2473,7 @@ def _evaluate_split(
         shift=shift,
         policy=inputs.ot_policy,
         timezone=inputs.timezone,
-        scheduled_end=inputs.scheduled_end,
+        scheduled_end=None if off_day_work else inputs.scheduled_end,
         last_out=last_out,
         worked_minutes=worked_minutes,
         scheduled_minutes=ot_scheduled_minutes,
