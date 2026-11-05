@@ -22,6 +22,7 @@ import 'package:hrms_mobile/features/attendance/presentation/geofences_screen.da
 import 'package:hrms_mobile/features/attendance/presentation/my_calendar_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/regularization_decision_center_screen.dart';
 import 'package:hrms_mobile/features/leave/presentation/leave_decision_center_screen.dart';
+import 'package:hrms_mobile/features/onboarding/presentation/invitation_composer_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_month_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_punch_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/punch_location_flow.dart';
@@ -287,6 +288,27 @@ void main() {
   _golden('regularization_decision_center', (v) => RegularizationDecisionCenterPanel(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRegularizationApprove], overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/regularizations/decision-center': _regularizationDecisionFixture()})),
   ], wrap: true);
+
+  _golden('invitation_composer', (v) => const InvitationComposerScreen(caseId: 'c-1'), permissions: const [onboardingCreate], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {
+      '/onboarding-cases/c-1/invitation/compose': const {
+        'recipient_email': 'asha@example.com',
+        'candidate_name': 'Asha Rao',
+        'invitable': true,
+        'has_active_link': true,
+        'active_link_expires_at': '2026-11-20T06:00:00Z',
+        'default_subject': 'Welcome to Acme',
+        'default_body': 'Hello',
+        'subject_max_length': 200,
+        'body_max_length': 5000,
+        'templates': [],
+      },
+      '/onboarding-cases/c-1/invitation/preview': const {
+        'subject': 'Welcome to Acme, Asha',
+        'editable_body': 'Dear Asha,\n\nWe are delighted you are joining Acme on 1 December.\n\nPlease complete your details here:\n{{onboarding_url}}\n\nThe HR team',
+      },
+    })),
+  ]);
 
   _golden('correction_form_shifts_denied', (v) => RequestListScreen(config: regularizationConfig), overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(

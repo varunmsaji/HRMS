@@ -1,5 +1,6 @@
 import '../../../core/api/api_client.dart';
 import 'public_onboarding_repository.dart' show OnboardingDocument;
+import '../domain/onboarding_invitation.dart';
 
 class OnboardingCase {
   OnboardingCase({
@@ -188,9 +189,29 @@ class OnboardingRepository {
   OnboardingRepository(this._client);
   final ApiClient _client;
 
-  Future<List<OnboardingCase>> listCases() => _client
-      .getList('/onboarding-cases', parseItem: (d) => OnboardingCase.fromJson(d as Map<String, dynamic>))
-      .then((e) => e.data);
+  /// Every case, or those in [status], a page at a time.
+  Future<List<OnboardingCase>> listCases({String? status}) async {
+    final all = <OnboardingCase>[];
+    for (var page = 1; page <= 20; page++) {
+      final env = await _client.getList(
+        '/onboarding-cases',
+        query: PageQuery(page: page, perPage: 100),
+        filters: {if (status != null) 'status': status},
+        parseItem: (d) => OnboardingCase.fromJson(d as Map<String, dynamic>),
+      );
+      all.addAll(env.data);
+      if (!(env.pagination?.hasNext ?? false)) break;
+    }
+    return all;
+  }
+
+  Future<({int total, Map<String, int> byStatus})> getStatusCounts() => _client.get(
+        '/onboarding-cases/status-counts',
+        parse: (d) {
+          final m = d as Map<String, dynamic>;
+          return (total: m['total'] as int, byStatus: (m['by_status'] as Map<String, dynamic>).cast<String, int>());
+        },
+      );
   Future<OnboardingCaseDetail> getCase(String id) => _client.get(
         '/onboarding-cases/$id',
         parse: (d) => OnboardingCaseDetail.fromJson(d as Map<String, dynamic>),
@@ -200,9 +221,31 @@ class OnboardingRepository {
         body: body,
         parse: (d) => OnboardingCase.fromJson(d as Map<String, dynamic>),
       );
-  Future<Map<String, dynamic>> sendInvite(String caseId) => _client.post(
+  /// With no [subject] and [body] the server sends its built-in invitation.
+  Future<Map<String, dynamic>> sendInvite(String caseId, {String? subject, String? body, String? sendRequestId}) => _client.post(
         '/onboarding-cases/$caseId/send-invite',
+        body: subject == null && body == null && sendRequestId == null
+            ? null
+            : {if (subject != null) 'subject': subject, if (body != null) 'body': body, if (sendRequestId != null) 'send_request_id': sendRequestId},
         parse: (d) => d as Map<String, dynamic>,
+      );
+  Future<InvitationCompose> getInvitationCompose(String caseId) => _client.get(
+        '/onboarding-cases/$caseId/invitation/compose',
+        parse: (d) => InvitationCompose.fromJson(d as Map<String, dynamic>),
+      );
+  Future<Map<String, dynamic>> previewInvitation(String caseId, {required String subject, required String body}) => _client.post(
+        '/onboarding-cases/$caseId/invitation/preview',
+        body: {'subject': subject, 'body': body},
+        parse: (d) => d as Map<String, dynamic>,
+      );
+  Future<List<OnboardingMessage>> listMessages(String caseId) => _client.get(
+        '/onboarding-cases/$caseId/messages',
+        parse: (d) => [for (final m in d as List) OnboardingMessage.fromJson(m as Map<String, dynamic>)],
+      );
+  Future<void> cancelCase(String caseId, {String? reason}) => _client.post(
+        '/onboarding-cases/$caseId/cancel',
+        body: {'reason': reason},
+        parse: (_) {},
       );
   Future<List<OnboardingDocument>> listCaseDocuments(String caseId) => _client
       .getList('/onboarding-cases/$caseId/documents', parseItem: (d) => OnboardingDocument.fromJson(d as Map<String, dynamic>))

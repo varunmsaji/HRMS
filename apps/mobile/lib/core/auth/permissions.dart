@@ -18,6 +18,7 @@ const onboardingView = 'ONBOARDING.VIEW';
 const onboardingCreate = 'ONBOARDING.CREATE';
 const onboardingReview = 'ONBOARDING.REVIEW';
 const onboardingActivate = 'ONBOARDING.ACTIVATE';
+const onboardingCancel = 'ONBOARDING.CANCEL';
 
 // Leave (mirrors `apps/api/src/hrms/modules/leave/permissions.py`).
 const leaveBalanceView = 'LEAVE.BALANCE_VIEW';

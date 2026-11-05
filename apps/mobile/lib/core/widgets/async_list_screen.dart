@@ -18,6 +18,7 @@ class AsyncListScreen<T> extends StatefulWidget {
     this.emptyLabel = 'Nothing here yet.',
     this.actions,
     this.searchText,
+    this.header,
   });
 
   final String title;
@@ -33,6 +34,9 @@ class AsyncListScreen<T> extends StatefulWidget {
 
   /// Enables the search bar; returns the text a row is matched against.
   final String Function(T item)? searchText;
+
+  /// Shown above the search bar, whatever the list's state (status tabs, say).
+  final Widget? header;
 
   @override
   State<AsyncListScreen<T>> createState() => AsyncListScreenState<T>();
@@ -109,6 +113,7 @@ class AsyncListScreenState<T> extends State<AsyncListScreen<T>> {
       appBar: AppBar(title: Text(widget.title), actions: widget.actions),
       body: Column(
         children: [
+          if (widget.header != null) widget.header!,
           if (search != null && !_loading && _error == null && _items.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
