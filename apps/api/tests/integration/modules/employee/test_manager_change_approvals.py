@@ -172,14 +172,12 @@ async def test_overtime_pending_record_is_not_re_resolved_by_a_backdated_change(
         await teardown_world(company_id=company_id, user_id=user_id)
 
 
-async def test_overtime_recalculation_restarts_a_partly_approved_chain_characterization(
+async def test_overtime_recalculation_keeps_a_partly_approved_chain_at_hr(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
-    """Characterization of existing recompute semantics (WD-29 decision 2: a PENDING record is
-    fully replaced when its day is recalculated). Unrelated to manager changes, so it is pinned
-    here rather than changed: after the manager approves the first stage of a two-stage chain, a
-    recalculation sends the record back to the MANAGER stage - to the *same* approver, now that
-    the approver is preserved. Whether that restart is wanted is a business decision."""
+    """A recalculation that leaves the detected minutes unchanged does not undo the manager's step
+    of a two-stage chain (N-2, a business decision that replaced the earlier restart). The record
+    keeps its approver, and that manager cannot act on it again."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         world = await build_world(client, headers, ot_chain="MANAGER_THEN_HR")
@@ -197,8 +195,9 @@ async def test_overtime_recalculation_restarts_a_partly_approved_chain_character
         await recalculate_day(client, headers, world)
 
         after = await fetch(client, headers, "ot", pending["id"])
-        assert (after["status"], after["approval_stage"]) == ("PENDING", "MANAGER")
+        assert (after["status"], after["approval_stage"]) == ("PENDING", "HR")
         assert _resolved(after) == a
+        assert (await approve(client, a_headers, "ot", after)).status_code == 403
     finally:
         await teardown_world(company_id=company_id, user_id=user_id)
 
