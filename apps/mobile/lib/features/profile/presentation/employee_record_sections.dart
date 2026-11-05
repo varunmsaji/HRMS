@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart' show ApiClient, PageQuery;
 import '../../../core/api/api_error.dart';
+import '../../../core/api/envelope.dart' show ErrorDetail;
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart';
@@ -82,6 +83,7 @@ class RecordAction {
     this.intro,
     this.destructive = false,
     this.specFor,
+    this.confirmConflict,
   });
 
   /// Shown on the button (and as the form title); may depend on the loaded records.
@@ -102,6 +104,10 @@ class RecordAction {
   final bool destructive;
   final Future<void> Function(ApiClient client, String employeeId, Items items, Map<String, dynamic> payload, Map<String, dynamic> changed) submit;
 
+  /// Offers a way past a refusal the user can knowingly accept: returns the fields to resend with,
+  /// or null to leave the refusal standing. [stale] means they already confirmed an older answer.
+  final Future<Map<String, dynamic>?> Function(BuildContext context, ApiError error, {required bool stale})? confirmConflict;
+
   bool allowed(List<String> permissions) =>
       (permission == null && anyOf.isEmpty) || (permission != null && permissions.contains(permission)) || anyOf.any(permissions.contains);
 }
@@ -120,6 +126,59 @@ Map<String, dynamic> _withoutNulls(Map<String, dynamic> m) => {
     };
 
 /// Effective-dated create: `If-Match` is needed only while a current row exists.
+/// The API refuses a reporting-manager change that leaves pending requests with their current
+/// approver until someone acknowledges them. Same wording as the web
+/// `manager-change-impact-dialog.tsx`; the token ties the acknowledgement to these exact figures.
+Future<Map<String, dynamic>?> confirmManagerChange(BuildContext context, ApiError error, {required bool stale}) async {
+  if (error.status != 409 || error.code != 'MANAGER_CHANGE_REQUIRES_CONFIRMATION') return null;
+  ErrorDetail? detail;
+  for (final d in error.details) {
+    if (d.code == error.code) detail = d;
+  }
+  final impact = detail?.context?['impact'] as Map<String, dynamic>?;
+  final token = detail?.context?['impact_token'] as String?;
+  if (impact == null || token == null) return null;
+  final requests = impact['requests'] as Map<String, dynamic>? ?? const {};
+  Widget row(String label, Object? count, {bool bold = false}) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(children: [
+          Expanded(child: Text(label, style: bold ? const TextStyle(fontWeight: FontWeight.w700) : null)),
+          Text('${count ?? 0}', style: const TextStyle(fontWeight: FontWeight.w700)),
+        ]),
+      );
+  final yes = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Pending approval requests'),
+      content: SingleChildScrollView(
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (stale) ...[
+            Text('The pending requests changed while you were reviewing this change. Please review the updated impact before continuing.', style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+            const SizedBox(height: 12),
+          ],
+          const Text('Changing the reporting manager will not change the approver for existing pending requests. They remain with their current approver. Future requests follow the new reporting manager from the date this takes effect.'),
+          const SizedBox(height: 12),
+          row('Leave requests', requests['leave']),
+          row('Attendance corrections', requests['attendance_regularization']),
+          row('Overtime requests', requests['overtime']),
+          const Divider(),
+          row('Total pending requests', impact['total_pending_requests'], bold: true),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Change Manager Anyway'),
+        ),
+      ],
+    ),
+  );
+  if (yes != true) return null;
+  return {'confirm_pending_request_impact': true, 'pending_impact_token': token};
+}
+
 Future<void> _createRevision(ApiClient client, String employeeId, String path, Items items, Map<String, dynamic> payload) {
   final current = openRow(items);
   return client.post<Object?>('/employees/$employeeId$path', body: payload, ifMatch: current?['version']?.toString(), parse: (_) => null);
@@ -205,6 +264,7 @@ final employeeRecordSections = <RecordSection>[
         choiceKeys: const ['branches', 'departments', 'designations', 'grades', 'employees', 'shifts'],
         intro: 'Anything you leave empty carries forward unchanged from the current assignment.',
         submit: (client, id, items, payload, _) => _createRevision(client, id, '/assignments', items, _withoutNulls(payload)),
+        confirmConflict: confirmManagerChange,
       ),
     ],
     cardTitle: (m) => _range(m, 'effective_from', 'effective_to'),
@@ -536,7 +596,21 @@ class _EmployeeRecordPanelState extends ConsumerState<EmployeeRecordPanel> {
       intro: a.intro,
       loadChoices: a.choiceKeys.isEmpty ? null : () => loadChoices(client, a.choiceKeys),
       submitLabel: a.destructive ? a.label(_items) : null,
-      onSubmit: (payload, changed) => a.submit(client, widget.employeeId, _items, payload, changed),
+      onSubmit: (payload, changed) async {
+        var body = payload;
+        var confirmed = false;
+        while (true) {
+          try {
+            return await a.submit(client, widget.employeeId, _items, body, changed);
+          } on ApiError catch (e) {
+            if (!mounted || a.confirmConflict == null) rethrow;
+            final extra = await a.confirmConflict!(context, e, stale: confirmed);
+            if (extra == null) rethrow;
+            body = {...payload, ...extra};
+            confirmed = true;
+          }
+        }
+      },
     );
     if (saved && mounted) {
       _toast('Saved.');

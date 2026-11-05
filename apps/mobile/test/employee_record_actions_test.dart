@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/api/api_error.dart';
+import 'package:hrms_mobile/core/api/envelope.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/profile/presentation/employee_record_sections.dart';
@@ -24,6 +26,8 @@ Future<FakeApiClient> _pump(WidgetTester tester, String section, List<String> pe
 }
 
 void main() {
+  managerChangeTests();
+
   testWidgets('with no permission there are no write buttons', (tester) async {
     await _pump(tester, 'Employment', const [], {'/employees/emp-1/employments': []});
     expect(find.text('Create first employment'), findsNothing);
@@ -163,5 +167,126 @@ void main() {
     });
     expect(find.text('Delete'), findsNothing);
     expect(find.text('Add dependent / nominee'), findsNothing);
+  });
+}
+
+/// The API's real refusal for a manager change with pending requests: it answers 409 until the
+/// current token comes back.
+class _ManagerChangeApi extends FakeApiClient {
+  _ManagerChangeApi({required this.tokens}) : super(lists: {'/employees/emp-1/assignments': [{'id': 'as-1', 'version': 3, 'effective_from': '2026-01-01', 'effective_to': null}]});
+
+  /// The token each attempt expects; once these run out, the write succeeds.
+  final List<String> tokens;
+  int attempts = 0;
+
+  @override
+  Future<T> post<T>(String path, {dynamic body, required T Function(dynamic) parse, bool authenticated = true, String? ifMatch, Map<String, String>? headers, String? idempotencyKey}) async {
+    calls.add((method: 'POST', path: path, body: body, ifMatch: ifMatch));
+    final expected = attempts < tokens.length ? tokens[attempts] : null;
+    attempts++;
+    if (expected != null && (body as Map)['pending_impact_token'] != expected) {
+      throw ApiError(status: 409, code: 'MANAGER_CHANGE_REQUIRES_CONFIRMATION', message: 'This employee has 3 pending request(s) that will stay with their current approver. Confirm to change the reporting manager.', details: [
+        ErrorDetail(field: 'reporting_manager_id', code: 'MANAGER_CHANGE_REQUIRES_CONFIRMATION', message: 'Confirm to change the reporting manager.', context: {
+          'impact': {'total_pending_requests': 3, 'requests': {'leave': 2, 'attendance_regularization': 1, 'overtime': 0}},
+          'impact_token': expected,
+        }),
+      ]);
+    }
+    return parse(null);
+  }
+}
+
+void managerChangeTests() {
+  Future<void> open(WidgetTester tester, FakeApiClient api) async {
+    tester.view.physicalSize = const Size(800, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [apiClientProvider.overrideWithValue(api), fakeAuth([employeeTransfer])],
+      child: MaterialApp(home: Scaffold(body: EmployeeRecordPanel(employeeId: 'emp-1', section: _section('Assignment')))),
+    ));
+    await tester.pumpAndSettle();
+  }
+
+  final action = _section('Assignment').actions.single;
+  const payload = {'change_type': 'MANAGER_CHANGE', 'effective_from': '2026-12-01', 'reporting_manager_id': 'mgr-2'};
+
+  Future<ApiError> refusal(_ManagerChangeApi api) async {
+    try {
+      await action.submit(api, 'emp-1', const [], payload, const {});
+    } on ApiError catch (e) {
+      return e;
+    }
+    throw StateError('expected a refusal');
+  }
+
+  Future<Future<Map<String, dynamic>?>> ask(WidgetTester tester, ApiError e, {bool stale = false}) async {
+    late BuildContext context;
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (c) {
+      context = c;
+      return const SizedBox();
+    })));
+    final answer = action.confirmConflict!(context, e, stale: stale);
+    await tester.pumpAndSettle();
+    return answer;
+  }
+
+  group('a manager change with pending requests', () {
+    testWidgets('shows the same figures as the web, and confirming returns the token', (tester) async {
+      final answer = await ask(tester, await refusal(_ManagerChangeApi(tokens: ['t-1'])));
+      expect(find.text('Pending approval requests'), findsOneWidget);
+      expect(find.text('Total pending requests'), findsOneWidget);
+      expect(find.text('3'), findsOneWidget);
+      await tester.tap(find.text('Change Manager Anyway'));
+      await tester.pumpAndSettle();
+      expect(await answer, {'confirm_pending_request_impact': true, 'pending_impact_token': 't-1'});
+    });
+
+    testWidgets('cancelling leaves the refusal standing', (tester) async {
+      final answer = await ask(tester, await refusal(_ManagerChangeApi(tokens: ['t-1'])));
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(await answer, isNull);
+    });
+
+    testWidgets('says so when the requests changed after the first confirmation', (tester) async {
+      final answer = await ask(tester, await refusal(_ManagerChangeApi(tokens: ['t-2'])), stale: true);
+      expect(find.textContaining('changed while you were reviewing'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await answer;
+    });
+
+    testWidgets('any other refusal is not offered as confirmable', (tester) async {
+      final answer = await ask(tester, ApiError(status: 409, code: 'STALE_RESOURCE', message: 'x'));
+      expect(find.text('Pending approval requests'), findsNothing);
+      expect(await answer, isNull);
+    });
+
+    testWidgets('confirming through the panel resends with the token, keeping the original fields', (tester) async {
+      final api = _ManagerChangeApi(tokens: ['t-1']);
+      await open(tester, api);
+      await tester.tap(find.text('Record a change'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Manager change').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextField, '').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Change Manager Anyway'));
+      await tester.pumpAndSettle();
+      expect(api.calls.length, 2);
+      final retry = api.calls.last.body as Map;
+      expect(retry['change_type'], 'MANAGER_CHANGE');
+      expect(retry['confirm_pending_request_impact'], true);
+      expect(retry['pending_impact_token'], 't-1');
+      expect(api.calls.last.ifMatch, '3');
+      expect(find.text('Saved.'), findsOneWidget);
+    });
   });
 }
