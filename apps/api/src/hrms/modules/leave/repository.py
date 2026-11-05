@@ -500,6 +500,16 @@ class LeaveLedgerRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none() is not None
 
+    async def get_id_with_reference(
+        self, session: AsyncSession, *, company_id: UUID, entry_type: str, reference_id: UUID
+    ) -> UUID | None:
+        stmt = select(LeaveLedgerEntry.id).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.entry_type == entry_type,
+            LeaveLedgerEntry.reference_id == reference_id,
+        )
+        return (await session.execute(stmt)).scalars().first()
+
     async def sum_for_reference(
         self,
         session: AsyncSession,
