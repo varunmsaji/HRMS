@@ -1,9 +1,10 @@
-import 'package:flutter/widgets.dart' show Column;
+import 'package:flutter/widgets.dart' show BuildContext, Column;
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/resource/resource_config.dart';
 import '../../../core/resource/sub_resource_section.dart';
 import '../../../core/time.dart';
+import '../presentation/change_impact_screen.dart';
 import '../presentation/day_type_lookup.dart';
 
 /// Resource configs for the organisation module — each spec mirrors a `*Create`/`*Update` schema
@@ -147,6 +148,32 @@ const holidaySpec = FormSpec(name: 'holiday', label: 'Holiday', defaults: {'holi
   _active,
 ]);
 
+Future<bool> _review(BuildContext context, String title, Map<String, dynamic> change) => reviewCalendarChange(context, title: title, change: change);
+
+/// Adding, editing or removing a holiday changes what days mean for employees, so it is reviewed
+/// first, as on the web (`holiday-calendars/[id]/page.tsx`).
+SubResourceReview _holidayReview(String calendarId) => SubResourceReview(
+      create: (context, payload) => _review(context, 'Add holiday', {'change_type': 'HOLIDAY_CREATE', 'holiday_calendar_id': calendarId, 'body': payload}),
+      update: (context, row, changed) => _review(context, 'Save holiday', {'change_type': 'HOLIDAY_UPDATE', 'holiday_id': row['id'], 'expected_version': row['version'], 'patch': changed}),
+      toggle: (context, row) => _review(context, row['is_active'] == false ? 'Restore holiday' : 'Delete holiday', {
+        'change_type': 'HOLIDAY_UPDATE',
+        'holiday_id': row['id'],
+        'expected_version': row['version'],
+        'patch': {'is_active': row['is_active'] == false},
+      }),
+    );
+
+SubResourceReview _exceptionReview(String calendarId) => SubResourceReview(
+      create: (context, payload) => _review(context, 'Add exception', {'change_type': 'EXCEPTION_CREATE', 'work_calendar_id': calendarId, 'body': payload}),
+      update: (context, row, changed) => _review(context, 'Save exception', {'change_type': 'EXCEPTION_UPDATE', 'exception_id': row['id'], 'expected_version': row['version'], 'patch': changed}),
+      toggle: (context, row) => _review(context, row['is_active'] == false ? 'Reactivate exception' : 'Deactivate exception', {
+        'change_type': 'EXCEPTION_UPDATE',
+        'exception_id': row['id'],
+        'expected_version': row['version'],
+        'patch': {'is_active': row['is_active'] == false},
+      }),
+    );
+
 final holidayCalendarResource = ResourceConfig(
   title: 'Holiday Calendars',
   singular: 'Holiday calendar',
@@ -155,6 +182,10 @@ final holidayCalendarResource = ResourceConfig(
   rowTitle: (r) => r['name'] as String,
   rowSubtitle: (r) => _join([r['kind'], r['valid_from'] != null ? '${r['valid_from']} → ${r['valid_to'] ?? 'open'}' : null]),
   manage: orgCalendarManage,
+  // Validity dates decide which holidays apply to employees; a rename does not.
+  reviewEdit: (context, row, changed) async => changed.containsKey('valid_from') || changed.containsKey('valid_to')
+      ? _review(context, 'Save holiday calendar', {'change_type': 'HOLIDAY_CALENDAR_UPDATE', 'holiday_calendar_id': row['id'], 'expected_version': row['version'], 'patch': changed})
+      : null,
   detailExtras: (context, row, reload) => SubResourceSection(
     title: 'Holidays',
     singular: 'holiday',
@@ -165,6 +196,7 @@ final holidayCalendarResource = ResourceConfig(
     rowTitle: (h) => '${h['date']} · ${h['name']}',
     rowSubtitle: (h) => _join([holidayTypeLabels[h['holiday_type']] ?? h['holiday_type'], h['is_paid'] == true ? 'paid' : 'unpaid', h['is_working'] == true ? 'working' : null]),
     emptyLabel: 'No holidays in this calendar yet.',
+    review: _holidayReview(row['id'] as String),
   ),
 );
 
@@ -201,6 +233,10 @@ final workCalendarResource = ResourceConfig(
   rowTitle: (r) => r['name'] as String,
   rowSubtitle: (r) => r['code'] as String?,
   manage: orgCalendarManage,
+  // These change what days mean for employees; a rename does not.
+  reviewEdit: (context, row, changed) async => const ['holiday_calendar_ids', 'weekly_off_pattern_id', 'restricted_holidays_are_off_by_default'].any(changed.containsKey)
+      ? _review(context, 'Save work calendar', {'change_type': 'WORK_CALENDAR_UPDATE', 'work_calendar_id': row['id'], 'expected_version': row['version'], 'patch': changed})
+      : null,
   detailExtras: (context, row, reload) => Column(children: [
     SubResourceSection(
       title: 'Exceptions',
@@ -212,6 +248,7 @@ final workCalendarResource = ResourceConfig(
       rowTitle: (e) => '${e['exception_date']} · ${exceptionTypeLabels[e['exception_type']] ?? e['exception_type']}',
       rowSubtitle: (e) => _join([e['name'], e['reason']]),
       emptyLabel: 'No exceptions yet.',
+      review: _exceptionReview(row['id'] as String),
     ),
     DayTypeLookup(calendarId: row['id'] as String),
   ]),
