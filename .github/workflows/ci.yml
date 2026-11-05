@@ -1,10 +1,10 @@
 name: CI
 
+# Runs once for each push to an open pull request. Changes reach `main` only through a pull request
+# (see AGENTS.md), so a separate run on `main` after the merge would repeat the same checks.
 on:
-  push:
-    branches: [main, develop]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
 jobs:
   api:
