@@ -1,0 +1,64 @@
+name: Auto-merge
+
+# Merges the pull request from `test` to `main` once CI has passed on its latest commit.
+#
+# `workflow_run` always runs this file as it is on `main`, so a pull request cannot change the rules
+# that decide whether it gets merged. No step checks out or runs code from the pull request.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_branch == 'test' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Merge if nothing needs a person to look at it
+        run: |
+          pr=$(gh pr list --repo "$REPO" --head test --base main --state open \
+            --json number,headRefOid --jq '.[0] // empty')
+          if [ -z "$pr" ]; then
+            echo "No open pull request from test to main."
+            exit 0
+          fi
+          number=$(jq -r .number <<<"$pr")
+          head_sha=$(jq -r .headRefOid <<<"$pr")
+
+          # A newer push has its own CI run, which decides for that commit.
+          if [ "$head_sha" != "$TESTED_SHA" ]; then
+            echo "PR #$number moved on from $TESTED_SHA to $head_sha. Leaving it."
+            exit 0
+          fi
+
+          # These can weaken the checks or are hard to undo, so a person merges them.
+          sensitive=$(gh api --paginate "repos/$REPO/pulls/$number/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' \
+            | grep -E '^(\.github/|\.gitleaks\.toml$|AGENTS\.md$|CLAUDE\.md$|apps/api/alembic/)' \
+            | sort -u || true)
+          if [ -n "$sensitive" ]; then
+            gh pr comment "$number" --repo "$REPO" --body "$(printf 'CI passed, but this was not merged automatically because it changes:\n\n```\n%s\n```\n\nPlease review and merge it yourself.' "$sensitive")"
+            exit 0
+          fi
+
+          # --match-head-commit refuses the merge if anything landed after the tested commit.
+          gh pr merge "$number" --repo "$REPO" --merge --match-head-commit "$TESTED_SHA"
+
+          merge_sha=$(gh pr view "$number" --repo "$REPO" --json mergeCommit --jq .mergeCommit.oid)
+          # Bring `test` level with `main`. This only fast-forwards, so it fails harmlessly if
+          # someone pushed to `test` in the meantime.
+          gh api -X PATCH "repos/$REPO/git/refs/heads/test" -f sha="$merge_sha" -F force=false >/dev/null \
+            || echo "::warning::test has newer commits. Run: git merge origin/main on test."

@@ -7,6 +7,7 @@ These rules apply to every AI agent and every person working here.
 - `main` is the release branch. Nobody commits or pushes to it directly.
 - `test` is the working branch. All edits happen here.
 - Changes reach `main` only through a pull request from `test`.
+- A push to `main` from this machine is refused by a local git hook. Do not bypass it.
 
 ## Before you start
 
@@ -27,18 +28,37 @@ These rules apply to every AI agent and every person working here.
 
 1. Run the checks for the apps you changed. See `.github/workflows/ci.yml` for the commands.
 2. Push `test` and open a pull request from `test` to `main`, or update the one already open.
-3. Report the CI result to the user, including any failures.
-4. Do not merge until the user says so. Approval for one pull request does not carry over to the next.
-5. Merge with a merge commit (`gh pr merge --merge`). Do not squash or rebase: that makes `test` and
-   `main` drift apart and causes false conflicts on the next pull request.
-6. After the merge, bring `test` back in line:
+   CI runs on every push while the pull request is open.
+3. When CI passes on the latest commit, `.github/workflows/auto-merge.yml` merges the pull request and
+   brings `test` level with `main`. Do not merge it yourself.
+4. If CI fails, fix the cause on `test` and push again. Report the failure to the user if you cannot
+   fix it.
+5. After the merge, run `git pull --ff-only origin test` before starting anything new.
 
-   ```bash
-   git checkout test
-   git pull --ff-only origin test
-   git merge --ff-only origin/main
-   git push origin test
-   ```
+### Changes a person must merge
+
+CI passing does not merge a pull request that changes any of these, because they can weaken the checks
+or are hard to undo. Tell the user it is waiting for them, and never merge it yourself:
+
+- `.github/`
+- `.gitleaks.toml`
+- `AGENTS.md` and `CLAUDE.md`
+- `apps/api/alembic/` (database migrations)
+
+The user merges with a merge commit (`gh pr merge --merge`), not squash or rebase, which make `test`
+and `main` drift apart. Then bring `test` level:
+
+```bash
+git checkout test
+git pull --ff-only origin test
+git merge --ff-only origin/main
+git push origin test
+```
+
+### Passing CI is not the same as ready to release
+
+CI does not click through the web app or run the mobile app on a device. Merging to `main` does not
+deploy anything, and it must stay that way: the user tries the app before releasing it.
 
 Do not delete `test`.
 
