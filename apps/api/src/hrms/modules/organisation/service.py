@@ -4626,6 +4626,13 @@ class OrganisationService:
         now = datetime.now(UTC)
         before_read: PolicyAssignmentRead | None = None
         if current is not None:
+            # Staleness first: a date judged against a row the caller has never seen would only
+            # send them to fix the wrong thing.
+            if expected_version is not None and expected_version != current.version:
+                raise StaleResourceError(
+                    "This assignment has been modified by another request",
+                    current=policy_assignment_to_audit_dict(policy_assignment_to_read(current)),
+                )
             if body.effective_from <= current.effective_from:
                 raise ValidationError(
                     "effective_from must be after the current assignment's effective_from",

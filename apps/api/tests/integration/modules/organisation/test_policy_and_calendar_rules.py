@@ -194,6 +194,40 @@ async def test_policy_assignment_chain_rules(client: AsyncClient) -> None:
         await wipe_tenant(company_id=company_id, user_id=user_id)
 
 
+async def test_stale_assignment_is_reported_as_stale_whatever_its_date(client: AsyncClient) -> None:
+    """Someone assigned a later date first. The stale caller must hear that it is stale, not that
+    its date is invalid against a row it has never seen."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        base = await _create_work_calendar(client, headers, name="Base")
+        first = await _assign(client, headers, _body("WORK_CALENDAR", base["id"], "2027-01-01"))
+        version = first.json()["data"]["version"]
+        late = await _create_work_calendar(client, headers, name="Late")
+        early = await _create_work_calendar(client, headers, name="Early")
+
+        winner = await _assign(
+            client, headers, _body("WORK_CALENDAR", late["id"], "2027-06-01"), version
+        )
+        assert winner.status_code == 201, winner.text
+        loser = await _assign(
+            client, headers, _body("WORK_CALENDAR", early["id"], "2027-02-01"), version
+        )
+        assert loser.status_code == 409, loser.text
+        assert loser.json()["error"]["code"] == "STALE_RESOURCE"
+
+        # With the current version the same date really is invalid.
+        fresh = await _assign(
+            client,
+            headers,
+            _body("WORK_CALENDAR", early["id"], "2027-02-01"),
+            winner.json()["data"]["version"],
+        )
+        assert fresh.status_code == 422, fresh.text
+        assert fresh.json()["error"]["code"] == "INVALID_EFFECTIVE_FROM"
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
 async def test_parallel_policy_assignments_have_a_single_winner(client: AsyncClient) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:
