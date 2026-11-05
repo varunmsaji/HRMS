@@ -166,6 +166,63 @@ void main() {
       expect(call.body, {'reviewer_comment': 'ok'});
     });
 
+    group('overtime minutes', () {
+      Map<String, dynamic> ot({String chain = 'HR', String stage = 'HR'}) => {
+            'id': 'o1',
+            'version': 2,
+            'status': 'PENDING',
+            'employee_id': 'emp-2',
+            'attendance_date': '2026-10-01',
+            'minutes_detected': 120,
+            'minutes_approved': 0,
+            'approval_chain': chain,
+            'approval_stage': stage,
+            'actions': const [],
+          };
+      Future<FakeApiClient> pumpOt(WidgetTester tester, Map<String, dynamic> row) async {
+        final api = _api(objects: {'/overtime/o1': row});
+        await _pump(tester, api, [attendanceOvertimeApprove], RequestDetailScreen(config: overtimeConfig, requestId: 'o1'), employeeId: 'emp-1');
+        await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+        await tester.pumpAndSettle();
+        return api;
+      }
+
+      testWidgets('approving as detected sends no minutes', (tester) async {
+        final api = await pumpOt(tester, ot());
+        expect(find.text('Minutes to approve', findRichText: true), findsOneWidget);
+        await tester.tap(find.widgetWithText(FilledButton, 'Approve').last);
+        await tester.pumpAndSettle();
+        expect(api.calls.single.body, <String, dynamic>{});
+      });
+
+      testWidgets('approving fewer minutes sends them with the comment', (tester) async {
+        final api = await pumpOt(tester, ot());
+        await tester.enterText(find.byType(TextField).first, '60');
+        await tester.enterText(find.byType(TextField).last, 'Stayed one hour');
+        await tester.tap(find.widgetWithText(FilledButton, 'Approve').last);
+        await tester.pumpAndSettle();
+        expect(api.calls.single.body, {'reviewer_comment': 'Stayed one hour', 'minutes_approved': 60});
+      });
+
+      testWidgets('changing minutes needs a comment, and they cannot exceed what was detected', (tester) async {
+        final api = await pumpOt(tester, ot());
+        await tester.enterText(find.byType(TextField).first, '60');
+        await tester.tap(find.widgetWithText(FilledButton, 'Approve').last);
+        await tester.pumpAndSettle();
+        expect(find.text('Add a comment explaining why the minutes were changed.'), findsOneWidget);
+        await tester.enterText(find.byType(TextField).first, '121');
+        await tester.tap(find.widgetWithText(FilledButton, 'Approve').last);
+        await tester.pumpAndSettle();
+        expect(find.text('Enter whole minutes from 1 to 120. To pay nothing, reject instead.'), findsOneWidget);
+        expect(api.calls, isEmpty);
+      });
+
+      testWidgets('the manager step of a two-step chain does not offer minutes', (tester) async {
+        await pumpOt(tester, ot(chain: 'MANAGER_THEN_HR', stage: 'MANAGER'));
+        expect(find.text('Minutes to approve', findRichText: true), findsNothing);
+      });
+    });
+
     testWidgets('rejecting sends comment and reason', (tester) async {
       final api = await pumpDetail(tester, _reg(), [attendanceRegularizationApprove]);
       await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));

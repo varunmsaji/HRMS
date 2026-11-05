@@ -1985,12 +1985,14 @@ def regularization_request_to_audit_dict(read: RegularizationRequestRead) -> dic
 
 
 class OvertimeReviewInput(BaseModel):
-    """Body for approve/reject — identical shape to `RegularizationReviewInput`."""
+    """Body for approve/reject. `minutes_approved` lets the final approver pay less than was
+    detected; omitted means all of it. To pay nothing, reject instead."""
 
     model_config = ConfigDict(extra="forbid")
 
     reviewer_comment: str | None = None
     rejection_reason: str | None = None
+    minutes_approved: int | None = Field(default=None, ge=1)
 
 
 class OvertimeActionRead(BaseModel):

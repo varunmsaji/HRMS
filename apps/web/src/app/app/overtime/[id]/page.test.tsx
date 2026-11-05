@@ -178,6 +178,87 @@ describe("OvertimeDetailPage", () => {
     expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: "Overtime approved" }));
   });
 
+  it("approves fewer minutes with a comment", async () => {
+    mockedGet.mockResolvedValue({ ...pendingRecord, employee_id: "someone-else" });
+    mockedPost.mockResolvedValue({
+      ...pendingRecord,
+      status: "APPROVED",
+      approval_stage: null,
+      minutes_approved: 60,
+    });
+    const user = userEvent.setup();
+    render(<OvertimeDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    const minutes = within(dialog).getByLabelText(/minutes to approve/i);
+    expect(minutes).toHaveValue(120);
+    await user.clear(minutes);
+    await user.type(minutes, "60");
+    await user.type(within(dialog).getByLabelText(/comment/i), "Stayed one hour");
+    await user.click(within(dialog).getByRole("button", { name: /^approve$/i }));
+
+    await waitFor(() => {
+      expect(mockedPost).toHaveBeenCalledWith(
+        "/overtime/ot-1/approve",
+        expect.objectContaining({ minutes_approved: 60, reviewer_comment: "Stayed one hour" }),
+        { ifMatch: "1" },
+      );
+    });
+  });
+
+  it("does not send minutes when they are left as detected", async () => {
+    mockedGet.mockResolvedValue({ ...pendingRecord, employee_id: "someone-else" });
+    mockedPost.mockResolvedValue({ ...pendingRecord, status: "APPROVED", approval_stage: null });
+    const user = userEvent.setup();
+    render(<OvertimeDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^approve$/i }));
+
+    await waitFor(() => expect(mockedPost).toHaveBeenCalled());
+    expect(mockedPost.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ minutes_approved: undefined }),
+    );
+  });
+
+  it.each([
+    ["more than detected", "121", "Stayed", /whole minutes from 1 to 120/i],
+    ["zero", "0", "Stayed", /whole minutes from 1 to 120/i],
+    ["changed without a comment", "60", "", /add a comment/i],
+  ])("refuses minutes that are %s", async (_name, entered, comment, message) => {
+    mockedGet.mockResolvedValue({ ...pendingRecord, employee_id: "someone-else" });
+    const user = userEvent.setup();
+    render(<OvertimeDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    const minutes = within(dialog).getByLabelText(/minutes to approve/i);
+    await user.clear(minutes);
+    await user.type(minutes, entered);
+    if (comment) await user.type(within(dialog).getByLabelText(/comment/i), comment);
+    await user.click(within(dialog).getByRole("button", { name: /^approve$/i }));
+
+    expect(await within(dialog).findByText(message)).toBeInTheDocument();
+    expect(mockedPost).not.toHaveBeenCalled();
+  });
+
+  it("does not offer minutes at the manager step of a two-step chain", async () => {
+    mockedGet.mockResolvedValue({
+      ...pendingRecord,
+      employee_id: "someone-else",
+      approval_chain: "MANAGER_THEN_HR",
+      approval_stage: "MANAGER",
+    });
+    const user = userEvent.setup();
+    render(<OvertimeDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^approve$/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByLabelText(/minutes to approve/i)).not.toBeInTheDocument();
+  });
+
   it("shows a self-approval error message from the backend", async () => {
     mockedGet.mockResolvedValue({ ...pendingRecord, employee_id: "someone-else" });
     mockedPost.mockRejectedValue(

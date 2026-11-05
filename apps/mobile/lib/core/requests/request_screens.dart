@@ -312,6 +312,8 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
   Future<void> _review(Rec r, {required bool approve}) async {
     final comment = TextEditingController();
     final rejection = TextEditingController();
+    final maxMinutes = approve ? _c.editableMinutes?.call(r) : null;
+    final minutes = TextEditingController(text: maxMinutes?.toString() ?? '');
     String? formError;
     final ok = await showDialog<bool>(
       context: context,
@@ -320,7 +322,15 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
           title: Text('${approve ? 'Approve' : 'Reject'} ${_c.singular.toLowerCase()}'),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              AuthFormField(label: 'Comment', description: 'Optional, visible to the employee.', child: TextField(controller: comment)),
+              if (maxMinutes != null) ...[
+                AuthFormField(
+                  label: 'Minutes to approve',
+                  description: '$maxMinutes detected. You can approve fewer, not more.',
+                  child: TextField(controller: minutes, keyboardType: TextInputType.number),
+                ),
+                const SizedBox(height: 12),
+              ],
+              AuthFormField(label: 'Comment', description: maxMinutes != null ? 'Required if you change the minutes. Visible to the employee.' : 'Optional, visible to the employee.', child: TextField(controller: comment)),
               if (!approve) ...[const SizedBox(height: 12), AuthFormField(label: 'Rejection reason', child: TextField(controller: rejection))],
               if (formError != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(formError!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
             ]),
@@ -330,11 +340,22 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
             FilledButton(
               style: approve ? null : FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
               onPressed: () async {
+                final entered = int.tryParse(minutes.text.trim());
+                final minutesChanged = maxMinutes != null && entered != maxMinutes;
+                if (minutesChanged && (entered == null || entered < 1 || entered > maxMinutes)) {
+                  setLocal(() => formError = 'Enter whole minutes from 1 to $maxMinutes. To pay nothing, reject instead.');
+                  return;
+                }
+                if (minutesChanged && comment.text.trim().isEmpty) {
+                  setLocal(() => formError = 'Add a comment explaining why the minutes were changed.');
+                  return;
+                }
                 try {
                   final updated = await _client.post<Rec>(
                     '$_url/${approve ? 'approve' : 'reject'}',
                     body: {
                       if (comment.text.trim().isNotEmpty) 'reviewer_comment': comment.text.trim(),
+                      if (minutesChanged) 'minutes_approved': entered,
                       if (!approve && rejection.text.trim().isNotEmpty) 'rejection_reason': rejection.text.trim(),
                     },
                     ifMatch: r['version'].toString(),

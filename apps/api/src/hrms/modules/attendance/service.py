@@ -6039,6 +6039,32 @@ class OvertimeRecordService:
             current=overtime_record_to_audit_dict(current_read),
         )
 
+    @staticmethod
+    def _minutes_to_approve(
+        row: OvertimeRecord, body: OvertimeReviewInput, *, is_final_stage: bool
+    ) -> int:
+        """The detected minutes unless the final approver entered fewer. Changing them changes
+        pay, so it needs a reason, which the record and the audit log keep."""
+        minutes = body.minutes_approved
+        if minutes is None:
+            return row.minutes_detected
+        if not is_final_stage:
+            raise ValidationError(
+                "Minutes can only be changed at the final approval step",
+                code="OVERTIME_MINUTES_NOT_FINAL_STAGE",
+            )
+        if minutes > row.minutes_detected:
+            raise ValidationError(
+                "Approved minutes cannot be more than the minutes detected",
+                code="OVERTIME_MINUTES_ABOVE_DETECTED",
+            )
+        if minutes < row.minutes_detected and not (body.reviewer_comment or "").strip():
+            raise ValidationError(
+                "Add a comment explaining why the minutes were changed",
+                code="OVERTIME_MINUTES_CHANGE_NEEDS_COMMENT",
+            )
+        return minutes
+
     @logged_operation("attendance.overtime.approve")
     async def approve(
         self,
@@ -6067,11 +6093,14 @@ class OvertimeRecordService:
         is_final_stage = not (
             row.approval_chain == "MANAGER_THEN_HR" and row.approval_stage == "MANAGER"
         )
+        minutes_approved = self._minutes_to_approve(row, body, is_final_stage=is_final_stage)
         values: dict[str, Any] = (
             {
                 "status": "APPROVED",
                 "approval_stage": None,
-                "minutes_approved": row.minutes_detected,
+                "minutes_approved": minutes_approved,
+                # A comp-off day earns what was approved, not what was detected.
+                "comp_off_minutes": minutes_approved if row.comp_off_minutes > 0 else 0,
                 "reviewed_by_user_id": actor_user_id,
                 "reviewed_at": now,
                 "reviewer_comment": body.reviewer_comment,
