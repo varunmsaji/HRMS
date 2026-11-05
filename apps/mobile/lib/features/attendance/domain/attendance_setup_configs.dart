@@ -59,7 +59,7 @@ final attendancePolicySetup = PolicySetupConfig(
     SetupTemplate(
       key: 'strict',
       label: 'Strict attendance',
-      description: 'No grace, 8 hours for a full day. The third late day in a month is a half-day, and leaving early needs approval.',
+      description: 'No grace, 8 hours for a full day. Every third late day in a month is a half-day, and leaving early needs approval.',
       defaultName: 'Strict attendance',
       values: {'lates_to_half_day_count': 3, 'early_departure_requires_approval': true, 'hour_bands': _hourBands(480)},
     ),

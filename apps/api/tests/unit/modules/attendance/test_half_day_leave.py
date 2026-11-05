@@ -1,7 +1,9 @@
 """Half-day leave: the worked half is judged on its own (D-2), with lateness and early departure
 measured from the middle of the shift (D-3). No DB/HTTP."""
 
+from dataclasses import replace
 from datetime import UTC, datetime, time
+from uuid import uuid4
 
 import pytest
 from tests.unit.modules.attendance.test_calculation import _base_input, _policy, _punch, _shift
@@ -10,6 +12,7 @@ from hrms.modules.attendance.calculation import (
     AttendanceCalculationResult,
     BandData,
     LeaveOverlayEntry,
+    ShiftBreakData,
     ShiftDutyBlockData,
     evaluate_day,
 )
@@ -170,3 +173,47 @@ def test_split_shift_still_pays_the_half_for_any_work() -> None:
         shift=_shift(shift_type="SPLIT", duty_blocks=blocks),
     )
     assert _pay(result) == ("HALF_DAY", "1.00", "0.00")
+
+
+_LUNCH = ShiftBreakData(
+    id=uuid4(),
+    break_kind="FIXED_WINDOW",
+    start_time=time(13, 0),
+    end_time=time(14, 0),
+    window_start=None,
+    window_end=None,
+    min_minutes=None,
+    max_minutes=None,
+    is_paid=False,
+    is_mandatory=False,
+)
+
+
+def test_first_half_leave_returning_when_lunch_ends_is_on_time() -> None:
+    result = _day([(14, 0, "IN"), (18, 0, "OUT")], shift=_shift(breaks=[_LUNCH]))
+    assert result.is_late is False
+    assert _pay(result) == ("HALF_DAY", "1.00", "0.00")
+
+
+def test_first_half_leave_counts_lateness_from_the_end_of_lunch() -> None:
+    result = _day([(14, 16, "IN"), (18, 0, "OUT")], shift=_shift(breaks=[_LUNCH]))
+    assert result.late_minutes == 1
+
+
+def test_second_half_leave_leaving_when_lunch_starts_is_not_early() -> None:
+    result = _day(
+        [(9, 0, "IN"), (13, 0, "OUT")],
+        half="SECOND",
+        shift=_shift(breaks=[_LUNCH]),
+        policy=_policy(
+            grace_in_minutes=15, grace_out_minutes=15, early_departure_requires_approval=True
+        ),
+    )
+    assert result.is_early_out is False
+    assert _pay(result) == ("HALF_DAY", "1.00", "0.00")
+
+
+def test_a_break_away_from_the_midpoint_does_not_move_the_split() -> None:
+    tea = replace(_LUNCH, start_time=time(11, 0), end_time=time(11, 15))
+    result = _day([(14, 0, "IN"), (18, 0, "OUT")], shift=_shift(breaks=[tea]))
+    assert result.late_minutes == 15

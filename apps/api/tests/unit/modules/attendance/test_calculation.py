@@ -225,6 +225,11 @@ def test_presence_span_first_in_last_out_includes_gap() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(("value", "expected"), [(14, 0), (15, 30), (45, 60), (75, 90), (105, 120)])
+def test_round_minutes_nearest_rounds_midpoints_up(value: int, expected: int) -> None:
+    assert round_minutes(value, mode="NEAREST", minutes=30) == expected
+
+
 def test_round_minutes_up_down_nearest() -> None:
     assert round_minutes(52, mode="UP", minutes=15) == 60
     assert round_minutes(52, mode="DOWN", minutes=15) == 45
@@ -1061,6 +1066,30 @@ def test_cumulative_lateness_forces_half_day_once_threshold_crossed() -> None:
     assert result.attendance_status == "HALF_DAY"
 
 
+@pytest.mark.parametrize(
+    ("prior_late_days", "expected"),
+    [
+        (0, "PRESENT"),
+        (1, "PRESENT"),
+        (2, "HALF_DAY"),
+        (3, "PRESENT"),
+        (4, "PRESENT"),
+        (5, "HALF_DAY"),
+        (8, "HALF_DAY"),
+    ],
+)
+def test_cumulative_lateness_fires_on_every_nth_late_day(
+    prior_late_days: int, expected: str
+) -> None:
+    """D-10 — with a count of 3, the 3rd, 6th and 9th late days are half days, the others not."""
+    policy = _policy(lates_to_half_day_count=3)
+    punches = [_punch(4, 0, "IN", day=10), _punch(12, 30, "OUT", day=10)]  # 20 min late
+    result = evaluate_day(
+        _base_input(policy=policy, punches=punches, prior_late_days_in_window=prior_late_days)
+    )
+    assert result.attendance_status == expected
+
+
 def test_cumulative_lateness_below_threshold_no_override() -> None:
     """Same policy, but only one prior late day — today's lateness makes two, still under the
     threshold of three, so status is unaffected by the cumulative rule."""
@@ -1119,6 +1148,50 @@ def test_cumulative_excess_break_days_forces_half_day_once_threshold_crossed() -
     )
     assert result.excess_break_minutes > 0
     assert result.attendance_status == "HALF_DAY"
+
+
+@pytest.mark.parametrize(
+    ("prior_excess_days", "expected"),
+    [(0, "PRESENT"), (1, "PRESENT"), (2, "HALF_DAY"), (3, "PRESENT"), (5, "HALF_DAY")],
+)
+def test_excess_break_rule_fires_on_every_nth_day(prior_excess_days: int, expected: str) -> None:
+    """D-10, same as the late rule: with a count of 3, only the 3rd, 6th and 9th such days."""
+    shift = _shift(
+        breaks=[
+            ShiftBreakData(
+                id=uuid4(),
+                break_kind="FIXED_WINDOW",
+                start_time=time(8, 0),
+                end_time=time(9, 0),
+                window_start=None,
+                window_end=None,
+                min_minutes=None,
+                max_minutes=30,
+                is_paid=False,
+                is_mandatory=True,
+            )
+        ]
+    )
+    policy = _policy(excess_break_days_to_half_day_count=3)
+    punches = [
+        _punch(3, 30, "IN", day=10),
+        _punch(8, 0, "OUT", day=10),
+        _punch(9, 30, "IN", day=10),  # 90-min gap against a 30-min-max break -> excess
+        _punch(12, 30, "OUT", day=10),
+    ]
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            policy=policy,
+            punches=punches,
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 3, 30, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 12, 30, tzinfo=UTC),
+            prior_excess_break_days_in_window=prior_excess_days,
+        )
+    )
+    assert result.excess_break_minutes > 0
+    assert result.attendance_status == expected
 
 
 # ---------------------------------------------------------------------------
