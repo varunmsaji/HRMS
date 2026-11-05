@@ -55,8 +55,9 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: constant existed (backfilled as NULL); 2 = payroll-readiness step 1 (PAY-002…PAY-012,
 #: ATT-005, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decisions 1/4/5); 3 = break management
 #: V1 (break events, automatic deduction, unresolved/excess breaks). Breaks with `mode=None`
-#: (every break configured before V1) calculate exactly as under 2.
-ENGINE_VERSION = 3
+#: (every break configured before V1) calculate exactly as under 2. 4 = flexible-shift lateness
+#: runs from the end of the start window; on-duty clears an unpaid off day.
+ENGINE_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -1861,6 +1862,8 @@ def _apply_on_duty_overlay(
         is_early_out=False,
         paid_day_fraction="1.00",
         lop_fraction="0.00",
+        # The whole day is now paid, so an unpaid off day (BUS-001) has nothing left unpaid.
+        unpaid_off_fraction="0.00",
         is_on_duty_flagged=False,
     )
 

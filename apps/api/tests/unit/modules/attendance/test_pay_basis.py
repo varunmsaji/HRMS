@@ -95,3 +95,54 @@ def test_daily_wage_half_weekly_off_off_half_unpaid() -> None:
     assert _fractions(worked) == ("0.50", "0.00", "0.50")
     for fractions in (_fractions(worked),):
         assert sum(Decimal(f) for f in fractions) == Decimal("1.00")
+
+
+def test_on_duty_on_an_unpaid_off_day_is_a_paid_day() -> None:
+    """D-4 — sent on duty on a day that would otherwise be unpaid: paid once, nothing left unpaid,
+    so the day still splits into exactly 1.00 and the period can close."""
+    for day_type, holiday_type, pay_basis in (
+        ("WEEKLY_OFF", None, "DAILY_WAGE"),
+        ("HOLIDAY", "COMPANY", "DAILY_WAGE"),
+        ("SHUTDOWN", None, "DAILY_WAGE"),
+    ):
+        result = evaluate_day(
+            _base_input(
+                calendar_day_type=day_type,
+                holiday_type=holiday_type,
+                pay_basis=pay_basis,
+                on_duty_approved=True,
+            )
+        )
+        assert result.attendance_status == "ON_DUTY", day_type
+        assert _fractions(result) == ("1.00", "0.00", "0.00"), day_type
+
+
+def test_on_duty_on_a_holiday_marked_unpaid_is_a_paid_day_for_monthly_too() -> None:
+    result = evaluate_day(
+        _base_input(
+            calendar_day_type="HOLIDAY",
+            holiday_type="PUBLIC",
+            holiday_is_paid=False,
+            on_duty_approved=True,
+        )
+    )
+    assert result.attendance_status == "ON_DUTY"
+    assert _fractions(result) == ("1.00", "0.00", "0.00")
+
+
+def test_on_duty_on_a_daily_wage_half_weekly_off_splits_into_one_day() -> None:
+    result = evaluate_day(
+        _base_input(
+            calendar_day_type="WEEKLY_OFF",
+            weekly_off_fraction="0.50",
+            pay_basis="DAILY_WAGE",
+            on_duty_approved=True,
+        )
+    )
+    assert _fractions(result) == ("1.00", "0.00", "0.00")
+
+
+def test_on_duty_on_a_paid_off_day_is_unchanged() -> None:
+    result = evaluate_day(_base_input(calendar_day_type="WEEKLY_OFF", on_duty_approved=True))
+    assert result.attendance_status == "ON_DUTY"
+    assert _fractions(result) == ("1.00", "0.00", "0.00")
