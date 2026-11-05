@@ -689,7 +689,7 @@ describe("AttendanceDashboardPage", () => {
       render(<AttendanceDashboardPage />);
       const section = (await screen.findByRole("heading", { name: /needs attention/i })).closest("[id='att-attention']") as HTMLElement;
       expect(await within(section).findByText("Missing punches")).toBeInTheDocument();
-      expect(within(section).getByText("Regularization pending")).toBeInTheDocument();
+      expect(await within(section).findByText("Regularization pending")).toBeInTheDocument();
       expect(within(section).getByRole("link", { name: /review/i })).toHaveAttribute("href", "/app/regularizations");
 
       await user.click(within(section).getByRole("button", { name: /view all: missing punches/i }));
@@ -899,7 +899,7 @@ describe("AttendanceDashboardPage", () => {
         const overtimeSection = (await screen.findByRole("heading", { name: "Overtime" })).closest("[id='att-overtime']") as HTMLElement;
         // Only the 30m in-range record counts — the 45m out-of-range record was already excluded
         // by `overtimeSummary`'s own range filter, both before and after the F6-1 fix.
-        expect(within(overtimeSection).getByText("Total detected").nextSibling).toHaveTextContent("0h 30m");
+        expect((await within(overtimeSection).findByText("Total detected")).nextSibling).toHaveTextContent("0h 30m");
         expect(within(overtimeSection).queryByText("1h 15m")).not.toBeInTheDocument();
       });
     });

@@ -62,8 +62,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      # `--extra liveness` mirrors apps/api/Dockerfile: face liveness imports OpenCV and NumPy,
+      # which are an optional extra, so without it mypy cannot resolve them.
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --all-groups --extra liveness
 
       - name: Ruff lint
         run: uv run ruff check .

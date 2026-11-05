@@ -60,7 +60,10 @@ def test_small_data_is_labelled_insufficient() -> None:
 
 
 @pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[4] / "models/face/opensource-v1").is_dir(),
+    not (
+        Path(__file__).resolve().parents[4]
+        / "models/face/opensource-v1/face_detection_yunet_2023mar.onnx"
+    ).is_file(),
     reason="assets not provisioned",
 )
 def test_report_contains_only_aggregates(tmp_path: Path) -> None:

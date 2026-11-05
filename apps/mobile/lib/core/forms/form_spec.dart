@@ -144,6 +144,11 @@ final _timePattern = RegExp(r'^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$');
 bool fieldVisible(FieldSpec f, Map<String, dynamic> values) {
   final cond = f.showWhen;
   if (cond == null) return true;
+  // Several conditions joined with `&&` must all hold.
+  return cond.split('&&').every((part) => _conditionHolds(part.trim(), values));
+}
+
+bool _conditionHolds(String cond, Map<String, dynamic> values) {
   // `key=VALUE` / `key!=VALUE` compare another field's value; `key` / `!key` test a toggle.
   final neq = cond.indexOf('!=');
   if (neq > 0) return '${values[cond.substring(0, neq)] ?? ''}' != cond.substring(neq + 2);

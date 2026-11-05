@@ -167,3 +167,25 @@ async def runtime_engine():  # type: ignore[no-untyped-def]
 def app_as_runtime_role(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     """`async with app_as_runtime_role():` runs the block with the app connected as `hrms_app`."""
     return lambda: rls_support.app_as_runtime_role(monkeypatch)
+
+
+# These files start worker processes or run Alembic against scratch databases, and their helpers
+# refuse to start unless the strict QA sandbox is up (`HRMS_QA_STRICT=1`, `hrms_qa_*` databases on
+# private ports; see docs/testing/qa_harness/stack.sh). A plain run cannot satisfy that, so they
+# are skipped there instead of failing with an isolation error.
+_QA_SANDBOX_ONLY = (
+    "test_b13_migrations.py",
+    "test_shift_tenant_fk_migrations.py",
+    "test_b13_confirm_terminate_concurrency.py",
+    "test_b13_email_outbox.py",
+    "test_b13_seat_limit_concurrency.py",
+)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    if os.environ.get("HRMS_QA_STRICT") == "1":
+        return
+    skip = pytest.mark.skip(reason="needs the strict QA sandbox (HRMS_QA_STRICT=1)")
+    for item in items:
+        if item.path.name in _QA_SANDBOX_ONLY:
+            item.add_marker(skip)

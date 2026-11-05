@@ -1129,7 +1129,21 @@ class OrganisationService:
     async def get_dashboard_summary(self, company_id: UUID) -> CompanyDashboardSummary:
         """Company Admin dashboard aggregation (04_API_Design.md §7)."""
         setup = await self.get_setup_progress(company_id)
-        steps_completed = sum(1 for step in setup.steps if step.is_complete)
+        # Registration steps plus the essentials still needed for the company to run (shift,
+        # working days, attendance rules), so the card does not say "done" while those are open.
+        from hrms.modules.organisation.setup_checklist import SetupChecklistService
+
+        checklist = await SetupChecklistService(self._session).get(company_id)
+        steps_completed = (
+            sum(1 for step in setup.steps if step.is_complete) + checklist.required_complete
+        )
+        steps_total = len(setup.steps) + checklist.required_total
+        setup_status = (
+            "COMPLETE"
+            if setup.status == "COMPLETE"
+            and checklist.required_complete == checklist.required_total
+            else "IN_PROGRESS"
+        )
 
         subscription_block: DashboardSubscription | None = None
         try:
@@ -1150,9 +1164,9 @@ class OrganisationService:
 
         return CompanyDashboardSummary(
             setup_progress=DashboardSetupProgress(
-                status=setup.status,
+                status=setup_status,
                 steps_completed=steps_completed,
-                steps_total=len(setup.steps),
+                steps_total=steps_total,
             ),
             subscription=subscription_block,
             branch_count=len(branches),

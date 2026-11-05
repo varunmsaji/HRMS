@@ -70,6 +70,10 @@ src = ["src", "tests", "entrypoints"]
 select = ["E", "F", "I", "N", "B", "UP", "BLE", "TRY"]
 ignore = ["UP046", "TRY003"]
 
+[tool.ruff.lint.per-file-ignores]
+# Applied migrations are never rewritten, and their raw SQL reads best unwrapped.
+"alembic/versions/*.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

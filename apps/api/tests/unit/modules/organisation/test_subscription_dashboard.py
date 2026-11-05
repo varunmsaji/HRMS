@@ -16,6 +16,7 @@ from hrms.modules.organisation.models import (
 )
 from hrms.modules.organisation.schemas import SetupStepDefinition
 from hrms.modules.organisation.service import OrganisationService
+from hrms.modules.organisation.setup_checklist import SetupChecklistRead, SetupChecklistService
 from hrms.seed.plan_catalogue import SEAT_LIMIT_FEATURE_CODE
 
 
@@ -251,11 +252,12 @@ async def test_get_dashboard_summary_zero_sibling_counts(
     service._repo.list_departments.return_value = []
     service._employee_repo.count_employees.return_value = 0
 
+    _stub_checklist(monkeypatch, complete=0)
     dashboard = await service.get_dashboard_summary(company_id)
 
     assert dashboard.setup_progress.status == "IN_PROGRESS"
     assert dashboard.setup_progress.steps_completed == 0
-    assert dashboard.setup_progress.steps_total == 1
+    assert dashboard.setup_progress.steps_total == 4
     assert dashboard.subscription is None
     assert dashboard.branch_count == 0
     assert dashboard.department_count == 0
@@ -318,13 +320,24 @@ async def test_get_dashboard_summary_includes_subscription(
     service._repo.list_departments.return_value = [MagicMock()]
     service._employee_repo.count_employees.return_value = 5
 
+    _stub_checklist(monkeypatch, complete=3)
     dashboard = await service.get_dashboard_summary(company_id)
 
     assert dashboard.setup_progress.status == "COMPLETE"
-    assert dashboard.setup_progress.steps_completed == 1
+    assert dashboard.setup_progress.steps_completed == 4
+    assert dashboard.setup_progress.steps_total == 4
     assert dashboard.subscription is not None
     assert dashboard.subscription.plan_code == "STARTER"
     assert dashboard.subscription.status == "ACTIVE"
     assert dashboard.branch_count == 2
     assert dashboard.department_count == 1
     assert dashboard.employee_count == 5
+
+
+def _stub_checklist(monkeypatch: pytest.MonkeyPatch, *, complete: int, total: int = 3) -> None:
+    async def _get(self: SetupChecklistService, company_id: object) -> SetupChecklistRead:
+        return SetupChecklistRead(
+            items=[], required_total=total, required_complete=complete, next_code=None
+        )
+
+    monkeypatch.setattr(SetupChecklistService, "get", _get)

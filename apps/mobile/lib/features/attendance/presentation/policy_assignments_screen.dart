@@ -8,6 +8,7 @@ import '../../../core/forms/form_spec.dart';
 import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
 import '../../shell/more_action.dart';
+import '../data/assignment_lookup.dart';
 import '../domain/policy_assignment_form.dart';
 import '../../../core/widgets/ui.dart';
 
@@ -108,17 +109,13 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
       onSubmit: (payload, _) async {
         // Replacing: an open assignment for the same kind, scope and leave type has to be closed
         // first. Asked of the server because `_rows` only holds the loaded, filtered pages.
-        final found = await _client.getList<Rec>('/policy-assignments', query: PageQuery(page: 1), filters: {
-          'policy_kind': payload['policy_kind'],
-          'scope_type': payload['scope_type'],
-          if (payload['scope_id'] != null) 'scope_id': payload['scope_id'],
-          if (payload['leave_type_id'] != null) 'leave_type_id': payload['leave_type_id'],
-          'current_only': 'true',
-        }, parseItem: (d) => d as Rec);
-        Rec? open;
-        for (final r in found.data) {
-          if (r['effective_to'] == null && r['policy_kind'] == payload['policy_kind'] && r['scope_type'] == payload['scope_type'] && r['scope_id'] == payload['scope_id'] && r['leave_type_id'] == payload['leave_type_id']) open = r;
-        }
+        final open = await findOpenAssignment(
+          _client,
+          policyKind: payload['policy_kind'] as String,
+          scopeType: payload['scope_type'] as String,
+          scopeId: payload['scope_id'] as String?,
+          leaveTypeId: payload['leave_type_id'] as String?,
+        );
         await _client.post<Object?>('/policy-assignments', body: payload, ifMatch: open?['version']?.toString(), parse: (_) => null);
       },
     );

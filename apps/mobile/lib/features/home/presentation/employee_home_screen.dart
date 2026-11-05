@@ -733,7 +733,7 @@ class _PunchCard extends StatelessWidget {
 /// same one HR can open), and the capture still goes through server-side liveness, consent and
 /// HR approval. Nothing here marks the employee enrolled.
 class FaceSetupCard extends ConsumerStatefulWidget {
-  const FaceSetupCard({required this.status, required this.onChanged});
+  const FaceSetupCard({super.key, required this.status, required this.onChanged});
   final FaceEnrollmentStatus status;
   final VoidCallback onChanged;
 

@@ -2,6 +2,7 @@
 failure at any step leaves no half-made shift behind. Reuses the step-by-step service methods,
 so the same validation and audit records apply."""
 
+from typing import Any
 from uuid import UUID
 
 from hrms.modules.organisation.schemas import (
@@ -23,7 +24,11 @@ async def setup_shift(
     ip_address: str | None = None,
     user_agent: str | None = None,
 ) -> ShiftSetupRead:
-    audit = {"actor_user_id": actor_user_id, "ip_address": ip_address, "user_agent": user_agent}
+    audit: dict[str, Any] = {
+        "actor_user_id": actor_user_id,
+        "ip_address": ip_address,
+        "user_agent": user_agent,
+    }
     shift = await service.create_shift(company_id, ShiftCreate(name=body.name), **audit)
     # `create_shift` opens an empty draft; fill it rather than creating a second one.
     assert shift.draft_version_id is not None

@@ -1,3 +1,6 @@
+import '../../features/attendance/domain/attendance_setup_configs.dart';
+import '../../features/attendance/presentation/policy_setup_screen.dart';
+import '../../features/leave/domain/leave_setup_config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -132,10 +135,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/designations', builder: (context, state) => ResourceListScreen(config: designationResource)),
       GoRoute(path: '/app/grades', builder: (context, state) => ResourceListScreen(config: gradeResource)),
       GoRoute(path: '/app/legal-entities', builder: (context, state) => ResourceListScreen(config: legalEntityResource)),
-      GoRoute(path: '/app/attendance-policies', builder: (context, state) => ResourceListScreen(config: attendancePolicyResource)),
-      GoRoute(path: '/app/overtime-policies', builder: (context, state) => ResourceListScreen(config: overtimePolicyResource)),
-      GoRoute(path: '/app/regularization-policies', builder: (context, state) => ResourceListScreen(config: regularizationPolicyResource)),
-      GoRoute(path: '/app/shifts', builder: (context, state) => ResourceListScreen(config: shiftResource())),
+      GoRoute(path: '/app/attendance-policies', builder: (context, state) => ResourceListScreen(config: attendancePolicyResource, createScreen: () => PolicySetupScreen(config: attendancePolicySetup))),
+      GoRoute(path: '/app/overtime-policies', builder: (context, state) => ResourceListScreen(config: overtimePolicyResource, createScreen: () => PolicySetupScreen(config: overtimePolicySetup))),
+      GoRoute(path: '/app/regularization-policies', builder: (context, state) => ResourceListScreen(config: regularizationPolicyResource, createScreen: () => PolicySetupScreen(config: regularizationPolicySetup))),
+      GoRoute(path: '/app/shifts', builder: (context, state) => ResourceListScreen(config: shiftResource(), createScreen: () => PolicySetupScreen(config: shiftSetup))),
       GoRoute(path: '/app/holiday-calendars', builder: (context, state) => ResourceListScreen(config: holidayCalendarResource)),
       GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => ResourceListScreen(config: weeklyOffPatternResource)),
       GoRoute(path: '/app/work-calendars', builder: (context, state) => ResourceListScreen(config: workCalendarResource)),
@@ -151,7 +154,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/policy-assignments', builder: (context, state) => const PolicyAssignmentsScreen()),
       GoRoute(path: '/app/policy-resolution', builder: (context, state) => const PolicyResolutionScreen()),
       GoRoute(path: '/app/leave-types', builder: (context, state) => ResourceListScreen(config: leaveTypeResource)),
-      GoRoute(path: '/app/leave-policies', builder: (context, state) => ResourceListScreen(config: leavePolicyResource)),
+      GoRoute(path: '/app/leave-policies', builder: (context, state) => ResourceListScreen(config: leavePolicyResource, createScreen: () => PolicySetupScreen(config: leavePolicySetup))),
       GoRoute(path: '/app/leave-combination-rules', builder: (context, state) => ResourceListScreen(config: leaveCombinationRuleResource)),
       GoRoute(path: '/app/leave-year-setting', builder: (context, state) => const LeaveYearSettingScreen()),
       GoRoute(path: '/app/statutory-leave-minimums', builder: (context, state) => ResourceListScreen(config: statutoryLeaveMinimumResource)),

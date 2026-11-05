@@ -88,7 +88,7 @@ class MyWorkProfileService:
         designation = (
             (
                 await self._session.execute(
-                    select(Designation.name).where(
+                    select(Designation.title).where(
                         Designation.company_id == company_id,
                         Designation.id == assignment.designation_id,
                     )

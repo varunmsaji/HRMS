@@ -168,7 +168,7 @@ describe("ShiftDetailPage", () => {
     const nameInput = await screen.findByLabelText(/shift name/i);
     await user.clear(nameInput);
     await user.type(nameInput, "Renamed Shift");
-    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await user.click(screen.getByRole("button", { name: /^save as draft$/i }));
 
     await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
     expect(mockedPatch).toHaveBeenCalledWith(
@@ -195,7 +195,7 @@ describe("ShiftDetailPage", () => {
     await user.selectOptions(screen.getByLabelText(/^type/i), "FIXED");
     await user.type(screen.getByLabelText(/start time/i), "09:00");
     await user.type(screen.getByLabelText(/end time/i), "18:00");
-    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await user.click(screen.getByRole("button", { name: /^save as draft$/i }));
 
     await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(2));
     expect(mockedPatch).toHaveBeenNthCalledWith(
@@ -224,7 +224,7 @@ describe("ShiftDetailPage", () => {
     await user.selectOptions(await screen.findByLabelText(/^type/i), "FIXED");
     await user.type(screen.getByLabelText(/start time/i), "09:00");
     await user.type(screen.getByLabelText(/end time/i), "18:00");
-    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await user.click(screen.getByRole("button", { name: /^save as draft$/i }));
 
     await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
     expect(mockedPost).toHaveBeenCalledWith("/shifts/shift-1/versions", {});
@@ -232,6 +232,37 @@ describe("ShiftDetailPage", () => {
       "/shifts/shift-1/versions/version-9",
       expect.objectContaining({ shift_type: "FIXED" }),
       { ifMatch: "1" },
+    );
+  });
+
+  it("saves the schedule and opens the publish step straight away", async () => {
+    mockLoad({ ...sampleShift, draft_version_id: null }, []);
+    mockedPost
+      .mockResolvedValueOnce({ ...draftVersion, id: "version-9" })
+      .mockResolvedValueOnce({ ...draftVersion, id: "version-9", status: "PUBLISHED" });
+    mockedPatch.mockResolvedValueOnce({
+      ...draftVersion,
+      id: "version-9",
+      shift_type: "FIXED",
+      version: 2,
+    });
+    const user = userEvent.setup();
+    render(<ShiftDetailPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^edit$/i }));
+    await user.selectOptions(await screen.findByLabelText(/^type/i), "FIXED");
+    await user.type(screen.getByLabelText(/start time/i), "09:00");
+    await user.type(screen.getByLabelText(/end time/i), "18:00");
+    await user.click(screen.getByRole("button", { name: /^save & publish…$/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^publish$/i }));
+    await waitFor(() =>
+      expect(mockedPost).toHaveBeenCalledWith(
+        "/shifts/shift-1/versions/version-9/publish",
+        expect.anything(),
+        { ifMatch: "2" },
+      ),
     );
   });
 
