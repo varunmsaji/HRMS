@@ -2460,9 +2460,9 @@ class LeaveApplicationService:
 
         WORKING/SPECIAL_WORKING days (and the working half of a half-day weekly off) are
         leave-consuming by default; full WEEKLY_OFF/HOLIDAY/SHUTDOWN days are not, unless the
-        sandwich rule brackets one between two consuming days *within this same application's
-        range* (no cross-application look-back — a separate, earlier application on an adjacent
-        date is not consulted here)."""
+        sandwich rule brackets a run of them (a Saturday and Sunday, say) between two consuming
+        days *within this same application's range* (no cross-application look-back — a separate,
+        earlier application on an adjacent date is not consulted here)."""
         from hrms.modules.organisation.calendar_resolution import (
             CalendarResolutionService,
             working_fraction_of,
@@ -2486,11 +2486,9 @@ class LeaveApplicationService:
         consuming: dict[date, bool] = {d: working[d] > Decimal("0.00") for d in dates}
 
         if sandwich_rule_enabled:
-            for i in range(1, len(dates) - 1):
-                d = dates[i]
-                if consuming[d]:
-                    continue
-                if consuming[dates[i - 1]] and consuming[dates[i + 1]]:
+            consuming_positions = [i for i, d in enumerate(dates) if working[d] > Decimal("0.00")]
+            for before, after in zip(consuming_positions, consuming_positions[1:], strict=False):
+                for d in dates[before + 1 : after]:
                     consuming[d] = True
 
         breakdown: list[dict[str, Any]] = []

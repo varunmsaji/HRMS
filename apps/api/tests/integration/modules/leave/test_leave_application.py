@@ -151,7 +151,11 @@ async def _create_leave_type(
 
 
 async def _setup_calendar(
-    client: AsyncClient, headers: dict[str, str], *, effective_from: str = "2024-01-01"
+    client: AsyncClient,
+    headers: dict[str, str],
+    *,
+    effective_from: str = "2024-01-01",
+    weekly_off_days: tuple[int, ...] = (6,),
 ) -> dict[str, Any]:
     """Sunday-off `WeeklyOffPattern` + `WorkCalendar`, assigned at COMPANY scope — required
     before any `leave-applications` submission can classify a date (fail-closed,
@@ -162,7 +166,7 @@ async def _setup_calendar(
         json={
             "name": "Sunday Off",
             "pattern_kind": "FIXED_WEEKDAYS",
-            "rules": [{"weekday": 6, "off_fraction": "1.00"}],
+            "rules": [{"weekday": day, "off_fraction": "1.00"} for day in weekly_off_days],
         },
     )
     assert wop.status_code == 201, wop.text
@@ -283,6 +287,7 @@ async def _setup_full(
     *,
     approval_chain: str = "AUTO",
     balance: str = "20.00",
+    weekly_off_days: tuple[int, ...] = (6,),
     **version_extra: Any,
 ) -> dict[str, Any]:
     """The common case: one employee, employment, calendar, published+assigned policy, and an
@@ -293,7 +298,7 @@ async def _setup_full(
         client, headers, employee_id=employee["id"], legal_entity_id=legal_entity["id"]
     )
     leave_type = await _create_leave_type(client, headers)
-    await _setup_calendar(client, headers)
+    await _setup_calendar(client, headers, weekly_off_days=weekly_off_days)
     policy = await _setup_leave_policy(
         client,
         headers,
@@ -423,6 +428,46 @@ async def test_submit_sandwich_rule_generates_weekend_day(
         assert by_date["2026-09-06"]["is_sandwich_generated"] is True
         assert by_date["2026-09-04"]["is_sandwich_generated"] is False
         assert await _get_balance(client, headers, employee_id) == "16.00"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("start_date", "end_date", "total", "sandwiched"),
+    [
+        ("2026-09-04", "2026-09-07", "4.00", ["2026-09-05", "2026-09-06"]),  # Fri-Mon
+        ("2026-09-03", "2026-09-08", "6.00", ["2026-09-05", "2026-09-06"]),  # Thu-Tue
+        ("2026-09-04", "2026-09-06", "1.00", []),  # Fri-Sun: nothing after the weekend
+        ("2026-09-05", "2026-09-07", "1.00", []),  # Sat-Mon: nothing before the weekend
+    ],
+)
+async def test_sandwich_rule_covers_a_two_day_weekend(
+    client: AsyncClient,
+    seeded_plan_catalogue: None,
+    start_date: str,
+    end_date: str,
+    total: str,
+    sandwiched: list[str],
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        ctx = await _setup_full(client, headers, sandwich_rule_enabled=True, weekly_off_days=(5, 6))
+        response = await _submit(
+            client,
+            headers,
+            employee_id=ctx["employee"]["id"],
+            leave_type_id=ctx["leave_type"]["id"],
+            start_date=start_date,
+            end_date=end_date,
+        )
+        assert response.status_code == 201, response.text
+        data = response.json()["data"]
+        assert data["total_days"] == total
+        assert [
+            d["calendar_date"] for d in data["days"] if d["is_sandwich_generated"]
+        ] == sandwiched
     finally:
         await _teardown(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
