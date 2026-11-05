@@ -55,8 +55,9 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: constant existed (backfilled as NULL); 2 = payroll-readiness step 1 (PAY-002…PAY-012,
 #: ATT-005, `docs/audits/PAYROLL_BUSINESS_DECISIONS.md` decisions 1/4/5); 3 = break management
 #: V1 (break events, automatic deduction, unresolved/excess breaks). Breaks with `mode=None`
-#: (every break configured before V1) calculate exactly as under 2.
-ENGINE_VERSION = 3
+#: (every break configured before V1) calculate exactly as under 2. 4 = flexible-shift lateness
+#: runs from the end of the start window; on-duty clears an unpaid off day.
+ENGINE_VERSION = 4
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -1861,6 +1862,8 @@ def _apply_on_duty_overlay(
         is_early_out=False,
         paid_day_fraction="1.00",
         lop_fraction="0.00",
+        # The whole day is now paid, so an unpaid off day (BUS-001) has nothing left unpaid.
+        unpaid_off_fraction="0.00",
         is_on_duty_flagged=False,
     )
 
@@ -2022,8 +2025,11 @@ def _evaluate_fixed_or_flex(
     early_minutes = 0
     early_classification = None
 
-    if first_in is not None and inputs.scheduled_start is not None:
-        late_raw = int((first_in - inputs.scheduled_start).total_seconds() // 60)
+    # FLEXIBLE: `scheduled_start`/`scheduled_end` are the allowed start window, and any arrival
+    # inside it is on time, so lateness runs from the end of the window (§11.8).
+    late_from = inputs.scheduled_end if shift.shift_type == "FLEXIBLE" else inputs.scheduled_start
+    if first_in is not None and late_from is not None:
+        late_raw = int((first_in - late_from).total_seconds() // 60)
         late_minutes = max(0, late_raw - policy.grace_in_minutes)
         if late_minutes > 0:
             late_classification = lookup_band(late_minutes, inputs.late_bands)

@@ -8,7 +8,18 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import ColumnElement, Select, delete, exists, func, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    and_,
+    delete,
+    exists,
+    func,
+    not_,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2046,7 +2057,27 @@ class OvertimeRecordRepository:
         window/date filter — comp-off volume is low (mirrors `LeaveAccrualService`'s own
         low-volume assumption, ADR-0004), and idempotency against re-crediting an already-handled
         record is the caller's (Leave's) responsibility, keyed on `reference_id`, not this
-        query's."""
+        query's.
+
+        A record whose day is now a full-day leave is not eligible: overtime on a leave day earns
+        nothing while the leave stands (BUS-011). `list_comp_off_on_full_day_leave` returns those
+        instead, and cancelling the leave makes the record eligible again."""
+        return await self._comp_off_facts(session, company_id=company_id, on_full_day_leave=False)
+
+    async def list_comp_off_on_full_day_leave(
+        self, session: AsyncSession, *, company_id: UUID
+    ) -> list[CompOffFactRow]:
+        """The same facts for records whose day is currently a full-day leave, so Leave can
+        reverse a credit it already wrote (LEAVE_DECISION_LOG.md LD-14)."""
+        return await self._comp_off_facts(session, company_id=company_id, on_full_day_leave=True)
+
+    async def _comp_off_facts(
+        self, session: AsyncSession, *, company_id: UUID, on_full_day_leave: bool
+    ) -> list[CompOffFactRow]:
+        is_full_day_leave = and_(
+            AttendanceDay.attendance_status == "LEAVE",
+            AttendanceDay.leave_fraction >= Decimal("1.00"),
+        )
         stmt = (
             select(
                 OvertimeRecord.id,
@@ -2071,6 +2102,9 @@ class OvertimeRecordRepository:
                 OvertimeRecord.company_id == company_id,
                 OvertimeRecord.status.in_(("AUTO_APPROVED", "APPROVED")),
                 OvertimeRecord.comp_off_minutes > 0,
+                is_full_day_leave
+                if on_full_day_leave
+                else or_(AttendanceDay.id.is_(None), not_(is_full_day_leave)),
             )
             .order_by(OvertimeRecord.attendance_date)
         )

@@ -8,8 +8,11 @@ from datetime import UTC, date, datetime, time, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from hrms.modules.attendance.calculation import (
     AttendanceCalculationInput,
+    AttendanceCalculationResult,
     BandData,
     OvertimePolicyInputs,
     PolicyInputs,
@@ -1220,3 +1223,56 @@ def test_on_duty_overlay_does_not_apply_to_not_joined() -> None:
     NOT_JOINED day."""
     result = evaluate_day(_base_input(population_status="NOT_JOINED", on_duty_approved=True))
     assert result.attendance_status == "NOT_JOINED"
+
+
+# ---------------------------------------------------------------------------
+# FLEXIBLE lateness runs from the end of the start window (§11.8)
+# ---------------------------------------------------------------------------
+
+
+def _flexible_day(in_hour: int, in_minute: int) -> AttendanceCalculationResult:
+    """Start window 08:00-10:00 UTC, 8 hours required, 15 minutes grace."""
+    return evaluate_day(
+        _base_input(
+            shift=_shift(shift_type="FLEXIBLE", required_minutes=480),
+            policy=_policy(grace_in_minutes=15),
+            punches=[_punch(in_hour, in_minute, "IN", day=10), _punch(21, 0, "OUT", day=10)],
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 8, 0, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 10, 0, tzinfo=UTC),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("in_hour", "in_minute", "expected_late"),
+    [
+        (8, 0, 0),  # start of the window
+        (9, 30, 0),  # inside the window
+        (10, 0, 0),  # end of the window
+        (10, 15, 0),  # end of the window plus all of the grace
+        (10, 30, 15),  # past the grace
+        (13, 30, 195),
+    ],
+)
+def test_flexible_late_minutes_count_from_the_end_of_the_window(
+    in_hour: int, in_minute: int, expected_late: int
+) -> None:
+    result = _flexible_day(in_hour, in_minute)
+    assert result.late_minutes == expected_late
+    assert result.is_late is (expected_late > 0)
+
+
+def test_fixed_late_minutes_still_count_from_the_shift_start() -> None:
+    result = evaluate_day(
+        _base_input(
+            shift=_shift(),
+            policy=_policy(grace_in_minutes=15),
+            punches=[_punch(9, 30, "IN", day=10), _punch(18, 0, "OUT", day=10)],
+            timezone="UTC",
+            scheduled_start=datetime(2026, 8, 10, 9, 0, tzinfo=UTC),
+            scheduled_end=datetime(2026, 8, 10, 18, 0, tzinfo=UTC),
+        )
+    )
+    assert result.late_minutes == 15
+    assert result.is_late is True

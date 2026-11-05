@@ -137,6 +137,7 @@ from hrms.shared.pagination import PageParams
 from hrms.shared.timezone import resolve_zoneinfo
 
 if TYPE_CHECKING:
+    from hrms.modules.attendance.repository import CompOffFactRow
     from hrms.modules.leave.models import LeavePolicyVersion
 
 _logger = get_logger(__name__)
@@ -2081,7 +2082,11 @@ class LeaveCompOffService:
         `reference_id=overtime_record_id`, mirrors `exists_for_cycle`'s role for accrual).
         Skips entirely if the company hasn't designated a comp-off leave type yet (LD-14), or
         for any individual record whose policy version has no `comp_off_day_length_minutes`
-        configured — never guesses a conversion basis."""
+        configured — never guesses a conversion basis.
+
+        Also keeps earlier credits in line with leave approved afterwards (BUS-011): a credit
+        whose day is now a full-day leave is reversed, and restored if that leave is cancelled.
+        Returns how many credits it wrote; reversals are not counted."""
         comp_off_type = await self._type_repo.get_comp_off_type(
             self._session, company_id=company_id
         )
@@ -2090,7 +2095,10 @@ class LeaveCompOffService:
 
         from hrms.modules.attendance.service import OvertimeRecordService
 
-        facts = await OvertimeRecordService(self._session).list_comp_off_facts(company_id)
+        overtime = OvertimeRecordService(self._session)
+        facts = await overtime.list_comp_off_facts(company_id)
+        for fact in await overtime.list_comp_off_facts_on_full_day_leave(company_id):
+            await self._reverse_credit_for_leave(company_id, comp_off_type.id, fact)
 
         written = 0
         for fact in facts:
@@ -2103,6 +2111,7 @@ class LeaveCompOffService:
                 reference_id=fact.overtime_record_id,
             )
             if already_credited:
+                await self._restore_reversed_credit(company_id, comp_off_type.id, fact)
                 continue
 
             amount = (
@@ -2128,6 +2137,102 @@ class LeaveCompOffService:
             ):
                 written += 1
         return written
+
+    async def _reversed_amount(self, company_id: UUID, fact: "CompOffFactRow") -> Decimal:
+        """How much of a credit is currently reversed for leave. Reversals point at the overtime
+        record, while expiry points at the credit, so the two can never be mistaken for each
+        other."""
+        return -await self._ledger_repo.sum_for_reference(
+            self._session,
+            company_id=company_id,
+            employee_id=fact.employee_id,
+            entry_type="ADJUSTMENT",
+            reference_id=fact.overtime_record_id,
+        )
+
+    async def _reverse_credit_for_leave(
+        self, company_id: UUID, leave_type_id: UUID, fact: "CompOffFactRow"
+    ) -> None:
+        """Takes back a credit whose day is now a full-day leave. Like expiry, this never drives
+        the balance negative: if the employee has already spent it, nothing is taken and the next
+        sweep tries again."""
+        await self._ledger_repo.lock_balance(
+            self._session,
+            company_id=company_id,
+            employee_id=fact.employee_id,
+            leave_type_id=leave_type_id,
+        )
+        credited = await self._ledger_repo.sum_for_reference(
+            self._session,
+            company_id=company_id,
+            employee_id=fact.employee_id,
+            entry_type="COMP_OFF_CREDIT",
+            reference_id=fact.overtime_record_id,
+        )
+        if credited <= 0 or await self._reversed_amount(company_id, fact) > 0:
+            return
+        credit_id = await self._ledger_repo.get_id_with_reference(
+            self._session,
+            company_id=company_id,
+            entry_type="COMP_OFF_CREDIT",
+            reference_id=fact.overtime_record_id,
+        )
+        if credit_id is not None and await self._ledger_repo.exists_with_reference(
+            self._session, company_id=company_id, entry_type="ADJUSTMENT", reference_id=credit_id
+        ):
+            return  # already expired, so there is nothing left to take back
+        balance = await self._ledger_repo.get_balance(
+            self._session,
+            company_id=company_id,
+            employee_id=fact.employee_id,
+            leave_type_id=leave_type_id,
+        )
+        if balance < credited:
+            return
+        await self._ledger_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "employee_id": fact.employee_id,
+                "leave_type_id": leave_type_id,
+                "entry_type": "ADJUSTMENT",
+                "amount": -credited,
+                "effective_date": fact.attendance_date,
+                "reference_id": fact.overtime_record_id,
+                "reason": f"Comp-off reversed: on leave {fact.attendance_date:%d %b %Y}",
+                "created_by_user_id": None,
+            },
+        )
+
+    async def _restore_reversed_credit(
+        self, company_id: UUID, leave_type_id: UUID, fact: "CompOffFactRow"
+    ) -> None:
+        """Gives a reversed credit back once the leave that caused it has been cancelled."""
+        await self._ledger_repo.lock_balance(
+            self._session,
+            company_id=company_id,
+            employee_id=fact.employee_id,
+            leave_type_id=leave_type_id,
+        )
+        reversed_amount = await self._reversed_amount(company_id, fact)
+        if reversed_amount <= 0:
+            return
+        await self._ledger_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "employee_id": fact.employee_id,
+                "leave_type_id": leave_type_id,
+                "entry_type": "ADJUSTMENT",
+                "amount": reversed_amount,
+                "effective_date": fact.attendance_date,
+                "reference_id": fact.overtime_record_id,
+                "reason": f"Comp-off restored: leave cancelled {fact.attendance_date:%d %b %Y}",
+                "created_by_user_id": None,
+            },
+        )
 
     @logged_operation("leave.comp_off.expire_company")
     async def expire_company(self, company_id: UUID, *, as_of: date) -> int:

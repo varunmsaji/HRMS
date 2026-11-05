@@ -3738,7 +3738,17 @@ class AttendanceDayService:
         # win outright, and a fresh AUTO_APPROVED decision (e.g. `approval_chain=AUTO` even when
         # `requires_post_approval=True`) is applied immediately rather than left at the engine's
         # provisional pending numbers.
-        if ot_decision is not None:
+        #
+        # BUS-011 — except on a full-day leave day, where overtime is never payable. The record
+        # stays as decided and the day keeps the engine's zeros, so cancelling the leave brings
+        # the approved minutes back on the recompute that follows.
+        frozen_on_full_day_leave = (
+            ot_decision is not None
+            and ot_decision["frozen"]
+            and result.attendance_status == "LEAVE"
+            and Decimal(result.leave_fraction) >= Decimal("1.00")
+        )
+        if ot_decision is not None and not frozen_on_full_day_leave:
             values["ot_minutes_approved"] = ot_decision["minutes_approved"]
             # `overtime_record.comp_off_minutes` (below) always carries the policy-computed
             # fact regardless of decision state; the day's payroll-facing summary only reflects
@@ -5935,6 +5945,13 @@ class OvertimeRecordService:
         the builtin `list` for every annotation evaluated later in this class body (no
         `from __future__ import annotations` in this module)."""
         return await self._repo.list_comp_off_eligible(self._session, company_id=company_id)
+
+    async def list_comp_off_facts_on_full_day_leave(self, company_id: UUID) -> list[CompOffFactRow]:
+        """Records whose day became a full-day leave after the overtime was decided. Same seam
+        and posture as `list_comp_off_facts`."""
+        return await self._repo.list_comp_off_on_full_day_leave(
+            self._session, company_id=company_id
+        )
 
     async def get(
         self,

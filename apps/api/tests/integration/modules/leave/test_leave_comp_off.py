@@ -23,6 +23,10 @@ from tests.integration.modules.attendance.test_attendance_day import (
     _cleanup_attendance_day,
     _register_tenant,
 )
+from tests.integration.modules.attendance.test_leave_projection import (
+    _cleanup_leave_projection,
+    _sync,
+)
 from tests.integration.modules.attendance.test_overtime_record import (
     _cleanup_overtime,
     _create_overtime_policy,
@@ -277,6 +281,154 @@ async def test_expiry_skipped_when_balance_already_spent_below_credit_amount(
         assert await _get_balance(client, headers, employee_id) == "0.03"
     finally:
         await _teardown_leave(company_id=company_id)
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def _delete_ledger(*, company_id: UUID) -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        await session.execute(
+            text("DELETE FROM leave_ledger WHERE company_id = :cid"), {"cid": str(company_id)}
+        )
+        await session.commit()
+
+
+async def _comp_off_day_with_credit_policy(
+    client: AsyncClient, headers: dict[str, str]
+) -> tuple[str, str]:
+    """One employee with 60 comp-off minutes on 2026-08-10, at 60 minutes to the day, so one credit
+    is exactly 1.00. Returns the employee id and the comp-off leave type id."""
+    wired = await _build_wired_employee(client, headers)
+    employee_id = wired["employee"]["id"]
+    await _create_overtime_policy(
+        client,
+        headers,
+        approval_chain="AUTO",
+        comp_off_instead_of_pay=True,
+        comp_off_expiry_days=90,
+        comp_off_day_length_minutes=60,
+    )
+    await _ot_calculate_day(client, headers, employee_id=employee_id)
+    leave_type = await _create_leave_type(client, headers, is_comp_off=True)
+    return employee_id, leave_type["id"]
+
+
+async def _cancel_leave(client: AsyncClient, headers: dict[str, str], synced: Any) -> None:
+    cancelled = await client.post(
+        f"/v1/leave-projections/{synced.json()['data']['id']}/cancel",
+        headers={**headers, "If-Match": str(synced.json()["data"]["version"])},
+        json={"reason": "Worked the day after all"},
+    )
+    assert cancelled.status_code == 200, cancelled.text
+
+
+async def test_credit_is_reversed_by_later_leave_and_restored_when_it_is_cancelled(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """D-8 — leave approved after the credit takes it back, and only once. Cancelling the leave
+    gives it back, and only once."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id, _ = await _comp_off_day_with_credit_policy(client, headers)
+        assert await _credit(company_id) == 1
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("1.00")
+
+        synced = await _sync(client, headers, employee_id=employee_id, fraction="1.00")
+        assert synced.status_code == 201, synced.text
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+
+        await _cancel_leave(client, headers, synced)
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("1.00")
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("1.00")
+    finally:
+        await _delete_ledger(company_id=company_id)
+        await _cleanup_leave_projection(company_id=company_id)
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_nothing_is_credited_while_the_day_is_on_leave(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id, _ = await _comp_off_day_with_credit_policy(client, headers)
+        synced = await _sync(client, headers, employee_id=employee_id, fraction="1.00")
+        assert synced.status_code == 201, synced.text
+
+        assert await _credit(company_id) == 0
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+
+        await _cancel_leave(client, headers, synced)
+        assert await _credit(company_id) == 1
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("1.00")
+    finally:
+        await _delete_ledger(company_id=company_id)
+        await _cleanup_leave_projection(company_id=company_id)
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_reversal_never_drives_the_balance_negative_and_retries(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The credit was already spent: nothing is taken yet, and a later sweep takes it once the
+    balance covers it."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id, leave_type_id = await _comp_off_day_with_credit_policy(client, headers)
+        await _credit(company_id)
+        await _adjust(
+            client, headers, employee_id=employee_id, leave_type_id=leave_type_id, amount="-1.00"
+        )
+        synced = await _sync(client, headers, employee_id=employee_id, fraction="1.00")
+        assert synced.status_code == 201, synced.text
+
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+
+        await _adjust(
+            client, headers, employee_id=employee_id, leave_type_id=leave_type_id, amount="1.00"
+        )
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+    finally:
+        await _delete_ledger(company_id=company_id)
+        await _cleanup_leave_projection(company_id=company_id)
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_expired_credit_is_not_reversed_again(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id, leave_type_id = await _comp_off_day_with_credit_policy(client, headers)
+        await _credit(company_id)
+        assert await _expire(company_id, as_of=date(2027, 1, 1)) == 1
+        await _adjust(
+            client, headers, employee_id=employee_id, leave_type_id=leave_type_id, amount="1.00"
+        )
+        synced = await _sync(client, headers, employee_id=employee_id, fraction="1.00")
+        assert synced.status_code == 201, synced.text
+
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("1.00")
+    finally:
+        await _delete_ledger(company_id=company_id)
+        await _cleanup_leave_projection(company_id=company_id)
         await _cleanup_overtime(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
