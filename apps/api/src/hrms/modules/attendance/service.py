@@ -3738,7 +3738,17 @@ class AttendanceDayService:
         # win outright, and a fresh AUTO_APPROVED decision (e.g. `approval_chain=AUTO` even when
         # `requires_post_approval=True`) is applied immediately rather than left at the engine's
         # provisional pending numbers.
-        if ot_decision is not None:
+        #
+        # BUS-011 — except on a full-day leave day, where overtime is never payable. The record
+        # stays as decided and the day keeps the engine's zeros, so cancelling the leave brings
+        # the approved minutes back on the recompute that follows.
+        frozen_on_full_day_leave = (
+            ot_decision is not None
+            and ot_decision["frozen"]
+            and result.attendance_status == "LEAVE"
+            and Decimal(result.leave_fraction) >= Decimal("1.00")
+        )
+        if ot_decision is not None and not frozen_on_full_day_leave:
             values["ot_minutes_approved"] = ot_decision["minutes_approved"]
             # `overtime_record.comp_off_minutes` (below) always carries the policy-computed
             # fact regardless of decision state; the day's payroll-facing summary only reflects

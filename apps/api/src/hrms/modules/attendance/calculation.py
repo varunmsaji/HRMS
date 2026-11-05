@@ -2022,8 +2022,11 @@ def _evaluate_fixed_or_flex(
     early_minutes = 0
     early_classification = None
 
-    if first_in is not None and inputs.scheduled_start is not None:
-        late_raw = int((first_in - inputs.scheduled_start).total_seconds() // 60)
+    # FLEXIBLE: `scheduled_start`/`scheduled_end` are the allowed start window, and any arrival
+    # inside it is on time, so lateness runs from the end of the window (§11.8).
+    late_from = inputs.scheduled_end if shift.shift_type == "FLEXIBLE" else inputs.scheduled_start
+    if first_in is not None and late_from is not None:
+        late_raw = int((first_in - late_from).total_seconds() // 60)
         late_minutes = max(0, late_raw - policy.grace_in_minutes)
         if late_minutes > 0:
             late_classification = lookup_band(late_minutes, inputs.late_bands)
