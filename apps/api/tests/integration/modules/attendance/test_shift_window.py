@@ -892,7 +892,9 @@ async def test_shift_timezone_across_midnight_does_not_false_reject(
         shift_timezone="America/Los_Angeles",
     )
     me = await _self(company_id, wired["employee_id"])
-    punch = at(2, 0)
+    # 03:00 UTC is past the 18:30 Los Angeles shift plus its grace all year. 18:30 is 01:30 UTC in
+    # summer but 02:30 UTC in winter, so an earlier punch would fall inside the shift in winter.
+    punch = at(3, 0)
     kolkata = punch.astimezone(ZoneInfo("Asia/Kolkata")).date()
     los_angeles = punch.astimezone(ZoneInfo("America/Los_Angeles")).date()
     assert kolkata != los_angeles
