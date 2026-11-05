@@ -57,8 +57,9 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: V1 (break events, automatic deduction, unresolved/excess breaks). Breaks with `mode=None`
 #: (every break configured before V1) calculate exactly as under 2. 4 = flexible-shift lateness
 #: runs from the end of the start window; on-duty clears an unpaid off day. 5 = half-day leave:
-#: the worked half is judged on its own (`_half_day_leave_half`, `_apply_leave_overlay`).
-ENGINE_VERSION = 5
+#: the worked half is judged on its own (`_half_day_leave_half`, `_apply_leave_overlay`). 6 = all
+#: minutes worked on a day off that the shift does not operate count as overtime.
+ENGINE_VERSION = 6
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -1440,7 +1441,11 @@ def resolve_is_night_ot(
         if scheduled_end is not None:
             span_start = scheduled_end
         else:
-            excess = max(0, worked_minutes - (scheduled_minutes or worked_minutes))
+            excess = max(
+                0,
+                worked_minutes
+                - (worked_minutes if scheduled_minutes is None else scheduled_minutes),
+            )
             span_start = last_out - timedelta(minutes=excess)
         by_window = _span_overlaps_daily_window(
             span_start,
@@ -1474,7 +1479,9 @@ def detect_overtime(
     if policy.eligibility == "SHIFT_FLAG" and not is_shift_ot_eligible:
         return 0, None, False
 
-    excess = max(0, worked_minutes - (scheduled_minutes or worked_minutes))
+    excess = max(
+        0, worked_minutes - (worked_minutes if scheduled_minutes is None else scheduled_minutes)
+    )
     if excess < policy.min_ot_minutes:
         return 0, None, False
 
@@ -1614,11 +1621,7 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     not_expected = (
         day_type in ("HOLIDAY", "WEEKLY_OFF", "SHUTDOWN") or inputs.roster_week_off_override
     )
-    shift_operates = (
-        (day_type == "HOLIDAY" and inputs.shift.operates_on_holiday)
-        or (day_type == "WEEKLY_OFF" and inputs.shift.operates_on_weekly_off)
-        or inputs.roster_holiday_working_override
-    )
+    shift_operates = _shift_operates(inputs, day_type)
 
     collapsed = collapse_duplicate_punches(
         sorted(inputs.punches, key=lambda p: p.punch_time),
@@ -1990,6 +1993,28 @@ def _evaluate_no_schedule(
     )
 
 
+def _shift_operates(inputs: AttendanceCalculationInput, day_type: str) -> bool:
+    assert inputs.shift is not None
+    return (
+        (day_type == "HOLIDAY" and inputs.shift.operates_on_holiday)
+        or (day_type == "WEEKLY_OFF" and inputs.shift.operates_on_weekly_off)
+        or inputs.roster_holiday_working_override
+    )
+
+
+def _off_day_overtime_basis(
+    inputs: AttendanceCalculationInput,
+    day_type: str,
+    not_expected: bool,
+    scheduled_minutes: int | None,
+) -> int | None:
+    """D-1 — no work was expected on a day off the shift does not operate, so all of it counts as
+    overtime. Where the shift operates (or the employee is rostered), the schedule still applies."""
+    if not_expected and not _shift_operates(inputs, day_type):
+        return 0
+    return scheduled_minutes
+
+
 def _half_day_leave_half(inputs: AttendanceCalculationInput) -> str | None:
     """`FIRST`/`SECOND` when one half of a working day is on leave and the other is expected to be
     worked, else `None`. A half-day weekly off leaves no half to work."""
@@ -2201,6 +2226,10 @@ def _evaluate_fixed_or_flex(
         else None
     )
 
+    ot_scheduled_minutes = _off_day_overtime_basis(
+        inputs, day_type, not_expected, ot_scheduled_minutes
+    )
+
     is_night = resolve_is_night_ot(
         shift=shift,
         policy=inputs.ot_policy,
@@ -2370,6 +2399,10 @@ def _evaluate_split(
         if shift.required_minutes is not None
         else None
     )
+    ot_scheduled_minutes = _off_day_overtime_basis(
+        inputs, day_type, not_expected, ot_scheduled_minutes
+    )
+
     is_night = resolve_is_night_ot(
         shift=shift,
         policy=inputs.ot_policy,
