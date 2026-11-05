@@ -20,6 +20,8 @@ import 'package:hrms_mobile/features/attendance/presentation/attendance_day_deta
 import 'package:hrms_mobile/features/attendance/domain/employee_calendar.dart';
 import 'package:hrms_mobile/features/attendance/presentation/geofences_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/my_calendar_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/regularization_decision_center_screen.dart';
+import 'package:hrms_mobile/features/leave/presentation/leave_decision_center_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_month_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_punch_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/punch_location_flow.dart';
@@ -131,7 +133,23 @@ Map<String, dynamic> _calendarFixture() {
   };
 }
 
-void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true, List<String> permissions = const [attendancePunch, attendanceView, attendanceRegularizationRequest]}) {
+Map<String, dynamic> _leaveDecisionFixture() => {
+      'summary': {'pending_count': 2, 'oldest_pending_at': '2026-11-03T06:00:00Z', 'on_leave_today': 3, 'on_leave_today_by_type': [['Casual Leave', 2], ['Sick Leave', 1]], 'active_staff': 48, 'available_pct': 93.75, 'upcoming_starts_7d': 4, 'peak_day': '2026-11-09', 'peak_day_away': 5},
+      'counts': {'pending': 2, 'approved': 31, 'declined': 4},
+      'items': [
+        {'id': 'l-1', 'employee_id': 'e-2', 'employee_name': 'Ravi Iyer', 'employee_code': 'E-2', 'designation': 'Engineer', 'department': 'Platform', 'leave_type': 'Casual Leave', 'start_date': '2026-11-09', 'end_date': '2026-11-11', 'total_days': '3.00', 'lop_days': '1.00', 'reason': 'Family function', 'status': 'SUBMITTED', 'submitted_at': '2026-11-04T06:00:00Z', 'current_balance': '2.00', 'post_approval_balance': '0.00', 'department_size': 8, 'colleagues_away': [{'name': 'Asha Rao'}]},
+      ],
+    };
+
+Map<String, dynamic> _regularizationDecisionFixture() => {
+      'summary': {'pending_count': 1, 'oldest_pending_at': '2026-11-04T06:00:00Z', 'window_regularized_days': 6, 'window_expected_days': 240, 'window_rate_pct': 2.5},
+      'counts': {'pending': 1, 'approved': 18, 'declined': 2},
+      'items': [
+        {'id': 'r-1', 'employee_id': 'e-2', 'employee_name': 'Ravi Iyer', 'employee_code': 'E-2', 'designation': 'Engineer', 'department': 'Platform', 'attendance_date': '2026-11-03', 'timezone': 'Asia/Kolkata', 'shift_name': 'General', 'request_type': 'MISSING_PUNCH', 'status': 'SUBMITTED', 'approval_stage': 'MANAGER', 'submitted_at': '2026-11-04T06:00:00Z', 'reason': 'Phone was off', 'recorded_first_in': '2026-11-03T03:45:00Z', 'recorded_last_out': null, 'recorded_worked_minutes': null, 'recorded_late_minutes': 15, 'recorded_status': 'INCOMPLETE', 'requested_punches': [{'direction': 'OUT', 'time': '2026-11-03T12:30:00Z'}], 'requested_span_minutes': 525},
+      ],
+    };
+
+void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true, List<String> permissions = const [attendancePunch, attendanceView, attendanceRegularizationRequest], bool wrap = false}) {
   for (final v in variants) {
     testWidgets('$name @ ${v.tag}', (tester) async {
       if (!await tester.runAsync(_loadFonts).then((ok) => ok ?? false)) {
@@ -147,7 +165,7 @@ void _golden(String name, Widget Function(_Variant v) build, {List<Override> ove
           debugShowCheckedModeBanner: false,
           theme: AppTheme.employee,
           builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(v.scale)), child: child!),
-          home: build(v),
+          home: wrap ? Scaffold(body: build(v)) : build(v),
         ),
       ));
       // A busy spinner never settles; pin it to a fixed frame instead.
@@ -261,6 +279,14 @@ void main() {
       ],
     })),
   ]);
+
+  _golden('leave_decision_center', (v) => LeaveDecisionCenterPanel(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [leaveApplicationApprove], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/leave-applications/decision-center': _leaveDecisionFixture()})),
+  ], wrap: true);
+
+  _golden('regularization_decision_center', (v) => RegularizationDecisionCenterPanel(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRegularizationApprove], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/regularizations/decision-center': _regularizationDecisionFixture()})),
+  ], wrap: true);
 
   _golden('correction_form_shifts_denied', (v) => RequestListScreen(config: regularizationConfig), overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(

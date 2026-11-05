@@ -19,7 +19,10 @@ import '../../../core/theme/employee_theme_scope.dart';
 /// "Team" are two filters over the same permission-scoped read: the server only returns what the
 /// caller may see. Filter by date range, status and (for the team) employee.
 class LeaveApplicationsScreen extends ConsumerStatefulWidget {
-  const LeaveApplicationsScreen({super.key});
+  const LeaveApplicationsScreen({super.key, this.decisionCenter});
+
+  /// The approver's screen, offered beside Mine and Team when given.
+  final Widget? decisionCenter;
 
   @override
   ConsumerState<LeaveApplicationsScreen> createState() => _LeaveApplicationsScreenState();
@@ -37,6 +40,8 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   List<LeaveApplication> _rows = const [];
   int _page = 1;
   bool _hasMore = false;
+  bool _decisions = false;
+  int _decisionsKey = 0;
   List<Choice> _employees = const [];
   Map<String, String> _typeNames = const {};
 
@@ -49,8 +54,10 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     super.initState();
     // The company account has no employee record, so "Mine" would mean nothing: it starts on Team.
     _team = _permissions.contains(leaveApplicationApprove) || _myEmployeeId == null;
+    // An approver starts on what is waiting for them, as on the web.
+    _decisions = widget.decisionCenter != null && _permissions.contains(leaveApplicationApprove);
     _loadLookups();
-    _load();
+    if (!_decisions) _load();
   }
 
   Future<void> _loadLookups() async {
@@ -116,7 +123,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   }
 
   Future<void> _apply() async {
-    final onBehalf = _team;
+    final onBehalf = _team || _decisions;
     final client = ref.read(apiClientProvider);
     final saved = await openSpecForm(
       context,
@@ -127,6 +134,7 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
     );
     if (saved && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Leave application submitted.')));
+      setState(() => _decisionsKey++);
       _load();
     }
   }
@@ -157,25 +165,36 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canApprove = permissions.contains(leaveApplicationApprove);
-    final canCreate = _team ? permissions.contains(leaveApplicationSubmitOnBehalf) : permissions.contains(leaveApplicationSubmit);
+    final notMine = _team || _decisions;
+    final canCreate = notMine ? permissions.contains(leaveApplicationSubmitOnBehalf) : permissions.contains(leaveApplicationSubmit);
+    final scopes = [
+      if (_myEmployeeId != null) const ButtonSegment(value: 'mine', label: Text('Mine')),
+      if (widget.decisionCenter != null && canApprove) const ButtonSegment(value: 'decisions', label: Text('Decisions')),
+      if (canApprove || permissions.contains(leaveApplicationSubmitOnBehalf)) const ButtonSegment(value: 'team', label: Text('Team')),
+    ];
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: const Text('Leave'), automaticallyImplyLeading: false, actions: const [MoreAction()]),
-      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _apply, icon: const Icon(Icons.add_rounded), label: Text(_team ? 'Apply on behalf' : 'Apply for leave')) : null,
+      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _apply, icon: const Icon(Icons.add_rounded), label: Text(notMine ? 'Apply on behalf' : 'Apply for leave')) : null,
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(children: [
-            if (_myEmployeeId != null && (canApprove || permissions.contains(leaveApplicationSubmitOnBehalf)))
-              SegmentedButton<bool>(
-                segments: const [ButtonSegment(value: false, label: Text('Mine')), ButtonSegment(value: true, label: Text('Team'))],
-                selected: {_team},
+            if (scopes.length > 1)
+              SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: scopes,
+                selected: {_decisions ? 'decisions' : (_team ? 'team' : 'mine')},
                 onSelectionChanged: (s) {
-                  setState(() => _team = s.first);
-                  _load();
+                  setState(() {
+                    _decisions = s.first == 'decisions';
+                    _team = s.first == 'team';
+                  });
+                  if (!_decisions) _load();
                 },
               ),
             const SizedBox(height: 10),
+            if (!_decisions) ...[
             Row(children: [
               Expanded(child: OutlinedButton.icon(onPressed: () => _pick(true), icon: const Icon(Icons.event_rounded, size: 18), label: Text(_from.isEmpty ? 'From' : _from))),
               const SizedBox(width: 8),
@@ -226,10 +245,13 @@ class _LeaveApplicationsScreenState extends ConsumerState<LeaveApplicationsScree
                 },
               ),
             ],
+            ],
           ]),
         ),
         Expanded(
-          child: _loading
+          child: _decisions
+              ? KeyedSubtree(key: ValueKey(_decisionsKey), child: widget.decisionCenter!)
+              : _loading
               ? const ListSkeleton(count: 5)
               : _error != null
                   ? StateMessage(icon: Icons.cloud_off_rounded, tone: Tone.danger, title: 'Couldn\'t load leave', message: _error!.message, actionLabel: 'Try again', onAction: _load)

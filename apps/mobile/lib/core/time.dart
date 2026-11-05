@@ -50,6 +50,22 @@ tz.TZDateTime? _inZone(String? iso, String zone) {
   return tz.TZDateTime.from(parsed, _location(zone));
 }
 
+/// "just now", "5 mins ago", "3 hours ago", "2 days ago", and the date once it is over a month old.
+String relativeTime(String iso, {DateTime? now}) {
+  final then = DateTime.tryParse(iso);
+  if (then == null) return '—';
+  final mins = (now ?? DateTime.now()).difference(then).inSeconds / 60;
+  final m = mins.round() < 0 ? 0 : mins.round();
+  if (m < 1) return 'just now';
+  if (m < 60) return '$m min${m == 1 ? '' : 's'} ago';
+  final hours = (m / 60).round();
+  if (hours < 24) return '$hours hour${hours == 1 ? '' : 's'} ago';
+  final days = (hours / 24).round();
+  if (days < 31) return '$days day${days == 1 ? '' : 's'} ago';
+  final d = then.toUtc();
+  return '${d.day} ${_months[d.month - 1]} ${d.year}';
+}
+
 /// "5:30 am IST"; null/empty -> "—".
 String formatClockTime(String? iso, String zone) {
   final t = _inZone(iso, zone);
