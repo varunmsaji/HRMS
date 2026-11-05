@@ -67,6 +67,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups --extra liveness
 
+      # The mobile contract tests read these fixtures, so a schema change must refresh them or those
+      # tests keep passing against an API that no longer exists.
+      - name: Mobile contract fixtures match the API schemas
+        run: |
+          uv run python ../mobile/tool/export_contract_fixtures.py
+          if [ -n "$(git status --porcelain -- ../mobile/test/fixtures/contract)" ]; then
+            git status --short -- ../mobile/test/fixtures/contract
+            echo "::error::Run 'apps/api/.venv/bin/python apps/mobile/tool/export_contract_fixtures.py' from the repo root and commit the result."
+            exit 1
+          fi
+
       - name: Ruff lint
         run: uv run ruff check .
 
