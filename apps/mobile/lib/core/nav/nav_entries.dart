@@ -69,6 +69,7 @@ const navQuickLinks = NavGroup('Quick links', [
   NavEntry('Employees', Icons.people_outline, '/app/employees', anyOf: [employeeViewAll]),
   NavEntry('Onboarding', Icons.person_add_alt, '/app/onboarding', anyOf: [onboardingView, onboardingCreate, onboardingReview, onboardingActivate]),
   NavEntry('Team Attendance', Icons.groups_outlined, '/app/team-attendance', anyOf: _teamView),
+  NavEntry('Attendance Calendar', Icons.calendar_view_month_outlined, '/app/attendance/calendar', anyOf: [attendanceViewAll]),
   NavEntry('Attendance Insights', Icons.insights_outlined, '/app/attendance-insights', anyOf: _teamView),
   NavEntry('Shift Rosters', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView]),
   NavEntry('Schedule Coverage', Icons.stacked_bar_chart_outlined, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView]),

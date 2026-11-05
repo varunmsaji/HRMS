@@ -26,6 +26,7 @@ import '../../features/attendance/presentation/regularization_decision_center_sc
 import '../../features/leave/presentation/leave_decision_center_screen.dart';
 import '../../features/attendance/presentation/shift_board_screen.dart';
 import '../../features/attendance/presentation/workforce_roster_screen.dart';
+import '../../features/attendance/presentation/attendance_calendar_screen.dart';
 import '../../features/attendance/presentation/my_calendar_screen.dart';
 import '../../features/attendance/presentation/weekly_schedule_screen.dart';
 import '../../features/auth/state/auth_controller.dart';
@@ -153,6 +154,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/overtime', builder: (context, state) => RequestListScreen(config: overtimeConfig)),
       GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
       GoRoute(path: '/app/attendance-geofences', builder: (context, state) => const GeofencesScreen()),
+      GoRoute(path: '/app/attendance/calendar', builder: (context, state) => const AttendanceCalendarScreen()),
       GoRoute(path: '/app/attendance-insights', builder: (context, state) => const AttendanceInsightsScreen()),
       GoRoute(path: '/app/rosters', builder: (context, state) => const RostersScreen()),
       GoRoute(path: '/app/rosters/board', builder: (context, state) => const ShiftBoardScreen()),

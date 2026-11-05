@@ -19,6 +19,7 @@ import 'package:hrms_mobile/features/attendance/domain/today_state.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
 import 'package:hrms_mobile/features/attendance/domain/employee_calendar.dart';
 import 'package:hrms_mobile/features/attendance/presentation/geofences_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/attendance_calendar_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/my_calendar_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/shift_board_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/workforce_roster_screen.dart';
@@ -171,6 +172,21 @@ Map<String, List<Map<String, dynamic>>> _rosterFixture() {
       entry('r-6', 'e-3', '2026-11-04', shift: null, off: true),
     ],
   };
+}
+
+List<Map<String, dynamic>> _calendarDays() {
+  Map<String, dynamic> d(String id, String who, int day, String status, {bool late = false, String? type}) => {'id': id, 'employee_id': who, 'attendance_date': '2026-11-${day.toString().padLeft(2, '0')}', 'attendance_status': status, 'is_locked': false, 'is_late': late, 'timezone': 'Asia/Kolkata', 'calendar_day_type': type};
+  return [
+    d('a', 'e-1', 1, 'NOT_EXPECTED', type: 'WEEKLY_OFF'),
+    d('b', 'e-1', 2, 'PRESENT'),
+    d('c', 'e-1', 3, 'PRESENT', late: true),
+    d('d', 'e-1', 4, 'HALF_DAY'),
+    d('e', 'e-1', 5, 'WFH'),
+    d('f', 'e-2', 2, 'ABSENT'),
+    d('g', 'e-2', 3, 'LEAVE'),
+    d('h', 'e-2', 4, 'ON_DUTY'),
+    d('i', 'e-2', 5, 'INCOMPLETE'),
+  ];
 }
 
 void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true, List<String> permissions = const [attendancePunch, attendanceView, attendanceRegularizationRequest], bool wrap = false}) {
@@ -339,6 +355,13 @@ void main() {
 
   _golden('workforce_roster', (v) => WorkforceRosterScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, employeeViewAll], overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
+  ]);
+
+  _golden('attendance_calendar', (v) => AttendanceCalendarScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceViewAll, employeeViewAll], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: {
+      '/employees': _rosterFixture()['/employees']!,
+      '/attendance/days': _calendarDays(),
+    })),
   ]);
 
   _golden('correction_form_shifts_denied', (v) => RequestListScreen(config: regularizationConfig), overrides: [
