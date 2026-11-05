@@ -21,6 +21,7 @@ import '../../features/attendance/presentation/policy_resolution_screen.dart';
 import '../../features/attendance/presentation/roster_calendar_screen.dart';
 import '../../features/attendance/presentation/rosters_screen.dart';
 import '../../features/attendance/presentation/shift_swaps_screen.dart';
+import '../../features/attendance/presentation/my_calendar_screen.dart';
 import '../../features/attendance/presentation/weekly_schedule_screen.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/auth/state/auth_state.dart';
@@ -127,6 +128,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => PublicOnboardingScreen(token: state.pathParameters['token']!),
       ),
       GoRoute(path: '/app/notifications', builder: (context, state) => const EmployeeThemeScope(child: NotificationsScreen())),
+      GoRoute(path: '/app/me/calendar', builder: (context, state) => const EmployeeThemeScope(child: MyCalendarScreen())),
       GoRoute(path: '/app/attendance/face-setup', builder: (context, state) => const EmployeeThemeScope(child: FaceSetupScreen())),
       GoRoute(path: '/app/more', builder: (context, state) => const SettingsHubScreen()),
       GoRoute(path: '/app/company', builder: (context, state) => const CompanyProfileScreen()),

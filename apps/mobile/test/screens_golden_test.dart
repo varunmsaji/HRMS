@@ -17,6 +17,8 @@ import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart'
 import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/domain/today_state.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
+import 'package:hrms_mobile/features/attendance/domain/employee_calendar.dart';
+import 'package:hrms_mobile/features/attendance/presentation/my_calendar_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_month_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_punch_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/punch_location_flow.dart';
@@ -105,6 +107,28 @@ const _variants = <_Variant>[
   (tag: '390', w: 390, h: 844, scale: 1.0),
   (tag: '320_x2', w: 320, h: 568, scale: 2.0),
 ];
+
+Map<String, dynamic> _calendarFixture() {
+  Map<String, dynamic> day(String date, String? type, {String? holiday, List<Map<String, dynamic>> leave = const [], bool configured = true}) =>
+      {'date': date, 'configured': configured, 'day_type': type, 'holiday_name': holiday, 'is_holiday_named': holiday != null, 'weekly_off_fraction': type == 'WEEKLY_OFF' ? '1.00' : null, 'leave': leave};
+  return {
+    'from_date': '2026-10-26',
+    'to_date': '2026-12-06',
+    'configuration': 'COMPLETE',
+    'leave_included': true,
+    'days': [
+      for (final date in datesBetween('2026-10-26', '2026-12-06'))
+        switch (date) {
+          '2026-11-09' => day(date, 'HOLIDAY', holiday: 'Founders Day'),
+          '2026-11-10' => day(date, 'WORKING', leave: [{'status': 'APPROVED', 'fraction': '1.00'}]),
+          '2026-11-11' => day(date, 'WORKING', leave: [{'status': 'PENDING', 'fraction': '0.50', 'half': 'FIRST_HALF'}]),
+          '2026-11-18' => day(date, 'SPECIAL_WORKING', holiday: 'Audit day'),
+          '2026-11-20' => day(date, 'SHUTDOWN', holiday: 'Plant shutdown'),
+          _ => day(date, DateTime.parse('${date}T00:00:00Z').weekday == DateTime.sunday ? 'WEEKLY_OFF' : 'WORKING'),
+        },
+    ],
+  };
+}
 
 void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true}) {
   for (final v in variants) {
@@ -223,6 +247,10 @@ void main() {
     await tester.tap(find.text('show'));
     await tester.pumpAndSettle();
   }, variants: [_variants[0], _variants[3]]);
+
+  _golden('my_calendar', (v) => MyCalendarScreen(now: DateTime.utc(2026, 11, 5, 6)), overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/employee-calendar/me': _calendarFixture()})),
+  ]);
 
   _golden('correction_form_shifts_denied', (v) => RequestListScreen(config: regularizationConfig), overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(

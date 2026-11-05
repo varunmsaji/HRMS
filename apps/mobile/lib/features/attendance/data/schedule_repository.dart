@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/providers.dart';
+import '../domain/employee_calendar.dart';
 import '../domain/weekly_schedule.dart';
 
 /// Weekly schedule and shift-swap calls. Employees raise, agree to and withdraw swaps themselves;
@@ -44,6 +45,12 @@ class ScheduleRepository {
         '/rosters/swap-requests/$id/$action',
         body: const <String, dynamic>{},
         parse: (d) => SwapRequest.fromJson(d as Map<String, dynamic>),
+      );
+
+  /// The caller's own calendar; the server works out who that is from the session.
+  Future<EmployeeCalendar> getMyCalendar({required String from, required String to}) => _client.get(
+        _path('/employee-calendar/me', {'from': from, 'to': to}),
+        parse: (d) => EmployeeCalendar.fromJson(d as Map<String, dynamic>),
       );
 
   static String _path(String base, Map<String, String> query) => '$base?${Uri(queryParameters: query).query}';

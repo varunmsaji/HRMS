@@ -51,7 +51,7 @@ class _SettingsHubScreenState extends ConsumerState<SettingsHubScreen> {
             for (final g in visibleNavGroups(permissions))
               if (g.items.any((e) => e.guarded)) NavGroup(g.label, [for (final e in g.items) if (e.guarded) e]),
           ]
-        : visibleNavGroups(permissions);
+        : visibleNavGroups(permissions, hasEmployee: user?.employeeId != null);
 
     final matches = [
       for (final g in groups)

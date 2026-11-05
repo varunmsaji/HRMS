@@ -40,7 +40,7 @@ Uncommitted in the tree and not part of this work: `apps/web/src/components/land
 
 1. **Done (5 Nov 2026).** Leave balances picker, plus the other defects from the 5 Nov review: manager-change confirmation, calendar change impact review (`change_impact_screen.dart`), payroll hidden on Home and the employee record, placeholder Home labels removed, location check on the attendance policy form, and refreshed contract fixtures with a CI check. Calendar and policy items below that mention change impact or the policy location setting no longer need that part.
 2. **WP4: calendars (mobile).**
-   - "My calendar": `GET /employee-calendar/me?from=&to=` (same as web `me/calendar`; types in `apps/web/src/lib/employee-calendar/types.ts`, month logic in `month.ts`). Month view with shift, leave, holiday markers; tap a day for detail. Reuse `attendance_month_card.dart` styling.
+   - "My calendar": done (`my_calendar_screen.dart`). Working days, weekly offs, holidays and leave, as on web; the API has no shift data for it.
    - HR attendance agenda: date strip plus Present / Late / Absent / On leave groups from `GET /attendance/days` (web: `app/app/attendance/calendar/page.tsx`, `lib/attendance/hr-calendar.ts`), with branch/department filters and server search. Tap opens the existing day detail.
    - Holiday year view on the holiday calendar detail (web: `components/holiday-calendar/holiday-year-calendar.tsx`).
 3. **WP5: work calendar day grid and change impact (mobile).** Web: `components/work-calendar/day-grid.tsx`, `change-impact-dialog.tsx`. Mobile today only has the one-day `DayTypeLookup`. First confirm the API behind the impact dialog.
