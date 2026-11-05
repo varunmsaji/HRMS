@@ -123,6 +123,12 @@ Additional repo conventions when Python scaffold lands:
 - **Money** as integer minor units (`BIGINT`) + `currency` column — never floats (ADR-0006).
 - **No hard deletes** — `deleted_at` / retention job only.
 
+## Making changes
+
+All edits happen on the `test` branch and reach `main` through a pull request. Once CI passes, the
+pull request merges by itself, unless it changes workflows, agent rules or database migrations. See
+[AGENTS.md](AGENTS.md) for the full rules.
+
 ## Documentation
 
 - Spec set: [`docs/product/00_README_Document_Index.md`](docs/product/00_README_Document_Index.md)
