@@ -2007,16 +2007,19 @@ class FacePunchService:
         found = False
         while time.monotonic() < deadline:
             async with session_scope(company_id=str(company_id)) as session:
+                # The attempt first: a MATCHED attempt commits together with its punch, so seeing
+                # the attempt means the punch read below sees it too. The other way round, the
+                # original can commit between the two reads and this request is wrongly refused.
+                has_attempt = await self._attempts.exists_for_session(
+                    session, company_id=company_id, session_id=challenge_id
+                )
                 found = (
                     await self._punches.get_by_idempotency_key(
                         session, company_id=company_id, idempotency_key=stored_key
                     )
                     is not None
                 )
-                finished = found or await self._attempts.exists_for_session(
-                    session, company_id=company_id, session_id=challenge_id
-                )
-            if finished:
+            if found or has_attempt:
                 break
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 1.0)

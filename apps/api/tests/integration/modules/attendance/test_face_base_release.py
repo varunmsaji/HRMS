@@ -12,6 +12,7 @@ fake provider / liveness engine / photo storage — nothing here reaches Face++)
 """
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -985,10 +986,17 @@ async def test_client_disconnect_mid_enrollment_compensates_and_releases_the_res
     assert "delete_person" in probing_provider.names()  # the FaceSet was removed
     assert fake_photo_storage.objects == {}
     assert await _sql(company_id, "SELECT count(*) FROM employee_face_profile") == [(0,)]
-    window = (
-        await _sql(company_id, "SELECT status, submission_token FROM face_enrollment_window")
-    )[0]
-    assert tuple(window) == ("OPEN", None)  # released at once, not left to lapse
+
+    # The shielded release outlives the cancelled request, so it can finish just after it. Well
+    # inside this deadline, not after the much longer lease lapses.
+    async def window_state() -> tuple[Any, ...]:
+        rows = await _sql(company_id, "SELECT status, submission_token FROM face_enrollment_window")
+        return tuple(rows[0])
+
+    deadline = time.monotonic() + 5
+    while await window_state() != ("OPEN", None) and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    assert await window_state() == ("OPEN", None)
     probing_provider.verify_gate.set()
     assert (await _submit(client, me)).status_code == 201  # and the employee can simply retry
 
