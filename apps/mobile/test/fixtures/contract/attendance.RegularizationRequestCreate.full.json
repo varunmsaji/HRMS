@@ -1,9 +1,12 @@
 {
  "attachment_reference": "x",
  "attendance_date": "2026-01-15",
+ "break_start_event_id": "00000000-0000-0000-0000-000000001234",
  "employee_id": "00000000-0000-0000-0000-000000001234",
  "reason": "x",
  "request_type": "x",
+ "requested_break_end": "2026-01-15T10:00:00Z",
+ "requested_break_minutes": 1,
  "requested_punches": [
   {
    "direction": "x",

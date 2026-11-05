@@ -1,6 +1,7 @@
 {
  "user": {
   "company_id": "00000000-0000-0000-0000-000000001234",
+  "company_status": "x",
   "company_timezone": "x",
   "email": "x",
   "employee_id": "00000000-0000-0000-0000-000000001234",

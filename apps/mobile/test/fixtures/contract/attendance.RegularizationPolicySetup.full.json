@@ -1,0 +1,29 @@
+{
+ "assign": {
+  "expected_version": 1,
+  "scope_id": "00000000-0000-0000-0000-000000001234",
+  "scope_type": "x"
+ },
+ "name": "x",
+ "publish": true,
+ "publish_reason": "x",
+ "rules": {
+  "allow_employee_request": true,
+  "allow_hr_request": true,
+  "allow_manager_request": true,
+  "allowed_types": [
+   {
+    "regularization_type": "x",
+    "sort_order": 1
+   }
+  ],
+  "approval_chain": "x",
+  "attachment_required": true,
+  "auto_approve_within_minutes": 1,
+  "blocked_when_locked": true,
+  "effective_from": "2026-01-15",
+  "max_backdated_days": 1,
+  "max_requests_per_month": 1,
+  "reason_required": true
+ }
+}

@@ -20,6 +20,7 @@
  "id": "00000000-0000-0000-0000-000000001234",
  "max_backdated_days": 1,
  "max_carry_forward_days": "1.50",
+ "max_consecutive_days": 1,
  "max_encashment_days": "1.50",
  "max_requests_per_month": 1,
  "min_balance_after_encashment": "1.50",

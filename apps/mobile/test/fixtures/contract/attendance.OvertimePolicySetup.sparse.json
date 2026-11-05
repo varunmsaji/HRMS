@@ -1,0 +1,33 @@
+{
+ "assign": null,
+ "name": "x",
+ "publish": true,
+ "publish_reason": null,
+ "rules": {
+  "approval_chain": "x",
+  "comp_off_day_length_minutes": null,
+  "comp_off_expiry_days": null,
+  "comp_off_instead_of_pay": true,
+  "daily_cap_minutes": null,
+  "effective_from": null,
+  "eligibility": "x",
+  "min_ot_minutes": 1,
+  "monthly_cap_minutes": null,
+  "night_ot_mode": "x",
+  "night_window_end": null,
+  "night_window_start": null,
+  "rate_rows": [
+   {
+    "classification_code": "x",
+    "day_class": "x",
+    "multiplier_decimal": null,
+    "sort_order": 1
+   }
+  ],
+  "requires_post_approval": true,
+  "requires_pre_approval": true,
+  "rounding_minutes": null,
+  "rounding_mode": "x",
+  "weekly_cap_minutes": null
+ }
+}

@@ -1,4 +1,7 @@
 {
+ "company_requires_enrollment": true,
+ "enrollment_state": "x",
+ "face_verification_required": true,
  "open_window": null,
  "profile": null
 }

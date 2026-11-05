@@ -1,5 +1,12 @@
 {
  "direction": "x",
  "idempotency_key": "x",
+ "location": {
+  "accuracy_m": 1.5,
+  "captured_at": "2026-01-15T10:00:00Z",
+  "latitude": 1.5,
+  "longitude": 1.5
+ },
+ "location_error": "x",
  "reference": "x"
 }

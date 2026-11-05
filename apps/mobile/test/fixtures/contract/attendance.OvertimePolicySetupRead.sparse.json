@@ -1,0 +1,55 @@
+{
+ "policy": {
+  "assigned_company_wide": true,
+  "assigned_group_count": 1,
+  "code": null,
+  "company_id": "00000000-0000-0000-0000-000000001234",
+  "created_at": "2026-01-15T10:00:00Z",
+  "has_draft": true,
+  "id": "00000000-0000-0000-0000-000000001234",
+  "is_active": true,
+  "live_from": null,
+  "name": "x",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "version": 1
+ },
+ "version": {
+  "approval_chain": "x",
+  "comp_off_day_length_minutes": null,
+  "comp_off_expiry_days": null,
+  "comp_off_instead_of_pay": true,
+  "company_id": "00000000-0000-0000-0000-000000001234",
+  "created_at": "2026-01-15T10:00:00Z",
+  "daily_cap_minutes": null,
+  "effective_from": null,
+  "effective_to": null,
+  "eligibility": "x",
+  "id": "00000000-0000-0000-0000-000000001234",
+  "min_ot_minutes": 1,
+  "monthly_cap_minutes": null,
+  "night_ot_mode": "x",
+  "night_window_end": null,
+  "night_window_start": null,
+  "policy_id": "00000000-0000-0000-0000-000000001234",
+  "publish_reason": null,
+  "published_at": null,
+  "published_by": null,
+  "rate_rows": [
+   {
+    "classification_code": "x",
+    "day_class": "x",
+    "id": "00000000-0000-0000-0000-000000001234",
+    "multiplier_decimal": null,
+    "sort_order": 1
+   }
+  ],
+  "requires_post_approval": true,
+  "requires_pre_approval": true,
+  "rounding_minutes": null,
+  "rounding_mode": "x",
+  "status": "x",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "version": 1,
+  "weekly_cap_minutes": null
+ }
+}

@@ -1,0 +1,47 @@
+{
+ "policy": {
+  "assigned_company_wide": true,
+  "assigned_group_count": 1,
+  "code": null,
+  "company_id": "00000000-0000-0000-0000-000000001234",
+  "created_at": "2026-01-15T10:00:00Z",
+  "has_draft": true,
+  "id": "00000000-0000-0000-0000-000000001234",
+  "is_active": true,
+  "live_from": null,
+  "name": "x",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "version": 1
+ },
+ "version": {
+  "allow_employee_request": true,
+  "allow_hr_request": true,
+  "allow_manager_request": true,
+  "allowed_types": [
+   {
+    "id": "00000000-0000-0000-0000-000000001234",
+    "regularization_type": "x",
+    "sort_order": 1
+   }
+  ],
+  "approval_chain": "x",
+  "attachment_required": true,
+  "auto_approve_within_minutes": null,
+  "blocked_when_locked": true,
+  "company_id": "00000000-0000-0000-0000-000000001234",
+  "created_at": "2026-01-15T10:00:00Z",
+  "effective_from": null,
+  "effective_to": null,
+  "id": "00000000-0000-0000-0000-000000001234",
+  "max_backdated_days": null,
+  "max_requests_per_month": null,
+  "policy_id": "00000000-0000-0000-0000-000000001234",
+  "publish_reason": null,
+  "published_at": null,
+  "published_by": null,
+  "reason_required": true,
+  "status": "x",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "version": 1
+ }
+}

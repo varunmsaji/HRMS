@@ -30,6 +30,9 @@ final attendancePolicySetup = PolicySetupConfig(
   base: const {
     'grace_in_minutes': 0,
     'grace_out_minutes': 0,
+    'geofence_mode': 'DISABLED',
+    'geofence_max_accuracy_m': 100,
+    'geofence_max_age_seconds': 60,
     'punch_rounding': 'NONE',
     'missing_punch_behaviour': 'INCOMPLETE',
     'auto_close_uses_shift_end': true,

@@ -1,5 +1,7 @@
 {
  "direction": "x",
  "idempotency_key": null,
+ "location": null,
+ "location_error": null,
  "reference": null
 }

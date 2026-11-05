@@ -1,7 +1,10 @@
 {
  "absent_days": "x",
+ "actual_break_minutes_total": null,
+ "auto_deducted_break_minutes_total": null,
  "comp_off_minutes_earned": 1,
  "employee_id": "00000000-0000-0000-0000-000000001234",
+ "excess_break_minutes_total": null,
  "frozen": true,
  "generated_at": "2026-01-15T10:00:00Z",
  "half_days": "x",
@@ -16,10 +19,13 @@
  "ot_minutes_night": 1,
  "ot_minutes_normal": 1,
  "ot_minutes_weekly_off": 1,
+ "paid_break_minutes_total": null,
  "paid_days": null,
  "payable_days": null,
  "present_days": "x",
+ "unpaid_break_minutes_total": null,
  "unpaid_off_days": null,
+ "unresolved_break_days": null,
  "weekly_off_days": "x",
  "worked_minutes_total": 1
 }

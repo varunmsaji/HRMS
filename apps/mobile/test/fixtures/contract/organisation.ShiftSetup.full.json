@@ -1,0 +1,56 @@
+{
+ "name": "x",
+ "publish": true,
+ "publish_reason": "x",
+ "rules": {
+  "breaks": [
+   {
+    "allows_split": null,
+    "auto_deduct_full": null,
+    "break_kind": null,
+    "break_type": null,
+    "end_time": null,
+    "excess_outcome": null,
+    "is_enabled": null,
+    "is_mandatory": null,
+    "is_paid": null,
+    "max_minutes": null,
+    "min_minutes": null,
+    "mode": null,
+    "name": null,
+    "optional_recorded_deducts": null,
+    "optional_scheduled_fallback": null,
+    "scheduled_minutes": null,
+    "sort_order": null,
+    "start_time": null,
+    "window_end": null,
+    "window_start": null
+   }
+  ],
+  "core_end": "x",
+  "core_start": "x",
+  "duty_blocks": [
+   {
+    "end_time": null,
+    "sequence": null,
+    "start_time": null
+   }
+  ],
+  "effective_from": "2026-01-15",
+  "end_time": "x",
+  "is_night_shift": true,
+  "is_ot_eligible": true,
+  "max_scheduled_minutes": 1,
+  "min_scheduled_minutes": 1,
+  "operates_on_holiday": true,
+  "operates_on_weekly_off": true,
+  "required_minutes": 1,
+  "scheduled_minutes": 1,
+  "shift_type": "x",
+  "start_time": "x",
+  "timezone": "x",
+  "weekly_off_pattern_id": "00000000-0000-0000-0000-000000001234",
+  "window_end": "x",
+  "window_start": "x"
+ }
+}

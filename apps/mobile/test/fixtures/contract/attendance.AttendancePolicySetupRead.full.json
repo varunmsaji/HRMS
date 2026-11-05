@@ -1,0 +1,91 @@
+{
+ "policy": {
+  "assigned_company_wide": true,
+  "assigned_group_count": 1,
+  "code": "x",
+  "company_id": "00000000-0000-0000-0000-000000001234",
+  "created_at": "2026-01-15T10:00:00Z",
+  "has_draft": true,
+  "id": "00000000-0000-0000-0000-000000001234",
+  "is_active": true,
+  "live_from": "2026-01-15",
+  "name": "x",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "version": 1
+ },
+ "version": {
+  "auto_close_after_minutes": 1,
+  "auto_close_uses_shift_end": true,
+  "company_id": "00000000-0000-0000-0000-000000001234",
+  "core_hours_breach_behaviour": "x",
+  "created_at": "2026-01-15T10:00:00Z",
+  "duplicate_punch_window_seconds": 1,
+  "early_departure_bands": [
+   {
+    "classification": "x",
+    "counts_toward_cap": true,
+    "id": "00000000-0000-0000-0000-000000001234",
+    "max_minutes": null,
+    "min_minutes": 1,
+    "sort_order": 1
+   }
+  ],
+  "early_departure_requires_approval": true,
+  "early_in_allowance_minutes": 1,
+  "early_out_uses_core_end": true,
+  "effective_from": "2026-01-15",
+  "effective_to": "2026-01-15",
+  "excess_break_behaviour": "x",
+  "excess_break_count_window": "x",
+  "excess_break_days_to_half_day_count": 1,
+  "geofence_max_accuracy_m": 1,
+  "geofence_max_age_seconds": 1,
+  "geofence_mode": "x",
+  "grace_in_minutes": 1,
+  "grace_out_minutes": 1,
+  "half_day_boundary_minutes": 1,
+  "half_day_split": "x",
+  "hour_bands": [
+   {
+    "id": "00000000-0000-0000-0000-000000001234",
+    "max_minutes": null,
+    "min_minutes": 1,
+    "result_status": "x",
+    "sort_order": 1
+   }
+  ],
+  "id": "00000000-0000-0000-0000-000000001234",
+  "incomplete_at_lock_behaviour": "x",
+  "late_bands": [
+   {
+    "classification": "x",
+    "counts_toward_cap": true,
+    "id": "00000000-0000-0000-0000-000000001234",
+    "max_minutes": null,
+    "min_minutes": 1,
+    "sort_order": 1
+   }
+  ],
+  "late_count_window": "x",
+  "lates_to_half_day_count": 1,
+  "missing_punch_behaviour": "x",
+  "missing_shift_behaviour": "x",
+  "multi_punch_mode": "x",
+  "on_duty_requires_punch": true,
+  "policy_id": "00000000-0000-0000-0000-000000001234",
+  "publish_reason": "x",
+  "published_at": "2026-01-15T10:00:00Z",
+  "published_by": "00000000-0000-0000-0000-000000001234",
+  "punch_rounding": "x",
+  "rounding_minutes": 1,
+  "split_shift_allow_hours_compensation": true,
+  "split_shift_block_mandatory": true,
+  "split_shift_missed_block_behaviour": "x",
+  "status": "x",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "version": 1,
+  "wfh_requires_punch": true,
+  "wfh_uses_shift_hours": true,
+  "work_on_leave_behaviour": "x"
+ }
+}

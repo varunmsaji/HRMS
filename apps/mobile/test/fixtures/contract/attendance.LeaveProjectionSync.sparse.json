@@ -1,9 +1,9 @@
 {
  "attendance_date": "2026-01-15",
  "employee_id": "00000000-0000-0000-0000-000000001234",
- "fraction": "x",
+ "fraction": null,
  "half": null,
- "is_paid": true,
+ "is_paid": null,
  "leave_application_id": "00000000-0000-0000-0000-000000001234",
  "leave_type_code": null,
  "leave_type_id": null
