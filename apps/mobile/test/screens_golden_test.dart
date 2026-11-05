@@ -18,6 +18,7 @@ import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/domain/today_state.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
 import 'package:hrms_mobile/features/attendance/domain/employee_calendar.dart';
+import 'package:hrms_mobile/features/attendance/presentation/geofences_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/my_calendar_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_month_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_punch_card.dart';
@@ -130,7 +131,7 @@ Map<String, dynamic> _calendarFixture() {
   };
 }
 
-void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true}) {
+void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true, List<String> permissions = const [attendancePunch, attendanceView, attendanceRegularizationRequest]}) {
   for (final v in variants) {
     testWidgets('$name @ ${v.tag}', (tester) async {
       if (!await tester.runAsync(_loadFonts).then((ok) => ok ?? false)) {
@@ -141,7 +142,7 @@ void _golden(String name, Widget Function(_Variant v) build, {List<Override> ove
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       await tester.pumpWidget(ProviderScope(
-        overrides: [fakeAuth(const [attendancePunch, attendanceView, attendanceRegularizationRequest], employeeId: 'e-1'), ...overrides],
+        overrides: [fakeAuth(permissions, employeeId: 'e-1'), ...overrides],
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: AppTheme.employee,
@@ -250,6 +251,15 @@ void main() {
 
   _golden('my_calendar', (v) => MyCalendarScreen(now: DateTime.utc(2026, 11, 5, 6)), overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/employee-calendar/me': _calendarFixture()})),
+  ]);
+
+  _golden('geofences', (v) => const GeofencesScreen(), permissions: const [attendancePolicyManage, attendanceViewAll, orgBranchManage], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: {
+      '/attendance/geofences': const [
+        {'branch_id': 'b-1', 'name': 'Head Office', 'code': null, 'is_active': true, 'latitude': 12.9716, 'longitude': 77.5946, 'radius_m': 150, 'configured': true, 'assigned_employee_count': 12, 'authorized_employee_count': 2},
+        {'branch_id': 'b-2', 'name': 'Plant', 'code': null, 'is_active': true, 'latitude': null, 'longitude': null, 'radius_m': null, 'configured': false, 'assigned_employee_count': 4, 'authorized_employee_count': 0},
+      ],
+    })),
   ]);
 
   _golden('correction_form_shifts_denied', (v) => RequestListScreen(config: regularizationConfig), overrides: [

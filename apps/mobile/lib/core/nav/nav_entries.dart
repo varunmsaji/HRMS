@@ -92,6 +92,7 @@ const navSettingsGroups = [
   ]),
   NavGroup('Attendance & Time', [
     NavEntry('Shifts', Icons.schedule_outlined, '/app/shifts', anyOf: [orgShiftManage]),
+    NavEntry('Workplace Geofences', Icons.location_on_outlined, '/app/attendance-geofences', anyOf: [attendancePolicyManage, attendanceViewAll]),
     NavEntry('Attendance Periods', Icons.lock_clock_outlined, '/app/attendance-periods', anyOf: [attendanceLock, attendanceUnlock, ..._teamView]),
     NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView]),
     NavEntry('Work Calendars', Icons.date_range_outlined, '/app/work-calendars', anyOf: [orgCalendarManage]),
