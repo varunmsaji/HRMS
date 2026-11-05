@@ -4700,6 +4700,15 @@ class AttendanceDayService:
                     resolved_manager_id = assignment.reporting_manager_id if assignment else None
                 approval_stage = "MANAGER" if resolved_manager_id is not None else "HR"
                 approver_unresolved = resolved_manager_id is None
+                # A recompute must not undo the manager's step of a two-step chain. If the minutes
+                # changed, the manager approved something else, so it goes back to them.
+                if (
+                    existing_ot_record is not None
+                    and existing_ot_record.approval_chain == approval_chain
+                    and existing_ot_record.approval_stage == "HR"
+                    and existing_ot_record.minutes_detected == result.ot_minutes_detected
+                ):
+                    approval_stage = "HR"
 
         if needs_review:
             status = "PENDING"

@@ -1197,3 +1197,66 @@ async def test_the_manager_step_of_a_two_step_chain_cannot_change_minutes(
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
         await _cleanup_scoped_users()
+
+
+@pytest.mark.parametrize(("worked_more", "stage"), [(False, "HR"), (True, "MANAGER")])
+async def test_recompute_keeps_the_manager_step_unless_the_minutes_change(
+    client: AsyncClient, seeded_plan_catalogue: None, worked_more: bool, stage: str
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        manager_id = wired["employee"]["id"]
+        reportee = await _add_reportee_employee(
+            client,
+            headers,
+            wired=wired,
+            first_name="Reportee",
+            reporting_manager_id=UUID(manager_id),
+        )
+        employee_id = reportee["id"]
+        await _create_overtime_policy(client, headers, approval_chain="MANAGER_THEN_HR")
+        await _ot_calculate_day(client, headers, employee_id=employee_id)
+        record = await _get_overtime_record_for_day(
+            client, headers, employee_id=employee_id, day="2026-08-10"
+        )
+
+        from hrms.modules.attendance.permissions import ATTENDANCE_OVERTIME_APPROVE
+
+        manager_headers, _ = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=[ATTENDANCE_OVERTIME_APPROVE],
+            data_scope="REPORTEES",
+            caller_employee_id=UUID(manager_id),
+        )
+        stage1 = await client.post(
+            f"/v1/overtime/{record['id']}/approve",
+            headers={**manager_headers, "If-Match": str(record["version"])},
+            json={},
+        )
+        assert stage1.status_code == 200, stage1.text
+
+        if worked_more:
+            await _punch(
+                client, headers, employee_id=employee_id, hour=19, minute=0, direction="IN"
+            )
+            await _punch(
+                client, headers, employee_id=employee_id, hour=19, minute=30, direction="OUT"
+            )
+        recalculated = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-10"},
+        )
+        assert recalculated.status_code == 200, recalculated.text
+
+        after = await _get_overtime_record_for_day(
+            client, headers, employee_id=employee_id, day="2026-08-10"
+        )
+        assert after["status"] == "PENDING"
+        assert after["approval_stage"] == stage
+    finally:
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
