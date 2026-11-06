@@ -2582,7 +2582,9 @@ class LeaveApplicationService:
         `CalendarResolutionService.resolve_for_employee`'s own `config_incomplete` posture).
 
         WORKING/SPECIAL_WORKING days (and the working half of a half-day weekly off) are
-        leave-consuming by default; full WEEKLY_OFF/HOLIDAY/SHUTDOWN days are not, unless the
+        leave-consuming by default, and a published roster outranks the calendar (F7, D-6): a
+        roster day off consumes nothing, a rostered working day on an off day consumes a day.
+        Full WEEKLY_OFF/HOLIDAY/SHUTDOWN days are not leave-consuming, unless the
         sandwich rule brackets a run of them (a Saturday and Sunday, say) between two consuming
         days *within this same application's range* (no cross-application look-back — a separate,
         earlier application on an adjacent date is not consulted here)."""
@@ -2605,6 +2607,19 @@ class LeaveApplicationService:
             if resolved.config_incomplete or resolved.day_type is None:
                 raise LeaveApplicationCalendarNotResolvedError()
             working[one_date] = working_fraction_of(resolved.day_type)
+
+        # F7 (D-6) — a published roster outranks the calendar, as it does in attendance: a roster
+        # day off consumes no leave, and a rostered working day on a holiday or weekly off does.
+        from hrms.modules.attendance.service import ShiftRosterService
+
+        overrides = await ShiftRosterService(self._session).published_day_overrides(
+            company_id, employee_id, date_from=body.start_date, date_to=body.end_date
+        )
+        for one_date, (week_off, holiday_working) in overrides.items():
+            if week_off:
+                working[one_date] = Decimal("0.00")
+            elif holiday_working:
+                working[one_date] = Decimal("1.00")
 
         consuming: dict[date, bool] = {d: working[d] > Decimal("0.00") for d in dates}
 

@@ -2367,6 +2367,23 @@ class ShiftRosterService:
         self._repo = ShiftRosterRepository()
         self._audit = AuditService()
 
+    async def published_day_overrides(
+        self, company_id: UUID, employee_id: UUID, *, date_from: date, date_to: date
+    ) -> dict[date, tuple[bool, bool]]:
+        """F7 (D-6) — `{date: (is_week_off_override, is_holiday_working_override)}` from the
+        employee's published roster in the range, for Leave to judge which days consume leave
+        the way the calculation engine judges which days expect work. Internal: no scope."""
+        rows = await self._repo.list_published_between(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        return {
+            r.roster_date: (r.is_week_off_override, r.is_holiday_working_override) for r in rows
+        }
+
     async def create_roster_entry(
         self,
         company_id: UUID,
