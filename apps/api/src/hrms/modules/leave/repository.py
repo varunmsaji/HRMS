@@ -433,6 +433,56 @@ class LeaveLedgerRepository:
         )
         return Decimal((await session.execute(stmt)).scalar_one())
 
+    async def sum_closed_year_cancellations(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID,
+        year_start: date,
+        next_year_start: date,
+        exclude_application_id: UUID,
+    ) -> tuple[Decimal, Decimal, Decimal]:
+        """R-12 — what earlier cancellations already gave back to a closed leave year, so the
+        year-end rule is applied to all of its refunds together rather than to each on its own:
+        `(refunded, lapsed, encashed)` from entries dated on or after `next_year_start` that
+        point at an application debited in `[year_start, next_year_start)`, other than
+        `exclude_application_id`. Lapses and encashments come back as positive day counts."""
+        refunded = func.coalesce(
+            func.sum(LeaveLedgerEntry.amount).filter(
+                LeaveLedgerEntry.entry_type == "ADJUSTMENT", LeaveLedgerEntry.amount > 0
+            ),
+            0,
+        )
+        lapsed = func.coalesce(
+            func.sum(-LeaveLedgerEntry.amount).filter(
+                LeaveLedgerEntry.entry_type == "ADJUSTMENT", LeaveLedgerEntry.amount < 0
+            ),
+            0,
+        )
+        encashed = func.coalesce(
+            func.sum(-LeaveLedgerEntry.amount).filter(LeaveLedgerEntry.entry_type == "ENCASHMENT"),
+            0,
+        )
+        stmt = (
+            select(refunded, lapsed, encashed)
+            .select_from(LeaveLedgerEntry)
+            .join(LeaveApplication, LeaveApplication.id == LeaveLedgerEntry.reference_id)
+            .where(
+                LeaveLedgerEntry.company_id == company_id,
+                LeaveLedgerEntry.employee_id == employee_id,
+                LeaveLedgerEntry.leave_type_id == leave_type_id,
+                LeaveLedgerEntry.effective_date >= next_year_start,
+                LeaveApplication.company_id == company_id,
+                LeaveApplication.id != exclude_application_id,
+                LeaveApplication.start_date >= year_start,
+                LeaveApplication.start_date < next_year_start,
+            )
+        )
+        row = (await session.execute(stmt)).one()
+        return Decimal(row[0]), Decimal(row[1]), Decimal(row[2])
+
     async def list_for_employee(
         self,
         session: AsyncSession,
@@ -477,13 +527,20 @@ class LeaveLedgerRepository:
         stmt = select(func.count()).select_from(LeaveLedgerEntry).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
 
-    async def latest_effective_date(
-        self, session: AsyncSession, *, company_id: UUID, entry_type: str
+    async def latest_monthly_accrual_date(
+        self, session: AsyncSession, *, company_id: UUID
     ) -> date | None:
-        """The newest date the company has an entry of this type for, or None."""
-        stmt = select(func.max(LeaveLedgerEntry.effective_date)).where(
-            LeaveLedgerEntry.company_id == company_id,
-            LeaveLedgerEntry.entry_type == entry_type,
+        """The newest month-end the company has a monthly accrual for, or None. Yearly accruals
+        are left out: they are dated at a leave-year start, often mid-month or at a month end,
+        and would otherwise hide a monthly run that never happened (R-08)."""
+        stmt = (
+            select(func.max(LeaveLedgerEntry.effective_date))
+            .join(LeavePolicyVersion, LeavePolicyVersion.id == LeaveLedgerEntry.reference_id)
+            .where(
+                LeaveLedgerEntry.company_id == company_id,
+                LeaveLedgerEntry.entry_type == "ACCRUAL",
+                LeavePolicyVersion.accrual_frequency == "MONTHLY",
+            )
         )
         return (await session.execute(stmt)).scalar_one()
 

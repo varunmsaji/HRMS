@@ -1705,8 +1705,8 @@ class LeaveAccrualService:
         """The daily run: repeats the month just ended during the first `window_days` days of a
         month, and at any time catches up months missed since the company's newest accrual (an
         outage over the window), oldest first. Every month is idempotent."""
-        latest = await self._ledger_repo.latest_effective_date(
-            self._session, company_id=company_id, entry_type="ACCRUAL"
+        latest = await self._ledger_repo.latest_monthly_accrual_date(
+            self._session, company_id=company_id
         )
         run_dates: list[date] = []
         run_date = as_of.replace(day=1)
@@ -2198,7 +2198,7 @@ class LeaveCompOffService:
         self._type_repo = LeaveTypeRepository()
 
     @logged_operation("leave.comp_off.credit_company")
-    async def credit_company(self, company_id: UUID) -> int:
+    async def credit_company(self, company_id: UUID, *, as_of: date | None = None) -> int:
         """Reads Attendance's terminal, comp-off-bearing `OvertimeRecord`s as a read-only fact
         (LD-07 — Leave never writes to Attendance tables) and writes one `COMP_OFF_CREDIT`
         ledger row per record not yet credited (idempotency keyed on
@@ -2208,8 +2208,10 @@ class LeaveCompOffService:
         configured — never guesses a conversion basis.
 
         Also keeps earlier credits in line with leave approved afterwards (BUS-011): a credit
-        whose day is now a full-day leave is reversed, and restored if that leave is cancelled.
-        Returns how many credits it wrote; reversals are not counted."""
+        whose day is now a full-day leave or an on-duty day (F11) is reversed, and restored if that
+        leave or on-duty is cancelled.
+        Returns how many credits it wrote; reversals are not counted. `as_of` (the company's
+        business date when unset) decides whether a credit being restored has already expired."""
         comp_off_type = await self._type_repo.get_comp_off_type(
             self._session, company_id=company_id
         )
@@ -2217,10 +2219,15 @@ class LeaveCompOffService:
             return 0
 
         from hrms.modules.attendance.service import OvertimeRecordService
+        from hrms.modules.organisation.service import OrganisationService
+
+        if as_of is None:
+            company = await OrganisationService(self._session).get_company_profile(company_id)
+            as_of = business_today(company.timezone)
 
         overtime = OvertimeRecordService(self._session)
         facts = await overtime.list_comp_off_facts(company_id)
-        for fact in await overtime.list_comp_off_facts_on_full_day_leave(company_id):
+        for fact in await overtime.list_comp_off_facts_on_unpayable_day(company_id):
             await self._reverse_credit_for_leave(company_id, comp_off_type.id, fact)
 
         written = 0
@@ -2234,7 +2241,7 @@ class LeaveCompOffService:
                 reference_id=fact.overtime_record_id,
             )
             if already_credited:
-                await self._restore_reversed_credit(company_id, comp_off_type.id, fact)
+                await self._restore_reversed_credit(company_id, comp_off_type.id, fact, as_of=as_of)
                 continue
 
             amount = (
@@ -2323,15 +2330,17 @@ class LeaveCompOffService:
                 "amount": -credited,
                 "effective_date": fact.attendance_date,
                 "reference_id": fact.overtime_record_id,
-                "reason": f"Comp-off reversed: on leave {fact.attendance_date:%d %b %Y}",
+                "reason": f"Comp-off reversed: on leave or on duty {fact.attendance_date:%d %b %Y}",
                 "created_by_user_id": None,
             },
         )
 
     async def _restore_reversed_credit(
-        self, company_id: UUID, leave_type_id: UUID, fact: "CompOffFactRow"
+        self, company_id: UUID, leave_type_id: UUID, fact: "CompOffFactRow", *, as_of: date
     ) -> None:
-        """Gives a reversed credit back once the leave that caused it has been cancelled."""
+        """Gives a reversed credit back once the leave that caused it has been cancelled. A
+        credit whose expiry passed while it was reversed is restored and expired together: the
+        expiry sweep could not see it during the leave, and must not find it spendable now."""
         await self._ledger_repo.lock_balance(
             self._session,
             company_id=company_id,
@@ -2352,7 +2361,37 @@ class LeaveCompOffService:
                 "amount": reversed_amount,
                 "effective_date": fact.attendance_date,
                 "reference_id": fact.overtime_record_id,
-                "reason": f"Comp-off restored: leave cancelled {fact.attendance_date:%d %b %Y}",
+                "reason": (
+                    f"Comp-off restored: leave or on duty cancelled {fact.attendance_date:%d %b %Y}"
+                ),
+                "created_by_user_id": None,
+            },
+        )
+        if fact.comp_off_expiry_date is None or fact.comp_off_expiry_date > as_of:
+            return
+        credit_id = await self._ledger_repo.get_id_with_reference(
+            self._session,
+            company_id=company_id,
+            entry_type="COMP_OFF_CREDIT",
+            reference_id=fact.overtime_record_id,
+        )
+        if credit_id is None or await self._ledger_repo.exists_with_reference(
+            self._session, company_id=company_id, entry_type="ADJUSTMENT", reference_id=credit_id
+        ):
+            return
+        # The same row `expire_company` writes, keyed on the credit, so that sweep skips it.
+        await self._ledger_repo.insert(
+            self._session,
+            data={
+                "id": uuid4(),
+                "company_id": company_id,
+                "employee_id": fact.employee_id,
+                "leave_type_id": leave_type_id,
+                "entry_type": "ADJUSTMENT",
+                "amount": -reversed_amount,
+                "effective_date": as_of,
+                "reference_id": credit_id,
+                "reason": f"Comp-off expired (earned {fact.attendance_date:%d %b %Y})",
                 "created_by_user_id": None,
             },
         )
@@ -3788,10 +3827,26 @@ class LeaveApplicationService:
             leave_type_id=row.leave_type_id,
             before=next_year_start,
         )
+        # Earlier cancellations from the same closed year count too: the cap applies to all of
+        # the year's refunds together, less what those cancellations already lapsed or encashed.
+        (
+            prior_refunded,
+            prior_lapsed,
+            prior_encashed,
+        ) = await self._ledger_repo.sum_closed_year_cancellations(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            leave_type_id=row.leave_type_id,
+            year_start=year_start,
+            next_year_start=next_year_start,
+            exclude_application_id=row.id,
+        )
         lapsed_before, encashed_before = _year_end_split(version, closing)
-        lapsed_after, encashed_after = _year_end_split(version, closing + refunded)
-        lapse = min(max(lapsed_after - lapsed_before, Decimal("0.00")), refunded)
-        encash = min(max(encashed_after - encashed_before, Decimal("0.00")), refunded - lapse)
+        lapsed_after, encashed_after = _year_end_split(version, closing + prior_refunded + refunded)
+        zero = Decimal("0.00")
+        lapse = min(max(lapsed_after - lapsed_before - prior_lapsed, zero), refunded)
+        encash = min(max(encashed_after - encashed_before - prior_encashed, zero), refunded - lapse)
 
         if lapse > 0:
             await self._ledger_repo.insert(

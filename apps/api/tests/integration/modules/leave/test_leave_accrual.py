@@ -419,3 +419,57 @@ async def test_daily_run_catches_up_at_most_a_few_months(
     finally:
         await _teardown(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_a_yearly_credit_does_not_hide_a_missed_monthly_run(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """R-08 — a yearly accrual dated at a leave-year start on 31 January is not a January
+    monthly run. Run on 20 February, the catch-up must still write January."""
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from hrms.modules.leave.repository import LeaveLedgerRepository
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id = await _setup_accruing_employee(client, headers)
+        await _run_accrual(company_id, as_of=date(2026, 1, 1))
+        assert await _get_balance(client, headers, employee_id) == "1.50"
+
+        # A second leave type credited yearly, at a leave-year start that falls on 31 January.
+        casual = await _create_leave_type(client, headers, code="CL", name="Casual Leave")
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await LeaveLedgerRepository().insert(
+                session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": UUID(employee_id),
+                    "leave_type_id": UUID(casual["id"]),
+                    "entry_type": "ACCRUAL",
+                    "amount": Decimal("12.00"),
+                    "effective_date": date(2026, 1, 31),
+                    "reference_id": None,
+                    "reason": "Yearly accrual for leave year starting 2026-01-31",
+                    "created_by_user_id": None,
+                },
+            )
+            await session.commit()
+
+        assert await _run_due_months(company_id, as_of=date(2026, 2, 20)) == 1
+        response = await client.get(
+            "/v1/leave-balances", headers=headers, params={"employee_id": employee_id}
+        )
+        assert response.status_code == 200, response.text
+        balances = {b["leave_type_id"]: b["balance"] for b in response.json()["data"]}
+        assert balances[casual["id"]] == "12.00"
+        assert len(balances) == 2
+        earned = next(v for k, v in balances.items() if k != casual["id"])
+        assert earned == "3.00"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
