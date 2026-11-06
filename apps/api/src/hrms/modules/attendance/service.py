@@ -3679,6 +3679,7 @@ class AttendanceDayService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        recompute_later_days: bool = True,
     ) -> AttendanceDayRead:
         """Architecture §19.1 steps 1-19, end to end, for one employee-date. Idempotent — same
         punches + versions produce the same result (SRS §5.1); calling this again on an
@@ -3901,7 +3902,7 @@ class AttendanceDayService:
             user_agent=user_agent,
         )
         counter_flags_after = (bool(row.is_late), _counts_as_excess_break_day(result.breaks))
-        if counter_flags_after != counter_flags_before:
+        if recompute_later_days and counter_flags_after != counter_flags_before:
             await self._recompute_later_days_of_month(
                 company_id,
                 employee_id,
@@ -3911,6 +3912,38 @@ class AttendanceDayService:
                 user_agent=user_agent,
             )
         return read
+
+    async def recalculate_days_for_close(
+        self,
+        company_id: UUID,
+        days: list[tuple[UUID, date]],
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        """R-09 — recalculates the given employee-dates just before a period is finalized, so a
+        holiday added for a past day, or a shift, policy or assignment change dated into the
+        past, cannot be locked into payroll with stale figures. Internal: the caller owns the
+        dates. Each employee's days run oldest first, so the cumulative late and excess-break
+        counters read already-corrected earlier days; R-04's per-day cascade is therefore not
+        needed here and is switched off to avoid recalculating the month repeatedly."""
+        settings = get_settings()
+        async with bounded_waits(
+            self._session,
+            lock_timeout_ms=settings.attendance_lock_timeout_ms,
+            statement_timeout_ms=settings.attendance_statement_timeout_ms,
+        ):
+            for employee_id, target_date in sorted(days, key=lambda d: (str(d[0]), d[1])):
+                await self._calculate(
+                    company_id,
+                    employee_id,
+                    target_date,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    recompute_later_days=False,
+                )
 
     async def _recompute_later_days_of_month(
         self,
@@ -7218,6 +7251,37 @@ class AttendancePeriodService:
             user_agent=user_agent,
         )
 
+    async def _recalculate_open_days(
+        self,
+        company_id: UUID,
+        period: "AttendancePeriod",
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """R-09 — nothing recalculates a computed day when a holiday is added for it, or when a
+        shift, policy or assignment change is dated before it; only the trailing sweep and
+        explicit recomputes do. So every unlocked day this period owns is recalculated before
+        validation reads it. Days with no row yet are left to `EMPLOYEES_WITHOUT_ATTENDANCE`.
+
+        If validation then blocks, the whole finalize rolls back, recalculation included."""
+        scope = await self._scope(company_id, period)
+        rows = [r for r in await self._owned_day_rows(company_id, period, scope) if not r.is_locked]
+        if not rows:
+            return
+        await AttendanceDayService(self._session).recalculate_days_for_close(
+            company_id,
+            [(r.employee_id, r.attendance_date) for r in rows],
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        # Validation and the summary must read the recalculated values, not these rows as they
+        # were loaded above; expired rows are refreshed by validation's own query.
+        for row in rows:
+            self._session.expire(row)
+
     async def finalize(
         self,
         company_id: UUID,
@@ -7241,6 +7305,14 @@ class AttendancePeriodService:
         period = await self._get_or_404(company_id, period_id)
         if period.status != "OPEN":
             raise AttendancePeriodInvalidTransitionError("Only an OPEN period can be finalized")
+
+        await self._recalculate_open_days(
+            company_id,
+            period,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
         # A BLOCKED verdict raises immediately, aborting this transaction — neither the
         # validation-status cache nor a `VALIDATION_FAILED` action would survive being written
