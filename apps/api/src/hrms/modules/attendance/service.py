@@ -6,6 +6,7 @@ identical CRUD/versioning/publish mechanics. Mirrors `organisation.service.Organ
 `ShiftVersion` methods (create/list/get/update/discard/publish/resolve_as_of) three times over,
 plus policy-resolution delegation (§16/§19 step 7)."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -2268,6 +2269,13 @@ def _is_unique_violation(exc: IntegrityError) -> bool:
     return str(getattr(cause, "sqlstate", None) or "") == "23505"
 
 
+def _counts_as_excess_break_day(breaks: Iterable[Any]) -> bool:
+    """Whether a day counts toward the cumulative excess-break rule. Must match the condition in
+    `AttendanceDayRepository.count_flagged_days_in_window`, which does the counting. Takes stored
+    break rows or the engine's break results, which share these fields."""
+    return any(b.is_excess and (b.kind == "PUNCHED_GAP" or b.needs_review) for b in breaks)
+
+
 async def _ensure_not_after_last_working_day(
     session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
 ) -> None:
@@ -2358,6 +2366,23 @@ class ShiftRosterService:
         self._session = session
         self._repo = ShiftRosterRepository()
         self._audit = AuditService()
+
+    async def published_day_overrides(
+        self, company_id: UUID, employee_id: UUID, *, date_from: date, date_to: date
+    ) -> dict[date, tuple[bool, bool]]:
+        """F7 (D-6) — `{date: (is_week_off_override, is_holiday_working_override)}` from the
+        employee's published roster in the range, for Leave to judge which days consume leave
+        the way the calculation engine judges which days expect work. Internal: no scope."""
+        rows = await self._repo.list_published_between(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        return {
+            r.roster_date: (r.is_week_off_override, r.is_holiday_working_override) for r in rows
+        }
 
     async def create_roster_entry(
         self,
@@ -3671,6 +3696,7 @@ class AttendanceDayService:
         actor_user_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        recompute_later_days: bool = True,
     ) -> AttendanceDayRead:
         """Architecture §19.1 steps 1-19, end to end, for one employee-date. Idempotent — same
         punches + versions produce the same result (SRS §5.1); calling this again on an
@@ -3718,6 +3744,18 @@ class AttendanceDayService:
         result = calc.evaluate_day(calc_input)
         now = datetime.now(UTC)
         values = self._result_to_values(calc_input, result, resolved_refs)
+        # R-04 — what this day fed the month's cumulative late and excess-break counters before
+        # this calculation. Read now, before the row and its breaks are replaced below.
+        counter_flags_before = (False, False)
+        if existing is not None:
+            counter_flags_before = (
+                bool(existing.is_late),
+                _counts_as_excess_break_day(
+                    await self._break_repo.list_for_day(
+                        self._session, company_id=company_id, attendance_day_id=existing.id
+                    )
+                ),
+            )
 
         existing_ot_record: OvertimeRecord | None = None
         if existing is not None:
@@ -3880,7 +3918,90 @@ class AttendanceDayService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        counter_flags_after = (bool(row.is_late), _counts_as_excess_break_day(result.breaks))
+        if recompute_later_days and counter_flags_after != counter_flags_before:
+            await self._recompute_later_days_of_month(
+                company_id,
+                employee_id,
+                target_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
         return read
+
+    async def recalculate_days_for_close(
+        self,
+        company_id: UUID,
+        days: list[tuple[UUID, date]],
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        """R-09 — recalculates the given employee-dates just before a period is finalized, so a
+        holiday added for a past day, or a shift, policy or assignment change dated into the
+        past, cannot be locked into payroll with stale figures. Internal: the caller owns the
+        dates. Each employee's days run oldest first, so the cumulative late and excess-break
+        counters read already-corrected earlier days; R-04's per-day cascade is therefore not
+        needed here and is switched off to avoid recalculating the month repeatedly."""
+        settings = get_settings()
+        async with bounded_waits(
+            self._session,
+            lock_timeout_ms=settings.attendance_lock_timeout_ms,
+            statement_timeout_ms=settings.attendance_statement_timeout_ms,
+        ):
+            for employee_id, target_date in sorted(days, key=lambda d: (str(d[0]), d[1])):
+                await self._calculate(
+                    company_id,
+                    employee_id,
+                    target_date,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    recompute_later_days=False,
+                )
+
+    async def _recompute_later_days_of_month(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        target_date: date,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """R-04 — the cumulative late and excess-break rules count the earlier days of the month
+        (`count_flagged_days_in_window`), so when a day starts or stops counting, every later
+        computed day of that month may now be a different Nth day. Recompute them, oldest first,
+        so each reads the corrected count. Locked days are left alone: they are final.
+
+        This cannot run away: the counters change a later day's status, never its own `is_late`
+        or break flags, so a later day only cascades further if its own inputs had changed."""
+        month_end = (
+            date(target_date.year, 12, 31)
+            if target_date.month == 12
+            else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
+        )
+        if target_date >= month_end:
+            return
+        later_dates = await self._day_repo.list_unlocked_dates_in_window(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            window_start=target_date + timedelta(days=1),
+            window_end=month_end,
+        )
+        for later_date in later_dates:
+            await self._calculate(
+                company_id,
+                employee_id,
+                later_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
     async def recompute(
         self,
@@ -7147,6 +7268,37 @@ class AttendancePeriodService:
             user_agent=user_agent,
         )
 
+    async def _recalculate_open_days(
+        self,
+        company_id: UUID,
+        period: "AttendancePeriod",
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """R-09 — nothing recalculates a computed day when a holiday is added for it, or when a
+        shift, policy or assignment change is dated before it; only the trailing sweep and
+        explicit recomputes do. So every unlocked day this period owns is recalculated before
+        validation reads it. Days with no row yet are left to `EMPLOYEES_WITHOUT_ATTENDANCE`.
+
+        If validation then blocks, the whole finalize rolls back, recalculation included."""
+        scope = await self._scope(company_id, period)
+        rows = [r for r in await self._owned_day_rows(company_id, period, scope) if not r.is_locked]
+        if not rows:
+            return
+        await AttendanceDayService(self._session).recalculate_days_for_close(
+            company_id,
+            [(r.employee_id, r.attendance_date) for r in rows],
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        # Validation and the summary must read the recalculated values, not these rows as they
+        # were loaded above; expired rows are refreshed by validation's own query.
+        for row in rows:
+            self._session.expire(row)
+
     async def finalize(
         self,
         company_id: UUID,
@@ -7170,6 +7322,14 @@ class AttendancePeriodService:
         period = await self._get_or_404(company_id, period_id)
         if period.status != "OPEN":
             raise AttendancePeriodInvalidTransitionError("Only an OPEN period can be finalized")
+
+        await self._recalculate_open_days(
+            company_id,
+            period,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
         # A BLOCKED verdict raises immediately, aborting this transaction — neither the
         # validation-status cache nor a `VALIDATION_FAILED` action would survive being written

@@ -56,7 +56,7 @@ const employmentCreateSpec = FormSpec(
   fields: [
     FieldSpec('legal_entity_id', 'Legal entity', kind: FieldKind.choice, choiceKey: 'legal_entities', required: true),
     FieldSpec('joining_date', 'Joining date', kind: FieldKind.date, required: true),
-    FieldSpec('probation_end_date', 'Probation end date', kind: FieldKind.date),
+    FieldSpec('probation_end_date', 'Probation end date', kind: FieldKind.date, hint: 'Last day of probation; set on confirmation if empty'),
     FieldSpec('pay_basis', 'Pay basis', kind: FieldKind.select, required: true, options: ['MONTHLY', 'DAILY_WAGE'], optionLabels: payBasisLabels),
   ],
 );
@@ -67,7 +67,7 @@ const employmentEditSpec = FormSpec(
   label: 'Employment',
   fields: [
     FieldSpec('legal_entity_id', 'Legal entity', kind: FieldKind.choice, choiceKey: 'legal_entities', required: true),
-    FieldSpec('probation_end_date', 'Probation end date', kind: FieldKind.date),
+    FieldSpec('probation_end_date', 'Probation end date', kind: FieldKind.date, hint: 'Last day of probation; set on confirmation if empty'),
     FieldSpec('pay_basis', 'Pay basis', kind: FieldKind.select, required: true, options: ['MONTHLY', 'DAILY_WAGE'], optionLabels: payBasisLabels),
   ],
 );

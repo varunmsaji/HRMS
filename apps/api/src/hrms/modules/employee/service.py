@@ -950,7 +950,69 @@ class EmployeeService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await self._record_probation_end(
+            company_id,
+            [e for e in employments if e.status == "ACTIVE"],
+            now=now,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         return after_read
+
+    async def _record_probation_end(
+        self,
+        company_id: UUID,
+        employments: list[Any],
+        *,
+        now: datetime,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """R-11 (D-13) — monthly leave accrual leaves out probation days up to
+        `probation_end_date`, so confirmation records it: the day before confirmation, unless HR
+        already set an earlier date. Confirming on the joining date leaves no probation day."""
+        from hrms.modules.organisation.service import OrganisationService
+
+        profile = await OrganisationService(self._session, self._settings).get_company_profile(
+            company_id
+        )
+        last_probation_day = business_today(profile.timezone) - timedelta(days=1)
+        for employment in employments:
+            current = employment.probation_end_date
+            if current is not None and current <= last_probation_day:
+                continue
+            new_end = last_probation_day if last_probation_day >= employment.joining_date else None
+            if new_end == current:
+                continue
+            before = employment_to_read(employment)
+            updated = await self._employment_repo.update_employment(
+                self._session,
+                company_id=company_id,
+                employee_id=employment.employee_id,
+                employment_id=employment.id,
+                values={"probation_end_date": new_end},
+                expected_version=employment.version,
+                now=now,
+            )
+            if updated is None:
+                raise StaleResourceError(
+                    "This employment has been modified by another request",
+                    current=employment_to_audit_dict(before),
+                )
+            await self._audit.record(
+                self._session,
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                action="EMPLOYMENT_UPDATED",
+                entity_type="employment",
+                entity_id=employment.id,
+                before=employment_to_audit_dict(before),
+                after=employment_to_audit_dict(employment_to_read(updated)),
+                ip=ip_address,
+                user_agent=user_agent,
+            )
 
 
 class EmploymentService:
@@ -1028,6 +1090,17 @@ class EmploymentService:
             self._session, company_id=company_id, date_from=date_from, date_to=date_to
         )
         return [(row.employee_id, row.joining_date, row.last_working_day) for row in rows]
+
+    async def list_probation_spells(
+        self, company_id: UUID, employee_id: UUID
+    ) -> list[tuple[date, date | None, date | None]]:
+        """`(joining_date, last_working_day, probation_end_date)` for each of one employee's
+        employment spells. R-11: Leave's monthly accrual leaves out the probation days. Same
+        internal, unscoped posture as `list_spans_overlapping`."""
+        rows = await self._repo.list_employments(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        return [(row.joining_date, row.last_working_day, row.probation_end_date) for row in rows]
 
     async def list_legal_entity_spans(
         self,

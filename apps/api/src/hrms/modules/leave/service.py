@@ -52,6 +52,7 @@ from hrms.modules.leave.exceptions import (
     LeaveCombinationRuleAlreadyExistsError,
     LeaveCombinationRuleNotFoundError,
     LeaveDateOutsideEmploymentError,
+    LeaveEncashmentAlreadyRecordedTodayError,
     LeaveEncashmentMaxDaysExceededError,
     LeaveEncashmentMinimumBalanceViolationError,
     LeaveEncashmentNotAllowedError,
@@ -419,6 +420,20 @@ class LeaveYearSettingService:
             row = await self._repo.get(self._session, company_id=company_id)
             assert row is not None  # inserted above, or by the concurrent caller we waited for
         return leave_year_setting_to_read(row)
+
+    async def peek_effective(self, company_id: UUID) -> LeaveYearSettingData:
+        """The effective setting without materializing the default row: for callers that only
+        read it in passing (R-12's cancellation path), where a write would be a side effect."""
+        row = await self._repo.get(self._session, company_id=company_id)
+        if row is None:
+            return LeaveYearSettingData(
+                leave_year_type="CALENDAR", start_month=None, start_day=None
+            )
+        return LeaveYearSettingData(
+            leave_year_type=row.leave_year_type,
+            start_month=row.start_month,
+            start_day=row.start_day,
+        )
 
     async def upsert(
         self,
@@ -1615,6 +1630,30 @@ def _previous_month_bounds(as_of: date) -> tuple[date, date]:
 ACCRUAL_CATCH_UP_MONTHS = 3
 
 
+async def _probation_days_in_period(
+    session: AsyncSession,
+    company_id: UUID,
+    employee_id: UUID,
+    period_start: date,
+    period_end: date,
+) -> int:
+    """R-11 — days in `[period_start, period_end]` on or before an employment spell's
+    `probation_end_date`, while that spell was running. A spell with no date has none."""
+    from hrms.modules.employee.service import EmploymentService
+
+    days = 0
+    for joining_date, last_working_day, probation_end in await EmploymentService(
+        session
+    ).list_probation_spells(company_id, employee_id):
+        if probation_end is None:
+            continue
+        start = max(joining_date, period_start)
+        end = min(probation_end, last_working_day or probation_end, period_end)
+        if end >= start:
+            days += (end - start).days + 1
+    return days
+
+
 def _prorate_accrual_days(rate: Decimal, total_days: int, worked_days: int) -> Decimal:
     if worked_days >= total_days:
         return rate.quantize(Decimal("0.01"))
@@ -1783,6 +1822,7 @@ class LeaveAccrualService:
         if worked_days <= 0:
             return 0
         employee = await employee_service.get_employee(company_id, employee_id)
+        probation_days: int | None = None
 
         for leave_type in accrual_types:
             found = await resolver.resolve_policy_assignment(
@@ -1806,8 +1846,19 @@ class LeaveAccrualService:
                 continue
             if not version.accrual_rate_per_cycle or version.accrual_rate_per_cycle <= 0:
                 continue
-            if not version.accrue_during_probation and employee.status == "PROBATION":
-                continue
+            accrual_days = worked_days
+            if not version.accrue_during_probation:
+                if employee.status == "PROBATION":
+                    continue
+                # R-11 (D-13): an employee confirmed during the month earns nothing for the days
+                # up to `probation_end_date`, whenever this run happens.
+                if probation_days is None:
+                    probation_days = await _probation_days_in_period(
+                        self._session, company_id, employee_id, period_start, period_end
+                    )
+                accrual_days = worked_days - probation_days
+                if accrual_days <= 0:
+                    continue
 
             already_written = await self._ledger_repo.exists_for_cycle(
                 self._session,
@@ -1823,7 +1874,7 @@ class LeaveAccrualService:
             amount = _prorate_accrual_days(
                 version.accrual_rate_per_cycle,
                 (period_end - period_start).days + 1,
-                worked_days,
+                accrual_days,
             )
             if amount <= 0:
                 continue
@@ -2531,7 +2582,9 @@ class LeaveApplicationService:
         `CalendarResolutionService.resolve_for_employee`'s own `config_incomplete` posture).
 
         WORKING/SPECIAL_WORKING days (and the working half of a half-day weekly off) are
-        leave-consuming by default; full WEEKLY_OFF/HOLIDAY/SHUTDOWN days are not, unless the
+        leave-consuming by default, and a published roster outranks the calendar (F7, D-6): a
+        roster day off consumes nothing, a rostered working day on an off day consumes a day.
+        Full WEEKLY_OFF/HOLIDAY/SHUTDOWN days are not leave-consuming, unless the
         sandwich rule brackets a run of them (a Saturday and Sunday, say) between two consuming
         days *within this same application's range* (no cross-application look-back — a separate,
         earlier application on an adjacent date is not consulted here)."""
@@ -2554,6 +2607,19 @@ class LeaveApplicationService:
             if resolved.config_incomplete or resolved.day_type is None:
                 raise LeaveApplicationCalendarNotResolvedError()
             working[one_date] = working_fraction_of(resolved.day_type)
+
+        # F7 (D-6) — a published roster outranks the calendar, as it does in attendance: a roster
+        # day off consumes no leave, and a rostered working day on a holiday or weekly off does.
+        from hrms.modules.attendance.service import ShiftRosterService
+
+        overrides = await ShiftRosterService(self._session).published_day_overrides(
+            company_id, employee_id, date_from=body.start_date, date_to=body.end_date
+        )
+        for one_date, (week_off, holiday_working) in overrides.items():
+            if week_off:
+                working[one_date] = Decimal("0.00")
+            elif holiday_working:
+                working[one_date] = Decimal("1.00")
 
         consuming: dict[date, bool] = {d: working[d] > Decimal("0.00") for d in dates}
 
@@ -3637,6 +3703,139 @@ class LeaveApplicationService:
     async def _business_today(self, company_id: UUID) -> date:
         return business_today((await self._company_profile(company_id)).timezone)
 
+    async def _apply_closed_year_rule(
+        self,
+        company_id: UUID,
+        row: Any,
+        refunded: Decimal,
+        *,
+        today: date,
+        actor_user_id: UUID | None,
+    ) -> None:
+        """R-12 — a refund for leave debited from a leave year whose year end has already run
+        must not escape that year's lapse or carry-forward cap. The year-end rule is applied again
+        as if the refund had been in that year, and the difference is written now: a negative
+        `ADJUSTMENT` for the part that lapses, and under `ENCASH_EXCESS` an `ENCASHMENT` (paid by
+        the payroll month it is dated in) for the part that would have been encashed.
+
+        A year whose year end has not run yet needs nothing: that run reads the balance as it
+        stands, refund included. The debit is dated on the application's start date
+        (`_apply_approval`), so that date decides which leave year it came from."""
+        from hrms.modules.employee.service import EmploymentService
+        from hrms.modules.leave.year import leave_year_start_for
+        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+
+        debit_date = row.start_date
+        setting = await LeaveYearSettingService(self._session).peek_effective(company_id)
+        joining_date = next(
+            (
+                joining
+                for joining, last_working_day, _probation_end in await EmploymentService(
+                    self._session
+                ).list_probation_spells(company_id, row.employee_id)
+                if joining <= debit_date
+                and (last_working_day is None or debit_date <= last_working_day)
+            ),
+            None,
+        )
+        if setting.leave_year_type == "ANNIVERSARY" and joining_date is None:
+            return
+        year_start = leave_year_start_for(setting, as_of=debit_date, joining_date=joining_date)
+        # 366 days on always lands inside the following leave year, whatever its length.
+        next_year_start = leave_year_start_for(
+            setting, as_of=year_start + timedelta(days=366), joining_date=joining_date
+        )
+        if next_year_start > today:
+            return
+        if not await LeaveYearEndRunRepository().is_processed(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            year_start=next_year_start,
+        ):
+            return
+
+        found = await CalendarResolutionService(self._session).resolve_policy_assignment(
+            company_id,
+            "LEAVE_POLICY",
+            employee_id=row.employee_id,
+            target_date=next_year_start,
+            leave_type_id=row.leave_type_id,
+        )
+        if found is None:
+            return
+        assignment, _scope_type = found
+        version = await self._policy_repo.find_effective_as_of(
+            self._session,
+            company_id=company_id,
+            policy_id=assignment.policy_id,
+            as_of=next_year_start,
+        )
+        if version is None:
+            return
+
+        # The same lock the year-end run and approvals take on this balance.
+        await self._ledger_repo.lock_balance(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            leave_type_id=row.leave_type_id,
+        )
+        closing = await self._ledger_repo.get_balance_before(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            leave_type_id=row.leave_type_id,
+            before=next_year_start,
+        )
+        lapsed_before, encashed_before = _year_end_split(version, closing)
+        lapsed_after, encashed_after = _year_end_split(version, closing + refunded)
+        lapse = min(max(lapsed_after - lapsed_before, Decimal("0.00")), refunded)
+        encash = min(max(encashed_after - encashed_before, Decimal("0.00")), refunded - lapse)
+
+        if lapse > 0:
+            await self._ledger_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": row.employee_id,
+                    "leave_type_id": row.leave_type_id,
+                    "entry_type": "ADJUSTMENT",
+                    "amount": -lapse,
+                    "effective_date": today,
+                    "reference_id": row.id,
+                    "reason": (
+                        f"Lapsed under the year-end rule at leave year start {next_year_start}: "
+                        "the cancelled leave was taken in that closed year"
+                    ),
+                    "created_by_user_id": actor_user_id,
+                },
+            )
+        if encash > 0:
+            # One system encashment per employee, type and day
+            # (`uq_leave_ledger_year_end_encashment`): fail loudly rather than drop a payment.
+            if not await self._ledger_repo.insert_if_absent(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": row.employee_id,
+                    "leave_type_id": row.leave_type_id,
+                    "entry_type": "ENCASHMENT",
+                    "amount": -encash,
+                    "effective_date": today,
+                    "reference_id": row.id,
+                    "reason": (
+                        f"Encashed above the carry-forward cap "
+                        f"({version.max_carry_forward_days} days) at leave year start "
+                        f"{next_year_start}: the cancelled leave was taken in that closed year"
+                    ),
+                    "created_by_user_id": actor_user_id,
+                },
+            ):
+                raise LeaveEncashmentAlreadyRecordedTodayError()
+
     async def _reverse_approval(
         self,
         company_id: UUID,
@@ -3674,6 +3873,7 @@ class LeaveApplicationService:
             reference_id=row.id,
         )
         if debited > 0 and not already_reversed:
+            today = await self._business_today(company_id)
             await self._ledger_repo.insert(
                 self._session,
                 data={
@@ -3683,11 +3883,14 @@ class LeaveApplicationService:
                     "leave_type_id": row.leave_type_id,
                     "entry_type": "ADJUSTMENT",
                     "amount": debited,
-                    "effective_date": await self._business_today(company_id),
+                    "effective_date": today,
                     "reference_id": row.id,
                     "reason": "Reversal: leave application cancelled after approval",
                     "created_by_user_id": actor_user_id,
                 },
+            )
+            await self._apply_closed_year_rule(
+                company_id, row, debited, today=today, actor_user_id=actor_user_id
             )
 
         days = await self._day_repo.list_for_application(

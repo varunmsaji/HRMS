@@ -17,8 +17,8 @@ export const EMPTY_EMPLOYMENT_FORM_VALUES: EmploymentFormValues = {
 };
 
 /** Full payload for `POST /employees/{id}/employments` — covers both first hire and rehire.
- * `probation_end_date` is optional and purely informational (Employee confirmation, minimal
- * slice) — nothing reads or auto-computes it. */
+ * `probation_end_date` is optional: the last day of probation. Monthly leave accrual leaves out
+ * the days up to it, and confirming the employee records it if none is set. */
 export function buildEmploymentCreatePayload(values: EmploymentFormValues): Record<string, unknown> {
   return {
     legal_entity_id: values.legalEntityId,

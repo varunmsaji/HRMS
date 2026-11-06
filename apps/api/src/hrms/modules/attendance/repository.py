@@ -956,6 +956,27 @@ class ShiftRosterRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def list_published_between(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        date_from: date,
+        date_to: date,
+    ) -> list[ShiftRoster]:
+        """F7 — every `PUBLISHED` row for one employee in `[date_from, date_to]`, for Leave's
+        day breakdown. Same rule as `get_published_for_date`: a `DRAFT` never counts."""
+        stmt = select(ShiftRoster).where(
+            ShiftRoster.company_id == company_id,
+            ShiftRoster.employee_id == employee_id,
+            ShiftRoster.roster_date >= date_from,
+            ShiftRoster.roster_date <= date_to,
+            ShiftRoster.status == "PUBLISHED",
+            ShiftRoster.deleted_at.is_(None),
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     def _filtered_stmt(
         self,
         session: AsyncSession,
@@ -1399,6 +1420,30 @@ class AttendanceDayRepository:
             )
         )
         return (await session.execute(stmt)).scalar_one()
+
+    async def list_unlocked_dates_in_window(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        window_start: date,
+        window_end: date,
+    ) -> list[date]:
+        """Dates already computed for one employee in `[window_start, window_end]` that are not
+        locked, oldest first. R-04: the days whose cumulative counters an earlier day feeds."""
+        stmt = (
+            select(AttendanceDay.attendance_date)
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.employee_id == employee_id,
+                AttendanceDay.attendance_date >= window_start,
+                AttendanceDay.attendance_date <= window_end,
+                AttendanceDay.is_locked.is_(False),
+            )
+            .order_by(AttendanceDay.attendance_date)
+        )
+        return list((await session.execute(stmt)).scalars().all())
 
     async def set_pending_approval(
         self,

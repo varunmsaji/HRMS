@@ -1359,7 +1359,7 @@
             },
             {
               "name": "Accrue during probation",
-              "text": "Turn off to skip earning leave while on probation."
+              "text": "Turn off to skip earning leave while on probation. In a month the employee is confirmed, the days up to the probation end date earn nothing; confirming records that date if it is empty."
             }
           ]
         },
@@ -1381,7 +1381,7 @@
           "items": [
             {
               "name": "What happens to unused leave",
-              "text": "Carry forward up to a cap with the rest lost, lose all of it, or carry forward up to a cap and pay out the rest."
+              "text": "Carry forward up to a cap with the rest lost, lose all of it, or carry forward up to a cap and pay out the rest. If leave from a year that has already closed is cancelled, the same rule applies to the days given back: days over the cap are lost, or paid out in the current month's payroll."
             },
             {
               "name": "Maximum carry-forward days",

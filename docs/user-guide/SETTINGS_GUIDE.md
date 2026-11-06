@@ -703,7 +703,7 @@ A leave policy holds the rules for one leave type: who can apply, how leave is e
 - **Sandwich rule:** A weekend or holiday between two leave days counts as leave too. Leave on Friday and Monday also uses Saturday and Sunday.
 - **Reserve balance on submission:** A pending application already blocks that part of the balance, so someone cannot apply twice for the same days before the first is approved.
 - **Allowed during probation:** Turn off to stop employees on probation applying.
-- **Accrue during probation:** Turn off to skip earning leave while on probation.
+- **Accrue during probation:** Turn off to skip earning leave while on probation. In a month the employee is confirmed, the days up to the probation end date earn nothing; confirming records that date if it is empty.
 
 ### Earning leave (accrual)
 
@@ -712,7 +712,7 @@ A leave policy holds the rules for one leave type: who can apply, how leave is e
 
 ### At the end of the leave year
 
-- **What happens to unused leave:** Carry forward up to a cap with the rest lost, lose all of it, or carry forward up to a cap and pay out the rest.
+- **What happens to unused leave:** Carry forward up to a cap with the rest lost, lose all of it, or carry forward up to a cap and pay out the rest. If leave from a year that has already closed is cancelled, the same rule applies to the days given back: days over the cap are lost, or paid out in the current month's payroll.
 - **Maximum carry-forward days:** The cap. It is required for the pay-out option and blank means unlimited for the others.
 
 ### Negative balance

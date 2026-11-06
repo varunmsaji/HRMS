@@ -414,6 +414,25 @@ class LeaveLedgerRepository:
         )
         return Decimal((await session.execute(stmt)).scalar_one())
 
+    async def get_balance_before(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID,
+        before: date,
+    ) -> Decimal:
+        """R-12 — the balance from entries dated before `before`: what a leave year that ends
+        the day before held, without that year end's own lapse, encashment or yearly credit."""
+        stmt = select(func.coalesce(func.sum(LeaveLedgerEntry.amount), 0)).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.employee_id == employee_id,
+            LeaveLedgerEntry.leave_type_id == leave_type_id,
+            LeaveLedgerEntry.effective_date < before,
+        )
+        return Decimal((await session.execute(stmt)).scalar_one())
+
     async def list_for_employee(
         self,
         session: AsyncSession,
@@ -1284,6 +1303,26 @@ class LeaveYearEndRunRepository:
             .returning(LeaveYearEndRun.id)
         )
         return (await session.execute(stmt)).first() is not None
+
+    async def is_processed(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, year_start: date
+    ) -> bool:
+        """R-12 — whether this employee's year end for `year_start` has run: claimed in this
+        table, or written by the engine that predates it."""
+        stmt = (
+            select(LeaveYearEndRun.id)
+            .where(
+                LeaveYearEndRun.company_id == company_id,
+                LeaveYearEndRun.employee_id == employee_id,
+                LeaveYearEndRun.year_start == year_start,
+            )
+            .limit(1)
+        )
+        if (await session.execute(stmt)).first() is not None:
+            return True
+        return await self.has_prior_year_end_entries(
+            session, company_id=company_id, employee_id=employee_id, year_start=year_start
+        )
 
     async def has_prior_year_end_entries(
         self, session: AsyncSession, *, company_id: UUID, employee_id: UUID, year_start: date

@@ -401,14 +401,20 @@ async def test_finalize_blocked_config_error(
     try:
         wired = await _build_wired_employee(client, headers)
         employee_id = wired["employee"]["id"]
-        day = await _full_calculate(client, headers, employee_id=employee_id)
+        await _full_calculate(client, headers, employee_id=employee_id)
 
+        # A real configuration error: the attendance policy no longer resolves. Writing
+        # CONFIG_ERROR onto the day directly would not hold, because finalize recalculates
+        # open days first (R-09).
         factory = get_session_factory()
         async with factory() as session:
             await set_rls_company_id(session, str(company_id))
             await session.execute(
-                text("UPDATE attendance_day SET attendance_status = 'CONFIG_ERROR' WHERE id = :id"),
-                {"id": day["id"]},
+                text(
+                    "DELETE FROM policy_assignment "
+                    "WHERE company_id = :cid AND policy_kind = 'ATTENDANCE_POLICY'"
+                ),
+                {"cid": str(company_id)},
             )
             await session.commit()
 
