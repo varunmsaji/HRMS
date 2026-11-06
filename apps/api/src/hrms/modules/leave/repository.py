@@ -458,6 +458,16 @@ class LeaveLedgerRepository:
         stmt = select(func.count()).select_from(LeaveLedgerEntry).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
 
+    async def latest_effective_date(
+        self, session: AsyncSession, *, company_id: UUID, entry_type: str
+    ) -> date | None:
+        """The newest date the company has an entry of this type for, or None."""
+        stmt = select(func.max(LeaveLedgerEntry.effective_date)).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.entry_type == entry_type,
+        )
+        return (await session.execute(stmt)).scalar_one()
+
     async def exists_for_cycle(
         self,
         session: AsyncSession,

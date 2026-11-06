@@ -74,9 +74,9 @@ def create_celery_app() -> Celery:
         # daily (a validity window can lapse on any calendar day) — both idempotent, so a missed
         # or repeated run is harmless.
         beat_schedule={
-            # Daily, not day-1 only (PRA-07): `leave.accrue_company` only acts during the first
-            # `leave_accrual_run_window_days` days of a month and every write is idempotent, so
-            # the extra runs are no-ops - but a missed day-1 firing is repaired the next day.
+            # Daily, not day-1 only (PRA-07): `leave.accrue_company` acts during the first
+            # `leave_accrual_run_window_days` days of a month, and later only to catch up months an
+            # outage skipped. Every write is idempotent, so a missed firing is simply repaired.
             "leave-run-monthly-accrual": {
                 "task": "leave.run_monthly_accrual",
                 "schedule": crontab(minute=0, hour=1),

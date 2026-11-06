@@ -1610,6 +1610,11 @@ def _previous_month_bounds(as_of: date) -> tuple[date, date]:
     return period_start, period_end
 
 
+#: How far back a company's monthly accrual catches up by itself after an outage. Older months need
+#: an operator, so a company that has stopped using monthly accrual does not re-check them forever.
+ACCRUAL_CATCH_UP_MONTHS = 3
+
+
 def _prorate_accrual_days(rate: Decimal, total_days: int, worked_days: int) -> Decimal:
     if worked_days >= total_days:
         return rate.quantize(Decimal("0.01"))
@@ -1655,6 +1660,38 @@ class LeaveAccrualService:
         self._type_repo = LeaveTypeRepository()
         self._policy_repo = LeavePolicyRepository()
         self._year_setting_service = LeaveYearSettingService(session)
+
+    @logged_operation("leave.accrual.run_due_months")
+    async def run_due_months(self, company_id: UUID, *, as_of: date, window_days: int) -> int:
+        """The daily run: repeats the month just ended during the first `window_days` days of a
+        month, and at any time catches up months missed since the company's newest accrual (an
+        outage over the window), oldest first. Every month is idempotent."""
+        latest = await self._ledger_repo.latest_effective_date(
+            self._session, company_id=company_id, entry_type="ACCRUAL"
+        )
+        run_dates: list[date] = []
+        run_date = as_of.replace(day=1)
+        for _ in range(ACCRUAL_CATCH_UP_MONTHS):
+            month_end = run_date - timedelta(days=1)
+            if latest is not None and month_end > latest:
+                run_dates.insert(0, run_date)
+            run_date = month_end.replace(day=1)
+
+        current = as_of.replace(day=1)
+        missed = [d for d in run_dates if d != current or as_of.day > window_days]
+        if missed:
+            _logger.warning(
+                "leave_accrual_catching_up",
+                company_id=str(company_id),
+                as_of=as_of.isoformat(),
+                months=[d.isoformat() for d in missed],
+            )
+        written = 0
+        for run_date in missed:
+            written += await self.run_for_company(company_id, as_of=run_date)
+        if as_of.day <= window_days:
+            written += await self.run_for_company(company_id, as_of=as_of)
+        return written
 
     @logged_operation("leave.accrual.run_company")
     async def run_for_company(self, company_id: UUID, *, as_of: date) -> int:
@@ -1825,7 +1862,11 @@ class LeaveAccrualService:
         run). Leave-year start dates are per `LeaveYearSetting` (LD-20) - one date for everyone
         under `CALENDAR`/`FINANCIAL`/`CUSTOM`, each spell's own `joining_date` anniversary under
         `ANNIVERSARY` - and ledger rows are dated on that start date, never on the catch-up day.
-        `as_of` is the company-local business date (the caller's responsibility)."""
+        `as_of` is the company-local business date (the caller's responsibility).
+
+        The last month of the old year is accrued first if it has not been, because the rule works
+        from the balance: an accrual landing after the year-end run would escape the lapse or cap.
+        If that accrual fails, the employee's year end fails with it and is retried."""
         window = (
             catchup_days if catchup_days is not None else get_settings().leave_year_end_catchup_days
         )
@@ -1839,7 +1880,8 @@ class LeaveAccrualService:
 
         from hrms.modules.employee.service import EmploymentService
 
-        spans = await EmploymentService(self._session).list_spans_overlapping(
+        employment_service = EmploymentService(self._session)
+        spans = await employment_service.list_spans_overlapping(
             company_id, date_from=window_start, date_to=as_of
         )
         if not spans:
@@ -1868,6 +1910,20 @@ class LeaveAccrualService:
         resolver = CalendarResolutionService(self._session)
         written = 0
         failed = 0
+        prior_month_spells: dict[date, dict[UUID, list[tuple[date, date | None]]]] = {}
+        for _employee_id, year_start in due:
+            if year_start not in prior_month_spells:
+                period_start, period_end = _previous_month_bounds(year_start)
+                spells: dict[UUID, list[tuple[date, date | None]]] = {}
+                for (
+                    span_employee,
+                    joining_date,
+                    last_working_day,
+                ) in await employment_service.list_spans_overlapping(
+                    company_id, date_from=period_start, date_to=period_end
+                ):
+                    spells.setdefault(span_employee, []).append((joining_date, last_working_day))
+                prior_month_spells[year_start] = spells
         for employee_id, year_start in sorted(due):
             # One SAVEPOINT per employee (PRA-07), as in the monthly accrual: one employee's
             # failure is logged and rolled back alone (claim included); a re-run completes the rest.
@@ -1879,6 +1935,7 @@ class LeaveAccrualService:
                         year_start=year_start,
                         accrual_types=accrual_types,
                         resolver=resolver,
+                        prior_month_spells=prior_month_spells[year_start].get(employee_id, []),
                     )
             except SoftTimeLimitExceeded:
                 raise  # the task's time limit — stop the run, not one employee's failure
@@ -1910,6 +1967,7 @@ class LeaveAccrualService:
         year_start: date,
         accrual_types: list[Any],
         resolver: Any,
+        prior_month_spells: list[tuple[date, date | None]],
     ) -> int:
         written = 0
         run_repo = LeaveYearEndRunRepository()
@@ -1928,6 +1986,20 @@ class LeaveAccrualService:
             self._session, company_id=company_id, employee_id=employee_id, year_start=year_start
         ):
             return 0  # already processed, or being processed by a concurrent run
+
+        from hrms.modules.employee.service import EmployeeService
+
+        period_start, period_end = _previous_month_bounds(year_start)
+        written += await self._accrue_employee_month(
+            company_id,
+            employee_id,
+            prior_month_spells,
+            period_start=period_start,
+            period_end=period_end,
+            accrual_types=accrual_types,
+            resolver=resolver,
+            employee_service=EmployeeService(self._session),
+        )
 
         for leave_type in accrual_types:
             found = await resolver.resolve_policy_assignment(

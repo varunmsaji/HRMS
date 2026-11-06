@@ -89,6 +89,7 @@ async def _create_published_monthly_policy(
     leave_type_id: str,
     accrual_rate_per_cycle: str = "1.50",
     effective_from: str = "2025-01-01",
+    **version_extra: Any,
 ) -> dict[str, Any]:
     policy_resp = await client.post(
         "/v1/leave-policies",
@@ -105,6 +106,7 @@ async def _create_published_monthly_policy(
             "effective_from": effective_from,
             "accrual_frequency": "MONTHLY",
             "accrual_rate_per_cycle": accrual_rate_per_cycle,
+            **version_extra,
         },
     )
     assert draft.status_code == 201, draft.text
@@ -308,6 +310,112 @@ async def test_no_policy_assigned_skips_accrual(
 
         written = await _run_accrual(company_id, as_of=date(2026, 3, 1))
         assert written == 0
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def _setup_accruing_employee(
+    client: AsyncClient, headers: dict[str, str], **version_extra: Any
+) -> str:
+    employee = await _create_employee(client, headers)
+    legal_entity = await _create_legal_entity(client, headers)
+    await _create_employment(
+        client,
+        headers,
+        employee_id=employee["id"],
+        legal_entity_id=legal_entity["id"],
+        joining_date="2025-01-01",
+    )
+    leave_type = await _create_leave_type(client, headers)
+    await _create_published_monthly_policy(
+        client, headers, leave_type_id=leave_type["id"], **version_extra
+    )
+    return str(employee["id"])
+
+
+async def _run_due_months(company_id: UUID, *, as_of: date) -> int:
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_company_id(session, str(company_id))
+        written = await LeaveAccrualService(session).run_due_months(
+            company_id, as_of=as_of, window_days=5
+        )
+        await session.commit()
+        return written
+
+
+@pytest.mark.asyncio
+async def test_year_end_lapses_the_last_month_even_if_its_accrual_had_not_run(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """R-07 — the December accrual failed at 01:00; the 02:00 year end must not leave it to land
+    afterwards, past the lapse."""
+    from tests.integration.modules.leave.test_leave_year import _teardown_year_setting
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id = await _setup_accruing_employee(client, headers, year_end_action="LAPSE")
+        factory = get_session_factory()
+        async with factory() as session:
+            await set_rls_company_id(session, str(company_id))
+            await LeaveAccrualService(session).run_year_end_for_company(
+                company_id, as_of=date(2026, 1, 1)
+            )
+            await session.commit()
+        assert await _get_balance(client, headers, employee_id) == "0.00"
+
+        assert await _run_accrual(company_id, as_of=date(2026, 1, 2)) == 0
+        assert await _get_balance(client, headers, employee_id) == "0.00"
+    finally:
+        await _teardown_year_setting(company_id=company_id)
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_daily_run_catches_up_months_an_outage_skipped(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """R-08 — nothing ran in February or March. A run on 20 March writes January and February."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id = await _setup_accruing_employee(client, headers)
+        await _run_accrual(company_id, as_of=date(2026, 1, 1))
+        assert await _get_balance(client, headers, employee_id) == "1.50"
+
+        assert await _run_due_months(company_id, as_of=date(2026, 3, 20)) == 2
+        assert await _get_balance(client, headers, employee_id) == "4.50"
+        assert await _run_due_months(company_id, as_of=date(2026, 3, 21)) == 0
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_daily_run_outside_the_window_does_nothing_without_an_accrual_history(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id = await _setup_accruing_employee(client, headers)
+        assert await _run_due_months(company_id, as_of=date(2026, 3, 20)) == 0
+        assert await _run_due_months(company_id, as_of=date(2026, 4, 5)) == 1
+        assert await _get_balance(client, headers, employee_id) == "1.50"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+@pytest.mark.asyncio
+async def test_daily_run_catches_up_at_most_a_few_months(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        await _setup_accruing_employee(client, headers)
+        await _run_accrual(company_id, as_of=date(2026, 1, 1))
+        assert await _run_due_months(company_id, as_of=date(2026, 9, 20)) == 3
     finally:
         await _teardown(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
