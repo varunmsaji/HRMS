@@ -1,0 +1,20 @@
+# Rendered from this template into /etc/nginx/conf.d/hrms-http.conf on every container start
+# (infra/nginx/start.sh, envsubst against ${API_DOMAIN}/${WEB_DOMAIN}/${STORAGE_DOMAIN}). Always
+# loaded, with or without a certificate, so a first deployment can serve the ACME challenge before
+# hrms.conf.template's HTTPS servers exist. Do not edit the rendered file directly.
+
+# HTTP: ACME challenge only, everything else redirected to HTTPS. Handles all three domains
+# so `certbot ... -d ${WEB_DOMAIN} -d ${API_DOMAIN} -d ${STORAGE_DOMAIN}` can complete its
+# HTTP-01 challenge (and renew later) without a separate server block per domain.
+server {
+    listen 80;
+    server_name ${WEB_DOMAIN} ${API_DOMAIN} ${STORAGE_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}

@@ -194,19 +194,20 @@ comp-off sweeps, attendance calculation).
 
 ## 10. Load self-signed / staging certs are NOT provided
 
-`docker-compose.prod.yml`'s `nginx` service expects real certificates at
-`/etc/letsencrypt/live/${WEB_DOMAIN}/{fullchain,privkey}.pem` inside the `certbot_certs` volume
-before it can start successfully — §11 creates these. Do not start `nginx` before §11 completes.
+`docker-compose.prod.yml`'s `nginx` service serves HTTPS with real certificates at
+`/etc/letsencrypt/live/${WEB_DOMAIN}/{fullchain,privkey}.pem` inside the `certbot_certs` volume —
+§11 creates these. Until they exist it serves port 80 only (the ACME challenge and a redirect),
+which is what lets §11 obtain them.
 
 ## 11. Issue the initial Let's Encrypt certificate
 
-Nginx needs to be running to serve the HTTP-01 challenge, but Nginx needs the certificate to start
-its HTTPS server blocks — resolved with a temporary bootstrap: start Nginx with only its HTTP (port
-80) behavior working, obtain the cert, then start it for real.
+Nginx needs to be running to serve the HTTP-01 challenge, but it cannot load its HTTPS server
+blocks without the certificate. `infra/nginx/start.sh` handles this: with no certificate it loads
+only `hrms-http.conf.template` (port 80), and it adds `hrms.conf.template` (the HTTPS servers) and
+reloads once the certificate appears.
 
 ```bash
-# 1. Start Nginx — it will fail to bind :443 (no cert yet) but that's fine for this step; the
-#    :80 ACME-challenge location still serves.
+# 1. Start Nginx. With no certificate yet it serves port 80 only; its log says so.
 docker compose -f docker-compose.prod.yml up -d nginx
 
 # 2. Request the certificate (webroot method — infra/nginx/conf.d/hrms.conf.template's
@@ -216,7 +217,7 @@ docker compose -f docker-compose.prod.yml run --rm certbot certonly \
     -d "${WEB_DOMAIN}" -d "${API_DOMAIN}" -d "${STORAGE_DOMAIN}" \
     --email "${LETSENCRYPT_EMAIL}" --agree-tos --no-eff-email
 
-# 3. Restart Nginx so it picks up the now-present certificate and serves HTTPS.
+# 3. Turn on HTTPS now. (Nginx would also notice the certificate by itself within 5 minutes.)
 docker compose -f docker-compose.prod.yml restart nginx
 
 # 4. Start the renewal daemon (auto-renews via a loop; --quiet, runs every 12h, only actually
@@ -226,7 +227,9 @@ docker compose -f docker-compose.prod.yml up -d certbot
 
 The certificate covers all three domains as SANs under `${WEB_DOMAIN}`'s `live/` directory — the
 Nginx template references that path for all three server blocks (§2 table), so a renewal never
-needs a config change.
+needs a config change. Nginx checks the certificate every 5 minutes
+(`CERT_CHECK_INTERVAL_SECONDS`) and reloads gracefully when a renewal has replaced it, so the
+renewed certificate is served without a restart.
 
 ## 12. Verify
 

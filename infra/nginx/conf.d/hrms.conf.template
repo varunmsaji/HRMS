@@ -1,7 +1,6 @@
-# Rendered from this template into /etc/nginx/conf.d/hrms.conf on container start
-# (docker-compose.prod.yml's `nginx` service `command`, envsubst against ${API_DOMAIN}/
-# ${WEB_DOMAIN}/${STORAGE_DOMAIN}). Do not edit the rendered file directly — it is regenerated on
-# every container start/restart.
+# Rendered from this template into /etc/nginx/conf.d/hrms.conf by infra/nginx/start.sh (envsubst
+# against ${API_DOMAIN}/${WEB_DOMAIN}/${STORAGE_DOMAIN}) on container start and whenever the
+# certificate changes. Do not edit the rendered file directly — it is regenerated each time.
 #
 # Routing (RELEASE_HARDENING_PHASE_3B §5):
 #   ${WEB_DOMAIN}     -> web:3000       (Next.js frontend)
@@ -16,21 +15,9 @@
 # conditional logic. Nginx's only header-related job is forwarding the right request context in
 # (Host, X-Forwarded-For, X-Forwarded-Proto), not adding response headers of its own.
 
-# HTTP: ACME challenge only, everything else redirected to HTTPS. Handles all three domains
-# so `certbot ... -d ${WEB_DOMAIN} -d ${API_DOMAIN} -d ${STORAGE_DOMAIN}` can complete its
-# HTTP-01 challenge (and renew later) without a separate server block per domain.
-server {
-    listen 80;
-    server_name ${WEB_DOMAIN} ${API_DOMAIN} ${STORAGE_DOMAIN};
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
+# The HTTP server (ACME challenge + redirect) is in hrms-http.conf.template. This file holds only
+# the HTTPS servers, and infra/nginx/start.sh renders it only once the certificate exists: Nginx
+# refuses to start at all with an `ssl_certificate` path it cannot read.
 
 server {
     listen 443 ssl;
