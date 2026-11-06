@@ -11,7 +11,8 @@
   "punch_time": "x",
   "recorded_by_user_id": null,
   "reference": null,
-  "source": "x"
+  "source": "x",
+  "supersedes_punch_id": null
  },
  "similarity": "1.50"
 }

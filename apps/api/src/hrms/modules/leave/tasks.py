@@ -105,11 +105,11 @@ async def _accrue_company_async(company_id: UUID) -> int:
         # or past 05:30 IST the divergence stops being observable — `business_today` must stay
         # regardless, so the bug cannot resurface the next time the schedule changes.
         as_of = business_today(company.timezone)
-        # Scheduled daily (see `celery_app.py`); accrues only inside the first days of the month
-        # so a missed day-1 firing is repaired, while later days stay no-ops.
-        if as_of.day > get_settings().leave_accrual_run_window_days:
-            return 0
-        return await LeaveAccrualService(session).run_for_company(company_id, as_of=as_of)
+        # Scheduled daily (see `celery_app.py`). Repeats inside the first days of the month so a
+        # missed day-1 firing is repaired, and catches up months an outage skipped altogether.
+        return await LeaveAccrualService(session).run_due_months(
+            company_id, as_of=as_of, window_days=get_settings().leave_accrual_run_window_days
+        )
 
 
 @celery_app.task(name="leave.accrue_company", **_TASK_OPTIONS, **_COMPANY_LIMITS)  # type: ignore[untyped-decorator]

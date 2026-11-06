@@ -61,8 +61,8 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: minutes worked on a day off that the shift does not operate count as overtime. 7 = work on such
 #: a day off is never penalised; overtime rounding NEAREST rounds midpoints up; half-day leave
 #: splits the shift around a fixed break; the cumulative late and excess-break rules fire on every
-#: Nth such day.
-ENGINE_VERSION = 7
+#: Nth such day. 8 = a stray same-direction punch next to another no longer makes a day INCOMPLETE.
+ENGINE_VERSION = 8
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -580,6 +580,37 @@ def collapse_duplicate_punches(punches: list[PunchData], *, window_seconds: int)
         ):
             continue
         kept.append(punch)
+    return kept
+
+
+#: How close two same-direction punches must be for the extra one to count as a stray. Further apart
+#: they may mean a real missed punch (IN at 09:00, IN at 14:00), which stays INCOMPLETE for review.
+STRAY_PUNCH_WINDOW_MINUTES = 30
+
+
+def drop_stray_punches(
+    punches: list[PunchData], snapshot: dict[str, Any] | None = None
+) -> list[PunchData]:
+    """An extra punch soon after one in the same direction is a double-tap or a mistake, not a
+    missing one. The earliest IN and the latest OUT of such a run stand. Dropped punches are named
+    in the snapshot so they can be reviewed. Punches must already be sorted by `punch_time`."""
+    kept: list[PunchData] = []
+    strays: list[PunchData] = []
+    for punch in punches:
+        prev = kept[-1] if kept else None
+        if (
+            prev is None
+            or punch.direction != prev.direction
+            or punch.punch_time - prev.punch_time > timedelta(minutes=STRAY_PUNCH_WINDOW_MINUTES)
+        ):
+            kept.append(punch)
+        elif punch.direction == "IN":
+            strays.append(punch)
+        else:
+            strays.append(prev)
+            kept[-1] = punch
+    if snapshot is not None and strays:
+        snapshot["stray_punch_ids"] = [str(p.id) for p in strays]
     return kept
 
 
@@ -1640,6 +1671,7 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
         window_seconds=inputs.policy.duplicate_punch_window_seconds,
     )
     snapshot["collapsed_punch_ids"] = [str(p.id) for p in collapsed]
+    collapsed = drop_stray_punches(collapsed, snapshot)
 
     # §19.1 step 8 — not expected + shift does not operate + no punches => NOT_EXPECTED
     if not_expected and not shift_operates and not collapsed:
@@ -1961,7 +1993,7 @@ def _evaluate_no_schedule(
         sorted(inputs.punches, key=lambda p: p.punch_time),
         window_seconds=(inputs.policy.duplicate_punch_window_seconds if inputs.policy else 60),
     )
-    pairing = pair_punches(collapsed)
+    pairing = pair_punches(drop_stray_punches(collapsed, snapshot))
     first_in, last_out, gross_minutes, _gaps = presence_span(
         pairing.pairs, mode=inputs.policy.multi_punch_mode if inputs.policy else "PAIR_ALL"
     )
