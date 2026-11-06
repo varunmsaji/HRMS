@@ -1498,6 +1498,7 @@ class PunchRead(BaseModel):
     idempotency_key: str | None
     recorded_by_user_id: UUID | None
     reference: str | None
+    supersedes_punch_id: UUID | None = None
     created_at: str
     #: Present only when the punch was evaluated by a geofence policy (OPTIONAL/REQUIRED).
     geofence: GeofenceDecisionRead | None = None
@@ -1514,6 +1515,7 @@ def punch_to_read(row: "Punch") -> PunchRead:
         idempotency_key=row.idempotency_key,
         recorded_by_user_id=row.recorded_by_user_id,
         reference=row.reference,
+        supersedes_punch_id=row.supersedes_punch_id,
         created_at=_format_timestamp(row.created_at) or "",
     )
 

@@ -22,6 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from hrms.modules.attendance.models import (
     AttendanceBreak,
@@ -1054,6 +1055,12 @@ class ShiftRosterRepository:
 # ---------------------------------------------------------------------------
 
 
+def _punch_not_superseded() -> ColumnElement[bool]:
+    """A punch a correction replaced is kept for the record but no longer counts."""
+    correction = aliased(Punch)
+    return ~exists().where(correction.supersedes_punch_id == Punch.id)
+
+
 class PunchRepository:
     async def insert(self, session: AsyncSession, *, data: dict[str, Any]) -> Punch:
         row = Punch(**data)
@@ -1071,6 +1078,7 @@ class PunchRepository:
                 Punch.company_id == company_id,
                 Punch.employee_id == employee_id,
                 Punch.punch_time >= since,
+                _punch_not_superseded(),
             )
             .order_by(Punch.punch_time.desc())
             .limit(1)
@@ -1103,6 +1111,7 @@ class PunchRepository:
                 Punch.employee_id == employee_id,
                 Punch.punch_time >= window_start,
                 Punch.punch_time < window_end,
+                _punch_not_superseded(),
             )
             .order_by(Punch.punch_time)
         )
@@ -1125,6 +1134,7 @@ class PunchRepository:
                 Punch.company_id == company_id,
                 Punch.punch_time >= window_start,
                 Punch.punch_time < window_end,
+                _punch_not_superseded(),
             )
             .order_by(Punch.employee_id, Punch.punch_time)
         )

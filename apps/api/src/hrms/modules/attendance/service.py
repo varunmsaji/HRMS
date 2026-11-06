@@ -5694,10 +5694,24 @@ class RegularizationRequestService:
         requested_punches = await self._requested_punch_repo.list_for_request(
             self._session, company_id=company_id, request_id=row.id
         )
+        replaceable: list[calc.PunchData] = []
+        if row.request_type == "WRONG_PUNCH":
+            day_input, *_ = await self._day_service._build_calculation_input(
+                company_id, row.employee_id, row.attendance_date
+            )
+            replaceable = list(day_input.punches)
         for requested in requested_punches:
             await _ensure_not_after_last_working_day(
                 self._session, company_id, row.employee_id, requested.requested_time
             )
+            # WRONG_PUNCH replaces the nearest punch of that direction, not adds alongside it.
+            replaced = min(
+                (p for p in replaceable if p.direction == requested.direction),
+                key=lambda p: abs(p.punch_time - requested.requested_time),
+                default=None,
+            )
+            if replaced is not None:
+                replaceable.remove(replaced)
             punch_row = await self._punch_repo.insert(
                 self._session,
                 data={
@@ -5710,6 +5724,7 @@ class RegularizationRequestService:
                     "idempotency_key": None,
                     "recorded_by_user_id": actor_user_id,
                     "reference": f"regularization:{row.id}",
+                    "supersedes_punch_id": replaced.id if replaced is not None else None,
                     "created_at": now,
                 },
             )

@@ -1267,3 +1267,61 @@ async def test_simultaneous_approve_and_reject_only_one_wins(
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
         await _cleanup_scoped_users()
+
+
+@pytest.mark.parametrize(
+    ("request_type", "expected_status", "expected_first_in"),
+    [
+        ("WRONG_PUNCH", "PRESENT", "2026-08-10T09:00:00Z"),
+        ("MISSING_PUNCH", "INCOMPLETE", None),
+    ],
+)
+async def test_wrong_punch_replaces_the_punch_it_corrects(
+    client: AsyncClient,
+    seeded_plan_catalogue: None,
+    request_type: str,
+    expected_status: str,
+    expected_first_in: str | None,
+) -> None:
+    """R-06 — IN recorded at 10:30 by mistake, corrected to 09:00. Only WRONG_PUNCH replaces; the
+    wrong punch stays on record either way."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        await _create_regularization_policy(client, headers, approval_chain="AUTO")
+        await _punch(client, headers, employee_id=employee_id, hour=10, minute=30, direction="IN")
+        await _punch(client, headers, employee_id=employee_id, hour=18, minute=0, direction="OUT")
+
+        created = await client.post(
+            "/v1/regularizations",
+            headers=headers,
+            json={
+                "employee_id": employee_id,
+                "attendance_date": "2026-08-10",
+                "request_type": request_type,
+                "reason": "Punched in at the wrong time",
+                "requested_punches": [
+                    {"direction": "IN", "requested_time": "2026-08-10T09:00:00Z"}
+                ],
+            },
+        )
+        assert created.status_code == 201, created.text
+        data = created.json()["data"]
+        day = (
+            await client.get(f"/v1/attendance/days/{data['attendance_day_id']}", headers=headers)
+        ).json()["data"]
+        assert day["attendance_status"] == expected_status
+        if expected_first_in is not None:
+            assert day["actual_first_in"] == expected_first_in
+            assert day["late_minutes"] == 0
+
+        listed = await client.get(
+            "/v1/attendance/punches", headers=headers, params={"employee_id": employee_id}
+        )
+        assert listed.status_code == 200, listed.text
+        assert len(listed.json()["data"]) == 3
+    finally:
+        await _cleanup_regularization(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

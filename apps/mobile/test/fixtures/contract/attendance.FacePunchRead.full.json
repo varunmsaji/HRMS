@@ -19,7 +19,8 @@
   "punch_time": "x",
   "recorded_by_user_id": "00000000-0000-0000-0000-000000001234",
   "reference": "x",
-  "source": "x"
+  "source": "x",
+  "supersedes_punch_id": "00000000-0000-0000-0000-000000001234"
  },
  "similarity": "1.50"
 }
