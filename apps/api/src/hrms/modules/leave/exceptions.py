@@ -740,3 +740,19 @@ class LeaveApprovalOutsideEmploymentError(ConflictError):
     def __init__(self, *, reason: str, offending_date: date | None) -> None:
         details = _outside_employment_details("start_date", self.code, reason, offending_date)
         super().__init__(details[0]["message"], details=details)
+
+
+class LeaveEncashmentAlreadyRecordedTodayError(ConflictError):
+    """R-12 — cancelling this leave would encash days today, but a system encashment for this
+    employee and leave type is already dated today, and the ledger allows one per day."""
+
+    code = "LEAVE_ENCASHMENT_ALREADY_RECORDED_TODAY"
+
+    def __init__(
+        self,
+        message: str = (
+            "This cancellation would encash leave today, but an encashment for this leave type "
+            "is already recorded today. Try again tomorrow."
+        ),
+    ) -> None:
+        super().__init__(message)

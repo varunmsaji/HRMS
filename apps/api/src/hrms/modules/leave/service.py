@@ -52,6 +52,7 @@ from hrms.modules.leave.exceptions import (
     LeaveCombinationRuleAlreadyExistsError,
     LeaveCombinationRuleNotFoundError,
     LeaveDateOutsideEmploymentError,
+    LeaveEncashmentAlreadyRecordedTodayError,
     LeaveEncashmentMaxDaysExceededError,
     LeaveEncashmentMinimumBalanceViolationError,
     LeaveEncashmentNotAllowedError,
@@ -419,6 +420,20 @@ class LeaveYearSettingService:
             row = await self._repo.get(self._session, company_id=company_id)
             assert row is not None  # inserted above, or by the concurrent caller we waited for
         return leave_year_setting_to_read(row)
+
+    async def peek_effective(self, company_id: UUID) -> LeaveYearSettingData:
+        """The effective setting without materializing the default row: for callers that only
+        read it in passing (R-12's cancellation path), where a write would be a side effect."""
+        row = await self._repo.get(self._session, company_id=company_id)
+        if row is None:
+            return LeaveYearSettingData(
+                leave_year_type="CALENDAR", start_month=None, start_day=None
+            )
+        return LeaveYearSettingData(
+            leave_year_type=row.leave_year_type,
+            start_month=row.start_month,
+            start_day=row.start_day,
+        )
 
     async def upsert(
         self,
@@ -3673,6 +3688,139 @@ class LeaveApplicationService:
     async def _business_today(self, company_id: UUID) -> date:
         return business_today((await self._company_profile(company_id)).timezone)
 
+    async def _apply_closed_year_rule(
+        self,
+        company_id: UUID,
+        row: Any,
+        refunded: Decimal,
+        *,
+        today: date,
+        actor_user_id: UUID | None,
+    ) -> None:
+        """R-12 — a refund for leave debited from a leave year whose year end has already run
+        must not escape that year's lapse or carry-forward cap. The year-end rule is applied again
+        as if the refund had been in that year, and the difference is written now: a negative
+        `ADJUSTMENT` for the part that lapses, and under `ENCASH_EXCESS` an `ENCASHMENT` (paid by
+        the payroll month it is dated in) for the part that would have been encashed.
+
+        A year whose year end has not run yet needs nothing: that run reads the balance as it
+        stands, refund included. The debit is dated on the application's start date
+        (`_apply_approval`), so that date decides which leave year it came from."""
+        from hrms.modules.employee.service import EmploymentService
+        from hrms.modules.leave.year import leave_year_start_for
+        from hrms.modules.organisation.calendar_resolution import CalendarResolutionService
+
+        debit_date = row.start_date
+        setting = await LeaveYearSettingService(self._session).peek_effective(company_id)
+        joining_date = next(
+            (
+                joining
+                for joining, last_working_day, _probation_end in await EmploymentService(
+                    self._session
+                ).list_probation_spells(company_id, row.employee_id)
+                if joining <= debit_date
+                and (last_working_day is None or debit_date <= last_working_day)
+            ),
+            None,
+        )
+        if setting.leave_year_type == "ANNIVERSARY" and joining_date is None:
+            return
+        year_start = leave_year_start_for(setting, as_of=debit_date, joining_date=joining_date)
+        # 366 days on always lands inside the following leave year, whatever its length.
+        next_year_start = leave_year_start_for(
+            setting, as_of=year_start + timedelta(days=366), joining_date=joining_date
+        )
+        if next_year_start > today:
+            return
+        if not await LeaveYearEndRunRepository().is_processed(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            year_start=next_year_start,
+        ):
+            return
+
+        found = await CalendarResolutionService(self._session).resolve_policy_assignment(
+            company_id,
+            "LEAVE_POLICY",
+            employee_id=row.employee_id,
+            target_date=next_year_start,
+            leave_type_id=row.leave_type_id,
+        )
+        if found is None:
+            return
+        assignment, _scope_type = found
+        version = await self._policy_repo.find_effective_as_of(
+            self._session,
+            company_id=company_id,
+            policy_id=assignment.policy_id,
+            as_of=next_year_start,
+        )
+        if version is None:
+            return
+
+        # The same lock the year-end run and approvals take on this balance.
+        await self._ledger_repo.lock_balance(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            leave_type_id=row.leave_type_id,
+        )
+        closing = await self._ledger_repo.get_balance_before(
+            self._session,
+            company_id=company_id,
+            employee_id=row.employee_id,
+            leave_type_id=row.leave_type_id,
+            before=next_year_start,
+        )
+        lapsed_before, encashed_before = _year_end_split(version, closing)
+        lapsed_after, encashed_after = _year_end_split(version, closing + refunded)
+        lapse = min(max(lapsed_after - lapsed_before, Decimal("0.00")), refunded)
+        encash = min(max(encashed_after - encashed_before, Decimal("0.00")), refunded - lapse)
+
+        if lapse > 0:
+            await self._ledger_repo.insert(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": row.employee_id,
+                    "leave_type_id": row.leave_type_id,
+                    "entry_type": "ADJUSTMENT",
+                    "amount": -lapse,
+                    "effective_date": today,
+                    "reference_id": row.id,
+                    "reason": (
+                        f"Lapsed under the year-end rule at leave year start {next_year_start}: "
+                        "the cancelled leave was taken in that closed year"
+                    ),
+                    "created_by_user_id": actor_user_id,
+                },
+            )
+        if encash > 0:
+            # One system encashment per employee, type and day
+            # (`uq_leave_ledger_year_end_encashment`): fail loudly rather than drop a payment.
+            if not await self._ledger_repo.insert_if_absent(
+                self._session,
+                data={
+                    "id": uuid4(),
+                    "company_id": company_id,
+                    "employee_id": row.employee_id,
+                    "leave_type_id": row.leave_type_id,
+                    "entry_type": "ENCASHMENT",
+                    "amount": -encash,
+                    "effective_date": today,
+                    "reference_id": row.id,
+                    "reason": (
+                        f"Encashed above the carry-forward cap "
+                        f"({version.max_carry_forward_days} days) at leave year start "
+                        f"{next_year_start}: the cancelled leave was taken in that closed year"
+                    ),
+                    "created_by_user_id": actor_user_id,
+                },
+            ):
+                raise LeaveEncashmentAlreadyRecordedTodayError()
+
     async def _reverse_approval(
         self,
         company_id: UUID,
@@ -3710,6 +3858,7 @@ class LeaveApplicationService:
             reference_id=row.id,
         )
         if debited > 0 and not already_reversed:
+            today = await self._business_today(company_id)
             await self._ledger_repo.insert(
                 self._session,
                 data={
@@ -3719,11 +3868,14 @@ class LeaveApplicationService:
                     "leave_type_id": row.leave_type_id,
                     "entry_type": "ADJUSTMENT",
                     "amount": debited,
-                    "effective_date": await self._business_today(company_id),
+                    "effective_date": today,
                     "reference_id": row.id,
                     "reason": "Reversal: leave application cancelled after approval",
                     "created_by_user_id": actor_user_id,
                 },
+            )
+            await self._apply_closed_year_rule(
+                company_id, row, debited, today=today, actor_user_id=actor_user_id
             )
 
         days = await self._day_repo.list_for_application(

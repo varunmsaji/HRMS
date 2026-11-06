@@ -712,7 +712,7 @@ A leave policy holds the rules for one leave type: who can apply, how leave is e
 
 ### At the end of the leave year
 
-- **What happens to unused leave:** Carry forward up to a cap with the rest lost, lose all of it, or carry forward up to a cap and pay out the rest.
+- **What happens to unused leave:** Carry forward up to a cap with the rest lost, lose all of it, or carry forward up to a cap and pay out the rest. If leave from a year that has already closed is cancelled, the same rule applies to the days given back: days over the cap are lost, or paid out in the current month's payroll.
 - **Maximum carry-forward days:** The cap. It is required for the pay-out option and blank means unlimited for the others.
 
 ### Negative balance
