@@ -51,7 +51,7 @@ FakeApiClient _api({List<Map<String, dynamic>>? days, Map<String, Object> failin
       failing: failing,
     );
 
-Future<void> _pump(WidgetTester tester, ApiClient api, {List<String> permissions = const [attendanceViewAll, employeeViewAll], double width = 700, double scale = 1}) async {
+Future<void> _pump(WidgetTester tester, ApiClient api, {List<String> permissions = const [attendanceViewAll, attendanceView, employeeViewAll], double width = 700, double scale = 1}) async {
   tester.view.physicalSize = Size(width, 2600);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -206,9 +206,26 @@ void main() {
     });
   });
 
-  test('it is in the menu only for those who can view everyone', () {
+  testWidgets('without the read grants its calls need it asks the API nothing', (tester) async {
+    final api = _api();
+    await _pump(tester, api, permissions: const [attendanceViewAll]);
+    expect(find.text('No access'), findsOneWidget);
+    expect(api.listCalls, isEmpty);
+  });
+
+  test('it is in the menu only for those who can view everyone and read what it loads', () {
     List<String> routes(List<String> p) => [for (final g in visibleNavGroups(p)) for (final e in g.items) e.route];
-    expect(routes(const [attendanceViewAll]), contains('/app/attendance/calendar'));
+    expect(routes(const [attendanceViewAll, attendanceView, employeeViewAll]), contains('/app/attendance/calendar'));
+    // VIEW_ALL alone: /employees and /attendance/days would both answer 403.
+    expect(routes(const [attendanceViewAll]), isNot(contains('/app/attendance/calendar')));
     expect(routes(const [attendanceView, employeeViewAll]), isNot(contains('/app/attendance/calendar')));
+  });
+
+  test('roster views need the roster read grant', () {
+    List<String> routes(List<String> p) => [for (final g in visibleNavGroups(p)) for (final e in g.items) e.route];
+    // ROSTER_MANAGE alone: GET /rosters checks ATTENDANCE.VIEW.
+    expect(routes(const [attendanceRosterManage]), isNot(contains('/app/rosters')));
+    expect(routes(const [attendanceRosterManage]), isNot(contains('/app/roster-calendar')));
+    expect(routes(const [attendanceRosterManage, attendanceView]), containsAll(['/app/rosters', '/app/roster-calendar', '/app/schedule']));
   });
 }

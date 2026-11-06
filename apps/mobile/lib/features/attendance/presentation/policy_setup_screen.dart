@@ -8,8 +8,10 @@ import '../../../core/forms/form_spec.dart';
 import '../../../core/forms/spec_form.dart';
 import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/providers.dart';
+import '../../../core/time.dart';
 import '../../../core/widgets/ui.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart' show InlineAlert;
+import '../../auth/state/auth_controller.dart';
 import '../data/assignment_lookup.dart';
 import '../domain/policy_assignment_form.dart';
 import '../domain/policy_setup_config.dart';
@@ -19,8 +21,11 @@ import '../domain/policy_setup_config.dart';
 /// Publishing asks when the rules start and who follows them, and everything is sent in one
 /// request to `$path/setup`, so a rejection leaves nothing half-made. Pops `true` when saved.
 class PolicySetupScreen extends ConsumerStatefulWidget {
-  const PolicySetupScreen({super.key, required this.config});
+  const PolicySetupScreen({super.key, required this.config, this.now});
   final PolicySetupConfig config;
+
+  /// The clock, for tests.
+  final DateTime? now;
 
   @override
   ConsumerState<PolicySetupScreen> createState() => _PolicySetupScreenState();
@@ -152,10 +157,9 @@ class _PolicySetupScreenState extends ConsumerState<PolicySetupScreen> {
     }
   }
 
-  String _today() {
-    final d = DateTime.now();
-    return '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-  }
+  /// Today in the company's timezone, not the device's: rules published from a phone in
+  /// another zone must still start on the company's date.
+  String _today() => businessToday(ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata', now: widget.now);
 
   Future<void> _publish() async {
     if (!_validate(forPublish: true)) return;

@@ -156,11 +156,21 @@ class _RostersScreenState extends ConsumerState<RostersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canManage = (ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(attendanceRosterManage);
+    final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
+    final canManage = permissions.contains(attendanceRosterManage);
+    // Every view below reads GET /rosters (ATTENDANCE.VIEW); the board and grid also list
+    // employees (EMPLOYEE.VIEW_ALL).
+    final canReadRosters = permissions.contains(attendanceView);
+    final canSeeTeamViews = canReadRosters && permissions.contains(employeeViewAll);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Shift Rosters'),
-        actions: [IconButton(tooltip: 'Shift board', icon: const Icon(Icons.view_column_outlined), onPressed: () => context.push('/app/rosters/board')), IconButton(tooltip: 'Workforce roster', icon: const Icon(Icons.grid_on_outlined), onPressed: () => context.push('/app/rosters/grid')), IconButton(tooltip: 'Roster calendar', icon: const Icon(Icons.calendar_view_month_outlined), onPressed: () => context.push('/app/roster-calendar')), const MoreAction()],
+        actions: [
+          if (canSeeTeamViews) IconButton(tooltip: 'Shift board', icon: const Icon(Icons.view_column_outlined), onPressed: () => context.push('/app/rosters/board')),
+          if (canSeeTeamViews) IconButton(tooltip: 'Workforce roster', icon: const Icon(Icons.grid_on_outlined), onPressed: () => context.push('/app/rosters/grid')),
+          if (canReadRosters) IconButton(tooltip: 'Roster calendar', icon: const Icon(Icons.calendar_view_month_outlined), onPressed: () => context.push('/app/roster-calendar')),
+          const MoreAction(),
+        ],
       ),
       floatingActionButton: canManage
           ? FloatingActionButton.extended(

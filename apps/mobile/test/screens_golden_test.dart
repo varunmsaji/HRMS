@@ -357,7 +357,7 @@ void main() {
     apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
   ]);
 
-  _golden('attendance_calendar', (v) => AttendanceCalendarScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceViewAll, employeeViewAll], overrides: [
+  _golden('attendance_calendar', (v) => AttendanceCalendarScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceViewAll, attendanceView, employeeViewAll], overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(lists: {
       '/employees': _rosterFixture()['/employees']!,
       '/attendance/days': _calendarDays(),

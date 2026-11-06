@@ -21,7 +21,7 @@ const kPayrollInRelease = false;
 bool isPayrollRoute(String route) => route == '/app/payroll' || route.startsWith('/app/payroll/') || route == '/app/me/payslips' || route.startsWith('/app/me/payslips/');
 
 class NavEntry {
-  const NavEntry(this.label, this.icon, this.route, {this.anyOf = const [], this.employeeLabel, this.guarded = true, this.requiresEmployee = false});
+  const NavEntry(this.label, this.icon, this.route, {this.anyOf = const [], this.allOf = const [], this.employeeLabel, this.guarded = true, this.requiresEmployee = false});
 
   final String label;
   final IconData icon;
@@ -29,6 +29,10 @@ class NavEntry {
 
   /// The user needs at least one of these. Empty means anyone signed in.
   final List<String> anyOf;
+
+  /// The user also needs every one of these: the read grants the screen's other API calls
+  /// check, so a user who passes [anyOf] is not sent to a screen that can only answer 403.
+  final List<String> allOf;
 
   /// Label for the employee menu when it differs from the administrator's.
   final String? employeeLabel;
@@ -40,7 +44,8 @@ class NavEntry {
   /// A personal view: hidden from an account with no linked employee record.
   final bool requiresEmployee;
 
-  bool allowedFor(Iterable<String> permissions) => anyOf.isEmpty || anyOf.any(permissions.contains);
+  bool allowedFor(Iterable<String> permissions) =>
+      (anyOf.isEmpty || anyOf.any(permissions.contains)) && allOf.every(permissions.contains);
 }
 
 class NavGroup {
@@ -50,6 +55,9 @@ class NavGroup {
 }
 
 const _teamView = [attendanceViewAll, employeeViewAll];
+
+/// What the attendance calendar reads besides [attendanceViewAll]: the employee list and the days.
+const attendanceCalendarReads = [attendanceView, employeeViewAll];
 
 /// The employee destinations (the entire employee menu besides Sign out).
 const employeeNavEntries = [
@@ -69,10 +77,12 @@ const navQuickLinks = NavGroup('Quick links', [
   NavEntry('Employees', Icons.people_outline, '/app/employees', anyOf: [employeeViewAll]),
   NavEntry('Onboarding', Icons.person_add_alt, '/app/onboarding', anyOf: [onboardingView, onboardingCreate, onboardingReview, onboardingActivate]),
   NavEntry('Team Attendance', Icons.groups_outlined, '/app/team-attendance', anyOf: _teamView),
-  NavEntry('Attendance Calendar', Icons.calendar_view_month_outlined, '/app/attendance/calendar', anyOf: [attendanceViewAll]),
+  // Also reads /employees (EMPLOYEE.VIEW_ALL) and /attendance/days (ATTENDANCE.VIEW).
+  NavEntry('Attendance Calendar', Icons.calendar_view_month_outlined, '/app/attendance/calendar', anyOf: [attendanceViewAll], allOf: attendanceCalendarReads),
   NavEntry('Attendance Insights', Icons.insights_outlined, '/app/attendance-insights', anyOf: _teamView),
-  NavEntry('Shift Rosters', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView]),
-  NavEntry('Schedule Coverage', Icons.stacked_bar_chart_outlined, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView]),
+  // Roster reads (/rosters, /rosters/weekly-schedule) check ATTENDANCE.VIEW, not ROSTER_MANAGE.
+  NavEntry('Shift Rosters', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
+  NavEntry('Schedule Coverage', Icons.stacked_bar_chart_outlined, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
   NavEntry('Shift Swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
   NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
@@ -95,7 +105,7 @@ const navSettingsGroups = [
     NavEntry('Shifts', Icons.schedule_outlined, '/app/shifts', anyOf: [orgShiftManage]),
     NavEntry('Workplace Geofences', Icons.location_on_outlined, '/app/attendance-geofences', anyOf: [attendancePolicyManage, attendanceViewAll]),
     NavEntry('Attendance Periods', Icons.lock_clock_outlined, '/app/attendance-periods', anyOf: [attendanceLock, attendanceUnlock, ..._teamView]),
-    NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView]),
+    NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
     NavEntry('Work Calendars', Icons.date_range_outlined, '/app/work-calendars', anyOf: [orgCalendarManage]),
     NavEntry('Holiday Calendars', Icons.calendar_month_outlined, '/app/holiday-calendars', anyOf: [orgHolidayManage]),
     NavEntry('Weekly-Off Patterns', Icons.event_busy_outlined, '/app/weekly-off-patterns', anyOf: [orgCalendarManage]),
@@ -138,11 +148,11 @@ List<NavGroup> visibleNavGroups(Iterable<String> permissions, {bool payroll = kP
 /// The employee menu: the destinations the user may open, with employee wording.
 List<NavEntry> visibleEmployeeEntries(Iterable<String> permissions, {bool payroll = kPayrollInRelease}) => _visible(employeeNavEntries, permissions, payroll);
 
-/// Route → permissions, for every guarded destination (built from the same entries).
-final Map<String, List<String>> _guardTable = {
+/// Route → entry, for every guarded destination (built from the same entries).
+final Map<String, NavEntry> _guardTable = {
   for (final g in [navQuickLinks, ...navSettingsGroups])
     for (final e in g.items)
-      if (e.guarded) e.route: e.anyOf,
+      if (e.guarded) e.route: e,
 };
 
 /// Where to send [user] instead of [location], or null to let them through. Applies only to the
@@ -153,7 +163,7 @@ String? guardRedirect(String location, UserProfile? user, {required String landi
   if (!payroll && isPayrollRoute(location)) return landing;
   for (final entry in _guardTable.entries) {
     if (location == entry.key || location.startsWith('${entry.key}/')) {
-      return entry.value.isEmpty || entry.value.any(user.permissions.contains) ? null : landing;
+      return entry.value.allowedFor(user.permissions) ? null : landing;
     }
   }
   return null;

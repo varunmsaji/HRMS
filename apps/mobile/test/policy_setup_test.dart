@@ -28,11 +28,11 @@ FakeApiClient _api({List<Map<String, dynamic>> companyWide = const []}) => FakeA
       '/employees': const [],
     });
 
-Future<void> _pump(WidgetTester tester, FakeApiClient api, PolicySetupConfig config) async {
+Future<void> _pump(WidgetTester tester, FakeApiClient api, PolicySetupConfig config, {DateTime? now}) async {
   tester.view.physicalSize = const Size(800, 6000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  await tester.pumpWidget(ProviderScope(overrides: [apiClientProvider.overrideWithValue(api), fakeAuth(const [])], child: MaterialApp(home: PolicySetupScreen(config: config))));
+  await tester.pumpWidget(ProviderScope(overrides: [apiClientProvider.overrideWithValue(api), fakeAuth(const [])], child: MaterialApp(home: PolicySetupScreen(config: config, now: now))));
   await tester.pumpAndSettle();
 }
 
@@ -77,6 +77,17 @@ void main() {
     expect(fieldVisible(f, {'a': 'BRANCH'}), isTrue);
     expect(fieldVisible(f, {'a': 'NO'}), isFalse);
     expect(fieldVisible(f, {'a': 'ALL'}), isFalse);
+  });
+
+  testWidgets("the rules start on the company's date, not the device's", (tester) async {
+    final api = _api();
+    // 20:00 UTC on 5 Nov is already 01:30 on 6 Nov in the company's zone (Asia/Kolkata).
+    await _pump(tester, api, attendancePolicySetup, now: DateTime.utc(2026, 11, 5, 20));
+    await _publishFlow(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Publish'));
+    await tester.pumpAndSettle();
+
+    expect((_setupBody(api)['rules'] as Map)['effective_from'], '2026-11-06');
   });
 
   testWidgets('publishing the first template assigns it to the whole company in one request', (tester) async {
