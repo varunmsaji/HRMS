@@ -4604,7 +4604,7 @@ class AttendanceDayService:
                 if ot_version.weekly_cap_minutes is not None:
                     week_start = target_date - timedelta(days=target_date.weekday())
                     week_end = week_start + timedelta(days=6)
-                    week_sum = await self._ot_record_repo.sum_minutes_detected_for_range(
+                    week_sum = await self._ot_record_repo.sum_minutes_counted_for_cap(
                         self._session,
                         company_id=company_id,
                         employee_id=employee_id,
@@ -4621,7 +4621,7 @@ class AttendanceDayService:
                         if target_date.month == 12
                         else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
                     )
-                    month_sum = await self._ot_record_repo.sum_minutes_detected_for_range(
+                    month_sum = await self._ot_record_repo.sum_minutes_counted_for_cap(
                         self._session,
                         company_id=company_id,
                         employee_id=employee_id,

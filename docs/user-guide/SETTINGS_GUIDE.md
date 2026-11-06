@@ -567,7 +567,7 @@ An overtime policy decides who can earn overtime, how much is counted, who must 
 ### How it is counted
 
 - **Rounding:** Rounds the overtime minutes, for example to the nearest 15 minutes, up or down.
-- **Daily, weekly and monthly caps:** The most overtime counted per day, week and month. Anything above the cap is not counted. Blank means no cap.
+- **Daily, weekly and monthly caps:** The most overtime counted per day, week and month. Anything above the cap is not counted. Blank means no cap. The week and month count approved minutes, and hold a waiting day's minutes until it is decided; rejected overtime and overtime on a full day of leave or on duty use none of the cap.
 
 ### Approval
 
