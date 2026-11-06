@@ -347,6 +347,20 @@ class AttendanceRepository {
   // Shift rosters
   // Attendance periods
   // Attendance days + punches
+  /// A whole company's month, up to 10,000 rows (20 pages of the endpoint's 500). [total] says if
+  /// the month held more than came back.
+  Future<({List<AttendanceDay> items, int total})> listMonthDays({required String dateFrom, required String dateTo}) async {
+    final items = <AttendanceDay>[];
+    var total = 0;
+    for (var page = 1; page <= 20; page++) {
+      final env = await _client.getList('/attendance/days', query: PageQuery(page: page, perPage: 500), filters: {'date_from': dateFrom, 'date_to': dateTo}, parseItem: (d) => AttendanceDay.fromJson(d as Map<String, dynamic>));
+      items.addAll(env.data);
+      total = env.pagination?.total ?? items.length;
+      if (!(env.pagination?.hasNext ?? false)) break;
+    }
+    return (items: items, total: total);
+  }
+
   /// Pages through every result (capped at 50 pages) so day-level summaries are not truncated.
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async {
     final all = <AttendanceDay>[];

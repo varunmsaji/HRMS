@@ -4,6 +4,7 @@ import '../../../core/api/api_client.dart';
 import '../../../core/providers.dart';
 import '../../../core/api/envelope.dart';
 import '../../../core/json.dart';
+import '../domain/leave_decision_center.dart';
 
 class LeaveType {
   LeaveType({
@@ -319,6 +320,9 @@ class LeaveRepository {
         body: body,
         parse: (d) => LeaveApplication.fromJson(d as Map<String, dynamic>),
       );
+  /// The approver's read-only screen data; deciding stays on the approve and reject routes.
+  Future<LeaveDecisionCenter> getDecisionCenter(String tab) => _client.get('/leave-applications/decision-center?tab=$tab', parse: (d) => LeaveDecisionCenter.fromJson(d as Map<String, dynamic>));
+
   Future<LeaveApplication> approveLeaveApplication(String id, {required String ifMatch, String? comment, bool excessAsLop = false}) =>
       _client.post(
         '/leave-applications/$id/approve',

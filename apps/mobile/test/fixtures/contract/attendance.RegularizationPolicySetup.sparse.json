@@ -1,0 +1,25 @@
+{
+ "assign": null,
+ "name": "x",
+ "publish": true,
+ "publish_reason": null,
+ "rules": {
+  "allow_employee_request": true,
+  "allow_hr_request": true,
+  "allow_manager_request": true,
+  "allowed_types": [
+   {
+    "regularization_type": "x",
+    "sort_order": 1
+   }
+  ],
+  "approval_chain": "x",
+  "attachment_required": true,
+  "auto_approve_within_minutes": null,
+  "blocked_when_locked": true,
+  "effective_from": null,
+  "max_backdated_days": null,
+  "max_requests_per_month": null,
+  "reason_required": true
+ }
+}

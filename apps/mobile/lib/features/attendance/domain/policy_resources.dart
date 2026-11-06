@@ -24,6 +24,12 @@ const attendancePolicyIdentitySpec = FormSpec(name: 'attendance_policy', label: 
   _active,
 ]);
 
+const geofenceModeLabels = {
+  'DISABLED': 'Disabled: location is not checked',
+  'OPTIONAL': 'Optional: record and flag location, never block a punch',
+  'REQUIRED': 'Required: block self-service punches outside an approved workplace',
+};
+
 const attendancePolicyVersionSpec = FormSpec(name: 'attendance_policy_version', label: 'Attendance policy version', fields: [
   FieldSpec('effective_from', 'Effective from', kind: FieldKind.date),
   FieldSpec('grace_in_minutes', 'Grace in (minutes)', kind: FieldKind.integer),
@@ -54,6 +60,9 @@ const attendancePolicyVersionSpec = FormSpec(name: 'attendance_policy_version', 
   FieldSpec('early_departure_requires_approval', 'Early departure needs approval', kind: FieldKind.toggle),
   FieldSpec('excess_break_count_window', 'Excess-break count window', kind: FieldKind.select, options: ['MONTH']),
   FieldSpec('excess_break_days_to_half_day_count', 'Excess-break days that make a half day', kind: FieldKind.integer),
+  FieldSpec('geofence_mode', 'Location check', kind: FieldKind.select, options: ['DISABLED', 'OPTIONAL', 'REQUIRED'], optionLabels: geofenceModeLabels),
+  FieldSpec('geofence_max_accuracy_m', 'Worst acceptable GPS accuracy (metres)', kind: FieldKind.integer, hint: '5-500', showWhen: 'geofence_mode!=DISABLED'),
+  FieldSpec('geofence_max_age_seconds', 'Oldest acceptable reading (seconds)', kind: FieldKind.integer, hint: '5-300', showWhen: 'geofence_mode!=DISABLED'),
   FieldSpec('incomplete_at_lock_behaviour', 'Incomplete day at lock', kind: FieldKind.select, options: ['TREAT_ABSENT', 'TREAT_PRESENT', 'KEEP_INCOMPLETE']),
   FieldSpec('hour_bands', 'Worked-hours bands', kind: FieldKind.rows, rowNoun: 'band', orderKey: 'sort_order', rowSpec: FormSpec(name: 'hour_band', label: 'Hour band', fields: [
     FieldSpec('min_minutes', 'From (minutes)', kind: FieldKind.integer, required: true),

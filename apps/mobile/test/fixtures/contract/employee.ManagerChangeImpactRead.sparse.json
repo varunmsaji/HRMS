@@ -1,0 +1,16 @@
+{
+ "changes_manager": true,
+ "current_reporting_manager_id": null,
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "has_pending_requests": true,
+ "impact_token": "x",
+ "new_manager_applies_to_requests_dated_from": null,
+ "proposed_reporting_manager_id": null,
+ "requests": {
+  "attendance_regularization": 1,
+  "leave": 1,
+  "overtime": 1
+ },
+ "requires_confirmation": true,
+ "total_pending_requests": 1
+}

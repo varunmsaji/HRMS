@@ -21,7 +21,7 @@ const kPayrollInRelease = false;
 bool isPayrollRoute(String route) => route == '/app/payroll' || route.startsWith('/app/payroll/') || route == '/app/me/payslips' || route.startsWith('/app/me/payslips/');
 
 class NavEntry {
-  const NavEntry(this.label, this.icon, this.route, {this.anyOf = const [], this.employeeLabel, this.guarded = true});
+  const NavEntry(this.label, this.icon, this.route, {this.anyOf = const [], this.employeeLabel, this.guarded = true, this.requiresEmployee = false});
 
   final String label;
   final IconData icon;
@@ -37,6 +37,9 @@ class NavEntry {
   /// (their screens already answer the API's 403 with the normal error state).
   final bool guarded;
 
+  /// A personal view: hidden from an account with no linked employee record.
+  final bool requiresEmployee;
+
   bool allowedFor(Iterable<String> permissions) => anyOf.isEmpty || anyOf.any(permissions.contains);
 }
 
@@ -48,10 +51,11 @@ class NavGroup {
 
 const _teamView = [attendanceViewAll, employeeViewAll];
 
-/// The four employee destinations (the entire employee menu besides Sign out).
+/// The employee destinations (the entire employee menu besides Sign out).
 const employeeNavEntries = [
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances',
       anyOf: [leaveBalanceView, leaveBalanceViewAll], employeeLabel: 'Leave balances', guarded: false),
+  NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], employeeLabel: 'My calendar', guarded: false, requiresEmployee: true),
   NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Attendance corrections', guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
   NavEntry('Shift swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
@@ -61,9 +65,11 @@ const employeeNavEntries = [
 /// Mirrors `apps/web/src/components/layout/nav-items.ts`'s `NAV_ITEMS` (the items not already in
 /// the bottom nav). Order is the existing hub order.
 const navQuickLinks = NavGroup('Quick links', [
+  NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], guarded: false, requiresEmployee: true),
   NavEntry('Employees', Icons.people_outline, '/app/employees', anyOf: [employeeViewAll]),
   NavEntry('Onboarding', Icons.person_add_alt, '/app/onboarding', anyOf: [onboardingView, onboardingCreate, onboardingReview, onboardingActivate]),
   NavEntry('Team Attendance', Icons.groups_outlined, '/app/team-attendance', anyOf: _teamView),
+  NavEntry('Attendance Calendar', Icons.calendar_view_month_outlined, '/app/attendance/calendar', anyOf: [attendanceViewAll]),
   NavEntry('Attendance Insights', Icons.insights_outlined, '/app/attendance-insights', anyOf: _teamView),
   NavEntry('Shift Rosters', Icons.event_available, '/app/rosters', anyOf: [attendanceRosterManage, ..._teamView]),
   NavEntry('Schedule Coverage', Icons.stacked_bar_chart_outlined, '/app/schedule', anyOf: [attendanceRosterManage, ..._teamView]),
@@ -87,6 +93,7 @@ const navSettingsGroups = [
   ]),
   NavGroup('Attendance & Time', [
     NavEntry('Shifts', Icons.schedule_outlined, '/app/shifts', anyOf: [orgShiftManage]),
+    NavEntry('Workplace Geofences', Icons.location_on_outlined, '/app/attendance-geofences', anyOf: [attendancePolicyManage, attendanceViewAll]),
     NavEntry('Attendance Periods', Icons.lock_clock_outlined, '/app/attendance-periods', anyOf: [attendanceLock, attendanceUnlock, ..._teamView]),
     NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView]),
     NavEntry('Work Calendars', Icons.date_range_outlined, '/app/work-calendars', anyOf: [orgCalendarManage]),
@@ -118,17 +125,17 @@ const navSettingsGroups = [
   ]),
 ];
 
-List<NavEntry> _visible(List<NavEntry> items, Iterable<String> permissions, bool payroll) =>
-    [for (final e in items) if (e.allowedFor(permissions) && (payroll || !isPayrollRoute(e.route))) e];
+List<NavEntry> _visible(List<NavEntry> items, Iterable<String> permissions, bool payroll, {bool hasEmployee = true}) =>
+    [for (final e in items) if (e.allowedFor(permissions) && (payroll || !isPayrollRoute(e.route)) && (hasEmployee || !e.requiresEmployee)) e];
 
 /// The administrator/manager menu filtered to what [permissions] allow; groups with no visible
 /// entry are dropped.
-List<NavGroup> visibleNavGroups(Iterable<String> permissions, {bool payroll = kPayrollInRelease}) => [
+List<NavGroup> visibleNavGroups(Iterable<String> permissions, {bool payroll = kPayrollInRelease, bool hasEmployee = true}) => [
       for (final g in [navQuickLinks, ...navSettingsGroups])
-        if (_visible(g.items, permissions, payroll).isNotEmpty) NavGroup(g.label, _visible(g.items, permissions, payroll)),
+        if (_visible(g.items, permissions, payroll, hasEmployee: hasEmployee).isNotEmpty) NavGroup(g.label, _visible(g.items, permissions, payroll, hasEmployee: hasEmployee)),
     ];
 
-/// The employee menu: the four destinations the user may open, with employee wording.
+/// The employee menu: the destinations the user may open, with employee wording.
 List<NavEntry> visibleEmployeeEntries(Iterable<String> permissions, {bool payroll = kPayrollInRelease}) => _visible(employeeNavEntries, permissions, payroll);
 
 /// Route → permissions, for every guarded destination (built from the same entries).

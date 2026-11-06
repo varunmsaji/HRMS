@@ -1,0 +1,22 @@
+{
+ "applied": {
+  "effective_from": "2026-01-15",
+  "effective_to": "2026-01-15",
+  "has_rules": true,
+  "policy_id": "00000000-0000-0000-0000-000000001234",
+  "policy_name": "x",
+  "scope_id": "00000000-0000-0000-0000-000000001234",
+  "scope_name": "x",
+  "scope_type": "x"
+ },
+ "leave_type_id": "00000000-0000-0000-0000-000000001234",
+ "leave_type_name": "x",
+ "own": {
+  "assignment_id": "00000000-0000-0000-0000-000000001234",
+  "effective_from": "2026-01-15",
+  "policy_id": "00000000-0000-0000-0000-000000001234",
+  "policy_name": "x",
+  "version": 1
+ },
+ "policy_kind": "x"
+}

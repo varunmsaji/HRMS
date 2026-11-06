@@ -7,6 +7,8 @@ import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/employees/presentation/employees_screen.dart';
 
+import 'package:hrms_mobile/features/profile/data/employee_repository.dart';
+
 import 'support/fake_api_client.dart';
 import 'support/fake_auth.dart';
 
@@ -58,6 +60,19 @@ Future<void> _pump(WidgetTester tester, FakeApiClient api) async {
 
 void main() {
   final people = [_employee(1, 'Asha'), _employee(2, 'Ben'), _employee(3, 'Bianca'), _employee(4, 'Cy')];
+
+  testWidgets('while payroll is paused the record has no Salary tab, but keeps Compensation', (tester) async {
+    tester.view.physicalSize = const Size(1600, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [apiClientProvider.overrideWithValue(FakeApiClient()), fakeAuth([employeeViewAll, employeeViewCompensation])],
+      child: MaterialApp(home: EmployeeDetailScreen(employee: Employee.fromJson(_employee(1, 'Asha')))),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Compensation'), findsOneWidget);
+    expect(find.text('Salary'), findsNothing);
+  });
 
   testWidgets('shows the first page and loads the next on demand', (tester) async {
     final api = _DirectoryApi(people);

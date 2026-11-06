@@ -1,0 +1,5 @@
+{
+ "attendance_regularization": 1,
+ "leave": 1,
+ "overtime": 1
+}

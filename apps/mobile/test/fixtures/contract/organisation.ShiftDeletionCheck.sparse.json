@@ -1,0 +1,12 @@
+{
+ "blockers": [
+  {
+   "code": "x",
+   "count": 1,
+   "message": "x"
+  }
+ ],
+ "can_delete": true,
+ "draft_version_count": 1,
+ "published_version_count": 1
+}

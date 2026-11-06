@@ -23,6 +23,7 @@ class ResourceConfig {
     this.editable = true,
     this.hardDelete = false,
     this.listActions,
+    this.reviewEdit,
   });
 
   /// Screen title / list heading ("Branches").
@@ -67,6 +68,10 @@ class ResourceConfig {
   /// Extra list-level actions (shown beside the create button for users who can manage), e.g. the
   /// salary structures' bulk assign. Receives the loaded rows.
   final List<Widget> Function(BuildContext context, List<Map<String, dynamic>> rows, VoidCallback reload)? listActions;
+
+  /// Runs an edit through its own review step instead of the plain PATCH: resolves true once the
+  /// review applied it, false if the user backed out, or null when this edit needs no review.
+  final Future<bool?> Function(BuildContext context, Map<String, dynamic> row, Map<String, dynamic> changed)? reviewEdit;
 
   /// Set for effective-dated, versioned resources (policies, shifts): the record is an identity
   /// and its configuration lives in versions (one editable DRAFT, then immutable PUBLISHED ones).

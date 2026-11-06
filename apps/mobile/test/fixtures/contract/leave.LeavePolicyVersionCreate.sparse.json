@@ -16,6 +16,7 @@
  "half_day_allowed": true,
  "max_backdated_days": null,
  "max_carry_forward_days": null,
+ "max_consecutive_days": 1,
  "max_encashment_days": null,
  "max_requests_per_month": null,
  "min_balance_after_encashment": null,

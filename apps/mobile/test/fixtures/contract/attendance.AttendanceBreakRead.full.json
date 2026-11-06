@@ -2,9 +2,20 @@
  "attendance_day_id": "00000000-0000-0000-0000-000000001234",
  "break_end": "x",
  "break_start": "x",
+ "deducted_minutes": 1,
+ "end_event_id": "00000000-0000-0000-0000-000000001234",
+ "excess_minutes": 1,
  "id": "00000000-0000-0000-0000-000000001234",
+ "is_approved": true,
  "is_excess": true,
  "is_paid": true,
+ "kind": "x",
  "minutes": 1,
- "shift_break_id": "00000000-0000-0000-0000-000000001234"
+ "name": "x",
+ "needs_review": true,
+ "override_id": "00000000-0000-0000-0000-000000001234",
+ "rule_source": "x",
+ "scheduled_minutes": 1,
+ "shift_break_id": "00000000-0000-0000-0000-000000001234",
+ "start_event_id": "00000000-0000-0000-0000-000000001234"
 }

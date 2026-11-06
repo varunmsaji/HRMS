@@ -1,0 +1,9 @@
+{
+ "accepted": true,
+ "accuracy_m": 1.5,
+ "distance_m": 1.5,
+ "mode": "x",
+ "outcome": "x",
+ "radius_m": 1.5,
+ "workplace_name": "x"
+}

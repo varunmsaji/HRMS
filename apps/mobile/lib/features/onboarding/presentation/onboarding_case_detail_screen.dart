@@ -15,13 +15,19 @@ import '../data/public_onboarding_repository.dart' show OnboardingDocument;
 import '../../../core/forms/form_spec.dart';
 import '../domain/onboarding_form_spec.dart';
 import 'onboarding_cases_screen.dart' show onboardingRepositoryProvider;
+import '../domain/onboarding_invitation.dart';
+import 'invitation_composer_screen.dart';
+import 'invitation_history.dart';
 
 /// Mirrors the web `apps/web/src/app/app/onboarding/[id]/page.tsx`: case status and invite
 /// link, every candidate-entered section with verify/reject, uploaded documents with
 /// verify/reject, and request-changes / activate.
 class OnboardingCaseDetailScreen extends ConsumerStatefulWidget {
-  const OnboardingCaseDetailScreen({super.key, required this.caseSummary});
+  const OnboardingCaseDetailScreen({super.key, required this.caseSummary, this.composeOnOpen = false});
   final OnboardingCase caseSummary;
+
+  /// Opened straight after the case was created: goes on to writing the invitation.
+  final bool composeOnOpen;
 
   @override
   ConsumerState<OnboardingCaseDetailScreen> createState() => _OnboardingCaseDetailScreenState();
@@ -37,6 +43,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
   List<OnboardingDocument>? _documents;
   bool _busy = false;
   String? _inviteUrl;
+  int _historyKey = 0;
 
   OnboardingRepository get _repo => ref.read(onboardingRepositoryProvider);
   String get _id => widget.caseSummary.id;
@@ -45,6 +52,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
   void initState() {
     super.initState();
     _load();
+    if (widget.composeOnOpen) WidgetsBinding.instance.addPostFrameCallback((_) => _compose(justCreated: true));
   }
 
   Future<void> _load() async {
@@ -117,6 +125,82 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
         final result = await _repo.sendInvite(_id);
         setState(() => _inviteUrl = result['invite_url'] as String?);
       }, success: 'Invite ready.');
+
+  /// "Queued" is all the API can say at this point, never "sent" or "delivered".
+  Future<void> _compose({bool justCreated = false}) async {
+    final result = await openInvitationComposer(context, caseId: _id, justCreated: justCreated);
+    if (result == null || !mounted) return;
+    final queued = result['email_queued'] != false;
+    setState(() {
+      _inviteUrl = result['invite_url'] as String?;
+      _historyKey++;
+    });
+    _toast(queued ? 'Invitation queued. Track its status below.' : 'The link is ready to copy, but no email was queued. Send a new invitation to retry.');
+    await _load();
+  }
+
+  Future<void> _cancelCase(OnboardingCaseDetail detail) async {
+    final reason = TextEditingController();
+    String? error;
+    var saving = false;
+    final cancelled = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: Text('Cancel onboarding for ${detail.candidateName.isEmpty ? 'this candidate' : detail.candidateName}?'),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('The case is closed and cannot be reopened.${detail.tokenStatus == 'ACTIVE' ? ' Their onboarding link stops working immediately.' : ''} The candidate is not emailed, and the case and its history stay on record. You can start a new onboarding for the same email afterwards.'),
+              const SizedBox(height: 12),
+              TextField(controller: reason, maxLength: 500, decoration: const InputDecoration(labelText: 'Reason (optional, kept in the audit trail)')),
+              if (error != null) Text(error!, style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: saving ? null : () => Navigator.of(ctx).pop(false), child: const Text('Keep case')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+              onPressed: saving
+                  ? null
+                  : () async {
+                      setLocal(() {
+                        saving = true;
+                        error = null;
+                      });
+                      try {
+                        final text = reason.text.trim();
+                        await _repo.cancelCase(_id, reason: text.isEmpty ? null : text);
+                        if (ctx.mounted) Navigator.of(ctx).pop(true);
+                      } on ApiError catch (e) {
+                        setLocal(() {
+                          saving = false;
+                          error = e.status == 403
+                              ? "You don't have permission to cancel onboarding."
+                              : e.status == 409
+                                  ? 'This onboarding case can no longer be cancelled. Refresh to see its latest status.'
+                                  : e.message;
+                        });
+                      } catch (_) {
+                        setLocal(() {
+                          saving = false;
+                          error = 'Something went wrong.';
+                        });
+                      }
+                    },
+              child: const Text('Cancel onboarding'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (cancelled != true || !mounted) return;
+    _toast('Onboarding cancelled.');
+    setState(() {
+      _inviteUrl = null;
+      _historyKey++;
+    });
+    await _load();
+  }
 
   Future<void> _activate() async {
     final confirmed = await showDialog<bool>(
@@ -245,12 +329,14 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
             const SizedBox(height: 12),
             Wrap(spacing: 8, runSpacing: 8, children: [
               if (canInvite && _invitableStatuses.contains(status))
-                FilledButton(onPressed: _busy ? null : _sendInvite, child: Text(status == 'DRAFT' ? 'Send invite' : status == 'ACTIVATED' ? 'Get link' : 'Resend invite')),
+                FilledButton(onPressed: _busy ? null : (status == 'ACTIVATED' ? _sendInvite : _compose), child: Text(status == 'DRAFT' ? 'Send invite' : status == 'ACTIVATED' ? 'Get link' : 'Resend invite')),
               if (canReview && status == 'UNDER_REVIEW' && hasRejection)
                 OutlinedButton(onPressed: _busy ? null : () => _run(() => _repo.requestChanges(_id), success: 'Changes requested.'), child: const Text('Request changes')),
               if (canActivate && status == 'VERIFIED') FilledButton(onPressed: _busy ? null : _activate, child: const Text('Activate employee')),
               if (status == 'ACTIVATED' && detail.employeeId != null)
                 OutlinedButton(onPressed: () => _openEmployee(detail.employeeId!), child: const Text('View employee')),
+              if (permissions.contains(onboardingCancel) && onboardingCancellableStatuses.contains(status))
+                OutlinedButton(onPressed: _busy ? null : () => _cancelCase(detail), child: const Text('Cancel onboarding')),
             ]),
             if (_inviteUrl != null) ...[
               const SizedBox(height: 12),
@@ -270,6 +356,8 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
                 ]),
               ),
             ],
+            const SizedBox(height: 12),
+            InvitationHistory(caseId: _id, refreshKey: _historyKey, canResend: canInvite && _invitableStatuses.contains(status) && status != 'ACTIVATED', onResend: _compose),
             const SizedBox(height: 20),
             for (final spec in onboardingSections) ...[
               Padding(

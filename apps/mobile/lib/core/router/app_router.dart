@@ -21,6 +21,13 @@ import '../../features/attendance/presentation/policy_resolution_screen.dart';
 import '../../features/attendance/presentation/roster_calendar_screen.dart';
 import '../../features/attendance/presentation/rosters_screen.dart';
 import '../../features/attendance/presentation/shift_swaps_screen.dart';
+import '../../features/attendance/presentation/geofences_screen.dart';
+import '../../features/attendance/presentation/regularization_decision_center_screen.dart';
+import '../../features/leave/presentation/leave_decision_center_screen.dart';
+import '../../features/attendance/presentation/shift_board_screen.dart';
+import '../../features/attendance/presentation/workforce_roster_screen.dart';
+import '../../features/attendance/presentation/attendance_calendar_screen.dart';
+import '../../features/attendance/presentation/my_calendar_screen.dart';
 import '../../features/attendance/presentation/weekly_schedule_screen.dart';
 import '../../features/auth/state/auth_controller.dart';
 import '../../features/auth/state/auth_state.dart';
@@ -127,6 +134,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => PublicOnboardingScreen(token: state.pathParameters['token']!),
       ),
       GoRoute(path: '/app/notifications', builder: (context, state) => const EmployeeThemeScope(child: NotificationsScreen())),
+      GoRoute(path: '/app/me/calendar', builder: (context, state) => const EmployeeThemeScope(child: MyCalendarScreen())),
       GoRoute(path: '/app/attendance/face-setup', builder: (context, state) => const EmployeeThemeScope(child: FaceSetupScreen())),
       GoRoute(path: '/app/more', builder: (context, state) => const SettingsHubScreen()),
       GoRoute(path: '/app/company', builder: (context, state) => const CompanyProfileScreen()),
@@ -142,11 +150,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/holiday-calendars', builder: (context, state) => ResourceListScreen(config: holidayCalendarResource)),
       GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => ResourceListScreen(config: weeklyOffPatternResource)),
       GoRoute(path: '/app/work-calendars', builder: (context, state) => ResourceListScreen(config: workCalendarResource)),
-      GoRoute(path: '/app/regularizations', builder: (context, state) => RequestListScreen(config: regularizationConfig)),
+      GoRoute(path: '/app/regularizations', builder: (context, state) => RequestListScreen(config: regularizationConfig, decisionCenter: const RegularizationDecisionCenterPanel())),
       GoRoute(path: '/app/overtime', builder: (context, state) => RequestListScreen(config: overtimeConfig)),
       GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
+      GoRoute(path: '/app/attendance-geofences', builder: (context, state) => const GeofencesScreen()),
+      GoRoute(path: '/app/attendance/calendar', builder: (context, state) => const AttendanceCalendarScreen()),
       GoRoute(path: '/app/attendance-insights', builder: (context, state) => const AttendanceInsightsScreen()),
       GoRoute(path: '/app/rosters', builder: (context, state) => const RostersScreen()),
+      GoRoute(path: '/app/rosters/board', builder: (context, state) => const ShiftBoardScreen()),
+      GoRoute(path: '/app/rosters/grid', builder: (context, state) => const WorkforceRosterScreen()),
       GoRoute(path: '/app/schedule', builder: (context, state) => const WeeklyScheduleScreen()),
       GoRoute(path: '/app/shift-swaps', builder: (context, state) => const ShiftSwapsScreen()),
       GoRoute(path: '/app/roster-calendar', builder: (context, state) => const RosterCalendarScreen()),
@@ -179,7 +191,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             GoRoute(path: '/app/attendance', builder: (context, state) => const EmployeeThemeScope(child: AttendanceSelfScreen())),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/app/leave-applications', builder: (context, state) => const EmployeeThemeScope(child: LeaveApplicationsScreen())),
+            GoRoute(path: '/app/leave-applications', builder: (context, state) => const EmployeeThemeScope(child: LeaveApplicationsScreen(decisionCenter: LeaveDecisionCenterPanel()))),
           ]),
           StatefulShellBranch(routes: [
             GoRoute(path: '/app/me', builder: (context, state) => const EmployeeThemeScope(child: ProfileScreen())),

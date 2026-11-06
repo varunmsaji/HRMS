@@ -6,8 +6,7 @@ import '../../../core/auth/permissions.dart';
 import '../../../core/widgets/ui.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
-import '../../profile/data/employee_repository.dart';
-import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
+import '../../employees/presentation/employee_picker_sheet.dart';
 import '../data/leave_repository.dart';
 
 /// Mirrors `apps/web/src/app/app/leave-balances/page.tsx`: balance per leave type, the
@@ -22,8 +21,8 @@ class LeaveBalancesScreen extends ConsumerStatefulWidget {
 
 class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
   String? _employeeId;
-  List<Employee> _employees = const [];
-  bool _loadingEmployees = true;
+  bool _canPick = false;
+  String? _employeeName;
   bool _loading = false;
   bool _loadingMore = false;
   List<LeaveBalance> _balances = const [];
@@ -35,27 +34,20 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
   @override
   void initState() {
     super.initState();
-    _employeeId = ref.read(authControllerProvider).user?.employeeId;
-    _init();
+    final user = ref.read(authControllerProvider).user;
+    _employeeId = user?.employeeId;
+    _canPick = (user?.permissions ?? const <String>[]).contains(leaveBalanceViewAll);
+    _load();
   }
 
-  Future<void> _init() async {
-    final permissions = ref.read(authControllerProvider).user?.permissions ?? const <String>[];
-    if (permissions.contains(leaveBalanceViewAll)) {
-      try {
-        final employees = await ref.read(employeeRepositoryProvider).listEmployees();
-        if (mounted) {
-          setState(() {
-            _employees = employees;
-            _employeeId ??= employees.isNotEmpty ? employees.first.id : null;
-          });
-        }
-      } catch (_) {
-        // Fall back to self only.
-      }
-    }
-    if (mounted) setState(() => _loadingEmployees = false);
-    await _load();
+  Future<void> _chooseEmployee() async {
+    final picked = await pickEmployee(context);
+    if (picked == null || !mounted) return;
+    setState(() {
+      _employeeId = picked.id;
+      _employeeName = picked.fullName.isEmpty ? picked.employeeCode : picked.fullName;
+    });
+    _load();
   }
 
   Future<void> _load() async {
@@ -203,25 +195,27 @@ class _LeaveBalancesScreenState extends ConsumerState<LeaveBalancesScreen> {
     final canAdjust = (ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(leaveBalanceAdjust);
     return Scaffold(
       appBar: AppBar(title: const Text('Leave Balances')),
-      body: _loadingEmployees
-          ? const ListSkeleton(count: 4)
-          : Column(
+      body: Column(
               children: [
-                if (_employees.length > 1)
+                if (_canPick)
                   Padding(
                     padding: const EdgeInsets.all(12),
-                    child: DropdownButtonFormField<String>(
-                      value: _employeeId,
-                      isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Employee'),
-                      items: [for (final e in _employees) DropdownMenuItem(value: e.id, child: Text(e.fullName.isEmpty ? e.employeeCode : e.fullName))],
-                      onChanged: (v) {
-                        setState(() => _employeeId = v);
-                        _load();
-                      },
+                    child: OutlinedButton.icon(
+                      onPressed: _chooseEmployee,
+                      icon: const Icon(Icons.person_search_outlined),
+                      label: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(_employeeName ?? (_employeeId == null ? 'Choose an employee' : 'You'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
                     ),
                   ),
-                if (_loading)
+                if (_employeeId == null)
+                  Expanded(
+                    child: _canPick
+                        ? const StateMessage(icon: Icons.person_search_outlined, title: 'Choose an employee', message: 'Pick someone to see their leave balances and history.')
+                        : const StateMessage(icon: Icons.person_off_outlined, title: 'No employee record', message: 'No employee record is linked to your account.'),
+                  )
+                else if (_loading)
                   const Expanded(child: ListSkeleton(count: 4))
                 else if (_error != null)
                   Expanded(

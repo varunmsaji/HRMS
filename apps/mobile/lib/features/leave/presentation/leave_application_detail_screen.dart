@@ -17,7 +17,10 @@ import 'leave_applications_screen.dart' show LeaveStatusChip;
 /// request, its day-by-day breakdown and action history, and the review (approve / reject) and
 /// cancel flows with the same permission and timing rules.
 class LeaveApplicationDetailScreen extends ConsumerStatefulWidget {
-  const LeaveApplicationDetailScreen({super.key, required this.applicationId, this.initial});
+  const LeaveApplicationDetailScreen({super.key, required this.applicationId, this.initial, this.reviewOnOpen});
+
+  /// Opens straight on the approve (true) or reject (false) step, and leaves when it is done.
+  final bool? reviewOnOpen;
 
   final String applicationId;
   final LeaveApplication? initial;
@@ -58,11 +61,22 @@ class _LeaveApplicationDetailScreenState extends ConsumerState<LeaveApplicationD
     try {
       final a = await _repo.getLeaveApplication(widget.applicationId);
       if (mounted) setState(() => _app = a);
+      _reviewOnce(a);
     } catch (e) {
       if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  bool _reviewStarted = false;
+
+  Future<void> _reviewOnce(LeaveApplication a) async {
+    final approve = widget.reviewOnOpen;
+    if (approve == null || _reviewStarted || !mounted) return;
+    _reviewStarted = true;
+    await _review(a, approve: approve);
+    if (mounted) Navigator.of(context).pop();
   }
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));

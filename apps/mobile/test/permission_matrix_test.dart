@@ -120,8 +120,8 @@ void main() {
   });
 
   group('employee', () {
-    test('menu is exactly the request destinations and shift swaps (payslips unavailable in this release)', () {
-      expect([for (final e in visibleEmployeeEntries(_employeeRole)) e.route], ['/app/leave-balances', '/app/regularizations', '/app/overtime', '/app/shift-swaps']);
+    test('menu is exactly the request destinations, My Calendar and shift swaps (payslips unavailable in this release)', () {
+      expect([for (final e in visibleEmployeeEntries(_employeeRole)) e.route], ['/app/leave-balances', '/app/me/calendar', '/app/regularizations', '/app/overtime', '/app/shift-swaps']);
     });
     test('every administrator destination lands on Home', () {
       expect(_reachable(_employeeRole, _allGuarded), isEmpty);

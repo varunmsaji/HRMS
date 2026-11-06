@@ -130,6 +130,8 @@ class _TeamAttendanceScreenState extends ConsumerState<TeamAttendanceScreen> {
       appBar: AppBar(
         title: const Text('Team attendance'),
         actions: [
+          if ((ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(attendanceViewAll))
+            IconButton(tooltip: 'Attendance calendar', icon: const Icon(Icons.calendar_view_month_outlined), onPressed: () => context.push('/app/attendance/calendar')),
           IconButton(tooltip: 'Insights', icon: const Icon(Icons.insights_outlined), onPressed: () => context.push('/app/attendance-insights')),
           if (canPunch)
             IconButton(

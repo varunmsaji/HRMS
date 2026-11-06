@@ -17,6 +17,15 @@ import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart'
 import 'package:hrms_mobile/features/attendance/domain/punch_location.dart';
 import 'package:hrms_mobile/features/attendance/domain/today_state.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_day_detail_screen.dart';
+import 'package:hrms_mobile/features/attendance/domain/employee_calendar.dart';
+import 'package:hrms_mobile/features/attendance/presentation/geofences_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/attendance_calendar_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/my_calendar_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/shift_board_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/workforce_roster_screen.dart';
+import 'package:hrms_mobile/features/attendance/presentation/regularization_decision_center_screen.dart';
+import 'package:hrms_mobile/features/leave/presentation/leave_decision_center_screen.dart';
+import 'package:hrms_mobile/features/onboarding/presentation/invitation_composer_screen.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_month_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/face_punch_card.dart';
 import 'package:hrms_mobile/features/attendance/presentation/punch_location_flow.dart';
@@ -106,7 +115,81 @@ const _variants = <_Variant>[
   (tag: '320_x2', w: 320, h: 568, scale: 2.0),
 ];
 
-void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true}) {
+Map<String, dynamic> _calendarFixture() {
+  Map<String, dynamic> day(String date, String? type, {String? holiday, List<Map<String, dynamic>> leave = const [], bool configured = true}) =>
+      {'date': date, 'configured': configured, 'day_type': type, 'holiday_name': holiday, 'is_holiday_named': holiday != null, 'weekly_off_fraction': type == 'WEEKLY_OFF' ? '1.00' : null, 'leave': leave};
+  return {
+    'from_date': '2026-10-26',
+    'to_date': '2026-12-06',
+    'configuration': 'COMPLETE',
+    'leave_included': true,
+    'days': [
+      for (final date in datesBetween('2026-10-26', '2026-12-06'))
+        switch (date) {
+          '2026-11-09' => day(date, 'HOLIDAY', holiday: 'Founders Day'),
+          '2026-11-10' => day(date, 'WORKING', leave: [{'status': 'APPROVED', 'fraction': '1.00'}]),
+          '2026-11-11' => day(date, 'WORKING', leave: [{'status': 'PENDING', 'fraction': '0.50', 'half': 'FIRST_HALF'}]),
+          '2026-11-18' => day(date, 'SPECIAL_WORKING', holiday: 'Audit day'),
+          '2026-11-20' => day(date, 'SHUTDOWN', holiday: 'Plant shutdown'),
+          _ => day(date, DateTime.parse('${date}T00:00:00Z').weekday == DateTime.sunday ? 'WEEKLY_OFF' : 'WORKING'),
+        },
+    ],
+  };
+}
+
+Map<String, dynamic> _leaveDecisionFixture() => {
+      'summary': {'pending_count': 2, 'oldest_pending_at': '2026-11-03T06:00:00Z', 'on_leave_today': 3, 'on_leave_today_by_type': [['Casual Leave', 2], ['Sick Leave', 1]], 'active_staff': 48, 'available_pct': 93.75, 'upcoming_starts_7d': 4, 'peak_day': '2026-11-09', 'peak_day_away': 5},
+      'counts': {'pending': 2, 'approved': 31, 'declined': 4},
+      'items': [
+        {'id': 'l-1', 'employee_id': 'e-2', 'employee_name': 'Ravi Iyer', 'employee_code': 'E-2', 'designation': 'Engineer', 'department': 'Platform', 'leave_type': 'Casual Leave', 'start_date': '2026-11-09', 'end_date': '2026-11-11', 'total_days': '3.00', 'lop_days': '1.00', 'reason': 'Family function', 'status': 'SUBMITTED', 'submitted_at': '2026-11-04T06:00:00Z', 'current_balance': '2.00', 'post_approval_balance': '0.00', 'department_size': 8, 'colleagues_away': [{'name': 'Asha Rao'}]},
+      ],
+    };
+
+Map<String, dynamic> _regularizationDecisionFixture() => {
+      'summary': {'pending_count': 1, 'oldest_pending_at': '2026-11-04T06:00:00Z', 'window_regularized_days': 6, 'window_expected_days': 240, 'window_rate_pct': 2.5},
+      'counts': {'pending': 1, 'approved': 18, 'declined': 2},
+      'items': [
+        {'id': 'r-1', 'employee_id': 'e-2', 'employee_name': 'Ravi Iyer', 'employee_code': 'E-2', 'designation': 'Engineer', 'department': 'Platform', 'attendance_date': '2026-11-03', 'timezone': 'Asia/Kolkata', 'shift_name': 'General', 'request_type': 'MISSING_PUNCH', 'status': 'SUBMITTED', 'approval_stage': 'MANAGER', 'submitted_at': '2026-11-04T06:00:00Z', 'reason': 'Phone was off', 'recorded_first_in': '2026-11-03T03:45:00Z', 'recorded_last_out': null, 'recorded_worked_minutes': null, 'recorded_late_minutes': 15, 'recorded_status': 'INCOMPLETE', 'requested_punches': [{'direction': 'OUT', 'time': '2026-11-03T12:30:00Z'}], 'requested_span_minutes': 525},
+      ],
+    };
+
+Map<String, List<Map<String, dynamic>>> _rosterFixture() {
+  Map<String, dynamic> person(int n, String first, String last) => {'id': 'e-$n', 'employee_code': 'E-$n', 'first_name': first, 'last_name': last, 'display_name': '$first $last', 'status': 'ACTIVE', 'is_active': true, 'version': 1, 'company_id': 'c-1'};
+  Map<String, dynamic> entry(String id, String who, String date, {String? shift = 's-1', bool off = false, String status = 'PUBLISHED'}) =>
+      {'id': id, 'employee_id': who, 'roster_date': date, 'shift_id': shift, 'is_week_off_override': off, 'is_holiday_working_override': false, 'status': status, 'version': 1};
+  return {
+    '/shifts': const [
+      {'id': 's-1', 'name': 'General', 'code': 'GEN'},
+      {'id': 's-2', 'name': 'Night', 'code': 'NGT', 'is_night_shift': true},
+    ],
+    '/employees': [person(1, 'Asha', 'Rao'), person(2, 'Ravi', 'Iyer'), person(3, 'Meera', 'Nair')],
+    '/rosters': [
+      entry('r-1', 'e-1', '2026-11-05'),
+      entry('r-2', 'e-2', '2026-11-05', shift: 's-2', status: 'DRAFT'),
+      entry('r-3', 'e-1', '2026-11-02'),
+      entry('r-4', 'e-1', '2026-11-03'),
+      entry('r-5', 'e-2', '2026-11-03', shift: 's-2'),
+      entry('r-6', 'e-3', '2026-11-04', shift: null, off: true),
+    ],
+  };
+}
+
+List<Map<String, dynamic>> _calendarDays() {
+  Map<String, dynamic> d(String id, String who, int day, String status, {bool late = false, String? type}) => {'id': id, 'employee_id': who, 'attendance_date': '2026-11-${day.toString().padLeft(2, '0')}', 'attendance_status': status, 'is_locked': false, 'is_late': late, 'timezone': 'Asia/Kolkata', 'calendar_day_type': type};
+  return [
+    d('a', 'e-1', 1, 'NOT_EXPECTED', type: 'WEEKLY_OFF'),
+    d('b', 'e-1', 2, 'PRESENT'),
+    d('c', 'e-1', 3, 'PRESENT', late: true),
+    d('d', 'e-1', 4, 'HALF_DAY'),
+    d('e', 'e-1', 5, 'WFH'),
+    d('f', 'e-2', 2, 'ABSENT'),
+    d('g', 'e-2', 3, 'LEAVE'),
+    d('h', 'e-2', 4, 'ON_DUTY'),
+    d('i', 'e-2', 5, 'INCOMPLETE'),
+  ];
+}
+
+void _golden(String name, Widget Function(_Variant v) build, {List<Override> overrides = const [], Future<void> Function(WidgetTester tester)? beforeShot, List<_Variant> variants = _variants, bool settle = true, List<String> permissions = const [attendancePunch, attendanceView, attendanceRegularizationRequest], bool wrap = false}) {
   for (final v in variants) {
     testWidgets('$name @ ${v.tag}', (tester) async {
       if (!await tester.runAsync(_loadFonts).then((ok) => ok ?? false)) {
@@ -117,12 +200,12 @@ void _golden(String name, Widget Function(_Variant v) build, {List<Override> ove
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       await tester.pumpWidget(ProviderScope(
-        overrides: [fakeAuth(const [attendancePunch, attendanceView, attendanceRegularizationRequest], employeeId: 'e-1'), ...overrides],
+        overrides: [fakeAuth(permissions, employeeId: 'e-1'), ...overrides],
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: AppTheme.employee,
           builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(v.scale)), child: child!),
-          home: build(v),
+          home: wrap ? Scaffold(body: build(v)) : build(v),
         ),
       ));
       // A busy spinner never settles; pin it to a fixed frame instead.
@@ -223,6 +306,63 @@ void main() {
     await tester.tap(find.text('show'));
     await tester.pumpAndSettle();
   }, variants: [_variants[0], _variants[3]]);
+
+  _golden('my_calendar', (v) => MyCalendarScreen(now: DateTime.utc(2026, 11, 5, 6)), overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/employee-calendar/me': _calendarFixture()})),
+  ]);
+
+  _golden('geofences', (v) => const GeofencesScreen(), permissions: const [attendancePolicyManage, attendanceViewAll, orgBranchManage], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: {
+      '/attendance/geofences': const [
+        {'branch_id': 'b-1', 'name': 'Head Office', 'code': null, 'is_active': true, 'latitude': 12.9716, 'longitude': 77.5946, 'radius_m': 150, 'configured': true, 'assigned_employee_count': 12, 'authorized_employee_count': 2},
+        {'branch_id': 'b-2', 'name': 'Plant', 'code': null, 'is_active': true, 'latitude': null, 'longitude': null, 'radius_m': null, 'configured': false, 'assigned_employee_count': 4, 'authorized_employee_count': 0},
+      ],
+    })),
+  ]);
+
+  _golden('leave_decision_center', (v) => LeaveDecisionCenterPanel(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [leaveApplicationApprove], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/leave-applications/decision-center': _leaveDecisionFixture()})),
+  ], wrap: true);
+
+  _golden('regularization_decision_center', (v) => RegularizationDecisionCenterPanel(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRegularizationApprove], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {'/regularizations/decision-center': _regularizationDecisionFixture()})),
+  ], wrap: true);
+
+  _golden('invitation_composer', (v) => const InvitationComposerScreen(caseId: 'c-1'), permissions: const [onboardingCreate], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(objects: {
+      '/onboarding-cases/c-1/invitation/compose': const {
+        'recipient_email': 'asha@example.com',
+        'candidate_name': 'Asha Rao',
+        'invitable': true,
+        'has_active_link': true,
+        'active_link_expires_at': '2026-11-20T06:00:00Z',
+        'default_subject': 'Welcome to Acme',
+        'default_body': 'Hello',
+        'subject_max_length': 200,
+        'body_max_length': 5000,
+        'templates': [],
+      },
+      '/onboarding-cases/c-1/invitation/preview': const {
+        'subject': 'Welcome to Acme, Asha',
+        'editable_body': 'Dear Asha,\n\nWe are delighted you are joining Acme on 1 December.\n\nPlease complete your details here:\n{{onboarding_url}}\n\nThe HR team',
+      },
+    })),
+  ]);
+
+  _golden('shift_board', (v) => ShiftBoardScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, employeeViewAll], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
+  ]);
+
+  _golden('workforce_roster', (v) => WorkforceRosterScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, employeeViewAll], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
+  ]);
+
+  _golden('attendance_calendar', (v) => AttendanceCalendarScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceViewAll, employeeViewAll], overrides: [
+    apiClientProvider.overrideWithValue(FakeApiClient(lists: {
+      '/employees': _rosterFixture()['/employees']!,
+      '/attendance/days': _calendarDays(),
+    })),
+  ]);
 
   _golden('correction_form_shifts_denied', (v) => RequestListScreen(config: regularizationConfig), overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(

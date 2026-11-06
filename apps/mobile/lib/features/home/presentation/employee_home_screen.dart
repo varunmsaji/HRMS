@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/auth/permissions.dart';
+import '../../../core/nav/nav_entries.dart' show kPayrollInRelease;
 import '../../../core/format.dart';
 import '../../../core/theme/employee_theme_scope.dart';
 import '../../../core/time.dart';
@@ -41,7 +42,10 @@ final homeFaceStatusProvider = FutureProvider.autoDispose.family<FaceEnrollmentS
 /// and a card whose data is missing shows "—" rather than a made-up value. Punching goes through
 /// the same [PunchController] as the Attendance tab.
 class EmployeeHomeScreen extends ConsumerStatefulWidget {
-  const EmployeeHomeScreen({super.key});
+  const EmployeeHomeScreen({super.key, this.payroll = kPayrollInRelease});
+
+  /// Whether pay shows at all; see [kPayrollInRelease].
+  final bool payroll;
 
   @override
   ConsumerState<EmployeeHomeScreen> createState() => _EmployeeHomeScreenState();
@@ -108,7 +112,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     final canPunch = permissions.contains(attendancePunch);
     final canSeeLeave = permissions.contains(leaveBalanceView);
     final canSeeName = permissions.contains(employeeView);
-    final canSeePayslip = permissions.contains(payrollPayslipViewOwn);
+    final canSeePayslip = widget.payroll && permissions.contains(payrollPayslipViewOwn);
 
     final employee = canSeeName ? ref.watch(homeEmployeeProvider(employeeId)).valueOrNull : null;
     final profile = canViewAttendance ? ref.watch(homeWorkProfileProvider(employeeId)).valueOrNull : null;
@@ -152,10 +156,6 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
                   children: [
                     Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                       Flexible(child: DdPill(label: _longDate(todayDate), background: const Color(0xFFE8EEF9), foreground: Dd.navy, icon: Icons.calendar_today_outlined)),
-                      if (face?.valueOrNull?.isEnrolled ?? false) ...[
-                        const SizedBox(width: 8),
-                        const Flexible(child: DdPill(label: 'AI Sync Active', background: Color(0xFFE0F2FE), foreground: Color(0xFF0369A1), icon: Icons.auto_awesome)),
-                      ],
                     ]),
                     const SizedBox(height: 12),
                     _Greeting(name: employee?.firstName, code: employee?.employeeCode, designation: profile?.designation, department: profile?.department),
@@ -414,7 +414,7 @@ class _EmployeeHomeScreenState extends ConsumerState<EmployeeHomeScreen> {
     final items = <Widget>[
       if (permissions.contains(leaveApplicationSubmit)) DdQuickAction(icon: Icons.flight_takeoff, iconColor: const Color(0xFF0369A1), iconBackground: const Color(0xFFE0F2FE), title: 'Apply Leave', subtitle: 'Quick balance slip', onTap: () => context.go('/app/leave-applications')),
       if (permissions.contains(attendanceRegularizationRequest)) DdQuickAction(icon: Icons.history_toggle_off, iconColor: Dd.navy, iconBackground: const Color(0xFFE3E8FB), title: 'Correction', subtitle: 'Fix missed punch', onTap: () => context.push('/app/regularizations')),
-      if (permissions.contains(payrollPayslipViewOwn)) DdQuickAction(icon: Icons.receipt_long_outlined, iconColor: Dd.green, iconBackground: const Color(0xFFDCFCE7), title: 'Payslips', subtitle: payslip == null ? 'Download payslip' : 'Download ${_payMonth(payslip.month, withYear: false)} slip', onTap: () => context.push('/app/me/payslips')),
+      if (widget.payroll && permissions.contains(payrollPayslipViewOwn)) DdQuickAction(icon: Icons.receipt_long_outlined, iconColor: Dd.green, iconBackground: const Color(0xFFDCFCE7), title: 'Payslips', subtitle: payslip == null ? 'Download payslip' : 'Download ${_payMonth(payslip.month, withYear: false)} slip', onTap: () => context.push('/app/me/payslips')),
       if (permissions.contains(attendanceView)) DdQuickAction(icon: Icons.calendar_month_outlined, iconColor: Dd.navy, iconBackground: const Color(0xFFE8EEF9), title: 'My Shifts', subtitle: 'Upcoming roster', onTap: () => context.go('/app/attendance')),
     ];
     return _TwoColumnGrid(children: items);
@@ -529,12 +529,7 @@ class _Header extends StatelessWidget {
                 child: const Image(image: AssetImage('assets/brand/krewoxa-mark.png'), semanticLabel: 'Krewoxa'),
               ),
               const SizedBox(width: 10),
-              const Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Krewoxa', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white, height: 1.1)),
-                  Text('ENTERPRISE', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF9CC2FF), letterSpacing: 1.1)),
-                ]),
-              ),
+              const Expanded(child: Text('Krewoxa', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Colors.white, height: 1.1))),
               NotificationBell(onPressed: onBell, color: Colors.white),
               GestureDetector(
                 onTap: onProfile,

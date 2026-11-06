@@ -87,6 +87,7 @@ Future<void> _pump(
   FakeApiClient? api,
   Size size = const Size(390, 2400), // tall enough to build every Home section (the list builds lazily)
   double textScale = 1.0,
+  bool payroll = false,
 }) async {
   tester.view.physicalSize = size * 3;
   tester.view.devicePixelRatio = 3;
@@ -100,7 +101,7 @@ Future<void> _pump(
     child: MaterialApp(
       theme: AppTheme.employee,
       builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)), child: child!),
-      home: const EmployeeHomeScreen(),
+      home: EmployeeHomeScreen(payroll: payroll),
     ),
   ));
   await tester.pumpAndSettle();
@@ -355,9 +356,25 @@ void main() {
         {'pay_run_id': 'r-1', 'month': '2026-09', 'pay_date': '2026-09-30', 'net_minor': 4100000, 'status': 'FINALIZED'},
         {'pay_run_id': 'r-2', 'month': '2026-10', 'pay_date': '2026-10-31', 'net_minor': 4218000, 'status': 'FINALIZED'},
       ]);
-      await _pump(tester, _Repo(), permissions: [..._full, payrollPayslipViewOwn], api: api);
+      await _pump(tester, _Repo(), permissions: [..._full, payrollPayslipViewOwn], api: api, payroll: true);
       expect(find.text('Oct 2026'), findsOneWidget);
       expect(find.text('₹42,180'), findsOneWidget);
+    });
+
+    testWidgets('while payroll is paused Home shows no pay and never asks for it, even with the permission', (tester) async {
+      final api = _api(payslips: [
+        {'pay_run_id': 'r-2', 'month': '2026-10', 'pay_date': '2026-10-31', 'net_minor': 4218000, 'status': 'FINALIZED'},
+      ]);
+      await _pump(tester, _Repo(), permissions: [..._full, payrollPayslipViewOwn], api: api);
+      expect(find.text('₹42,180'), findsNothing);
+      expect(find.text('Payslips'), findsNothing);
+      expect(api.listCalls.map((c) => c.path), isNot(contains('/me/payslips')));
+    });
+
+    testWidgets('Home makes no claims the product cannot back up', (tester) async {
+      await _pump(tester, _Repo());
+      expect(find.text('AI Sync Active'), findsNothing);
+      expect(find.text('ENTERPRISE'), findsNothing);
     });
 
     testWidgets('without PAYROLL.PAYSLIP_VIEW_OWN there is no Payslip section and no request for it', (tester) async {

@@ -16,6 +16,7 @@
  "attachment_reference": null,
  "attendance_date": "2026-01-15",
  "attendance_day_id": null,
+ "break_start_event_id": null,
  "cancelled_at": null,
  "cancelled_by_user_id": null,
  "company_id": "00000000-0000-0000-0000-000000001234",
@@ -26,6 +27,8 @@
  "regularization_policy_version_id": "00000000-0000-0000-0000-000000001234",
  "rejection_reason": null,
  "request_type": "x",
+ "requested_break_end": null,
+ "requested_break_minutes": null,
  "requested_punches": [
   {
    "direction": "x",

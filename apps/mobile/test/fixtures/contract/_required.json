@@ -194,6 +194,9 @@
   "min_minutes",
   "sort_order"
  ],
+ "attendance.AttendancePolicyFormContext": [
+  "shift_types_in_use"
+ ],
  "attendance.AttendancePolicyHourBandInput": [
   "min_minutes",
   "result_status"
@@ -227,6 +230,14 @@
   "updated_at",
   "version"
  ],
+ "attendance.AttendancePolicySetup": [
+  "name",
+  "rules"
+ ],
+ "attendance.AttendancePolicySetupRead": [
+  "policy",
+  "version"
+ ],
  "attendance.AttendancePolicyUpdate": [],
  "attendance.AttendancePolicyVersionCreate": [],
  "attendance.AttendancePolicyVersionPublishRequest": [],
@@ -239,12 +250,16 @@
   "duplicate_punch_window_seconds",
   "early_departure_bands",
   "early_departure_requires_approval",
+  "early_in_allowance_minutes",
   "early_out_uses_core_end",
   "effective_from",
   "effective_to",
   "excess_break_behaviour",
   "excess_break_count_window",
   "excess_break_days_to_half_day_count",
+  "geofence_max_accuracy_m",
+  "geofence_max_age_seconds",
+  "geofence_mode",
   "grace_in_minutes",
   "grace_out_minutes",
   "half_day_boundary_minutes",
@@ -298,6 +313,15 @@
   "opened_by_user_id",
   "status"
  ],
+ "attendance.FaceLivenessSessionCreate": [
+  "direction"
+ ],
+ "attendance.FaceLivenessSessionRead": [
+  "direction",
+  "expires_at",
+  "frames_required",
+  "session_id"
+ ],
  "attendance.FaceProfileRead": [
   "consent_recorded_at",
   "employee_id",
@@ -316,9 +340,13 @@
  ],
  "attendance.FaceProfileRejectInput": [],
  "attendance.FacePunchRead": [
-  "liveness_score",
   "punch",
   "similarity"
+ ],
+ "attendance.GeofenceDecisionRead": [
+  "accepted",
+  "mode",
+  "outcome"
  ],
  "attendance.LeaveDayProjectionRead": [
   "attendance_date",
@@ -346,8 +374,6 @@
  "attendance.LeaveProjectionSync": [
   "attendance_date",
   "employee_id",
-  "fraction",
-  "is_paid",
   "leave_application_id"
  ],
  "attendance.OvertimeActionRead": [
@@ -381,6 +407,14 @@
   "is_active",
   "name",
   "updated_at",
+  "version"
+ ],
+ "attendance.OvertimePolicySetup": [
+  "name",
+  "rules"
+ ],
+ "attendance.OvertimePolicySetupRead": [
+  "policy",
   "version"
  ],
  "attendance.OvertimePolicyUpdate": [],
@@ -452,6 +486,9 @@
   "employee_id",
   "policy_kind"
  ],
+ "attendance.PolicySetupAssign": [
+  "scope_type"
+ ],
  "attendance.PunchCreateOnBehalf": [
   "direction",
   "employee_id",
@@ -460,6 +497,12 @@
  ],
  "attendance.PunchCreateSelf": [
   "direction"
+ ],
+ "attendance.PunchLocation": [
+  "accuracy_m",
+  "captured_at",
+  "latitude",
+  "longitude"
  ],
  "attendance.PunchRead": [
   "company_id",
@@ -501,6 +544,14 @@
   "is_active",
   "name",
   "updated_at",
+  "version"
+ ],
+ "attendance.RegularizationPolicySetup": [
+  "name",
+  "rules"
+ ],
+ "attendance.RegularizationPolicySetupRead": [
+  "policy",
   "version"
  ],
  "attendance.RegularizationPolicyUpdate": [],
@@ -675,6 +726,22 @@
   "updated_at",
   "version"
  ],
+ "employee.DirectReportRead": [
+  "branch_id",
+  "department_id",
+  "designation_id",
+  "display_name",
+  "employee_code",
+  "employee_id",
+  "employment_joining_date",
+  "employment_last_working_day",
+  "first_name",
+  "is_active",
+  "last_name",
+  "middle_name",
+  "reporting_since",
+  "status"
+ ],
  "employee.EmployeeConfirmInput": [],
  "employee.EmployeeCreate": [
   "first_name"
@@ -704,6 +771,36 @@
   "relationship",
   "updated_at",
   "version"
+ ],
+ "employee.EmployeeDocumentRead": [
+  "content_type",
+  "document_type",
+  "employee_id",
+  "id",
+  "original_filename",
+  "rejection_reason",
+  "size_bytes",
+  "status",
+  "uploaded_at",
+  "verified_at",
+  "verified_by_user_id"
+ ],
+ "employee.EmployeeDocumentReviewRequest": [
+  "status"
+ ],
+ "employee.EmployeeDocumentWithUrlRead": [
+  "content_type",
+  "document_type",
+  "download_url",
+  "employee_id",
+  "id",
+  "original_filename",
+  "rejection_reason",
+  "size_bytes",
+  "status",
+  "uploaded_at",
+  "verified_at",
+  "verified_by_user_id"
  ],
  "employee.EmployeeEducationCreate": [
   "qualification"
@@ -816,6 +913,23 @@
   "last_working_day"
  ],
  "employee.EmploymentUpdate": [],
+ "employee.ManagerChangeImpactRead": [
+  "changes_manager",
+  "current_reporting_manager_id",
+  "employee_id",
+  "has_pending_requests",
+  "impact_token",
+  "new_manager_applies_to_requests_dated_from",
+  "proposed_reporting_manager_id",
+  "requests",
+  "requires_confirmation",
+  "total_pending_requests"
+ ],
+ "employee.PendingRequestCounts": [
+  "attendance_regularization",
+  "leave",
+  "overtime"
+ ],
  "employee.StatutoryCreate": [
   "effective_from",
   "is_esi_applicable",
@@ -847,6 +961,7 @@
   "vpf_amount",
   "vpf_percentage"
  ],
+ "employee._EmployeeFieldRules": [],
  "employee_import.EmployeeImportBatchRead": [
   "company_id",
   "completed_at",
@@ -985,6 +1100,10 @@
   "updated_at",
   "version"
  ],
+ "leave.LeaveApplicationReassignInput": [
+  "new_approver_employee_id",
+  "reason"
+ ],
  "leave.LeaveApplicationReviewInput": [],
  "leave.LeaveBalanceRead": [
   "balance",
@@ -1052,6 +1171,18 @@
   "updated_at",
   "version"
  ],
+ "leave.LeavePolicySetup": [
+  "leave_type_id",
+  "name",
+  "rules"
+ ],
+ "leave.LeavePolicySetupAssign": [
+  "scope_type"
+ ],
+ "leave.LeavePolicySetupRead": [
+  "policy",
+  "version"
+ ],
  "leave.LeavePolicyUpdate": [],
  "leave.LeavePolicyVersionCreate": [],
  "leave.LeavePolicyVersionPublishRequest": [],
@@ -1077,6 +1208,7 @@
   "id",
   "max_backdated_days",
   "max_carry_forward_days",
+  "max_consecutive_days",
   "max_encashment_days",
   "max_requests_per_month",
   "min_balance_after_encashment",
@@ -1164,6 +1296,7 @@
   "full_name",
   "relationship"
  ],
+ "onboarding.OnboardingCaseCancelRequest": [],
  "onboarding.OnboardingCaseCreate": [
   "candidate_first_name",
   "personal_email",
@@ -1279,6 +1412,7 @@
   "statutory_info",
   "writable"
  ],
+ "onboarding.PublicRoleSummary": [],
  "onboarding.StatutoryInfoSection": [
   "is_esi_applicable",
   "is_lwf_applicable",
@@ -1533,11 +1667,23 @@
   "code",
   "name"
  ],
+ "organisation.PolicyAssignmentBatch": [
+  "changes",
+  "effective_from",
+  "scope_type"
+ ],
+ "organisation.PolicyAssignmentBatchChange": [
+  "policy_id",
+  "policy_kind"
+ ],
  "organisation.PolicyAssignmentCreate": [
   "effective_from",
   "policy_id",
   "policy_kind",
   "scope_type"
+ ],
+ "organisation.PolicyAssignmentEnd": [
+  "effective_to"
  ],
  "organisation.PolicyAssignmentRead": [
   "company_id",
@@ -1555,6 +1701,36 @@
   "scope_type",
   "updated_at",
   "version"
+ ],
+ "organisation.PolicyCoverageApplied": [
+  "effective_from",
+  "effective_to",
+  "has_rules",
+  "policy_id",
+  "policy_name",
+  "scope_id",
+  "scope_name",
+  "scope_type"
+ ],
+ "organisation.PolicyCoverageOwn": [
+  "assignment_id",
+  "effective_from",
+  "policy_id",
+  "policy_name",
+  "version"
+ ],
+ "organisation.PolicyCoverageRead": [
+  "as_of",
+  "rows",
+  "scope_id",
+  "scope_type"
+ ],
+ "organisation.PolicyCoverageRow": [
+  "applied",
+  "leave_type_id",
+  "leave_type_name",
+  "own",
+  "policy_kind"
  ],
  "organisation.RegistrationConfigRead": [
   "allowed_company_timezones"
@@ -1589,6 +1765,22 @@
  "organisation.ShiftCreate": [
   "name"
  ],
+ "organisation.ShiftDeleteRequest": [
+  "acknowledge_irreversible",
+  "confirm_name",
+  "reason"
+ ],
+ "organisation.ShiftDeletionBlocker": [
+  "code",
+  "count",
+  "message"
+ ],
+ "organisation.ShiftDeletionCheck": [
+  "blockers",
+  "can_delete",
+  "draft_version_count",
+  "published_version_count"
+ ],
  "organisation.ShiftDutyBlockCreate": [
   "end_time",
   "sequence",
@@ -1621,6 +1813,14 @@
   "name",
   "start_time",
   "updated_at",
+  "version"
+ ],
+ "organisation.ShiftSetup": [
+  "name",
+  "rules"
+ ],
+ "organisation.ShiftSetupRead": [
+  "shift",
   "version"
  ],
  "organisation.ShiftUpdate": [],

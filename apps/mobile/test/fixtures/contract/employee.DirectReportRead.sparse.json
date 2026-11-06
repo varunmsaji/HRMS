@@ -1,0 +1,16 @@
+{
+ "branch_id": null,
+ "department_id": null,
+ "designation_id": null,
+ "display_name": null,
+ "employee_code": "x",
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "employment_joining_date": null,
+ "employment_last_working_day": null,
+ "first_name": "x",
+ "is_active": true,
+ "last_name": null,
+ "middle_name": null,
+ "reporting_since": "2026-01-15",
+ "status": "x"
+}

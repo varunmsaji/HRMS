@@ -254,6 +254,9 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
       initial: _row,
       loadChoices: _choiceKeys(_c.spec).isEmpty ? null : () => loadChoices(_client, _choiceKeys(_c.spec)),
       onSubmit: (payload, changed) async {
+        final reviewed = await _c.reviewEdit?.call(context, _row, changed);
+        if (reviewed == false) throw const SubmitCancelled();
+        if (reviewed == true) return _reload();
         final updated = await _client.patch<Rec>(_url, body: changed, ifMatch: _row['version'].toString(), parse: (d) => d as Rec);
         if (mounted) setState(() => _row = updated);
       },

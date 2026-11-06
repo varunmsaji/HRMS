@@ -331,7 +331,8 @@ void _writeFormMatchesRegularization() {
     expect(shiftBody.containsKey('requested_punches'), isFalse);
     expect(shiftBody['requested_shift_id'], 's');
     final formKeys = regularizationSpec(true).fields.map((f) => f.key).toSet();
-    expect(backend.difference(formKeys).difference(const {'requested_punches'}), isEmpty, reason: 'backend fields the form does not offer');
+    // The break-correction fields are not offered on the web either.
+    expect(backend.difference(formKeys).difference(const {'requested_punches', 'break_start_event_id', 'requested_break_end', 'requested_break_minutes'}), isEmpty, reason: 'backend fields the form does not offer');
   });
 }
 
@@ -448,14 +449,14 @@ void versionedFormTests() {
   leaveApplicationFormTests();
   payrollFormTests();
   weeklyOffRuleTest();
-  void rowsMatch(FormSpec spec, Map<String, String> rowSchemas, {Set<String> orderKeys = const {'sort_order', 'sequence'}}) {
+  void rowsMatch(FormSpec spec, Map<String, String> rowSchemas, {Set<String> orderKeys = const {'sort_order', 'sequence'}, Set<String> notInForm = const {}}) {
     for (final e in rowSchemas.entries) {
       final field = spec.fields.firstWhere((f) => f.key == e.key);
       test('${spec.name}.${e.key} rows -> ${e.value}', () {
         final backend = (_load(e.value, 'full') as Map<String, dynamic>).keys.toSet();
         final mine = field.rowSpec!.fields.map((f) => f.key).toSet();
         expect(mine.difference(backend), isEmpty, reason: 'row keys the backend would reject');
-        expect(backend.difference(mine).difference(orderKeys), isEmpty, reason: 'row fields the form does not offer');
+        expect(backend.difference(mine).difference(orderKeys).difference(notInForm), isEmpty, reason: 'row fields the form does not offer');
         final requiredInSpec = field.rowSpec!.fields.where((f) => f.required).map((f) => f.key).toSet();
         final toggles = field.rowSpec!.fields.where((f) => f.kind == FieldKind.toggle).map((f) => f.key).toSet();
         expect(_requiredBy(e.value).difference(requiredInSpec).difference(toggles).difference(orderKeys), isEmpty, reason: 'backend-required row fields left optional');
@@ -486,10 +487,13 @@ void versionedFormTests() {
       ('leave policy', leavePolicyVersionSpec, 'leave.LeavePolicyVersion', 'leave.LeavePolicyVersionRead', const {}),
     ];
     for (final (label, spec, base, read, rows) in all) {
-      _writeFormMatches('$label version (create)', spec, '${base}Create');
-      _writeFormMatches('$label version (update)', spec, '${base}Update');
+      // Not offered on the web either.
+      final notInForm = label == 'leave policy' ? const {'max_consecutive_days'} : const <String>{};
+      _writeFormMatches('$label version (create)', spec, '${base}Create', notInForm: notInForm);
+      _writeFormMatches('$label version (update)', spec, '${base}Update', notInForm: notInForm);
       readHas(label, spec, read);
-      rowsMatch(spec, rows);
+      // The newer per-break rules are not offered on the web either.
+      rowsMatch(spec, rows, notInForm: const {'auto_deduct_full', 'break_type', 'excess_outcome', 'is_enabled', 'mode', 'optional_recorded_deducts', 'optional_scheduled_fallback'});
     }
     _writeFormMatches('attendance policy', attendancePolicyIdentitySpec, 'attendance.AttendancePolicyCreate');
     _writeFormMatches('attendance policy (update)', attendancePolicyIdentitySpec, 'attendance.AttendancePolicyUpdate');
@@ -513,7 +517,14 @@ void writeFormTests() {
     _writeFormMatches('employmentCreateSpec', employmentCreateSpec, 'employee.EmploymentCreate');
     _writeFormMatches('employmentEditSpec', employmentEditSpec, 'employee.EmploymentUpdate');
     _writeFormMatches('employmentTerminateSpec', employmentTerminateSpec, 'employee.EmploymentTerminate');
-    _writeFormMatches('assignmentSpec', assignmentSpec(const ['INITIAL']), 'employee.AssignmentCreate', notInForm: {'cost_centre_id'});
+    _writeFormMatches('assignmentSpec', assignmentSpec(const ['INITIAL']), 'employee.AssignmentCreate', notInForm: {
+      'cost_centre_id',
+      // Not offered on the web either.
+      'clear_reporting_manager',
+      // Sent by the confirmation step, not typed into the form.
+      'confirm_pending_request_impact',
+      'pending_impact_token',
+    });
     _writeFormMatches('compensationSpec', compensationSpec, 'employee.CompensationCreate');
     _writeFormMatches('statutorySpec', statutorySpec, 'employee.StatutoryCreate');
     _writeFormMatches('bankSpec', bankSpec, 'employee.BankCreate');

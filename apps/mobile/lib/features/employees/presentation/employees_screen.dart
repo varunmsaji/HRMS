@@ -10,6 +10,7 @@ import '../../../core/forms/spec_form_screen.dart';
 import '../../attendance/presentation/employee_attendance_panel.dart';
 import '../../auth/state/auth_controller.dart';
 import '../../payroll/presentation/employee_salary_panel.dart';
+import '../../../core/nav/nav_entries.dart' show kPayrollInRelease;
 import '../../profile/presentation/employee_documents_panel.dart';
 import '../../profile/data/employee_repository.dart';
 import '../../profile/presentation/employee_overview.dart';
@@ -301,7 +302,7 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
     final e = _employee;
     // The web page's Salary and Attendance tabs, after the record sections.
     final extraTabs = <(String, Widget)>[
-      if (permissions.contains(employeeViewCompensation)) ('Salary', EmployeeSalaryPanel(employeeId: e.id)),
+      if (kPayrollInRelease && permissions.contains(employeeViewCompensation)) ('Salary', EmployeeSalaryPanel(employeeId: e.id)),
       ('Documents', EmployeeDocumentsPanel(employeeId: e.id)),
       if (permissions.contains(attendanceView)) ('Attendance', EmployeeAttendancePanel(employeeId: e.id, employeeLabel: e.fullName.isEmpty ? e.employeeCode : e.fullName)),
     ];

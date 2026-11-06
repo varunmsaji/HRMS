@@ -8,6 +8,12 @@ import 'spec_form.dart';
 import '../widgets/ui.dart';
 import '../theme/employee_theme_scope.dart';
 
+/// Thrown by an `onSubmit` when the user backed out of a confirmation step: nothing was saved, so
+/// the form stays open and shows no error.
+class SubmitCancelled implements Exception {
+  const SubmitCancelled();
+}
+
 /// A full-screen create/edit form driven by a [FormSpec]. Pops `true` after [onSubmit] succeeds so
 /// the caller can reload.
 ///
@@ -109,6 +115,8 @@ class _SpecFormScreenState extends State<SpecFormScreen> {
     try {
       await widget.onSubmit(payload, changed);
       if (mounted) Navigator.of(context).pop(true);
+    } on SubmitCancelled {
+      // Back on the form, as the user left it.
     } on ApiError catch (e) {
       if (!mounted) return;
       final fieldErrors = <String, String>{};

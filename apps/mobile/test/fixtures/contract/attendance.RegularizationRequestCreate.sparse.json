@@ -1,9 +1,12 @@
 {
  "attachment_reference": null,
  "attendance_date": "2026-01-15",
+ "break_start_event_id": null,
  "employee_id": null,
  "reason": null,
  "request_type": "x",
+ "requested_break_end": null,
+ "requested_break_minutes": null,
  "requested_punches": [
   {
    "direction": "x",

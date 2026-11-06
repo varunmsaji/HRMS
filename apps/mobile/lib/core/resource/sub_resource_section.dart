@@ -12,6 +12,15 @@ import '../widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
+/// Writes that go through a review step instead of the plain POST/PATCH. Each resolves true once
+/// the review applied the change, or false if the user backed out.
+class SubResourceReview {
+  const SubResourceReview({required this.create, required this.update, required this.toggle});
+  final Future<bool> Function(BuildContext context, Rec payload) create;
+  final Future<bool> Function(BuildContext context, Rec row, Rec changed) update;
+  final Future<bool> Function(BuildContext context, Rec row) toggle;
+}
+
 /// A list of child records under a parent record — holidays of a calendar, exceptions of a work
 /// calendar, … Each child can be added, edited (PATCH with its `version`) and deactivated.
 class SubResourceSection extends ConsumerStatefulWidget {
@@ -29,6 +38,7 @@ class SubResourceSection extends ConsumerStatefulWidget {
     this.createPath,
     this.hasActive = true,
     this.emptyLabel,
+    this.review,
   });
 
   final String title;
@@ -47,6 +57,7 @@ class SubResourceSection extends ConsumerStatefulWidget {
   final List<String> choiceKeys;
   final bool hasActive;
   final String? emptyLabel;
+  final SubResourceReview? review;
 
   @override
   ConsumerState<SubResourceSection> createState() => _SubResourceSectionState();
@@ -99,7 +110,13 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
       title: 'Add ${widget.singular}',
       spec: widget.spec,
       loadChoices: widget.choiceKeys.isEmpty ? null : () => loadChoices(_client, widget.choiceKeys),
-      onSubmit: (payload, _) async => _client.post<Object?>(widget.createPath ?? widget.listPath, body: payload, parse: (_) => null),
+      onSubmit: (payload, _) async {
+        if (widget.review != null) {
+          if (!await widget.review!.create(context, payload)) throw const SubmitCancelled();
+          return;
+        }
+        await _client.post<Object?>(widget.createPath ?? widget.listPath, body: payload, parse: (_) => null);
+      },
     );
     if (saved && mounted) {
       _toast('${widget.singular[0].toUpperCase()}${widget.singular.substring(1)} added.');
@@ -114,7 +131,13 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
       spec: widget.spec,
       initial: row,
       loadChoices: widget.choiceKeys.isEmpty ? null : () => loadChoices(_client, widget.choiceKeys),
-      onSubmit: (payload, changed) async => _client.patch<Object?>(widget.itemPath(row), body: changed, ifMatch: row['version'].toString(), parse: (_) => null),
+      onSubmit: (payload, changed) async {
+        if (widget.review != null) {
+          if (!await widget.review!.update(context, row, changed)) throw const SubmitCancelled();
+          return;
+        }
+        await _client.patch<Object?>(widget.itemPath(row), body: changed, ifMatch: row['version'].toString(), parse: (_) => null);
+      },
     );
     if (saved && mounted) {
       _toast('Saved.');
@@ -124,6 +147,10 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
 
   Future<void> _toggle(Rec row) async {
     try {
+      if (widget.review != null) {
+        if (await widget.review!.toggle(context, row) && mounted) _load();
+        return;
+      }
       await _client.patch<Object?>(widget.itemPath(row), body: {'is_active': row['is_active'] == false}, ifMatch: row['version'].toString(), parse: (_) => null);
       _load();
     } catch (e) {

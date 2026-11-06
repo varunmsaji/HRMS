@@ -47,8 +47,11 @@ class RequestStatusChip extends StatelessWidget {
 final deniedChoiceSourcesProvider = StateProvider.family<Set<String>, String>((ref, userId) => const {});
 
 class RequestListScreen extends ConsumerStatefulWidget {
-  const RequestListScreen({super.key, required this.config});
+  const RequestListScreen({super.key, required this.config, this.decisionCenter});
   final RequestConfig config;
+
+  /// The approver's screen, offered beside Mine and Team when given.
+  final Widget? decisionCenter;
 
   @override
   ConsumerState<RequestListScreen> createState() => _RequestListScreenState();
@@ -58,6 +61,8 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
   late bool _team;
   late String _from;
   late String _to;
+  bool _decisions = false;
+  int _decisionsKey = 0;
   String _status = '';
   String _employee = '';
   final _extra = <String, String>{};
@@ -75,10 +80,12 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     super.initState();
     // The company account has no employee record, so "Mine" would mean nothing: it starts on Team.
     _team = _perms.contains(_c.approvePermission) || ref.read(authControllerProvider).user?.employeeId == null;
+    // An approver starts on what is waiting for them, as on the web.
+    _decisions = widget.decisionCenter != null && _perms.contains(_c.approvePermission);
     _from = businessDayOffset(_zone, -30);
     _to = businessToday(_zone);
     _loadEmployees();
-    _load();
+    if (!_decisions) _load();
   }
 
   Future<void> _loadEmployees() async {
@@ -119,7 +126,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
   }
 
   Future<void> _create() async {
-    final onBehalf = _team;
+    final onBehalf = _team || _decisions;
     final client = ref.read(apiClientProvider);
     final zone = _zone;
     final required = [if (onBehalf) 'employees', ..._c.createChoiceKeys];
@@ -143,6 +150,7 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     );
     if (saved && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${_c.singular} submitted.')));
+      setState(() => _decisionsKey++);
       _load();
     }
   }
@@ -167,24 +175,35 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
     final perms = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canApprove = perms.contains(_c.approvePermission);
     final onBehalf = _c.onBehalfPermission != null && perms.contains(_c.onBehalfPermission);
-    final canCreate = _c.createSpec != null && (_team ? onBehalf : (_c.submitPermission == null || perms.contains(_c.submitPermission)));
+    final notMine = _team || _decisions;
+    final canCreate = _c.createSpec != null && (notMine ? onBehalf : (_c.submitPermission == null || perms.contains(_c.submitPermission)));
+    final scopes = [
+      if (ref.read(authControllerProvider).user?.employeeId != null) const ButtonSegment(value: 'mine', label: Text('Mine')),
+      if (widget.decisionCenter != null && canApprove) const ButtonSegment(value: 'decisions', label: Text('Decisions')),
+      if (canApprove || onBehalf) const ButtonSegment(value: 'team', label: Text('Team')),
+    ];
     return Scaffold(
       appBar: AppBar(title: Text(_c.title), actions: const [MoreAction()]),
-      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: Text(_team ? '${_c.singular} on behalf' : _c.singular)) : null,
+      floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: Text(notMine ? '${_c.singular} on behalf' : _c.singular)) : null,
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Column(children: [
-            if (ref.read(authControllerProvider).user?.employeeId != null && (canApprove || onBehalf))
-              SegmentedButton<bool>(
-                segments: const [ButtonSegment(value: false, label: Text('Mine')), ButtonSegment(value: true, label: Text('Team'))],
-                selected: {_team},
+            if (scopes.length > 1)
+              SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: scopes,
+                selected: {_decisions ? 'decisions' : (_team ? 'team' : 'mine')},
                 onSelectionChanged: (s) {
-                  setState(() => _team = s.first);
-                  _load();
+                  setState(() {
+                    _decisions = s.first == 'decisions';
+                    _team = s.first == 'team';
+                  });
+                  if (!_decisions) _load();
                 },
               ),
             const SizedBox(height: 8),
+            if (!_decisions) ...[
             Row(children: [
               Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From $_from'))),
               const SizedBox(width: 8),
@@ -227,10 +246,13 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
                 },
               ),
             ],
+            ],
           ]),
         ),
         Expanded(
-          child: _loading
+          child: _decisions
+              ? KeyedSubtree(key: ValueKey(_decisionsKey), child: widget.decisionCenter!)
+              : _loading
               ? const ListSkeleton()
               : _error != null
                   ? StateMessage(icon: Icons.error_outline_rounded, tone: Tone.danger, title: 'Something went wrong', message: _error!.message, actionLabel: 'Retry', onAction: _load)
@@ -266,10 +288,13 @@ class _RequestListScreenState extends ConsumerState<RequestListScreen> {
 /// One request: its sections, and — with the right permission and state — review (approve /
 /// reject with a comment) and cancel. Mirrors the web `[id]` pages.
 class RequestDetailScreen extends ConsumerStatefulWidget {
-  const RequestDetailScreen({super.key, required this.config, required this.requestId, this.initial});
+  const RequestDetailScreen({super.key, required this.config, required this.requestId, this.initial, this.reviewOnOpen});
   final RequestConfig config;
   final String requestId;
   final Rec? initial;
+
+  /// Opens straight on the approve (true) or reject (false) step, and leaves when it is done.
+  final bool? reviewOnOpen;
 
   @override
   ConsumerState<RequestDetailScreen> createState() => _RequestDetailScreenState();
@@ -300,6 +325,7 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
     try {
       final r = await _client.get<Rec>(_url, parse: (d) => d as Rec);
       if (mounted) setState(() => _row = r);
+      _reviewOnce(r);
     } catch (e) {
       if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
@@ -308,6 +334,16 @@ class _RequestDetailScreenState extends ConsumerState<RequestDetailScreen> {
   }
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+
+  bool _reviewStarted = false;
+
+  Future<void> _reviewOnce(Rec r) async {
+    final approve = widget.reviewOnOpen;
+    if (approve == null || _reviewStarted || !mounted) return;
+    _reviewStarted = true;
+    await _review(r, approve: approve);
+    if (mounted) Navigator.of(context).pop();
+  }
 
   Future<void> _review(Rec r, {required bool approve}) async {
     final comment = TextEditingController();

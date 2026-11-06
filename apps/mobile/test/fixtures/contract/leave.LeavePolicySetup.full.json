@@ -1,0 +1,41 @@
+{
+ "assign": {
+  "expected_version": 1,
+  "scope_id": "00000000-0000-0000-0000-000000001234",
+  "scope_type": "x"
+ },
+ "leave_type_id": "00000000-0000-0000-0000-000000001234",
+ "name": "x",
+ "publish": true,
+ "publish_reason": "x",
+ "rules": {
+  "accrual_frequency": "x",
+  "accrual_rate_per_cycle": "1.50",
+  "accrue_during_probation": true,
+  "allow_employee_request": true,
+  "allow_hr_request_on_behalf": true,
+  "allow_manager_request_on_behalf": true,
+  "allow_negative_balance": true,
+  "allowed_during_probation": true,
+  "approval_chain": "x",
+  "attachment_required": true,
+  "effective_from": "2026-01-15",
+  "encashment_allowed": true,
+  "encashment_calculation_basis": "x",
+  "encashment_frequency": "x",
+  "half_day_allowed": true,
+  "max_backdated_days": 1,
+  "max_carry_forward_days": "1.50",
+  "max_consecutive_days": 1,
+  "max_encashment_days": "1.50",
+  "max_requests_per_month": 1,
+  "min_balance_after_encashment": "1.50",
+  "negative_balance_floor": "1.50",
+  "post_delivery_days": 1,
+  "pre_delivery_days": 1,
+  "reason_required": true,
+  "reserve_balance_on_submission": true,
+  "sandwich_rule_enabled": true,
+  "year_end_action": "x"
+ }
+}

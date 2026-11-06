@@ -9,6 +9,8 @@
  "emergency_contact_phone": null,
  "emergency_contact_relationship": null,
  "employee_code": "x",
+ "employment_joining_date": null,
+ "employment_last_working_day": null,
  "father_or_husband_name": null,
  "first_name": "x",
  "gender": null,

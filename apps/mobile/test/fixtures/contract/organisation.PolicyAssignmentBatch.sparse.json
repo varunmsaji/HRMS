@@ -1,0 +1,14 @@
+{
+ "changes": [
+  {
+   "expected_version": null,
+   "leave_type_id": null,
+   "policy_id": "00000000-0000-0000-0000-000000001234",
+   "policy_kind": "x"
+  }
+ ],
+ "effective_from": "2026-01-15",
+ "reason": null,
+ "scope_id": null,
+ "scope_type": "x"
+}
