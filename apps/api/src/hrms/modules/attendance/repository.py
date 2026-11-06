@@ -1400,6 +1400,30 @@ class AttendanceDayRepository:
         )
         return (await session.execute(stmt)).scalar_one()
 
+    async def list_unlocked_dates_in_window(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        window_start: date,
+        window_end: date,
+    ) -> list[date]:
+        """Dates already computed for one employee in `[window_start, window_end]` that are not
+        locked, oldest first. R-04: the days whose cumulative counters an earlier day feeds."""
+        stmt = (
+            select(AttendanceDay.attendance_date)
+            .where(
+                AttendanceDay.company_id == company_id,
+                AttendanceDay.employee_id == employee_id,
+                AttendanceDay.attendance_date >= window_start,
+                AttendanceDay.attendance_date <= window_end,
+                AttendanceDay.is_locked.is_(False),
+            )
+            .order_by(AttendanceDay.attendance_date)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
     async def set_pending_approval(
         self,
         session: AsyncSession,

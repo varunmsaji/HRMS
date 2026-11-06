@@ -6,6 +6,7 @@ identical CRUD/versioning/publish mechanics. Mirrors `organisation.service.Organ
 `ShiftVersion` methods (create/list/get/update/discard/publish/resolve_as_of) three times over,
 plus policy-resolution delegation (§16/§19 step 7)."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -2268,6 +2269,13 @@ def _is_unique_violation(exc: IntegrityError) -> bool:
     return str(getattr(cause, "sqlstate", None) or "") == "23505"
 
 
+def _counts_as_excess_break_day(breaks: Iterable[Any]) -> bool:
+    """Whether a day counts toward the cumulative excess-break rule. Must match the condition in
+    `AttendanceDayRepository.count_flagged_days_in_window`, which does the counting. Takes stored
+    break rows or the engine's break results, which share these fields."""
+    return any(b.is_excess and (b.kind == "PUNCHED_GAP" or b.needs_review) for b in breaks)
+
+
 async def _ensure_not_after_last_working_day(
     session: AsyncSession, company_id: UUID, employee_id: UUID, punch_time: datetime
 ) -> None:
@@ -3718,6 +3726,18 @@ class AttendanceDayService:
         result = calc.evaluate_day(calc_input)
         now = datetime.now(UTC)
         values = self._result_to_values(calc_input, result, resolved_refs)
+        # R-04 — what this day fed the month's cumulative late and excess-break counters before
+        # this calculation. Read now, before the row and its breaks are replaced below.
+        counter_flags_before = (False, False)
+        if existing is not None:
+            counter_flags_before = (
+                bool(existing.is_late),
+                _counts_as_excess_break_day(
+                    await self._break_repo.list_for_day(
+                        self._session, company_id=company_id, attendance_day_id=existing.id
+                    )
+                ),
+            )
 
         existing_ot_record: OvertimeRecord | None = None
         if existing is not None:
@@ -3880,7 +3900,58 @@ class AttendanceDayService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        counter_flags_after = (bool(row.is_late), _counts_as_excess_break_day(result.breaks))
+        if counter_flags_after != counter_flags_before:
+            await self._recompute_later_days_of_month(
+                company_id,
+                employee_id,
+                target_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
         return read
+
+    async def _recompute_later_days_of_month(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        target_date: date,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """R-04 — the cumulative late and excess-break rules count the earlier days of the month
+        (`count_flagged_days_in_window`), so when a day starts or stops counting, every later
+        computed day of that month may now be a different Nth day. Recompute them, oldest first,
+        so each reads the corrected count. Locked days are left alone: they are final.
+
+        This cannot run away: the counters change a later day's status, never its own `is_late`
+        or break flags, so a later day only cascades further if its own inputs had changed."""
+        month_end = (
+            date(target_date.year, 12, 31)
+            if target_date.month == 12
+            else date(target_date.year, target_date.month + 1, 1) - timedelta(days=1)
+        )
+        if target_date >= month_end:
+            return
+        later_dates = await self._day_repo.list_unlocked_dates_in_window(
+            self._session,
+            company_id=company_id,
+            employee_id=employee_id,
+            window_start=target_date + timedelta(days=1),
+            window_end=month_end,
+        )
+        for later_date in later_dates:
+            await self._calculate(
+                company_id,
+                employee_id,
+                later_date,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
 
     async def recompute(
         self,
