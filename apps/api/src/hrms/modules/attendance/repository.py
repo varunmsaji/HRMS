@@ -12,6 +12,7 @@ from sqlalchemy import (
     ColumnElement,
     Select,
     and_,
+    case,
     delete,
     exists,
     func,
@@ -1390,7 +1391,7 @@ class AttendanceDayRepository:
         (repeated lateness, repeated excess-break days), parameterized by which per-day signal
         it's counting rather than two near-identical queries. `window_end` is inclusive; the
         caller passes the day *before* the date being recomputed (mirrors
-        `OvertimeRecordRepository.sum_minutes_detected_for_range`'s own exclude-today shape) so
+        `OvertimeRecordRepository.sum_minutes_counted_for_cap`'s own exclude-today shape) so
         this day's own fresh computation, done by the pure engine, is never double-counted."""
         # Mirrors the engine's `counter_excess_minutes`: a legacy punched-gap excess, or a V1
         # break whose excess needs review. Excess a shift rule only RECORDs (no exception, no
@@ -2072,7 +2073,7 @@ class OvertimeRecordRepository:
             return [], 0
         return await fetch_page(session, stmt, page)
 
-    async def sum_minutes_detected_for_range(
+    async def sum_minutes_counted_for_cap(
         self,
         session: AsyncSession,
         *,
@@ -2082,24 +2083,48 @@ class OvertimeRecordRepository:
         date_to: date,
         exclude_date: date | None = None,
     ) -> int:
-        """W7 (WD-29 decision 3) — the weekly/monthly cap budget already consumed by sibling
-        days. Counts `PENDING`+`AUTO_APPROVED`+`APPROVED` minutes (everything except
-        `REJECTED`), consistent with how the existing daily cap already clamps against detected,
-        not yet approved, minutes. Excludes by `attendance_date`, not `attendance_day_id` — the
-        day currently being calculated may not have an `AttendanceDay` row yet on its first
-        calculation."""
+        """W7 (WD-29 decision 3) — the weekly/monthly cap budget already used by sibling days.
+
+        N-5: counts what will be paid. A decided record (`APPROVED`/`AUTO_APPROVED`) counts its
+        approved minutes, so a partial approval frees the rest; a `PENDING` record holds its
+        detected minutes in reserve until it is decided, so waiting days together cannot pass
+        the cap; `REJECTED` counts nothing. A day that pays no overtime counts nothing whatever
+        its record says: full-day leave (BUS-011) and ON_DUTY without punches (F11).
+
+        Excludes by `attendance_date`, not `attendance_day_id` — the day currently being
+        calculated may not have an `AttendanceDay` row yet on its first calculation."""
+        counted = case(
+            (
+                OvertimeRecord.status.in_(("APPROVED", "AUTO_APPROVED")),
+                OvertimeRecord.minutes_approved,
+            ),
+            (OvertimeRecord.status == "PENDING", OvertimeRecord.minutes_detected),
+            else_=0,
+        )
+        unpayable_day = (
+            select(AttendanceDay.id)
+            .where(
+                AttendanceDay.id == OvertimeRecord.attendance_day_id,
+                or_(
+                    AttendanceDay.attendance_status == "ON_DUTY",
+                    and_(
+                        AttendanceDay.attendance_status == "LEAVE",
+                        AttendanceDay.leave_fraction >= Decimal("1.00"),
+                    ),
+                ),
+            )
+            .exists()
+        )
         conditions = [
             OvertimeRecord.company_id == company_id,
             OvertimeRecord.employee_id == employee_id,
             OvertimeRecord.attendance_date >= date_from,
             OvertimeRecord.attendance_date <= date_to,
-            OvertimeRecord.status != "REJECTED",
+            ~unpayable_day,
         ]
         if exclude_date is not None:
             conditions.append(OvertimeRecord.attendance_date != exclude_date)
-        stmt = select(func.coalesce(func.sum(OvertimeRecord.minutes_detected), 0)).where(
-            *conditions
-        )
+        stmt = select(func.coalesce(func.sum(counted), 0)).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())
 
     async def list_comp_off_eligible(

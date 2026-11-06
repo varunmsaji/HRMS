@@ -489,7 +489,7 @@ An attendance policy is the rulebook for turning raw punches into a day's result
 
 ### On-duty
 
-- **On-duty requires punch:** When off, an approved on-duty day, such as field work, counts as fully paid without any punches. When on, the punches still decide the status and the day is only flagged.
+- **On-duty requires punch:** When off, an approved on-duty day, such as field work, counts as fully paid without any punches, and any punches on it earn no overtime. When on, the punches still decide the status, overtime included, and the day is only flagged.
 
 ### Breaks, caps and lock behaviour
 
@@ -567,7 +567,7 @@ An overtime policy decides who can earn overtime, how much is counted, who must 
 ### How it is counted
 
 - **Rounding:** Rounds the overtime minutes, for example to the nearest 15 minutes, up or down.
-- **Daily, weekly and monthly caps:** The most overtime counted per day, week and month. Anything above the cap is not counted. Blank means no cap.
+- **Daily, weekly and monthly caps:** The most overtime counted per day, week and month. Anything above the cap is not counted. Blank means no cap. The week and month count approved minutes, and hold a waiting day's minutes until it is decided; rejected overtime and overtime on a full day of leave or on duty use none of the cap.
 
 ### Approval
 

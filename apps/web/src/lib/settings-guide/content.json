@@ -908,7 +908,7 @@
           "items": [
             {
               "name": "On-duty requires punch",
-              "text": "When off, an approved on-duty day, such as field work, counts as fully paid without any punches. When on, the punches still decide the status and the day is only flagged."
+              "text": "When off, an approved on-duty day, such as field work, counts as fully paid without any punches, and any punches on it earn no overtime. When on, the punches still decide the status, overtime included, and the day is only flagged."
             }
           ]
         },
@@ -1058,7 +1058,7 @@
             },
             {
               "name": "Daily, weekly and monthly caps",
-              "text": "The most overtime counted per day, week and month. Anything above the cap is not counted. Blank means no cap."
+              "text": "The most overtime counted per day, week and month. Anything above the cap is not counted. Blank means no cap. The week and month count approved minutes, and hold a waiting day's minutes until it is decided; rejected overtime and overtime on a full day of leave or on duty use none of the cap."
             }
           ]
         },

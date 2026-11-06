@@ -62,7 +62,10 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: a day off is never penalised; overtime rounding NEAREST rounds midpoints up; half-day leave
 #: splits the shift around a fixed break; the cumulative late and excess-break rules fire on every
 #: Nth such day. 8 = a stray same-direction punch next to another no longer makes a day INCOMPLETE.
-ENGINE_VERSION = 8
+#: 9 = an ON_DUTY day that does not require punches earns no overtime (F11, D-5).
+#: 10 = an OUT and an IN at the same instant pair OUT first, so the result no longer depends on the
+#: order the punches were loaded in.
+ENGINE_VERSION = 10
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -563,6 +566,15 @@ def resolve_schedule_window(
 # ---------------------------------------------------------------------------
 # Duplicate collapsing (§19.1 step 9, FR-ATT-017)
 # ---------------------------------------------------------------------------
+
+
+def punches_in_order(punches: list[PunchData]) -> list[PunchData]:
+    """Punches by time. At the same instant an OUT comes before an IN: it closes the open session
+    before the next one starts (clocking out and straight back in). The id breaks any remaining
+    tie, so the order never depends on how the punches were loaded."""
+    return sorted(
+        punches, key=lambda p: (p.punch_time, 0 if p.direction == "OUT" else 1, str(p.id))
+    )
 
 
 def collapse_duplicate_punches(punches: list[PunchData], *, window_seconds: int) -> list[PunchData]:
@@ -1667,7 +1679,7 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
     shift_operates = _shift_operates(inputs, day_type)
 
     collapsed = collapse_duplicate_punches(
-        sorted(inputs.punches, key=lambda p: p.punch_time),
+        punches_in_order(inputs.punches),
         window_seconds=inputs.policy.duplicate_punch_window_seconds,
     )
     snapshot["collapsed_punch_ids"] = [str(p.id) for p in collapsed]
@@ -1907,9 +1919,10 @@ def _apply_on_duty_overlay(
 
     `on_duty_requires_punch=False` (the default) short-circuits straight to `ON_DUTY`, full paid
     day, no punch evaluation needed — the exact shape of the full-day-leave short-circuit in
-    `_apply_leave_overlay`. `on_duty_requires_punch=True` keeps the punch-derived status and only
-    raises `is_on_duty_flagged` for reporting — the exact shape of `work_on_leave_flagged`'s
-    "keep punch status + flag" mode."""
+    `_apply_leave_overlay`, overtime zeroed included (F11, D-5: the day is paid as on duty, so
+    punches on it earn no overtime). `on_duty_requires_punch=True` keeps the punch-derived status,
+    overtime included, and only raises `is_on_duty_flagged` for reporting — the exact shape of
+    `work_on_leave_flagged`'s "keep punch status + flag" mode."""
     if not inputs.on_duty_approved:
         return result
     if result.attendance_status in ("NOT_JOINED", "EXITED", "CONFIG_ERROR"):
@@ -1931,6 +1944,13 @@ def _apply_on_duty_overlay(
         # The whole day is now paid, so an unpaid off day (BUS-001) has nothing left unpaid.
         unpaid_off_fraction="0.00",
         is_on_duty_flagged=False,
+        is_overtime=False,
+        ot_minutes_detected=0,
+        ot_minutes_approved=0,
+        ot_pending=False,
+        ot_classification=None,
+        ot_day_class=None,
+        comp_off_minutes_earned=0,
     )
 
 
@@ -1990,7 +2010,7 @@ def _evaluate_no_schedule(
     inputs: AttendanceCalculationInput, snapshot: dict[str, Any]
 ) -> AttendanceCalculationResult:
     collapsed = collapse_duplicate_punches(
-        sorted(inputs.punches, key=lambda p: p.punch_time),
+        punches_in_order(inputs.punches),
         window_seconds=(inputs.policy.duplicate_punch_window_seconds if inputs.policy else 60),
     )
     pairing = pair_punches(drop_stray_punches(collapsed, snapshot))
