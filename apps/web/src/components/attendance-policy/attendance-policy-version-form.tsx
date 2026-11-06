@@ -322,7 +322,7 @@ export function AttendancePolicyVersionForm({
             <div className="flex items-end pb-2">
               <PolicyCheckbox
                 label="On-duty days still need punches"
-                description="When off, an approved on-duty day counts as fully paid without punches."
+                description="When off, an approved on-duty day counts as fully paid without punches and earns no overtime. When on, the punches decide the day, overtime included."
                 checked={values.onDutyRequiresPunch}
                 onChange={(v) => update("onDutyRequiresPunch", v)}
               />

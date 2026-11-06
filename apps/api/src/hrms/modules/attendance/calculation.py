@@ -62,7 +62,8 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: a day off is never penalised; overtime rounding NEAREST rounds midpoints up; half-day leave
 #: splits the shift around a fixed break; the cumulative late and excess-break rules fire on every
 #: Nth such day. 8 = a stray same-direction punch next to another no longer makes a day INCOMPLETE.
-ENGINE_VERSION = 8
+#: 9 = an ON_DUTY day that does not require punches earns no overtime (F11, D-5).
+ENGINE_VERSION = 9
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -1907,9 +1908,10 @@ def _apply_on_duty_overlay(
 
     `on_duty_requires_punch=False` (the default) short-circuits straight to `ON_DUTY`, full paid
     day, no punch evaluation needed — the exact shape of the full-day-leave short-circuit in
-    `_apply_leave_overlay`. `on_duty_requires_punch=True` keeps the punch-derived status and only
-    raises `is_on_duty_flagged` for reporting — the exact shape of `work_on_leave_flagged`'s
-    "keep punch status + flag" mode."""
+    `_apply_leave_overlay`, overtime zeroed included (F11, D-5: the day is paid as on duty, so
+    punches on it earn no overtime). `on_duty_requires_punch=True` keeps the punch-derived status,
+    overtime included, and only raises `is_on_duty_flagged` for reporting — the exact shape of
+    `work_on_leave_flagged`'s "keep punch status + flag" mode."""
     if not inputs.on_duty_approved:
         return result
     if result.attendance_status in ("NOT_JOINED", "EXITED", "CONFIG_ERROR"):
@@ -1931,6 +1933,13 @@ def _apply_on_duty_overlay(
         # The whole day is now paid, so an unpaid off day (BUS-001) has nothing left unpaid.
         unpaid_off_fraction="0.00",
         is_on_duty_flagged=False,
+        is_overtime=False,
+        ot_minutes_detected=0,
+        ot_minutes_approved=0,
+        ot_pending=False,
+        ot_classification=None,
+        ot_day_class=None,
+        comp_off_minutes_earned=0,
     )
 
 

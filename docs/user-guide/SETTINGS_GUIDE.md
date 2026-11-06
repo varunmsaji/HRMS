@@ -489,7 +489,7 @@ An attendance policy is the rulebook for turning raw punches into a day's result
 
 ### On-duty
 
-- **On-duty requires punch:** When off, an approved on-duty day, such as field work, counts as fully paid without any punches. When on, the punches still decide the status and the day is only flagged.
+- **On-duty requires punch:** When off, an approved on-duty day, such as field work, counts as fully paid without any punches, and any punches on it earn no overtime. When on, the punches still decide the status, overtime included, and the day is only flagged.
 
 ### Breaks, caps and lock behaviour
 

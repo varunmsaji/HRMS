@@ -3779,14 +3779,16 @@ class AttendanceDayService:
         #
         # BUS-011 — except on a full-day leave day, where overtime is never payable. The record
         # stays as decided and the day keeps the engine's zeros, so cancelling the leave brings
-        # the approved minutes back on the recompute that follows.
-        frozen_on_full_day_leave = (
-            ot_decision is not None
-            and ot_decision["frozen"]
-            and result.attendance_status == "LEAVE"
+        # the approved minutes back on the recompute that follows. F11 (D-5): the same for an
+        # ON_DUTY day that does not require punches, which the engine only reports as ON_DUTY.
+        overtime_not_payable = (
+            result.attendance_status == "LEAVE"
             and Decimal(result.leave_fraction) >= Decimal("1.00")
+        ) or result.attendance_status == "ON_DUTY"
+        frozen_on_unpayable_day = (
+            ot_decision is not None and ot_decision["frozen"] and overtime_not_payable
         )
-        if ot_decision is not None and not frozen_on_full_day_leave:
+        if ot_decision is not None and not frozen_on_unpayable_day:
             values["ot_minutes_approved"] = ot_decision["minutes_approved"]
             # `overtime_record.comp_off_minutes` (below) always carries the policy-computed
             # fact regardless of decision state; the day's payroll-facing summary only reflects
