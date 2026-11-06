@@ -138,9 +138,10 @@ class Employment(Base, TimestampMixin):
     )
     joining_date: Mapped[date] = mapped_column(Date)
     last_working_day: Mapped[date | None] = mapped_column(Date, nullable=True)
-    # Purely informational (mirrors Leave's LD-17 maternity-fields posture) — nothing reads or
-    # auto-computes this; HR sets/corrects it directly. Not a trigger for anything: the actual
-    # PROBATION -> ACTIVE transition is the explicit `EmployeeService.confirm_employee` action.
+    # The last day of probation. HR sets or corrects it, and `EmployeeService.confirm_employee`
+    # records the day before confirmation if no earlier date is set. Not a trigger: the
+    # PROBATION -> ACTIVE transition is the confirm action. Monthly leave accrual leaves out the
+    # days up to it when the policy does not accrue during probation (R-11).
     probation_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # BUS-001 (`docs/audits/PAYROLL_BUSINESS_DECISIONS.md` #1) — `MONTHLY` (salaried: holidays and
     # weekly offs paid) or `DAILY_WAGE` (paid for PUBLIC holidays only; weekly offs, company

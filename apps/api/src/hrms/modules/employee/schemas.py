@@ -350,9 +350,10 @@ class EmploymentCreate(BaseModel):
     always computed server-side from the employee's own employment history, never accepted as
     input (`status`/`version` are likewise system-set, never client-settable).
 
-    `probation_end_date` is optional and purely informational — nothing reads or auto-computes
-    it; the actual `PROBATION` -> `ACTIVE` transition is the explicit `confirm` action, never
-    gated by this date."""
+    `probation_end_date` is optional. It never moves `PROBATION` -> `ACTIVE` (that is the
+    explicit `confirm` action, which records the date itself if none is set). Monthly leave
+    accrual leaves out the days up to it when the leave policy does not accrue during probation
+    (R-11)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -377,9 +378,9 @@ class EmploymentUpdate(BaseModel):
     immutable); `status`/`last_working_day` only ever change via the dedicated `terminate`
     action, never a generic field patch — this keeps the one-way `ACTIVE` → `TERMINATED`
     transition from being reachable through an unvalidated arbitrary-field update.
-    `probation_end_date` is the one exception to "immutable once set": it's purely
-    informational bookkeeping, not a fact anything downstream depends on, so HR correcting it
-    carries none of `joining_date`'s risk."""
+    `probation_end_date` is the one exception to "immutable once set": HR may correct it.
+    Monthly leave accrual reads it (R-11), so a correction changes months accrued after it,
+    never ones already written."""
 
     model_config = ConfigDict(extra="forbid")
 

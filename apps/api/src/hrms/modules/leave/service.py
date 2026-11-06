@@ -1615,6 +1615,30 @@ def _previous_month_bounds(as_of: date) -> tuple[date, date]:
 ACCRUAL_CATCH_UP_MONTHS = 3
 
 
+async def _probation_days_in_period(
+    session: AsyncSession,
+    company_id: UUID,
+    employee_id: UUID,
+    period_start: date,
+    period_end: date,
+) -> int:
+    """R-11 — days in `[period_start, period_end]` on or before an employment spell's
+    `probation_end_date`, while that spell was running. A spell with no date has none."""
+    from hrms.modules.employee.service import EmploymentService
+
+    days = 0
+    for joining_date, last_working_day, probation_end in await EmploymentService(
+        session
+    ).list_probation_spells(company_id, employee_id):
+        if probation_end is None:
+            continue
+        start = max(joining_date, period_start)
+        end = min(probation_end, last_working_day or probation_end, period_end)
+        if end >= start:
+            days += (end - start).days + 1
+    return days
+
+
 def _prorate_accrual_days(rate: Decimal, total_days: int, worked_days: int) -> Decimal:
     if worked_days >= total_days:
         return rate.quantize(Decimal("0.01"))
@@ -1783,6 +1807,7 @@ class LeaveAccrualService:
         if worked_days <= 0:
             return 0
         employee = await employee_service.get_employee(company_id, employee_id)
+        probation_days: int | None = None
 
         for leave_type in accrual_types:
             found = await resolver.resolve_policy_assignment(
@@ -1806,8 +1831,19 @@ class LeaveAccrualService:
                 continue
             if not version.accrual_rate_per_cycle or version.accrual_rate_per_cycle <= 0:
                 continue
-            if not version.accrue_during_probation and employee.status == "PROBATION":
-                continue
+            accrual_days = worked_days
+            if not version.accrue_during_probation:
+                if employee.status == "PROBATION":
+                    continue
+                # R-11 (D-13): an employee confirmed during the month earns nothing for the days
+                # up to `probation_end_date`, whenever this run happens.
+                if probation_days is None:
+                    probation_days = await _probation_days_in_period(
+                        self._session, company_id, employee_id, period_start, period_end
+                    )
+                accrual_days = worked_days - probation_days
+                if accrual_days <= 0:
+                    continue
 
             already_written = await self._ledger_repo.exists_for_cycle(
                 self._session,
@@ -1823,7 +1859,7 @@ class LeaveAccrualService:
             amount = _prorate_accrual_days(
                 version.accrual_rate_per_cycle,
                 (period_end - period_start).days + 1,
-                worked_days,
+                accrual_days,
             )
             if amount <= 0:
                 continue

@@ -464,7 +464,7 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
             <FormField
               id="hire-probation-end-date"
               label="Probation end date"
-              description="Optional — purely informational, doesn't gate anything."
+              description="Optional. The last day of probation. Leave policies that don't accrue during probation earn nothing up to this date. Filled in automatically when the employee is confirmed."
               error={hireErrors.probationEndDate}
             >
               <Input
@@ -528,7 +528,7 @@ export function EmploymentPanel({ employeeId }: EmploymentPanelProps) {
             <FormField
               id="edit-probation-end-date"
               label="Probation end date"
-              description="Optional — purely informational, doesn't gate anything."
+              description="Optional. The last day of probation. Leave policies that don't accrue during probation earn nothing up to this date. Filled in automatically when the employee is confirmed."
               error={editErrors.probationEndDate}
             >
               <Input

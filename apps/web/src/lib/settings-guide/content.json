@@ -1359,7 +1359,7 @@
             },
             {
               "name": "Accrue during probation",
-              "text": "Turn off to skip earning leave while on probation."
+              "text": "Turn off to skip earning leave while on probation. In a month the employee is confirmed, the days up to the probation end date earn nothing; confirming records that date if it is empty."
             }
           ]
         },
