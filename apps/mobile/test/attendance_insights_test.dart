@@ -122,7 +122,7 @@ void main() {
     expect(find.text('Overtime'), findsWidgets);
     expect(find.text('Something went wrong.'), findsOneWidget); // overtime section only
     expect(find.text('Attendance heatmap'), findsOneWidget);
-    expect(find.textContaining('Not available yet'), findsOneWidget);
+    expect(find.text('Departments & branches'), findsNothing, reason: 'no directory grant');
   });
 }
 
