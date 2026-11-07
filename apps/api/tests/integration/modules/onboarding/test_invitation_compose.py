@@ -6,6 +6,7 @@ delivery explicitly with a synthetic sender. Nothing contacts a mail server.
 """
 
 import asyncio
+import re
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -339,7 +340,11 @@ async def test_transient_failure_retries_same_message_and_token_permanent_fails(
         assert await ob.deliver_message(row.id, sender=Recorder(permanent)) == "failed"
         (m,) = (await client.get(_url(case["id"], "messages"), headers=headers)).json()["data"]
         assert m["status"] == "FAILED" and m["failed_at"]
-        assert "550" not in str(m) and "rejected" not in m["subject"]
+        # The provider's SMTP code must not reach the API. Ids and timestamps are left out, and
+        # the code is matched as a whole number: random hex in the company name or address, or
+        # the digits of a timestamp (".155019Z"), would otherwise contain "550" by chance.
+        shown = {k: v for k, v in m.items() if k != "id" and not k.endswith(("_id", "_at"))}
+        assert not re.search(r"\b550\b", str(shown)) and "rejected" not in m["subject"]
     finally:
         await _teardown_with_tokens(company_id=company_id, user_id=user_id)
 

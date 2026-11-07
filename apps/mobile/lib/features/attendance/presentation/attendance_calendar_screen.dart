@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
+import '../../../core/nav/nav_entries.dart' show attendanceCalendarReads;
 import '../../../core/theme/employee_tokens.dart';
 import '../../../core/time.dart';
 import '../../../core/widgets/employee/status_map.dart';
@@ -67,7 +68,10 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
   bool _loading = true;
   int _request = 0;
 
-  bool get _allowed => (ref.read(authControllerProvider).user?.permissions ?? const []).contains(attendanceViewAll);
+  bool get _allowed {
+    final permissions = ref.read(authControllerProvider).user?.permissions ?? const <String>[];
+    return permissions.contains(attendanceViewAll) && attendanceCalendarReads.every(permissions.contains);
+  }
   String get _zone => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
 
   @override

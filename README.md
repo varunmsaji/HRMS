@@ -126,7 +126,8 @@ Additional repo conventions when Python scaffold lands:
 ## Making changes
 
 All edits happen on the `test` branch and reach `main` through a pull request. Once CI passes, the
-pull request merges by itself, unless it changes workflows, agent rules or database migrations. See
+pull request merges by itself, unless it changes workflows, agent rules, the secret-scan config
+(`.gitleaks.toml`) or database migrations. See
 [AGENTS.md](AGENTS.md) for the full rules.
 
 ## Documentation

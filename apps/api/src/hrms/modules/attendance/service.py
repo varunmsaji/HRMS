@@ -6093,12 +6093,10 @@ class OvertimeRecordService:
         `from __future__ import annotations` in this module)."""
         return await self._repo.list_comp_off_eligible(self._session, company_id=company_id)
 
-    async def list_comp_off_facts_on_full_day_leave(self, company_id: UUID) -> list[CompOffFactRow]:
-        """Records whose day became a full-day leave after the overtime was decided. Same seam
-        and posture as `list_comp_off_facts`."""
-        return await self._repo.list_comp_off_on_full_day_leave(
-            self._session, company_id=company_id
-        )
+    async def list_comp_off_facts_on_unpayable_day(self, company_id: UUID) -> list[CompOffFactRow]:
+        """Records whose day became a full-day leave or an on-duty day after the overtime was
+        decided. Same seam and posture as `list_comp_off_facts`."""
+        return await self._repo.list_comp_off_on_unpayable_day(self._session, company_id=company_id)
 
     async def get(
         self,

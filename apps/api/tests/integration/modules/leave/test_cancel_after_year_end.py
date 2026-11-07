@@ -185,3 +185,41 @@ async def test_a_refund_before_year_end_runs_is_left_to_year_end(
         await _teardown(company_id=company_id)
         await _drop_year_setting(company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_refunds_from_one_closed_year_share_its_cap(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Two leaves from the same closed year, cancelled one after the other: the cap applies to
+    both refunds together. 10 held, 3 + 3 taken, 4 carried under a cap of 8. Each refund alone
+    would fit (4 + 3 = 7), but together they make 10, so 2 days lapse and 8 remain."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id, second = await _take_december_leave(
+            client, headers, year_end_action="CARRY_FORWARD", max_carry_forward_days="8.00"
+        )
+        leave_type_id = (await _ledger(client, headers, employee_id))[0]["leave_type_id"]
+        submitted = await _submit(
+            client,
+            headers,
+            employee_id=employee_id,
+            leave_type_id=leave_type_id,
+            start_date="2025-12-15",
+            end_date="2025-12-17",
+        )
+        assert submitted.status_code == 201, submitted.text
+        first = submitted.json()["data"]
+        assert first["status"] == "APPROVED"
+        assert await _get_balance(client, headers, employee_id) == "4.00"
+
+        await _run_year_end(company_id)
+        assert await _get_balance(client, headers, employee_id) == "4.00"
+
+        await _cancel(client, headers, first)
+        assert await _get_balance(client, headers, employee_id) == "7.00"
+        await _cancel(client, headers, second)
+        assert await _get_balance(client, headers, employee_id) == "8.00"
+    finally:
+        await _teardown(company_id=company_id)
+        await _drop_year_setting(company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

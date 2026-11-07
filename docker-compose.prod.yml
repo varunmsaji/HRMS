@@ -261,17 +261,19 @@ services:
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./infra/nginx/conf.d:/etc/nginx/templates:ro
+      - ./infra/nginx/start.sh:/etc/nginx/start.sh:ro
       - certbot_certs:/etc/letsencrypt:ro
       - certbot_webroot:/var/www/certbot:ro
     environment:
       API_DOMAIN: ${API_DOMAIN:?API_DOMAIN is required}
       WEB_DOMAIN: ${WEB_DOMAIN:?WEB_DOMAIN is required}
       STORAGE_DOMAIN: ${STORAGE_DOMAIN:?STORAGE_DOMAIN is required}
-    # Renders infra/nginx/conf.d/*.template (envsubst-style ${API_DOMAIN} etc.) into
-    # /etc/nginx/conf.d/*.conf on container start — the official nginx image's own documented
-    # mechanism (`/docker-entrypoint.d/20-envsubst-on-templates.sh`), so the domain names live in
-    # one place (this file's own `.env`) instead of being hand-edited into the Nginx config twice.
-    command: ["/bin/sh", "-c", "envsubst '$$API_DOMAIN $$WEB_DOMAIN $$STORAGE_DOMAIN' < /etc/nginx/templates/hrms.conf.template > /etc/nginx/conf.d/hrms.conf && nginx -g 'daemon off;'"]
+    # infra/nginx/start.sh renders infra/nginx/conf.d/*.template (envsubst-style ${API_DOMAIN}
+    # etc.) into /etc/nginx/conf.d/, so the domain names live in one place (this file's own
+    # `.env`). It serves HTTP alone until the certificate exists (first deployment, §11 of
+    # docs/deployment/PRODUCTION_DEPLOYMENT.md), and reloads Nginx when the certificate appears or
+    # the `certbot` service renews it.
+    command: ["/bin/sh", "/etc/nginx/start.sh"]
     depends_on:
       - api
       - web
@@ -281,7 +283,8 @@ services:
   # Webroot-method Let's Encrypt renewal. Initial certificate issuance is a one-off manual step
   # (docs/deployment/PRODUCTION_DEPLOYMENT.md §11 — `docker compose run --rm certbot certonly ...`)
   # since it needs the domain already resolving to this VPS and Nginx already serving the HTTP-01
-  # challenge path; this long-running service only handles renewal from then on.
+  # challenge path; this long-running service only handles renewal from then on. It only writes
+  # the files: the `nginx` service notices the changed certificate and reloads itself.
   certbot:
     image: certbot/certbot:latest
     restart: unless-stopped

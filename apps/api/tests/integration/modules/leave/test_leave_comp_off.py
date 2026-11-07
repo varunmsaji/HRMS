@@ -61,11 +61,13 @@ async def _teardown_leave(*, company_id: UUID) -> None:
         await session.commit()
 
 
-async def _credit(company_id: UUID) -> int:
+async def _credit(company_id: UUID, *, as_of: date = date(2026, 8, 20)) -> int:
+    """`as_of` is pinned so the credits these tests make (expiring in November 2026) do not
+    expire on their own as the calendar moves on."""
     factory = get_session_factory()
     async with factory() as session:
         await set_rls_company_id(session, str(company_id))
-        written = await LeaveCompOffService(session).credit_company(company_id)
+        written = await LeaveCompOffService(session).credit_company(company_id, as_of=as_of)
         await session.commit()
         return written
 
@@ -432,6 +434,96 @@ async def test_expired_credit_is_not_reversed_again(
         await _cleanup_overtime(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_a_credit_that_expired_during_the_leave_is_not_restored_spendable(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """The leave hid the credit from the expiry sweep. Cancelled after its expiry, the credit is
+    restored and expired together, so it can't be spent, and the sweep does not take it twice."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id, _ = await _comp_off_day_with_credit_policy(client, headers)
+        assert await _credit(company_id) == 1
+        synced = await _sync(client, headers, employee_id=employee_id, fraction="1.00")
+        assert synced.status_code == 201, synced.text
+        await _credit(company_id)
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+        assert await _expire(company_id, as_of=date(2027, 1, 1)) == 0
+
+        await _cancel_leave(client, headers, synced)
+        await _credit(company_id, as_of=date(2027, 1, 1))
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+        assert await _expire(company_id, as_of=date(2027, 1, 2)) == 0
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+    finally:
+        await _delete_ledger(company_id=company_id)
+        await _cleanup_leave_projection(company_id=company_id)
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_an_on_duty_day_takes_back_its_comp_off_credit(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """F11 — an on-duty day that needs no punches pays no overtime, so a comp-off credit already
+    written for that day's approved overtime is reversed, as for a full-day leave."""
+    from tests.integration.modules.attendance.test_attendance_security import (
+        _cleanup_scoped_users,
+        _create_permission_scoped_user,
+    )
+    from tests.integration.modules.attendance.test_regularization import (
+        _cleanup_regularization,
+        _create_regularization_policy,
+    )
+
+    from hrms.modules.attendance.permissions import ATTENDANCE_REGULARIZATION_APPROVE
+
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        employee_id, _ = await _comp_off_day_with_credit_policy(client, headers)
+        assert await _credit(company_id) == 1
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("1.00")
+
+        await _create_regularization_policy(
+            client, headers, allowed_types=["ON_DUTY"], approval_chain="HR"
+        )
+        created = await client.post(
+            "/v1/regularizations",
+            headers=headers,
+            json={
+                "employee_id": employee_id,
+                "attendance_date": "2026-08-10",
+                "request_type": "ON_DUTY",
+                "reason": "Client site visit",
+                "requested_punches": [
+                    {"direction": "IN", "requested_time": "2026-08-10T09:00:00Z"},
+                    {"direction": "OUT", "requested_time": "2026-08-10T19:00:00Z"},
+                ],
+            },
+        )
+        assert created.status_code == 201, created.text
+        request = created.json()["data"]
+        hr_headers, _ = await _create_permission_scoped_user(
+            company_id=company_id, permission_codes=[ATTENDANCE_REGULARIZATION_APPROVE]
+        )
+        approved = await client.post(
+            f"/v1/regularizations/{request['id']}/approve",
+            headers={**hr_headers, "If-Match": str(request["version"])},
+            json={},
+        )
+        assert approved.status_code == 200, approved.text
+
+        assert await _credit(company_id) == 0
+        assert Decimal(await _get_balance(client, headers, employee_id)) == Decimal("0.00")
+    finally:
+        await _teardown_leave(company_id=company_id)
+        await _cleanup_regularization(company_id=company_id)
+        await _cleanup_overtime(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
 
 
 async def test_only_one_comp_off_leave_type_allowed_per_company(

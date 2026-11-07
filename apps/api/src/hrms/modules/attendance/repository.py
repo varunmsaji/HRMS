@@ -2139,24 +2139,28 @@ class OvertimeRecordRepository:
         record is the caller's (Leave's) responsibility, keyed on `reference_id`, not this
         query's.
 
-        A record whose day is now a full-day leave is not eligible: overtime on a leave day earns
-        nothing while the leave stands (BUS-011). `list_comp_off_on_full_day_leave` returns those
-        instead, and cancelling the leave makes the record eligible again."""
-        return await self._comp_off_facts(session, company_id=company_id, on_full_day_leave=False)
+        A record whose day now pays no overtime is not eligible: a full-day leave (BUS-011) or
+        an on-duty day (F11), while it stands. `list_comp_off_on_unpayable_day` returns those
+        instead, and cancelling the leave or on-duty makes the record eligible again."""
+        return await self._comp_off_facts(session, company_id=company_id, on_unpayable_day=False)
 
-    async def list_comp_off_on_full_day_leave(
+    async def list_comp_off_on_unpayable_day(
         self, session: AsyncSession, *, company_id: UUID
     ) -> list[CompOffFactRow]:
-        """The same facts for records whose day is currently a full-day leave, so Leave can
-        reverse a credit it already wrote (LEAVE_DECISION_LOG.md LD-14)."""
-        return await self._comp_off_facts(session, company_id=company_id, on_full_day_leave=True)
+        """The same facts for records whose day currently pays no overtime (full-day leave or on
+        duty), so Leave can reverse a credit it already wrote (LEAVE_DECISION_LOG.md LD-14)."""
+        return await self._comp_off_facts(session, company_id=company_id, on_unpayable_day=True)
 
     async def _comp_off_facts(
-        self, session: AsyncSession, *, company_id: UUID, on_full_day_leave: bool
+        self, session: AsyncSession, *, company_id: UUID, on_unpayable_day: bool
     ) -> list[CompOffFactRow]:
-        is_full_day_leave = and_(
-            AttendanceDay.attendance_status == "LEAVE",
-            AttendanceDay.leave_fraction >= Decimal("1.00"),
+        # The same days `AttendanceDayService` keeps at zero overtime (`overtime_not_payable`).
+        is_unpayable_day = or_(
+            and_(
+                AttendanceDay.attendance_status == "LEAVE",
+                AttendanceDay.leave_fraction >= Decimal("1.00"),
+            ),
+            AttendanceDay.attendance_status == "ON_DUTY",
         )
         stmt = (
             select(
@@ -2182,9 +2186,9 @@ class OvertimeRecordRepository:
                 OvertimeRecord.company_id == company_id,
                 OvertimeRecord.status.in_(("AUTO_APPROVED", "APPROVED")),
                 OvertimeRecord.comp_off_minutes > 0,
-                is_full_day_leave
-                if on_full_day_leave
-                else or_(AttendanceDay.id.is_(None), not_(is_full_day_leave)),
+                is_unpayable_day
+                if on_unpayable_day
+                else or_(AttendanceDay.id.is_(None), not_(is_unpayable_day)),
             )
             .order_by(OvertimeRecord.attendance_date)
         )
