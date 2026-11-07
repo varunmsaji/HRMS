@@ -349,11 +349,11 @@ void main() {
     })),
   ]);
 
-  _golden('shift_board', (v) => ShiftBoardScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, employeeViewAll], overrides: [
+  _golden('shift_board', (v) => ShiftBoardScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, attendanceView, employeeViewAll, orgShiftManage], overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
   ]);
 
-  _golden('workforce_roster', (v) => WorkforceRosterScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, employeeViewAll], overrides: [
+  _golden('workforce_roster', (v) => WorkforceRosterScreen(now: DateTime.utc(2026, 11, 5, 6)), permissions: const [attendanceRosterManage, attendanceView, employeeViewAll, orgShiftManage], overrides: [
     apiClientProvider.overrideWithValue(FakeApiClient(lists: _rosterFixture())),
   ]);
 

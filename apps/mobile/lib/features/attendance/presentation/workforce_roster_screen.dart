@@ -77,8 +77,10 @@ class _WorkforceRosterScreenState extends ConsumerState<WorkforceRosterScreen> {
     super.dispose();
   }
 
-  /// The grid still works from ids without them.
+  /// The grid still works from ids without them. `GET /shifts` checks ORG.SHIFT.MANAGE, so a role
+  /// without it skips the call rather than collect a 403.
   Future<void> _loadShifts() async {
+    if (!(ref.read(authControllerProvider).user?.permissions ?? const <String>[]).contains(orgShiftManage)) return;
     try {
       final shifts = await ref.read(rosterRepositoryProvider).listShifts();
       if (mounted) setState(() => _shifts = {for (final s in shifts) s.id: s});
