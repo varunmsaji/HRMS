@@ -16,7 +16,7 @@ import '../domain/employee_calendar.dart' show formatMonthKey, shiftMonthKey;
 import '../domain/hr_calendar.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_summary.dart';
-import 'employee_attendance_panel.dart';
+import 'employee_attendance_profile_screen.dart';
 
 /// HR view: every employee's attendance for a month as one calendar — mirrors
 /// `apps/web/src/app/app/attendance/calendar/page.tsx`. Names stay put while the days scroll sideways.
@@ -117,7 +117,7 @@ class _AttendanceCalendarScreenState extends ConsumerState<AttendanceCalendarScr
   void _openDay(AttendanceDay day) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: day.id, initial: day)));
 
   void _openEmployee(HrCalendarRow row) => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => Scaffold(appBar: AppBar(title: Text(row.name)), body: EmployeeAttendancePanel(employeeId: row.employeeId, employeeLabel: row.name)),
+        builder: (_) => EmployeeAttendanceProfileScreen(employeeId: row.employeeId, employeeLabel: row.name),
       ));
 
   @override

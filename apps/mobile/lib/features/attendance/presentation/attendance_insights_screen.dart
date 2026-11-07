@@ -19,6 +19,7 @@ import 'attendance_period_detail_screen.dart';
 import 'attendance_reports_screen.dart';
 import '../domain/attendance_reports.dart' show reportLabels;
 import 'attendance_day_detail_screen.dart';
+import 'employee_attendance_profile_screen.dart';
 import 'attendance_summary.dart';
 import 'insight_charts.dart';
 import '../../../core/widgets/ui.dart';
@@ -167,6 +168,9 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     if (mounted && mine == _summaryRequest) setState(() => _summary = loaded);
   }
 
+  /// The employee's attendance profile, as web links each name to `/app/attendance/employee/[id]`.
+  void _openEmployee(String employeeId) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeAttendanceProfileScreen(employeeId: employeeId, employeeLabel: _name(employeeId))));
+
   void _openPeriod(_Rec p) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendancePeriodDetailScreen(periodId: p['id'] as String, initial: p)));
 
   String _name(String id) => _names[id] ?? 'Employee ${id.substring(0, id.length < 8 ? id.length : 8)}';
@@ -276,7 +280,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         Text('Repeat absences ($repeatAbsenceThreshold+ absent days)', style: Theme.of(context).textTheme.labelLarge),
         if (repeat.isEmpty) const Padding(padding: EdgeInsets.only(top: 4), child: Text('None in this range.')),
         for (final r in repeat.take(10))
-          ListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(_name(r.employeeId)), subtitle: Text('${r.leaveDays} leave day${r.leaveDays == 1 ? '' : 's'}'), trailing: Text('${r.absentDays} absent')),
+          ListTile(dense: true, contentPadding: EdgeInsets.zero, onTap: () => _openEmployee(r.employeeId), title: Text(_name(r.employeeId)), subtitle: Text('${r.leaveDays} leave day${r.leaveDays == 1 ? '' : 's'}'), trailing: Text('${r.absentDays} absent')),
       ]),
     );
   }
@@ -667,7 +671,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
             child: Text(s.late == 0 ? 'Everyone who checked in was on time.' : 'Nobody has been late more than once in this range.'),
           ),
         for (final f in frequent)
-          ListTile(dense: true, contentPadding: EdgeInsets.zero, title: Text(_name(f.employeeId)), trailing: Text('${f.lateDays} days · ${f.totalLateMinutes} min')),
+          ListTile(dense: true, contentPadding: EdgeInsets.zero, onTap: () => _openEmployee(f.employeeId), title: Text(_name(f.employeeId)), trailing: Text('${f.lateDays} days · ${f.totalLateMinutes} min')),
       ]),
     );
   }

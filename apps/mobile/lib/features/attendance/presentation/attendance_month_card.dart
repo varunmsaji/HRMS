@@ -19,9 +19,13 @@ String _iso(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toStr
 /// a month grid coloured by each day's attendance bucket, with previous/next month navigation.
 /// Tapping a day opens its detail.
 class AttendanceMonthCard extends ConsumerStatefulWidget {
-  const AttendanceMonthCard({super.key, required this.employeeId, required this.zone, this.now});
+  const AttendanceMonthCard({super.key, required this.employeeId, required this.zone, this.now, this.onLoaded});
   final String employeeId;
   final String zone;
+
+  /// Told the month shown (`YYYY-MM`) and its day rows after each successful load, so a screen can
+  /// summarise the same month without a second picker.
+  final void Function(String month, List<AttendanceDay> days)? onLoaded;
 
   /// Overrides the clock (tests, so "today" and the opening month are fixed). Null = now.
   final DateTime? now;
@@ -53,6 +57,7 @@ class _AttendanceMonthCardState extends ConsumerState<AttendanceMonthCard> {
     try {
       final days = await ref.read(attendanceRepositoryProvider).listAttendanceDays(employeeId: widget.employeeId, dateFrom: _iso(_month), dateTo: _iso(last));
       if (mounted) setState(() => _byDate = {for (final d in days) d.attendanceDate: d});
+      if (mounted) widget.onLoaded?.call(_iso(_month).substring(0, 7), days);
     } catch (e) {
       if (mounted) setState(() => _error = e is ApiError ? e.message : 'Something went wrong.');
     } finally {

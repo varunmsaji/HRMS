@@ -96,6 +96,8 @@ class ScheduleTotals {
     required this.cellsBelowTarget,
     required this.pendingSwaps,
     required this.allocatedHours,
+    this.nightStaff = 0,
+    this.nightShiftCount = 0,
   });
   final int activeHeadcount;
   final int rosteredStaff;
@@ -107,6 +109,13 @@ class ScheduleTotals {
   final int pendingSwaps;
   final double allocatedHours;
 
+  /// People rostered on a night shift this week, and how many night shifts exist.
+  final int nightStaff;
+  final int nightShiftCount;
+
+  /// Share of active headcount with a shift this week, rounded (web `scheduledPct`).
+  int get scheduledPct => activeHeadcount > 0 ? (100 * rosteredStaff / activeHeadcount).round() : 0;
+
   factory ScheduleTotals.fromJson(Map<String, dynamic> j) => ScheduleTotals(
         activeHeadcount: (j['active_headcount'] as int?) ?? 0,
         rosteredStaff: (j['rostered_staff'] as int?) ?? 0,
@@ -115,6 +124,8 @@ class ScheduleTotals {
         cellsBelowTarget: (j['cells_below_target'] as int?) ?? 0,
         pendingSwaps: (j['pending_swaps'] as int?) ?? 0,
         allocatedHours: ((j['allocated_hours'] as num?) ?? 0).toDouble(),
+        nightStaff: (j['night_staff'] as int?) ?? 0,
+        nightShiftCount: (j['night_shift_count'] as int?) ?? 0,
       );
 }
 
