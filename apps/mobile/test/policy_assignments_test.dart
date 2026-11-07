@@ -59,6 +59,9 @@ Future<void> _pump(WidgetTester tester, FakeApiClient api) async {
   addTearDown(tester.view.reset);
   await tester.pumpWidget(ProviderScope(overrides: [apiClientProvider.overrideWithValue(api), fakeAuth(const [])], child: const MaterialApp(home: PolicyAssignmentsScreen())));
   await tester.pumpAndSettle();
+  // The screen opens on "Set policies", as on web; these tests are about the list.
+  await tester.tap(find.text('All assignments'));
+  await tester.pumpAndSettle();
 }
 
 Future<void> _choose(WidgetTester tester, int dropdownIndex, String label) async {

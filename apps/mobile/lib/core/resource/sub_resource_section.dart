@@ -39,6 +39,7 @@ class SubResourceSection extends ConsumerStatefulWidget {
     this.hasActive = true,
     this.emptyLabel,
     this.review,
+    this.onChanged,
   });
 
   final String title;
@@ -58,6 +59,10 @@ class SubResourceSection extends ConsumerStatefulWidget {
   final bool hasActive;
   final String? emptyLabel;
   final SubResourceReview? review;
+
+  /// Called after this section adds, edits or (de)activates a row, so a sibling view of the same
+  /// records (e.g. a holiday year view) can refresh.
+  final VoidCallback? onChanged;
 
   @override
   ConsumerState<SubResourceSection> createState() => _SubResourceSectionState();
@@ -121,6 +126,7 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
     if (saved && mounted) {
       _toast('${widget.singular[0].toUpperCase()}${widget.singular.substring(1)} added.');
       _load();
+      widget.onChanged?.call();
     }
   }
 
@@ -142,17 +148,22 @@ class _SubResourceSectionState extends ConsumerState<SubResourceSection> {
     if (saved && mounted) {
       _toast('Saved.');
       _load();
+      widget.onChanged?.call();
     }
   }
 
   Future<void> _toggle(Rec row) async {
     try {
       if (widget.review != null) {
-        if (await widget.review!.toggle(context, row) && mounted) _load();
+        if (await widget.review!.toggle(context, row) && mounted) {
+          _load();
+          widget.onChanged?.call();
+        }
         return;
       }
       await _client.patch<Object?>(widget.itemPath(row), body: {'is_active': row['is_active'] == false}, ifMatch: row['version'].toString(), parse: (_) => null);
       _load();
+      widget.onChanged?.call();
     } catch (e) {
       _toast(e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This record was changed by someone else. Reloading.' : e.message) : 'Something went wrong.');
       _load();

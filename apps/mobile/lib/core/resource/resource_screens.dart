@@ -142,6 +142,7 @@ class _ResourceListScreenState extends ConsumerState<ResourceListScreen> {
                   onRefresh: _load,
                   child: visible.isEmpty
                       ? ListView(children: [
+                          if (_c.listHeader != null) Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 0), child: _c.listHeader!(context)),
                           SizedBox(
                             height: MediaQuery.sizeOf(context).height * 0.6,
                             child: StateMessage(
@@ -154,6 +155,7 @@ class _ResourceListScreenState extends ConsumerState<ResourceListScreen> {
                       : ListView(
                           padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
                           children: [
+                            if (_c.listHeader != null) _c.listHeader!(context),
                             if (_c.hasActive && inactiveCount > 0)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 10),
@@ -290,6 +292,18 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
     }
   }
 
+  Future<void> _guardedDelete() async {
+    final result = await _c.guardedDelete!(context, _row);
+    if (!mounted || result == null) return;
+    if (result) {
+      _toast('${_c.singular} deleted.');
+      Navigator.of(context).pop();
+    } else {
+      _toast('This ${_c.singular.toLowerCase()} was changed by someone else. It has been reloaded.');
+      _reload();
+    }
+  }
+
   Future<void> _toggleActive() async {
     final deactivating = _row['is_active'] != false;
     final yes = await showDialog<bool>(
@@ -352,6 +366,7 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
                   if (_c.editable) FilledButton.icon(icon: const Icon(Icons.edit_outlined), label: const Text('Edit'), onPressed: _busy ? null : _edit),
                   if (_c.hardDelete) OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error), onPressed: _busy ? null : _hardDelete, child: const Text('Delete')),
                   if (_c.hasActive && _c.canDeactivate) OutlinedButton(onPressed: _busy ? null : _toggleActive, child: Text(active ? 'Deactivate' : 'Reactivate')),
+                  if (_c.guardedDelete != null) OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error), onPressed: _busy ? null : _guardedDelete, child: const Text('Delete')),
                 ]),
               ),
             Container(

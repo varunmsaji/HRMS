@@ -24,6 +24,8 @@ class ResourceConfig {
     this.hardDelete = false,
     this.listActions,
     this.reviewEdit,
+    this.guardedDelete,
+    this.listHeader,
   });
 
   /// Screen title / list heading ("Branches").
@@ -57,6 +59,15 @@ class ResourceConfig {
 
   /// Extra query params for the list call.
   final Map<String, dynamic> listFilters;
+
+  /// A card above the list (shown even when the list is empty), e.g. a company-wide setting that
+  /// belongs with these records. It decides its own permission and may render nothing.
+  final WidgetBuilder? listHeader;
+
+  /// A permanent delete with its own safeguards (e.g. a shift's in-use check, typed name and
+  /// reason), shown as "Delete" to users who can manage. Resolves true once deleted (the detail
+  /// screen then closes), false when the record changed meanwhile (it reloads), null if cancelled.
+  final Future<bool?> Function(BuildContext context, Map<String, dynamic> row)? guardedDelete;
 
   /// The record can be edited (a `*Update` schema exists). False for create-and-delete-only
   /// records (leave combination rules, statutory minimums).

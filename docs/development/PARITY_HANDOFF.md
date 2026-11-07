@@ -1,8 +1,31 @@
 # Web / mobile parity: handoff
 
-Written 3 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 5.
+Written 3 Nov 2026, updated 7 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 0.
 
 Read first: [MOBILE_PARITY_PLAN.md](MOBILE_PARITY_PLAN.md) (the full plan and the parity matrix G1 to G14). This file records what is done, what is left, how to run things, and the traps.
+
+## 0. State on 7 Nov 2026 (read this before sections 2 and 5)
+
+A fresh comparison of both apps (routes, and the API endpoints each one calls) found mobile had a screen for nearly every web page but lacked features inside them. These were closed on 7 Nov, each ported from web's committed code with web's wording and rules:
+
+| Area | Mobile now has | Main files (`apps/mobile/lib/`) |
+|---|---|---|
+| Employee directory | Summary cards, status and record-state filters, designation · department per row, CSV through the share sheet with web's columns | `features/employees/`, `core/export/csv_export.dart` |
+| Attendance insights | Today's rate and change from last week, KPIs, payroll readiness, departments & branches, punctuality, absence by weekday, attendance periods, monthly summary; days fetched over the range widened to 14 days as on web | `features/attendance/domain/attendance_pulse.dart` |
+| Attendance reports | Web's six read-only reports (search, sort, 15-row pages), from the insights screen | `attendance_reports_screen.dart`, `domain/attendance_reports.dart` |
+| Shift delete | In-use check, typed name, reason, acknowledgement | `shift_delete_screen.dart`, `ResourceConfig.guardedDelete` |
+| Policy assignments | "Set policies" tab: one group, every policy type, batch save, calendar impact previews | `set_policies_panel.dart`, `domain/policy_coverage.dart` |
+| Face enrollment | Company requirement switch above Attendance Policies | `face_enrollment_policy_card.dart`, `ResourceConfig.listHeader` |
+| Calendars | Work calendar month view, holiday year view (tap a day to add), guided work calendar setup at `/app/work-calendars/setup` | `features/organisation/presentation/` |
+
+Corrections to earlier notes: web has **no** attendance-report CSV (only employees and pay-run files), so mobile has none either. Section 5 items 2 to 5 and the mobile half of item 8 are done.
+
+Still open:
+- "Who follows this" on each policy (mobile): needs the `policy_id` filter on `GET /policy-assignments`, which is in the owner's uncommitted Settings rework.
+- Waiting on the same rework: web Shift swaps link in the employee menu (`nav-items.ts`), and mobile menu renames ("Correction Policies", "Rules by Group", "Check a Person's Rules").
+- Done 7 Nov: web's employee record now has Identity, Experience, Education and Dependents tabs (`components/employee/record-list-panel.tsx`, `identity-panel.tsx`, `lib/employee/record-sections.ts`).
+- Owner decision: web drops the middle name from employee names, mobile keeps it.
+- Never `dart format` whole files: the repo uses a long-line hand style and the formatter rewrites untouched code.
 
 ## 1. The goal and the decisions already made
 

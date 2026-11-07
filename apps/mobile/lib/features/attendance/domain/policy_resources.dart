@@ -2,6 +2,8 @@ import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/resource/resource_config.dart';
 import '../../../core/time.dart';
+import '../presentation/face_enrollment_policy_card.dart';
+import '../presentation/shift_delete_screen.dart' show openShiftDelete;
 
 /// Versioned resources of the attendance module — attendance / overtime / regularization policies
 /// and shifts. Each version spec mirrors a `*VersionCreate`/`*VersionUpdate` schema (and the web
@@ -91,6 +93,8 @@ final attendancePolicyResource = ResourceConfig(
   rowTitle: (r) => r['name'] as String,
   rowSubtitle: (r) => r['code'] as String?,
   manage: attendancePolicyManage,
+  // As on web: the company's face-enrollment requirement sits above the attendance policies.
+  listHeader: (context) => const FaceEnrollmentPolicyCard(),
   versions: VersionsConfig(
     spec: attendancePolicyVersionSpec,
     noun: 'policy version',
@@ -246,6 +250,8 @@ ResourceConfig shiftResource() => ResourceConfig(
       rowTitle: (r) => r['name'] as String,
       rowSubtitle: (r) => _join([r['code'], r['current_version_id'] == null ? 'no published version' : null, r['draft_version_id'] != null ? 'draft pending' : null]),
       manage: orgShiftManage,
+      // Web's permanent delete: in-use check, typed name, reason and acknowledgement.
+      guardedDelete: openShiftDelete,
       versions: VersionsConfig(
         spec: shiftVersionSpec(),
         noun: 'shift version',

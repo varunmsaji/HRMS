@@ -1,4 +1,5 @@
 import '../../../core/api/api_client.dart';
+import '../../employees/domain/employee_directory.dart';
 
 /// `GET /employees/{id}` — mirrors `EmployeeRead` (employee/schemas.py). Only
 /// the personal-record fields the mobile "My Profile" screen shows; the web
@@ -152,6 +153,24 @@ class EmployeeRepository {
       parseItem: (d) => Employee.fromJson(d as Map<String, dynamic>),
     );
     return (rows: env.data, hasNext: env.pagination?.hasNext ?? false);
+  }
+
+  /// Headline counts over every employee the caller may see (`EMPLOYEE.VIEW_ALL`).
+  Future<DirectorySummary> directorySummary() =>
+      _client.get('/employees/directory/summary', parse: (d) => DirectorySummary.fromJson(d as Map<String, dynamic>));
+
+  /// Job title, department, manager and shift for [ids], keyed by employee id. Sent in batches of
+  /// [directoryRowsChunk] (the endpoint's limit), never one request per employee.
+  Future<Map<String, DirectoryRow>> directoryRows(List<String> ids) async {
+    final chunks = [for (var i = 0; i < ids.length; i += directoryRowsChunk) ids.sublist(i, (i + directoryRowsChunk).clamp(0, ids.length))];
+    final pages = await Future.wait([
+      for (final chunk in chunks)
+        _client.get<List<DirectoryRow>>(
+          '/employees/directory/rows?${chunk.map((id) => 'ids=${Uri.encodeQueryComponent(id)}').join('&')}',
+          parse: (d) => [for (final r in (d as List)) DirectoryRow.fromJson(r as Map<String, dynamic>)],
+        ),
+    ]);
+    return {for (final rows in pages) for (final r in rows) r.employeeId: r};
   }
 
   Future<List<Employee>> listEmployees() =>

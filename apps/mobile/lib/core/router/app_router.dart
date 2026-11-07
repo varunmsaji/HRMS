@@ -47,6 +47,7 @@ import '../../features/payroll/presentation/my_payslips_screen.dart';
 import '../../features/payroll/presentation/pay_runs_screen.dart';
 import '../../features/payroll/presentation/statutory_rates_screen.dart';
 import '../../features/organisation/presentation/company_profile_screen.dart';
+import '../../features/organisation/presentation/work_calendar_setup_screen.dart';
 import '../../features/profile/presentation/profile_screen.dart';
 import '../../features/attendance/presentation/team_attendance_screen.dart';
 import '../../features/onboarding/presentation/public_onboarding_screen.dart';
@@ -150,6 +151,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/app/holiday-calendars', builder: (context, state) => ResourceListScreen(config: holidayCalendarResource)),
       GoRoute(path: '/app/weekly-off-patterns', builder: (context, state) => ResourceListScreen(config: weeklyOffPatternResource)),
       GoRoute(path: '/app/work-calendars', builder: (context, state) => ResourceListScreen(config: workCalendarResource)),
+      GoRoute(path: '/app/work-calendars/setup', builder: (context, state) => const WorkCalendarSetupScreen()),
       GoRoute(path: '/app/regularizations', builder: (context, state) => RequestListScreen(config: regularizationConfig, decisionCenter: const RegularizationDecisionCenterPanel())),
       GoRoute(path: '/app/overtime', builder: (context, state) => RequestListScreen(config: overtimeConfig)),
       GoRoute(path: '/app/team-attendance', builder: (context, state) => const TeamAttendanceScreen()),
