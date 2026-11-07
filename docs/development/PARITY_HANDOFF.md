@@ -1,10 +1,33 @@
 # Web / mobile parity: handoff
 
-Written 3 Nov 2026, updated 7 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 0.
+Written 3 Nov 2026, updated 8 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 0.
 
 Read first: [MOBILE_PARITY_PLAN.md](MOBILE_PARITY_PLAN.md) (the full plan and the parity matrix G1 to G14). This file records what is done, what is left, how to run things, and the traps.
 
-## 0. State on 7 Nov 2026 (read this before sections 2 and 5)
+## 0a. Audit on 8 Nov 2026 (newest; read first)
+
+A full comparison of the committed code of both apps: routes, every API endpoint each app calls, form field keys, user-facing labels, and the screens side by side.
+
+**At parity:** every web page has a mobile screen except the Settings guide and the platform console (`/platform/*`, web-only by design). Every endpoint web calls, mobile calls too. The policy, shift, organisation, employee and onboarding forms cover the same fields. Attendance insights, calendar change impact, manager-change impact, the attendance day fields and notifications match.
+
+**Closed on 8 Nov (mobile):**
+
+| Gap | Mobile now has | Main files (`apps/mobile/lib/features/attendance/`) |
+|---|---|---|
+| Corrections on the attendance day | Web's "Corrections" section: the requests raised for that day (tap to open) and "Request a correction" (own day with `REGULARIZATION_REQUEST`, anyone's with `_ON_BEHALF`; emphasised when the day has a missing punch, late, early out or is incomplete; hidden while one is open) | `presentation/attendance_day_detail_screen.dart` |
+| One employee's attendance (HR) | Web's attendance profile: today's status, shift, check-in/out, worked, punches; the month calendar with web's nine figures, attendance issues and regularization requests. Opened from the attendance calendar and from names in insights, as on web. The record tab's panel gained quick ranges (default "Last 7 days", as on web) and the range summary | `presentation/employee_attendance_profile_screen.dart`, `presentation/employee_attendance_panel.dart`, `domain/employee_attendance_summary.dart` |
+| Schedule coverage | Department and branch filters, web's four KPI cards with web's wording (rostered staff, coverage efficiency, night shift coverage, shift swap requests), the "What is schedule coverage?" note, and "No one is rostered for this week." | `presentation/weekly_schedule_screen.dart`, `domain/weekly_schedule.dart` |
+
+**Still open, mobile behind web:**
+- Company dashboard: "Today's Workforce Overview" (date, branch, department filters; late arrivals, not checked in), onboarding queues in pending approvals, quick actions, the month/year leave switch. Growth and the department table stay web-only on purpose (comment in `dashboard_screen.dart`).
+- Employee home: recent days, recent leave, requests waiting on HR, worked hours this week. The earlier Home redesign dropped some of these on purpose; ask the owner before adding them back.
+- Settings guide (`/app/settings/guide`): no mobile screen.
+
+**Wording drift (same fields, different labels):** about 70 labels on the leave, attendance, overtime, regularization and shift policy forms (e.g. web "Balance can go below zero", mobile "Allow a negative balance"); day detail "LOP fraction" / "Loss-of-pay fraction" and "OT classification" / "Overtime class"; statutory "Is a director" / "Director"; employee menu "Corrections" (web) / "Regularizations" (mobile); "Company Profile" / "Company". Web's "Companies" becomes "Legal Entities" in the Settings rework, matching mobile.
+
+**Waiting on the owner's uncommitted Settings rework:** "Who follows this" on mobile policies (needs the `policy_id` filter); web's new Settings module pages and regrouped menu, which mobile's More hub should follow; the web Shift swaps link in the employee menu.
+
+## 0. State on 7 Nov 2026
 
 A fresh comparison of both apps (routes, and the API endpoints each one calls) found mobile had a screen for nearly every web page but lacked features inside them. These were closed on 7 Nov, each ported from web's committed code with web's wording and rules:
 
