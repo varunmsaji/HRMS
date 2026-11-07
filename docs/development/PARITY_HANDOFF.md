@@ -23,7 +23,7 @@ Corrections to earlier notes: web has **no** attendance-report CSV (only employe
 Still open:
 - "Who follows this" on each policy (mobile): needs the `policy_id` filter on `GET /policy-assignments`, which is in the owner's uncommitted Settings rework.
 - Waiting on the same rework: web Shift swaps link in the employee menu (`nav-items.ts`), and mobile menu renames ("Correction Policies", "Rules by Group", "Check a Person's Rules").
-- Web is behind mobile: the employee record has no dependents, education, experience or identity sections.
+- Done 7 Nov: web's employee record now has Identity, Experience, Education and Dependents tabs (`components/employee/record-list-panel.tsx`, `identity-panel.tsx`, `lib/employee/record-sections.ts`).
 - Owner decision: web drops the middle name from employee names, mobile keeps it.
 - Never `dart format` whole files: the repo uses a long-line hand style and the formatter rewrites untouched code.
 
