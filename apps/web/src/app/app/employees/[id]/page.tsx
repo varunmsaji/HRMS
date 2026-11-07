@@ -16,6 +16,8 @@ import { EmployeeAvatar } from "@/components/employee/employee-identity";
 import { EmployeeOverview } from "@/components/employee/employee-overview";
 import { EmployeeStatusBadge } from "@/components/employee/employee-status-badge";
 import { EmploymentPanel } from "@/components/employee/employment-panel";
+import { IdentityPanel } from "@/components/employee/identity-panel";
+import { RecordListPanel } from "@/components/employee/record-list-panel";
 import { StatutoryPanel } from "@/components/employee/statutory-panel";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
@@ -43,6 +45,7 @@ import {
   type EmployeeFormErrors,
   type EmployeeFormValues,
 } from "@/lib/employee/validate-employee";
+import { DEPENDENTS_SECTION, EDUCATION_SECTION, EXPERIENCE_SECTION } from "@/lib/employee/record-sections";
 import { cn } from "@/lib/utils";
 
 type TabKey =
@@ -53,6 +56,10 @@ type TabKey =
   | "salary"
   | "statutory"
   | "banking"
+  | "identity"
+  | "experience"
+  | "education"
+  | "dependents"
   | "documents"
   | "attendance";
 
@@ -64,6 +71,10 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "salary", label: "Salary" },
   { key: "statutory", label: "Statutory" },
   { key: "banking", label: "Banking" },
+  { key: "identity", label: "Identity" },
+  { key: "experience", label: "Experience" },
+  { key: "education", label: "Education" },
+  { key: "dependents", label: "Dependents" },
   { key: "documents", label: "Documents" },
   { key: "attendance", label: "Attendance" },
 ];
@@ -491,6 +502,10 @@ export default function EmployeeDetailPage() {
           {tab === "salary" ? <SalaryPanel employeeId={employee.id} /> : null}
           {tab === "statutory" ? <StatutoryPanel employeeId={employee.id} /> : null}
           {tab === "banking" ? <BankingPanel employeeId={employee.id} /> : null}
+          {tab === "identity" ? <IdentityPanel employeeId={employee.id} /> : null}
+          {tab === "experience" ? <RecordListPanel employeeId={employee.id} section={EXPERIENCE_SECTION} /> : null}
+          {tab === "education" ? <RecordListPanel employeeId={employee.id} section={EDUCATION_SECTION} /> : null}
+          {tab === "dependents" ? <RecordListPanel employeeId={employee.id} section={DEPENDENTS_SECTION} /> : null}
           {tab === "documents" ? <DocumentPanel employeeId={employee.id} /> : null}
           {tab === "attendance" ? (
             <EmployeeAttendancePanel
