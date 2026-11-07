@@ -15,6 +15,7 @@ import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { employeeFullName } from "@/lib/employee/names";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
 
@@ -57,7 +58,7 @@ function columnOf(r: ShiftRoster | undefined): string {
 }
 
 function fullName(e: EmployeeOption): string {
-  return [e.first_name, e.last_name].filter(Boolean).join(" ");
+  return employeeFullName(e);
 }
 
 /** Shift board: one column per shift for a single date. Drag an employee card between columns to

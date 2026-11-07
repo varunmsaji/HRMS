@@ -5,20 +5,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAbortError, useLatestRequest } from "@/hooks/use-latest-request";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
+import { employeeFullName } from "@/lib/employee/names";
 
 /** The few `Employee` fields a picker or a name column needs. */
 export interface EmployeeOption {
   id: string;
   first_name: string;
+  middle_name?: string | null;
   last_name: string | null;
   employee_code: string | null;
   display_name?: string | null;
 }
 
 export function employeeOptionName(employee: EmployeeOption): string {
-  const name =
-    employee.display_name?.trim() ||
-    [employee.first_name, employee.last_name].filter(Boolean).join(" ");
+  const name = employeeFullName(employee);
   return employee.employee_code ? `${name} (${employee.employee_code})` : name;
 }
 

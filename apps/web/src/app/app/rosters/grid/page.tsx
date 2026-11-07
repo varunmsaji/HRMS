@@ -23,6 +23,7 @@ import type { PaginationMeta } from "@/lib/api/types";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { employeeFullName } from "@/lib/employee/names";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
 import { buildCoverage } from "@/lib/shift-roster/coverage";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
@@ -102,7 +103,7 @@ function cellLabel(roster: ShiftRoster, shifts: Map<string, ShiftOption>): strin
 }
 
 function employeeLabel(e: EmployeeOption): string {
-  return [e.first_name, e.last_name].filter(Boolean).join(" ");
+  return employeeFullName(e);
 }
 
 interface RosterRange {
@@ -236,7 +237,7 @@ export default function RosterGridPage() {
     return (employees ?? []).filter((e) => {
       if (onlyRostered && !rosteredIds.has(e.id)) return false;
       if (!q) return true;
-      return `${e.first_name} ${e.last_name ?? ""} ${e.employee_code ?? ""}`.toLowerCase().includes(q);
+      return `${employeeFullName(e)} ${e.employee_code ?? ""}`.toLowerCase().includes(q);
     });
   }, [employees, rosteredIds, search, onlyRostered]);
 
