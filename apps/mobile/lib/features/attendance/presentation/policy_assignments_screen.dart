@@ -10,12 +10,15 @@ import '../../../core/providers.dart';
 import '../../shell/more_action.dart';
 import '../data/assignment_lookup.dart';
 import '../domain/policy_assignment_form.dart';
+import 'set_policies_panel.dart';
 import '../../../core/widgets/ui.dart';
 
 typedef Rec = Map<String, dynamic>;
 
-/// Policy assignments — mirrors `apps/web/src/app/app/policy-assignments/page.tsx`: which
-/// calendar, weekly-off pattern or policy applies to which scope, and from when. There is no edit:
+/// Policy assignments — mirrors `apps/web/src/app/app/policy-assignments/page.tsx`, with web's
+/// tabs: "Set policies" (one group, every policy type at once — [SetPoliciesPanel]) and "All
+/// assignments": which calendar, weekly-off pattern or policy applies to which scope, and from
+/// when. Web's third tab, "Check an employee", is the Policy Resolution screen here. There is no edit:
 /// assigning a new one for the same kind and scope closes the open one the day before (the open
 /// assignment's version is sent as `If-Match`, which the server requires in that case). Tapping a
 /// current group-level assignment ends it so the group falls back to the wider one.
@@ -26,7 +29,8 @@ class PolicyAssignmentsScreen extends ConsumerStatefulWidget {
   ConsumerState<PolicyAssignmentsScreen> createState() => _PolicyAssignmentsScreenState();
 }
 
-class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScreen> {
+class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScreen> with SingleTickerProviderStateMixin {
+  late final TabController _tabs = TabController(length: 2, vsync: this)..addListener(() => setState(() {}));
   bool _loading = true;
   bool _loadingMore = false;
   ApiError? _error;
@@ -48,6 +52,12 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
     super.initState();
     _loadNames();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
   }
 
   Future<void> _loadNames() async {
@@ -125,43 +135,10 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
     }
   }
 
-  String _isoDate(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
-  /// Ends a current override: from the day after the chosen last day, its scope follows the next
-  /// wider assignment again. The server needs the open row's version as `If-Match`.
+  /// Ends a current override so its group follows the next wider assignment again.
   Future<void> _end(Rec a) async {
-    final start = DateTime.tryParse('${a['effective_from']}') ?? DateTime.now();
-    final now = DateTime.now();
-    final initial = now.isAfter(start) ? now : start;
-    final picked = await showDatePicker(
-      context: context,
-      helpText: 'Last day of this assignment',
-      initialDate: initial,
-      firstDate: start,
-      lastDate: DateTime(2100),
-    );
-    if (picked == null || !mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('End this assignment?'),
-        content: Text('After ${_isoDate(picked)}, this group follows the next wider assignment, ending at the company-wide one.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('End assignment')),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await _client.post<Object?>('/policy-assignments/${a['id']}/end', body: {'effective_to': _isoDate(picked)}, ifMatch: a['version']?.toString(), parse: (_) => null);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Assignment ended.')));
-      _load();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Could not end the assignment.')));
-    }
+    final ended = await endPolicyAssignment(context, _client, id: '${a['id']}', version: a['version'], effectiveFrom: '${a['effective_from']}');
+    if (ended && mounted) _load();
   }
 
   String _name(String source, String? id) => id == null ? '' : (_names[source]?[id] ?? id);
@@ -169,9 +146,21 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Policy Assignments'), actions: const [MoreAction()]),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('New assignment')),
-      body: Column(children: [
+      appBar: AppBar(
+        title: const Text('Policy Assignments'),
+        actions: const [MoreAction()],
+        bottom: TabBar(controller: _tabs, tabs: const [Tab(text: 'Set policies'), Tab(text: 'All assignments')]),
+      ),
+      floatingActionButton: _tabs.index == 1 ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('New assignment')) : null,
+      body: TabBarView(controller: _tabs, children: [
+        const SetPoliciesPanel(),
+        _allAssignments(),
+      ]),
+    );
+  }
+
+  Widget _allAssignments() {
+    return Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: DropdownButtonFormField<String>(
@@ -218,7 +207,6 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
                       ),
                     ),
         ),
-      ]),
-    );
+      ]);
   }
 }
