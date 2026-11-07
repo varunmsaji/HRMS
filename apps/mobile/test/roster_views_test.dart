@@ -41,7 +41,7 @@ FakeApiClient _api({List<Map<String, dynamic>> entries = const [], Map<String, O
       failing: failing,
     );
 
-Future<void> _pump(WidgetTester tester, ApiClient api, Widget child, {List<String> permissions = const [attendanceRosterManage, employeeViewAll], Size size = const Size(390, 2400), double scale = 1}) async {
+Future<void> _pump(WidgetTester tester, ApiClient api, Widget child, {List<String> permissions = const [attendanceRosterManage, attendanceView, employeeViewAll, orgShiftManage], Size size = const Size(390, 2400), double scale = 1}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -200,12 +200,19 @@ void main() {
 
     testWidgets('someone without roster permission can look but not move', (tester) async {
       final api = _api();
-      await _pump(tester, api, screen(), permissions: const [attendanceViewAll, employeeViewAll]);
+      await _pump(tester, api, screen(), permissions: const [attendanceViewAll, attendanceView, employeeViewAll, orgShiftManage]);
       await tester.tap(find.text('Person 1'));
       await tester.pumpAndSettle();
       expect(find.text('Move Person 1 to'), findsNothing);
       expect(find.text('Copy to next day'), findsNothing);
       expect(api.calls, isEmpty);
+    });
+
+    testWidgets('without the shift list grant it says so and asks for nothing', (tester) async {
+      final api = _api();
+      await _pump(tester, api, screen(), permissions: const [attendanceRosterManage, attendanceView, employeeViewAll]);
+      expect(find.text('No access'), findsOneWidget);
+      expect(api.listCalls, isEmpty);
     });
 
     testWidgets('a failed move says so and reloads', (tester) async {
@@ -318,11 +325,18 @@ void main() {
     });
 
     testWidgets('without roster permission cells are read-only', (tester) async {
-      await _pump(tester, _api(entries: [_entry('r-1', 'e-1', date: '2026-11-02')]), screen(), permissions: const [attendanceViewAll, employeeViewAll]);
+      await _pump(tester, _api(entries: [_entry('r-1', 'e-1', date: '2026-11-02')]), screen(), permissions: const [attendanceViewAll, attendanceView, employeeViewAll, orgShiftManage]);
       expect(find.text('+'), findsNothing);
       await tester.tap(find.text('GEN'));
       await tester.pumpAndSettle();
       expect(find.text('Edit roster entry'), findsNothing);
+    });
+
+    testWidgets('without the shift list grant it skips GET /shifts and still shows the grid', (tester) async {
+      final api = _api(entries: [_entry('r-1', 'e-1', date: '2026-11-02')]);
+      await _pump(tester, api, screen(), permissions: const [attendanceRosterManage, attendanceView, employeeViewAll]);
+      expect(api.listCalls.map((c) => c.path), isNot(contains('/shifts')));
+      expect(find.text('Person 1'), findsOneWidget);
     });
 
     testWidgets('no access is explained', (tester) async {

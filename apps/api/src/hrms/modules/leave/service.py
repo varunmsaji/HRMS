@@ -3829,6 +3829,11 @@ class LeaveApplicationService:
         )
         # Earlier cancellations from the same closed year count too: the cap applies to all of
         # the year's refunds together, less what those cancellations already lapsed or encashed.
+        # A refund made before the year-end run is in that sum as well, although the run already
+        # capped it (its CARRY_FORWARD/ENCASHMENT is not subtracted here). That only matters once
+        # the balance is over the cap, and then this refund lapses or is encashed in full anyway,
+        # so the `min(..., refunded)` bounds below absorb it
+        # (test_a_refund_before_year_end_runs_is_not_capped_again_after_it).
         (
             prior_refunded,
             prior_lapsed,

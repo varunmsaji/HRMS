@@ -60,6 +60,7 @@ import {
   type DayFlag,
 } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
+import { HR_CALENDAR_PERMISSIONS } from "@/lib/attendance/hr-calendar";
 import {
   breakdownBy,
   compareRates,
@@ -324,7 +325,7 @@ function AttendanceDashboard() {
   const actions =
     mode !== "self" ? (
       <div className="flex flex-wrap items-center gap-2">
-        {can("ATTENDANCE.VIEW_ALL") ? (
+        {HR_CALENDAR_PERMISSIONS.every((code) => can(code)) ? (
           <Button asChild variant="outline">
             <Link href="/app/attendance/calendar">Calendar view</Link>
           </Button>

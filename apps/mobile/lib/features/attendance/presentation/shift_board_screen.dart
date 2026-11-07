@@ -16,6 +16,10 @@ import '../domain/roster_views.dart';
 class ShiftBoardScreen extends ConsumerStatefulWidget {
   const ShiftBoardScreen({super.key, this.now});
 
+  /// The reads the board needs: rosters (ATTENDANCE.VIEW), employees (EMPLOYEE.VIEW_ALL) and the
+  /// shift list its columns come from (`GET /shifts` checks ORG.SHIFT.MANAGE).
+  static const requiredPermissions = [attendanceView, employeeViewAll, orgShiftManage];
+
   /// Overrides the clock (tests). Null = now.
   final DateTime? now;
 
@@ -39,12 +43,13 @@ class _ShiftBoardScreenState extends ConsumerState<ShiftBoardScreen> {
 
   RosterRepository get _repo => ref.read(rosterRepositoryProvider);
   bool get _canManage => (ref.read(authControllerProvider).user?.permissions ?? const []).contains(attendanceRosterManage);
+  bool get _allowed => ShiftBoardScreen.requiredPermissions.every((ref.read(authControllerProvider).user?.permissions ?? const <String>[]).contains);
 
   @override
   void initState() {
     super.initState();
     _date = businessToday(ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata', now: widget.now);
-    _load();
+    if (_allowed) _load();
   }
 
   String _describe(Object e) => e is ApiError ? (e.code == 'STALE_RESOURCE' ? 'This entry was changed by someone else. Try again.' : (e.status == 403 ? "You don't have permission to do that." : e.message)) : 'Something went wrong.';
@@ -185,6 +190,12 @@ class _ShiftBoardScreenState extends ConsumerState<ShiftBoardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_allowed) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Shift board')),
+        body: const StateMessage(icon: Icons.lock_outline_rounded, title: 'No access', message: 'The shift board needs access to rosters, the employee directory and the shift list.'),
+      );
+    }
     final canManage = _canManage;
     final scheme = Theme.of(context).colorScheme;
     final muted = TextStyle(fontSize: 12, color: scheme.onSurfaceVariant);
