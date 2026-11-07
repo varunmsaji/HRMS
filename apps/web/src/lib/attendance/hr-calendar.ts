@@ -12,6 +12,13 @@ export interface CalendarRow {
   late: number;
 }
 
+/**
+ * Who can open the HR calendar. It is an HR view (VIEW_ALL), and it loads `/attendance/days`
+ * (ATTENDANCE.VIEW) and `/employees` (EMPLOYEE.VIEW_ALL), so a role missing either read would see
+ * only an error.
+ */
+export const HR_CALENDAR_PERMISSIONS = ["ATTENDANCE.VIEW_ALL", "ATTENDANCE.VIEW", "EMPLOYEE.VIEW_ALL"] as const;
+
 /** First and last date of a YYYY-MM month, and every date in between. */
 export function monthDates(month: string): string[] {
   const first = `${month}-01`;

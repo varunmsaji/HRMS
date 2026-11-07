@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { apiClient } from "@/lib/api/client";
 import type { EmployeeLite } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
-import { buildHrCalendar, filterRows, monthDates, shiftMonth } from "@/lib/attendance/hr-calendar";
+import { HR_CALENDAR_PERMISSIONS, buildHrCalendar, filterRows, monthDates, shiftMonth } from "@/lib/attendance/hr-calendar";
 import type { AttendanceDay } from "@/lib/attendance/types";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -68,7 +68,7 @@ export default function AttendanceCalendarPage() {
   const [month, setMonth] = useState(today.slice(0, 7));
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
-  const allowed = can("ATTENDANCE.VIEW_ALL");
+  const allowed = HR_CALENDAR_PERMISSIONS.every((code) => can(code));
 
   const dates = useMemo(() => monthDates(month), [month]);
   const days = useSection(() => loadDays(dates[0], dates[dates.length - 1]), `cal|${month}`, allowed);
@@ -100,7 +100,7 @@ export default function AttendanceCalendarPage() {
       />
 
       {!allowed ? (
-        <ErrorState message="The attendance calendar is available to HR and people who can view everyone's attendance." />
+        <ErrorState message="The attendance calendar is available to people who can view everyone's attendance and the employee directory." />
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
