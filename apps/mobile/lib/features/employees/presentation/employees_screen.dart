@@ -16,6 +16,9 @@ import '../../profile/data/employee_repository.dart';
 import '../../profile/presentation/employee_overview.dart';
 import '../../profile/presentation/employee_record_sections.dart';
 import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
+import '../../../core/export/csv_export.dart';
+import '../../../core/widgets/dashboard_kit.dart';
+import '../domain/employee_directory.dart';
 import '../domain/employee_forms.dart';
 
 /// Employee directory — mirrors `apps/web/src/app/app/employees/page.tsx`.
@@ -33,14 +36,28 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
   bool _hasNext = false;
   bool _loading = true;
   bool _loadingMore = false;
+  bool _exporting = false;
   ApiError? _error;
   int _page = 1;
   int _request = 0;
+
+  /// Headline counts; null until loaded (and stays null if the summary fails, as on web).
+  DirectorySummary? _summary;
+
+  /// Designation, department, manager and shift for the loaded rows, by employee id.
+  final Map<String, DirectoryRow> _details = {};
+
+  /// Web's two dropdowns: employment status, and active/inactive record state.
+  String? _status;
+  RecordState _state = RecordState.all;
+
+  EmployeeRepository get _repo => ref.read(employeeRepositoryProvider);
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadSummary();
   }
 
   @override
@@ -48,6 +65,29 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     _debounce?.cancel();
     _search.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadSummary() async {
+    try {
+      final summary = await _repo.directorySummary();
+      if (mounted) setState(() => _summary = summary);
+    } catch (_) {
+      // The cards are extra context; the directory works without them (as on web).
+    }
+  }
+
+  /// Fetches directory details for [rows] not already known. A failure leaves the subtitle at the
+  /// employee code, as web leaves those cells blank.
+  Future<void> _loadDetails(List<Employee> rows) async {
+    final missing = [
+      for (final e in rows)
+        if (!_details.containsKey(e.id)) e.id,
+    ];
+    if (missing.isEmpty) return;
+    try {
+      final found = await _repo.directoryRows(missing);
+      if (mounted) setState(() => _details.addAll(found));
+    } catch (_) {}
   }
 
   /// Loads page 1 for the current search; a slower, older answer never overwrites a newer one.
@@ -58,13 +98,14 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
       _error = null;
     });
     try {
-      final page = await ref.read(employeeRepositoryProvider).listEmployeesPage(search: _search.text);
+      final page = await _repo.listEmployeesPage(search: _search.text);
       if (!mounted || mine != _request) return;
       setState(() {
         _items = page.rows;
         _hasNext = page.hasNext;
         _page = 1;
       });
+      unawaited(_loadDetails(page.rows));
     } catch (e) {
       if (!mounted || mine != _request) return;
       setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
@@ -78,13 +119,14 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     final mine = _request;
     setState(() => _loadingMore = true);
     try {
-      final page = await ref.read(employeeRepositoryProvider).listEmployeesPage(search: _search.text, page: _page + 1);
+      final page = await _repo.listEmployeesPage(search: _search.text, page: _page + 1);
       if (!mounted || mine != _request) return;
       setState(() {
         _items = [..._items, ...page.rows];
         _hasNext = page.hasNext;
         _page += 1;
       });
+      unawaited(_loadDetails(page.rows));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is ApiError ? e.message : 'Something went wrong.')));
     } finally {
@@ -97,24 +139,119 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     _debounce = Timer(const Duration(milliseconds: 350), _load);
   }
 
+  List<Employee> get _shown => filterEmployees(_items, status: _status, state: _state);
+
+  bool get _filtered => _status != null || _state != RecordState.all;
+
+  /// Shares the rows on screen as `employees.csv`, with web's columns.
+  Future<void> _export() async {
+    final rows = _shown;
+    setState(() => _exporting = true);
+    try {
+      await _loadDetails(rows);
+      await ref.read(csvSharerProvider)('employees.csv', employeesCsv(rows, _details));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not export the list. Try again.')));
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
   Future<void> _create() async {
-    final repo = ref.read(employeeRepositoryProvider);
+    final repo = _repo;
     final saved = await openSpecForm(
       context,
       title: 'New employee',
       spec: employeeSpec,
-      onSubmit: (payload, _) async => repo.createEmployee({
-        for (final e in payload.entries)
-          if (e.value != null) e.key: e.value,
-      }),
+      onSubmit:
+          (payload, _) async => repo.createEmployee({
+            for (final e in payload.entries)
+              if (e.value != null) e.key: e.value,
+          }),
     );
-    if (saved) _load();
+    if (saved) {
+      _load();
+      _loadSummary();
+    }
+  }
+
+  String _subtitle(Employee e) {
+    final d = _details[e.id];
+    return [e.employeeCode, d?.designation, d?.department].whereType<String>().where((p) => p.isNotEmpty).join(' · ');
+  }
+
+  Widget _header(BuildContext context) {
+    final statuses = {for (final e in _items) e.status}.where((s) => s.isNotEmpty).toList()..sort();
+    final summary = _summary;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (summary != null) ...[
+          _TilePairs(
+            tiles: [
+              StatTile(icon: Icons.groups_outlined, label: 'Total employees', value: '${summary.total}', hint: '${summary.active} active', accent: toneColors(context, Tone.accent).fg),
+              StatTile(icon: Icons.schedule_outlined, label: 'On probation', value: '${summary.onProbation}', accent: toneColors(context, Tone.warning).fg),
+              StatTile(icon: Icons.logout_rounded, label: 'On notice', value: '${summary.onNotice}', accent: toneColors(context, Tone.info).fg),
+              StatTile(
+                icon: Icons.account_tree_outlined,
+                label: 'Departments',
+                value: '${summary.departmentCount}',
+                hint: summary.departmentNames.isEmpty ? null : summary.departmentNames.join(', '),
+                accent: toneColors(context, Tone.neutral).fg,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+        ],
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            // As on web, the status filter appears only when the loaded rows have more than one status.
+            if (statuses.length > 1)
+              _FilterMenu<String?>(
+                semanticLabel: 'Filter by employment status',
+                value: _status,
+                options: {null: 'All statuses', for (final s in statuses) s: s.replaceAll('_', ' ')},
+                onChanged: (v) => setState(() => _status = v),
+              ),
+            _FilterMenu<RecordState>(
+              semanticLabel: 'Filter by record state',
+              value: _state,
+              options: const {RecordState.all: 'All states', RecordState.active: 'Active only', RecordState.inactive: 'Inactive only'},
+              onChanged: (v) => setState(() => _state = v),
+            ),
+            if (_filtered)
+              TextButton.icon(
+                onPressed:
+                    () => setState(() {
+                      _status = null;
+                      _state = RecordState.all;
+                    }),
+                icon: const Icon(Icons.close_rounded, size: 16),
+                label: const Text('Clear'),
+              ),
+          ],
+        ),
+        if (_filtered && _hasNext)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Filters apply to the ${_items.length} employees loaded so far.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+          ),
+        const SizedBox(height: 4),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final canCreate = (ref.watch(authControllerProvider).user?.permissions ?? const <String>[]).contains(employeeCreate);
     final searching = _search.text.trim().isNotEmpty;
+    final shown = _shown;
     Widget body;
     if (_loading && _items.isEmpty) {
       body = const ListSkeleton();
@@ -135,41 +272,120 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
         message: searching ? 'Nothing matches "${_search.text.trim()}".' : (canCreate ? 'Tap "New employee" to add the first one.' : null),
       );
     } else {
+      // Item 0 is the summary and filters; then the rows; then "Load more" when there is a next page.
+      final rowCount = shown.isEmpty ? 1 : shown.length;
       body = ListView.separated(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
-        itemCount: _items.length + (_hasNext ? 1 : 0),
+        itemCount: 1 + rowCount + (_hasNext ? 1 : 0),
         separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
-          if (index == _items.length) {
-            return Center(
-              child: _loadingMore ? const Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()) : TextButton(onPressed: _loadMore, child: const Text('Load more')),
-            );
+          if (index == 0) return _header(context);
+          if (index == rowCount + 1) {
+            return Center(child: _loadingMore ? const Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()) : TextButton(onPressed: _loadMore, child: const Text('Load more')));
           }
-          final employee = _items[index];
-          final name = employee.fullName.isEmpty ? employee.employeeCode : employee.fullName;
+          if (shown.isEmpty) {
+            return const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Text('No employees match these filters.', textAlign: TextAlign.center));
+          }
+          final employee = shown[index - 1];
+          final name = employeeDisplayName(employee);
           return ListRowCard(
             title: name,
-            subtitle: employee.employeeCode,
+            subtitle: _subtitle(employee),
             leading: InitialsAvatar(name: name),
             trailing: employee.isActive ? StatusChip.status(employee.status) : const StatusChip(label: 'Inactive'),
             onTap: () async {
               await Navigator.of(context).push(MaterialPageRoute(builder: (_) => EmployeeDetailScreen(employee: employee)));
               _load();
+              _loadSummary();
             },
           );
         },
       );
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('Employees')),
-      body: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-          child: AppSearchField(hint: 'Search name, code, email or mobile', controller: _search, onChanged: _onSearchChanged),
-        ),
-        Expanded(child: RefreshIndicator(onRefresh: _load, child: body)),
-      ]),
+      appBar: AppBar(
+        title: const Text('Employees'),
+        actions: [
+          if (_items.isNotEmpty && _error == null)
+            IconButton(
+              tooltip: 'Export CSV',
+              onPressed: _exporting || shown.isEmpty ? null : _export,
+              icon: _exporting ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.file_download_outlined),
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 10), child: AppSearchField(hint: 'Search name, code, email or mobile', controller: _search, onChanged: _onSearchChanged)),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await Future.wait([_load(), _loadSummary()]);
+              },
+              child: body,
+            ),
+          ),
+        ],
+      ),
       floatingActionButton: canCreate ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add_rounded), label: const Text('New employee')) : null,
+    );
+  }
+}
+
+/// [StatTile]s two to a row, without [StatGrid]'s page gutter (the list already has one).
+class _TilePairs extends StatelessWidget {
+  const _TilePairs({required this.tiles});
+  final List<StatTile> tiles;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      for (var i = 0; i < tiles.length; i += 2) ...[
+        if (i > 0) const SizedBox(height: 12),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [Expanded(child: tiles[i]), const SizedBox(width: 12), Expanded(child: i + 1 < tiles.length ? tiles[i + 1] : const SizedBox.shrink())],
+          ),
+        ),
+      ],
+    ],
+  );
+}
+
+/// A compact dropdown chip ("All statuses ▾") for one list filter.
+class _FilterMenu<T> extends StatelessWidget {
+  const _FilterMenu({required this.semanticLabel, required this.value, required this.options, required this.onChanged});
+
+  final String semanticLabel;
+  final T value;
+  final Map<T, String> options;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      label: semanticLabel,
+      button: true,
+      child: PopupMenuButton<T>(
+        tooltip: semanticLabel,
+        initialValue: value,
+        onSelected: onChanged,
+        itemBuilder: (_) => [for (final o in options.entries) PopupMenuItem<T>(value: o.key, child: Text(o.value))],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(20)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(options[value] ?? '', style: Theme.of(context).textTheme.labelLarge),
+              const SizedBox(width: 4),
+              Icon(Icons.arrow_drop_down_rounded, size: 20, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
