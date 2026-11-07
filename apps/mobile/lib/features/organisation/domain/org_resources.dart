@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart' show BuildContext, Column;
+import 'package:flutter/material.dart' show BuildContext, Column, Text, TextButton;
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/resource/resource_config.dart';
@@ -6,6 +6,9 @@ import '../../../core/resource/sub_resource_section.dart';
 import '../../../core/time.dart';
 import '../presentation/change_impact_screen.dart';
 import '../presentation/day_type_lookup.dart';
+import '../presentation/holiday_year_view.dart';
+import '../presentation/work_calendar_month_view.dart';
+import 'package:go_router/go_router.dart';
 
 /// Resource configs for the organisation module — each spec mirrors a `*Create`/`*Update` schema
 /// in `apps/api/.../organisation/schemas.py` and the matching web form.
@@ -152,7 +155,7 @@ Future<bool> _review(BuildContext context, String title, Map<String, dynamic> ch
 
 /// Adding, editing or removing a holiday changes what days mean for employees, so it is reviewed
 /// first, as on the web (`holiday-calendars/[id]/page.tsx`).
-SubResourceReview _holidayReview(String calendarId) => SubResourceReview(
+SubResourceReview holidayReview(String calendarId) => SubResourceReview(
       create: (context, payload) => _review(context, 'Add holiday', {'change_type': 'HOLIDAY_CREATE', 'holiday_calendar_id': calendarId, 'body': payload}),
       update: (context, row, changed) => _review(context, 'Save holiday', {'change_type': 'HOLIDAY_UPDATE', 'holiday_id': row['id'], 'expected_version': row['version'], 'patch': changed}),
       toggle: (context, row) => _review(context, row['is_active'] == false ? 'Restore holiday' : 'Delete holiday', {
@@ -186,17 +189,23 @@ final holidayCalendarResource = ResourceConfig(
   reviewEdit: (context, row, changed) async => changed.containsKey('valid_from') || changed.containsKey('valid_to')
       ? _review(context, 'Save holiday calendar', {'change_type': 'HOLIDAY_CALENDAR_UPDATE', 'holiday_calendar_id': row['id'], 'expected_version': row['version'], 'patch': changed})
       : null,
-  detailExtras: (context, row, reload) => SubResourceSection(
-    title: 'Holidays',
-    singular: 'holiday',
-    listPath: '/holiday-calendars/${row['id']}/holidays',
-    itemPath: (h) => '/holidays/${h['id']}',
-    spec: holidaySpec,
-    manage: orgHolidayManage,
-    rowTitle: (h) => '${h['date']} · ${h['name']}',
-    rowSubtitle: (h) => _join([holidayTypeLabels[h['holiday_type']] ?? h['holiday_type'], h['is_paid'] == true ? 'paid' : 'unpaid', h['is_working'] == true ? 'working' : null]),
-    emptyLabel: 'No holidays in this calendar yet.',
-    review: _holidayReview(row['id'] as String),
+  // Web's year view above the holiday list; the two refresh each other.
+  detailExtras: (context, row, reload) => HolidaysPanel(
+    calendarId: row['id'] as String,
+    section: (onChanged, key) => SubResourceSection(
+      key: key,
+      title: 'Holidays',
+      singular: 'holiday',
+      listPath: '/holiday-calendars/${row['id']}/holidays',
+      itemPath: (h) => '/holidays/${h['id']}',
+      spec: holidaySpec,
+      manage: orgHolidayManage,
+      rowTitle: (h) => '${h['date']} · ${h['name']}',
+      rowSubtitle: (h) => _join([holidayTypeLabels[h['holiday_type']] ?? h['holiday_type'], h['is_paid'] == true ? 'paid' : 'unpaid', h['is_working'] == true ? 'working' : null]),
+      emptyLabel: 'No holidays in this calendar yet.',
+      review: holidayReview(row['id'] as String),
+      onChanged: onChanged,
+    ),
   ),
 );
 
@@ -233,11 +242,23 @@ final workCalendarResource = ResourceConfig(
   rowTitle: (r) => r['name'] as String,
   rowSubtitle: (r) => r['code'] as String?,
   manage: orgCalendarManage,
+  // Web's "Guided setup" on the Work Calendars page (calendar managers only).
+  listActions: (context, rows, reload) => [
+    TextButton(
+      onPressed: () async {
+        await GoRouter.of(context).push('/app/work-calendars/setup');
+        reload();
+      },
+      child: const Text('Guided setup'),
+    ),
+  ],
   // These change what days mean for employees; a rename does not.
   reviewEdit: (context, row, changed) async => const ['holiday_calendar_ids', 'weekly_off_pattern_id', 'restricted_holidays_are_off_by_default'].any(changed.containsKey)
       ? _review(context, 'Save work calendar', {'change_type': 'WORK_CALENDAR_UPDATE', 'work_calendar_id': row['id'], 'expected_version': row['version'], 'patch': changed})
       : null,
   detailExtras: (context, row, reload) => Column(children: [
+    // Web's Calendar tab: the month of day types this calendar produces.
+    WorkCalendarMonthView(calendar: row),
     SubResourceSection(
       title: 'Exceptions',
       singular: 'exception',
