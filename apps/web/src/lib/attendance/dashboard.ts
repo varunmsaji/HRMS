@@ -8,6 +8,7 @@
 
 import type { DirectoryRow } from "@/lib/employee/directory";
 import type { AttendancePeriod, AttendancePeriodSummaryRow } from "@/lib/attendance-period/types";
+import { employeeFullName } from "@/lib/employee/names";
 import type { OvertimeRecord } from "@/lib/overtime/types";
 import type { RegularizationRequest } from "@/lib/regularization/types";
 
@@ -397,6 +398,7 @@ export function hasException(day: AttendanceDay): boolean {
 export interface EmployeeLite {
   id: string;
   first_name: string;
+  middle_name?: string | null;
   last_name: string | null;
   display_name?: string | null;
   employee_code: string | null;
@@ -432,8 +434,7 @@ export function isEmployedOn(employee: EmployeeLite, date: string): boolean {
 
 export function employeeName(employee: EmployeeLite | undefined, employeeId: string): string {
   if (!employee) return `Employee ${employeeId.slice(0, 8)}`;
-  const full = [employee.first_name, employee.last_name].filter(Boolean).join(" ");
-  return employee.display_name?.trim() || full || `Employee ${employeeId.slice(0, 8)}`;
+  return employeeFullName(employee) || `Employee ${employeeId.slice(0, 8)}`;
 }
 
 export function initials(name: string): string {

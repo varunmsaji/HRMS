@@ -10,6 +10,7 @@ import { LoadingState } from "@/components/common/loading-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
+import { employeeFullName } from "@/lib/employee/names";
 import type { Assignment, Employee, Employment } from "@/lib/employee/types";
 import type { Branch } from "@/lib/branch/types";
 import type { Department } from "@/lib/department/types";
@@ -148,8 +149,7 @@ export function EmployeeOverview({ employee }: { employee: Employee }) {
   function managerName(): string | null {
     if (!data?.manager) return null;
     return (
-      data.manager.display_name?.trim() ||
-      [data.manager.first_name, data.manager.last_name].filter(Boolean).join(" ") ||
+      employeeFullName(data.manager) ||
       data.manager.employee_code
     );
   }

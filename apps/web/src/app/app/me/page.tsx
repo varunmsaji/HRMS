@@ -20,6 +20,7 @@ import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { employeeFullName } from "@/lib/employee/names";
 import type { Employee } from "@/lib/employee/types";
 import { cn } from "@/lib/utils";
 
@@ -43,10 +44,7 @@ const TABS: Array<{ key: TabKey; label: string; permission?: string }> = [
 ];
 
 function employeeName(employee: Employee): string {
-  return (
-    employee.display_name?.trim() ||
-    [employee.first_name, employee.last_name].filter(Boolean).join(" ")
-  );
+  return employeeFullName(employee);
 }
 
 export default function MyProfilePage() {

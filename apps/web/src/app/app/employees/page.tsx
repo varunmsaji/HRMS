@@ -50,6 +50,7 @@ import {
   type DirectoryRow,
   type DirectorySummary,
 } from "@/lib/employee/directory";
+import { employeeFullName } from "@/lib/employee/names";
 import type { Employee } from "@/lib/employee/types";
 import {
   EMPTY_EMPLOYEE_FORM_VALUES,
@@ -60,10 +61,7 @@ import {
 } from "@/lib/employee/validate-employee";
 
 function employeeName(employee: Employee): string {
-  return (
-    employee.display_name?.trim() ||
-    [employee.first_name, employee.last_name].filter(Boolean).join(" ")
-  );
+  return employeeFullName(employee);
 }
 
 /** Stands in for a directory detail (designation, department…) that is still being fetched. */

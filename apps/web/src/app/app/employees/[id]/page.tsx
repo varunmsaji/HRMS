@@ -37,6 +37,7 @@ import {
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { employeeFullName } from "@/lib/employee/names";
 import type { Employee } from "@/lib/employee/types";
 import {
   buildUpdatePatch,
@@ -80,10 +81,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 ];
 
 function employeeName(employee: Employee): string {
-  return (
-    employee.display_name?.trim() ||
-    [employee.first_name, employee.last_name].filter(Boolean).join(" ")
-  );
+  return employeeFullName(employee);
 }
 
 export default function EmployeeDetailPage() {
