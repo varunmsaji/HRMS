@@ -142,6 +142,29 @@ Profile menu                           (My profile · My payslips · Preferences
 Helpdesk                               (ticket submission — icon-level entry; full module is Phase 2)
 ```
 
+### Settings as built (web, 2026-11)
+
+`/app/settings` shows one card per area, with that area's progress from the setup checklist. Each
+area has its own page at `/app/settings/<area>` that lists everything for it as numbered steps in
+setup order, so an admin never has to leave the area to finish it:
+
+| Area | Page | Steps |
+|---|---|---|
+| Company & structure | `/app/settings/organisation` | Company · People structure |
+| Attendance | `/app/settings/attendance` | When people work · Where people punch · Attendance rules · Who follows which rules · Closing the month |
+| Leave | `/app/settings/leave` | Leave types and rules · Who follows which rules |
+| Payroll | `/app/settings/payroll` | Pay setup |
+| Access & setup | `/app/settings/access` | Users · Setup checklist |
+
+"Who follows which rules" shows what the whole company follows today for that area's policies,
+with each policy linking to its own **Who follows this** tab. Every assignable policy (attendance,
+overtime, regularization, leave, work calendar, weekly-off pattern) has that tab, where the admin
+adds or ends the groups and people who follow it. **Rules by Group** (`/app/policy-assignments`)
+stays as the by-group view (everything one group follows, side by side) and **Check a Person's
+Rules** as the per-person check; both are linked from each area's "Who follows" step. Each card on
+an area page also shows a live status, e.g. "3 shifts" or "2 policies · 1 not assigned". The source of truth for the areas is
+`SETTINGS_MODULES` in `apps/web/src/components/layout/nav-items.ts`.
+
 ---
 
 ## 3. Why "People" and not "Employees"
