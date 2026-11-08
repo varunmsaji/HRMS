@@ -152,8 +152,8 @@ export default function DepartmentsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/organisation"
+        backLabel="Company & structure"
         title="Departments"
         description="Organisational units under your branches — Company → Branch → Department."
         actions={

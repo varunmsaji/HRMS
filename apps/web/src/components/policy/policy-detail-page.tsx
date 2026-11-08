@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -15,10 +14,12 @@ import type {
   PolicyKindConfig,
   PolicyVersionBase,
 } from "@/components/policy/policy-kind-config";
+import { PolicyFollowersPanel } from "@/components/policy-assignment/policy-followers-panel";
 import {
   PublishAssignDialog,
   type PublishChoice,
 } from "@/components/policy-assignment/publish-assign-dialog";
+import { TabBar } from "@/components/ui/tab-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,11 +48,12 @@ import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import { useLeaveTypes } from "@/lib/leave-type/use-leave-types";
-import { cn } from "@/lib/utils";
+import { useInitialTab } from "@/lib/use-initial-tab";
 
-type TabKey = "rules" | "history";
+type TabKey = "rules" | "followers" | "history";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "rules", label: "Rules" },
+  { key: "followers", label: "Who follows this" },
   { key: "history", label: "History" },
 ];
 
@@ -85,6 +87,7 @@ export function PolicyDetailPage<
   const leaveTypes = useLeaveTypes(Boolean(config.leaveTyped));
 
   const [tab, setTab] = useState<TabKey>("rules");
+  useInitialTab(TABS, setTab);
   const [policy, setPolicy] = useState<P | null>(null);
   const [versions, setVersions] = useState<V[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -291,7 +294,7 @@ export function PolicyDetailPage<
         } catch (err) {
           toast({
             title: "Published, but not assigned",
-            description: `${describeApiError(err)} Assign it from Policy Assignments.`,
+            description: `${describeApiError(err)} Assign it from the Who follows this tab.`,
             variant: "danger",
           });
           setPublishOpen(false);
@@ -422,25 +425,7 @@ export function PolicyDetailPage<
 
       {!loading && !error && policy ? (
         <>
-          <div className="flex gap-1 overflow-x-auto border-b border-border" role="tablist">
-            {TABS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={tab === item.key}
-                onClick={() => setTab(item.key)}
-                className={cn(
-                  "shrink-0 border-b-2 px-3.5 py-2.5 text-sm font-medium transition-colors duration-motion-instant focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  tab === item.key
-                    ? "border-primary text-primary"
-                    : "border-transparent text-foreground-secondary hover:border-border-strong hover:text-foreground",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+          <TabBar tabs={TABS} value={tab} onChange={setTab} label="Policy sections" />
 
           {tab === "rules" && editing && rules ? (
             <Card>
@@ -540,14 +525,15 @@ export function PolicyDetailPage<
                   )}
                   {current ? (
                     <p className="text-xs text-foreground-muted">
-                      See or change who follows this policy in{" "}
-                      <Link
-                        href="/app/policy-assignments"
+                      See or change who follows this policy on the{" "}
+                      <button
+                        type="button"
+                        onClick={() => setTab("followers")}
                         className="font-medium text-primary hover:underline"
                       >
-                        Policy Assignments
-                      </Link>
-                      .
+                        Who follows this
+                      </button>{" "}
+                      tab.
                     </p>
                   ) : null}
                 </CardContent>
@@ -565,6 +551,24 @@ export function PolicyDetailPage<
                 </Card>
               ) : null}
             </div>
+          ) : null}
+
+          {tab === "followers" ? (
+            <PolicyFollowersPanel
+              policyKind={config.kind}
+              policyId={policy.id}
+              policyName={policy.name}
+              leaveTypeId={config.leaveTyped ? (policy.leave_type_id ?? null) : null}
+              today={today}
+              canManage={canManage}
+              cannotAssignReason={
+                !policy.is_active
+                  ? "This policy is inactive, so nobody new can follow it. Reactivate it to assign it."
+                  : !current
+                    ? "Publish the rules first. A policy can be assigned once it has published rules."
+                    : null
+              }
+            />
           ) : null}
 
           {tab === "history" ? (

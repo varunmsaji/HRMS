@@ -229,8 +229,8 @@ export default function LeaveTypesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/leave"
+        backLabel="Leave"
         title="Leave Types"
         description="The kinds of leave employees can apply for — Casual, Earned, Sick, and any LOP-style type that doesn't consume a balance."
         actions={

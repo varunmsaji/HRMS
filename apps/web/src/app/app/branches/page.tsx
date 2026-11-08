@@ -192,8 +192,8 @@ export default function BranchesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/organisation"
+        backLabel="Company & structure"
         title="Branches"
         description="Physical work locations under your companies."
         actions={

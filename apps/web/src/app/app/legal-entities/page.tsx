@@ -125,9 +125,9 @@ export default function LegalEntitiesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
-        title="Companies"
+        backHref="/app/settings/organisation"
+        backLabel="Company & structure"
+        title="Legal Entities"
         description="The legally registered company that employs your workforce. Add your locations as branches under it."
         actions={
           entities && entities.length > 0 ? (

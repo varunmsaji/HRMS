@@ -125,94 +125,208 @@ export interface SettingsNavGroup {
   items: NavItem[];
 }
 
-/** Configuration/admin screens, reachable via the Settings hub (`/app/settings`) rather than the
- * primary sidebar. Grouping mirrors the categories on that hub page. */
-export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
+export type SettingsModuleSlug = "organisation" | "attendance" | "leave" | "payroll" | "access";
+
+/** Kinds of policy whose company-wide setting a module summarises (mirrors
+ * `lib/policy-assignment/types.ts` — kept as strings here so the nav has no API imports). */
+export type SettingsPolicyKind =
+  | "WORK_CALENDAR"
+  | "WEEKLY_OFF"
+  | "ATTENDANCE_POLICY"
+  | "OVERTIME_POLICY"
+  | "REGULARIZATION_POLICY"
+  | "LEAVE_POLICY";
+
+/** One area of Settings, e.g. Attendance, with everything it needs on one page. Sections are in
+ * the order an admin sets them up. */
+export interface SettingsModule {
+  slug: SettingsModuleSlug;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  sections: SettingsNavGroup[];
+  /** Codes from the setup checklist (`/companies/current/setup-checklist`) that belong here. */
+  checklistCodes: string[];
+  /** When set, the module page shows which of these policies the whole company follows, and
+   * where to change who follows what. */
+  followsKinds?: SettingsPolicyKind[];
+  /** The section the "who follows which rules" step comes after; the end when unset. */
+  followsAfter?: string;
+}
+
+export const SETTINGS_MODULES: SettingsModule[] = [
   {
-    label: "Company",
-    description: "Your company, its legal entities and offices.",
-    items: [
-      { href: "/app/company", label: "Company Profile", icon: Building2 },
-      { href: "/app/legal-entities", label: "Companies", icon: Landmark },
-      { href: "/app/branches", label: "Branches", icon: Building },
-      { href: "/app/attendance-geofences", label: "Workplace Geofences", icon: MapPin },
+    slug: "organisation",
+    label: "Company & structure",
+    description: "Your company, legal entities, offices, departments, job titles and grades.",
+    icon: Building2,
+    checklistCodes: ["BRANCH"],
+    sections: [
+      {
+        label: "Company",
+        description: "Your company, its legal entities and offices.",
+        items: [
+          { href: "/app/company", label: "Company Profile", icon: Building2 },
+          { href: "/app/legal-entities", label: "Legal Entities", icon: Landmark },
+          { href: "/app/branches", label: "Branches", icon: Building },
+        ],
+      },
+      {
+        label: "People structure",
+        description: "Departments, job titles and pay levels.",
+        items: [
+          { href: "/app/departments", label: "Departments", icon: Network },
+          { href: "/app/designations", label: "Designations", icon: Briefcase },
+          { href: "/app/grades", label: "Grades", icon: Layers },
+        ],
+      },
     ],
   },
   {
-    label: "People structure",
-    description: "Departments, job titles and pay levels.",
-    items: [
-      { href: "/app/departments", label: "Departments", icon: Network },
-      { href: "/app/designations", label: "Designations", icon: Briefcase },
-      { href: "/app/grades", label: "Grades", icon: Layers },
+    slug: "attendance",
+    label: "Attendance",
+    description:
+      "Where and when people work, the rules that judge each day, who follows them, and closing the month.",
+    icon: CalendarClock,
+    checklistCodes: ["SHIFT", "WORK_CALENDAR", "ATTENDANCE_POLICY", "REGULARIZATION_POLICY", "OVERTIME_POLICY"],
+    followsKinds: [
+      "WORK_CALENDAR",
+      "ATTENDANCE_POLICY",
+      "OVERTIME_POLICY",
+      "REGULARIZATION_POLICY",
+      "WEEKLY_OFF",
+    ],
+    followsAfter: "Attendance rules",
+    sections: [
+      {
+        label: "When people work",
+        description: "Working hours, working days, holidays and weekly offs.",
+        items: [
+          { href: "/app/shifts", label: "Shifts", icon: Clock },
+          { href: "/app/work-calendars", label: "Work Calendars", icon: CalendarRange },
+          { href: "/app/holiday-calendars", label: "Holiday Calendars", icon: CalendarDays },
+          { href: "/app/weekly-off-patterns", label: "Weekly-Off Patterns", icon: CalendarOff },
+        ],
+      },
+      {
+        label: "Where people punch",
+        description: "Approved workplaces for location checks. Office addresses are under Branches.",
+        items: [{ href: "/app/attendance-geofences", label: "Workplace Geofences", icon: MapPin }],
+      },
+      {
+        label: "Attendance rules",
+        description:
+          "How punches, overtime and corrections are judged and approved. Open a policy to choose who follows it.",
+        items: [
+          { href: "/app/attendance-policies", label: "Attendance Policies", icon: ClipboardList },
+          { href: "/app/overtime-policies", label: "Overtime Policies", icon: Timer },
+          { href: "/app/regularization-policies", label: "Correction Policies", icon: FileClock },
+        ],
+      },
+      {
+        label: "Closing the month",
+        description: "Lock a month once attendance is final, before payroll uses it.",
+        items: [{ href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock }],
+      },
     ],
   },
   {
-    label: "Working time",
-    description: "Shifts, working days, holidays and closing the month.",
-    items: [
-      { href: "/app/shifts", label: "Shifts", icon: Clock },
-      { href: "/app/work-calendars", label: "Work Calendars", icon: CalendarRange },
-      { href: "/app/holiday-calendars", label: "Holiday Calendars", icon: CalendarDays },
-      { href: "/app/weekly-off-patterns", label: "Weekly-Off Patterns", icon: CalendarOff },
-      { href: "/app/attendance-periods", label: "Attendance Periods", icon: Lock },
-    ],
-  },
-  {
-    label: "Attendance rules",
-    description: "How punches, overtime and corrections are judged and approved.",
-    items: [
-      { href: "/app/attendance-policies", label: "Attendance Policies", icon: ClipboardList },
-      { href: "/app/overtime-policies", label: "Overtime Policies", icon: Timer },
-      { href: "/app/regularization-policies", label: "Regularization Policies", icon: FileClock },
-    ],
-  },
-  {
+    slug: "leave",
     label: "Leave",
-    description: "Leave types and the rules for earning and using them.",
-    items: [
-      { href: "/app/leave-types", label: "Leave Types", icon: Tag },
-      { href: "/app/leave-policies", label: "Leave Policies", icon: ClipboardCheck },
-      { href: "/app/leave-year-setting", label: "Leave Year", icon: CalendarHeart, advanced: true },
+    description: "Leave types, the rules for earning and using them, and who follows which rules.",
+    icon: Palmtree,
+    checklistCodes: ["LEAVE_POLICY"],
+    followsKinds: ["LEAVE_POLICY"],
+    sections: [
       {
-        href: "/app/leave-combination-rules",
-        label: "Leave Combination Rules",
-        icon: GitMerge,
-        advanced: true,
-      },
-      {
-        href: "/app/statutory-leave-minimums",
-        label: "Statutory Minimums",
-        icon: Scale,
-        advanced: true,
+        label: "Leave types and rules",
+        description: "Each leave type has its own policy. Open a policy to choose who follows it.",
+        items: [
+          { href: "/app/leave-types", label: "Leave Types", icon: Tag },
+          { href: "/app/leave-policies", label: "Leave Policies", icon: ClipboardCheck },
+          { href: "/app/leave-year-setting", label: "Leave Year", icon: CalendarHeart, advanced: true },
+          {
+            href: "/app/leave-combination-rules",
+            label: "Leave Combination Rules",
+            icon: GitMerge,
+            advanced: true,
+          },
+          {
+            href: "/app/statutory-leave-minimums",
+            label: "Statutory Minimums",
+            icon: Scale,
+            advanced: true,
+          },
+        ],
       },
     ],
   },
   {
-    label: "Who follows what",
-    description: "Choose which rules each group follows, and check what applies to a person.",
-    items: [
-      { href: "/app/policy-assignments", label: "Policy Assignments", icon: Link2 },
-      { href: "/app/policy-resolution", label: "Policy Resolution", icon: Search },
-    ],
-  },
-  {
+    slug: "payroll",
     label: "Payroll",
     description: "Earnings and deduction components, salary structures, and statutory tax/PF/ESI rates.",
-    items: [
-      { href: "/app/payroll/salary-components", label: "Salary Components", icon: Coins },
-      { href: "/app/payroll/salary-structures", label: "Salary Structures", icon: LayoutList },
-      { href: "/app/payroll/statutory-rates", label: "Statutory Rates", icon: Landmark },
+    icon: Banknote,
+    checklistCodes: [],
+    sections: [
+      {
+        label: "Pay setup",
+        items: [
+          { href: "/app/payroll/salary-components", label: "Salary Components", icon: Coins },
+          { href: "/app/payroll/salary-structures", label: "Salary Structures", icon: LayoutList },
+          { href: "/app/payroll/statutory-rates", label: "Statutory Rates", icon: Landmark },
+        ],
+      },
     ],
   },
   {
-    label: "Administration",
-    description: "Setup progress and user account access.",
-    items: [
-      { href: "/app/setup", label: "Setup", icon: ListChecks },
-      { href: "/app/users", label: "Users", icon: UserCog },
+    slug: "access",
+    label: "Access & setup",
+    description: "User accounts and roles, and the setup checklist.",
+    icon: UserCog,
+    checklistCodes: [],
+    sections: [
+      {
+        label: "Access & setup",
+        items: [
+          { href: "/app/users", label: "Users", icon: UserCog },
+          { href: "/app/setup", label: "Setup", icon: ListChecks },
+        ],
+      },
     ],
   },
 ];
 
+/** Screens shared by several modules: each module with `followsKinds` links to them. */
+export const SETTINGS_SHARED_GROUP: SettingsNavGroup = {
+  label: "Who follows what",
+  description: "Choose which rules each group follows, and check what applies to a person.",
+  items: [
+    { href: "/app/policy-assignments", label: "Rules by Group", icon: Link2 },
+    { href: "/app/policy-resolution", label: "Check a Person's Rules", icon: Search },
+  ],
+};
+
+export function settingsModuleHref(slug: SettingsModuleSlug): string {
+  return `/app/settings/${slug}`;
+}
+
+/** Every Settings screen, grouped by module section; used by search, breadcrumbs and the
+ * sidebar. */
+export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
+  ...SETTINGS_MODULES.flatMap((area) => area.sections),
+  SETTINGS_SHARED_GROUP,
+];
+
 export const SETTINGS_ITEMS: NavItem[] = SETTINGS_NAV_GROUPS.flatMap((group) => group.items);
+
+/** The module a Settings screen belongs to, by its path (including detail pages under it). */
+export function settingsModuleFor(pathname: string): SettingsModule | null {
+  for (const area of SETTINGS_MODULES) {
+    for (const section of area.sections) {
+      for (const item of section.items) {
+        if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return area;
+      }
+    }
+  }
+  return null;
+}

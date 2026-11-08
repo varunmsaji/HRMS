@@ -59,8 +59,8 @@ export default function CompanySetupPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/access"
+        backLabel="Access & setup"
         title="Company setup"
         description="What is left to set up, and where to do it."
         actions={

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -8,6 +7,7 @@ import { WeeklyOffPatternForm } from "@/components/weekly-off-pattern/weekly-off
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PolicyFollowersPanel } from "@/components/policy-assignment/policy-followers-panel";
 import { useToast } from "@/components/common/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,8 @@ import { ChangeImpactDialog } from "@/components/work-calendar/change-impact-dia
 import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError } from "@/lib/api/errors";
+import { businessToday } from "@/lib/attendance/format";
+import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
 import { WEEKDAY_LABELS } from "@/lib/weekly-off-pattern/types";
@@ -47,6 +49,8 @@ export default function WeeklyOffPatternDetailPage() {
   } | null>(null);
 
   const canManage = can("ORG.CALENDAR.MANAGE");
+  const { user } = useAuth();
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
 
   const [pattern, setPattern] = useState<WeeklyOffPattern | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,16 +181,9 @@ export default function WeeklyOffPatternDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/app/weekly-off-patterns"
-          className="text-sm text-foreground-secondary hover:underline"
-        >
-          ← Weekly-Off Patterns
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/weekly-off-patterns"
+        backLabel="Weekly-Off Patterns"
         title={pattern?.name ?? "Weekly-Off Pattern"}
         description="Typed weekly-off rules for this pattern."
         actions={
@@ -288,6 +285,31 @@ export default function WeeklyOffPatternDetailPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {pattern ? (
+        <section aria-labelledby="weekly-off-followers-title" className="space-y-3">
+          <div>
+            <h2 id="weekly-off-followers-title" className="text-md font-semibold text-foreground">
+              Who follows this
+            </h2>
+            <p className="mt-0.5 text-sm text-foreground-secondary">
+              Groups given this pattern directly. A work calendar can also include it.
+            </p>
+          </div>
+          <PolicyFollowersPanel
+            policyKind="WEEKLY_OFF"
+            policyId={pattern.id}
+            policyName={pattern.name}
+            today={today}
+            canManage={canManage}
+            cannotAssignReason={
+              pattern.is_active
+                ? null
+                : "This pattern is inactive, so nobody new can follow it. Reactivate it to assign it."
+            }
+          />
+        </section>
+      ) : null}
 
       <Dialog
         open={confirmOpen}

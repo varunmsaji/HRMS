@@ -80,9 +80,10 @@ async def test_sweep_does_not_hold_other_employees_locks(
     client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     headers, company_id, user_id = await _register_tenant(client)
+    real = AttendanceDayService.calculate
+    sweep: asyncio.Task[int] | None = None
     try:
         first, second = await _two_employees(client, headers)
-        real = AttendanceDayService.calculate
         second_started = asyncio.Event()
         slow_seconds = 2.5
 
@@ -142,6 +143,11 @@ async def test_sweep_does_not_hold_other_employees_locks(
         assert calculated == 2 * attendance_tasks.TRAILING_DAYS
     finally:
         monkeypatch.setattr(AttendanceDayService, "calculate", real)
+        # If an assertion above failed, the sweep is still writing attendance days. Let it finish
+        # before deleting the company, or the cleanup hits a foreign-key error, leaves rows behind,
+        # and later tests that count rows fail too.
+        if sweep is not None:
+            await asyncio.gather(sweep, return_exceptions=True)
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
 

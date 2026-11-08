@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -15,6 +14,7 @@ import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
+import { TabBar } from "@/components/ui/tab-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -536,16 +536,9 @@ export default function ShiftDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/app/shifts"
-          className="text-sm text-foreground-secondary hover:underline"
-        >
-          ← Shifts
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/shifts"
+        backLabel="Shifts"
         title={shift?.name ?? "Shift"}
         description="Edit the name and the whole schedule together, then save and publish in one go. Drafts and past versions are on the Versions tab."
         actions={
@@ -602,27 +595,7 @@ export default function ShiftDetailPage() {
 
       {!loading && !error && shift ? (
         <>
-          <div
-            className="flex gap-1 overflow-x-auto border-b border-border"
-            role="tablist"
-          >
-            {TABS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={tab === item.key}
-                onClick={() => setTab(item.key)}
-                className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-                  tab === item.key
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-foreground-muted hover:text-foreground"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+          <TabBar tabs={TABS} value={tab} onChange={setTab} label="Shift sections" />
 
           {tab === "overview" ? (
             <Card>

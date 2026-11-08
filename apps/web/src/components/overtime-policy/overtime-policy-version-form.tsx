@@ -1,3 +1,4 @@
+import { AdvancedSettings } from "@/components/policy/advanced-settings";
 import { FormField } from "@/components/common/form-field";
 import { OvertimePolicyRateRowsEditor } from "@/components/overtime-policy/overtime-policy-rate-rows-editor";
 import { PolicyCheckbox } from "@/components/policy/policy-checkbox";
@@ -18,6 +19,7 @@ import type {
   OvertimePolicyVersionFormErrors,
   OvertimePolicyVersionFormValues,
 } from "@/lib/overtime-policy/validate-overtime-policy";
+import { EMPTY_OVERTIME_POLICY_VERSION_FORM_VALUES } from "@/lib/overtime-policy/validate-overtime-policy";
 import { APPROVAL_CHAIN_LABELS } from "@/lib/policy/approval-labels";
 
 interface OvertimePolicyVersionFormProps {
@@ -189,13 +191,19 @@ export function OvertimePolicyVersionForm({
         </div>
       </section>
 
-      <details
-        open={Boolean(errors.nightWindow || errors.rateRows) || undefined}
-        className="rounded-md border border-border"
+      <AdvancedSettings
+        values={values}
+        defaults={EMPTY_OVERTIME_POLICY_VERSION_FORM_VALUES}
+        fields={[
+          "roundingMode",
+          "roundingMinutes",
+          "nightOtMode",
+          "nightWindowStart",
+          "nightWindowEnd",
+          "rateRows",
+        ]}
+        hasError={Boolean(errors.nightWindow || errors.rateRows)}
       >
-        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
-          Advanced settings
-        </summary>
         <div className="space-y-6 border-t border-border p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField id="ot-rounding-mode" label="Round overtime">
@@ -265,7 +273,7 @@ export function OvertimePolicyVersionForm({
             onChange={(rows) => update("rateRows", rows)}
           />
         </div>
-      </details>
+      </AdvancedSettings>
     </div>
   );
 }

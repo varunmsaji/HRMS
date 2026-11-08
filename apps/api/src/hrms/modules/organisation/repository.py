@@ -1681,6 +1681,7 @@ class PolicyAssignmentRepository:
         scope_id: UUID | None,
         leave_type_id: UUID | None = None,
         current_only: bool = False,
+        policy_id: UUID | None = None,
     ) -> list[Any]:
         conditions = [
             PolicyAssignment.company_id == company_id,
@@ -1694,6 +1695,8 @@ class PolicyAssignmentRepository:
             conditions.append(PolicyAssignment.scope_id == scope_id)
         if leave_type_id is not None:
             conditions.append(PolicyAssignment.leave_type_id == leave_type_id)
+        if policy_id is not None:
+            conditions.append(PolicyAssignment.policy_id == policy_id)
         if current_only:
             conditions.append(PolicyAssignment.effective_to.is_(None))
         return conditions
@@ -1708,6 +1711,7 @@ class PolicyAssignmentRepository:
         scope_id: UUID | None = None,
         leave_type_id: UUID | None = None,
         current_only: bool = False,
+        policy_id: UUID | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> list[PolicyAssignment]:
@@ -1718,6 +1722,7 @@ class PolicyAssignmentRepository:
             scope_id=scope_id,
             leave_type_id=leave_type_id,
             current_only=current_only,
+            policy_id=policy_id,
         )
         # `id` is a stable secondary key — `effective_from` (a plain `Date`) ties constantly
         # across assignments created the same day, which would make page boundaries
@@ -1741,6 +1746,7 @@ class PolicyAssignmentRepository:
         scope_id: UUID | None = None,
         leave_type_id: UUID | None = None,
         current_only: bool = False,
+        policy_id: UUID | None = None,
     ) -> int:
         """Same predicates as `list_assignments`, no `ORDER BY`/`LIMIT` — the paired COUNT query
         for `GET /policy-assignments`'s `pagination.total` (API-01 §6)."""
@@ -1751,6 +1757,7 @@ class PolicyAssignmentRepository:
             scope_id=scope_id,
             leave_type_id=leave_type_id,
             current_only=current_only,
+            policy_id=policy_id,
         )
         stmt = select(func.count()).select_from(PolicyAssignment).where(*conditions)
         return int((await session.execute(stmt)).scalar_one())

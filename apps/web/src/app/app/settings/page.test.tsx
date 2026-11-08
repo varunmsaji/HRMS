@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -35,21 +35,18 @@ function checklist(complete: string[]) {
 describe("Settings page", () => {
   afterEach(() => mockedGet.mockReset());
 
-  it("groups settings by task, with leave extras tucked away", async () => {
-    mockedGet.mockResolvedValue(checklist(["SHIFT", "WORK_CALENDAR", "ATTENDANCE_POLICY"]) as never);
-    const user = userEvent.setup();
+  it("shows one card per area, each with its setup progress", async () => {
+    mockedGet.mockResolvedValue(checklist(["SHIFT", "WORK_CALENDAR"]) as never);
     render(<SettingsPage />);
 
-    for (const heading of ["Company", "Working time", "Attendance rules", "Who follows what"]) {
-      expect(screen.getByRole("heading", { name: heading, level: 2 })).toBeInTheDocument();
+    const attendance = screen.getByRole("link", { name: /^Attendance/ });
+    expect(attendance).toHaveAttribute("href", "/app/settings/attendance");
+    expect(await within(attendance).findByText("2 of 4 setup steps done")).toBeInTheDocument();
+    for (const name of [/^Company & structure/, /^Leave/, /^Payroll/, /^Access & setup/]) {
+      expect(screen.getByRole("link", { name })).toBeInTheDocument();
     }
-    const leave = screen.getByRole("heading", { name: "Leave", level: 2 }).closest("section")!;
-    expect(within(leave).getByText("Leave Policies")).toBeInTheDocument();
-    expect(within(leave).queryByText("Leave Year")).toBeNull();
-
-    await user.click(within(leave).getByRole("button", { name: "Show 3 more" }));
-    expect(within(leave).getByText("Leave Year")).toBeInTheDocument();
-    expect(within(leave).getByText("Statutory Minimums")).toBeInTheDocument();
+    // Rarely needed screens aren't named on the card.
+    expect(screen.getByRole("link", { name: /^Leave/ })).not.toHaveTextContent("Leave Year");
   });
 
   it("finds a tucked-away setting by searching", async () => {
@@ -74,13 +71,14 @@ describe("Settings page", () => {
   it("stays quiet once the essentials are done, and when the checklist is unavailable", async () => {
     mockedGet.mockResolvedValue(checklist(["SHIFT", "WORK_CALENDAR", "ATTENDANCE_POLICY"]) as never);
     const { unmount } = render(<SettingsPage />);
-    await screen.findByRole("heading", { name: "Company", level: 2 });
+    await screen.findByText("3 of 4 setup steps done");
     expect(screen.queryByText(/essentials done/)).toBeNull();
     unmount();
 
     mockedGet.mockRejectedValue(new Error("403"));
     render(<SettingsPage />);
-    await screen.findByRole("heading", { name: "Company", level: 2 });
+    await waitFor(() => expect(mockedGet).toHaveBeenCalled());
+    expect(screen.getByRole("link", { name: /^Attendance/ })).toBeInTheDocument();
     expect(screen.queryByText(/essentials done/)).toBeNull();
   });
 });

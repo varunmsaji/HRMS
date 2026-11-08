@@ -132,8 +132,8 @@ export default function WorkCalendarsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/attendance"
+        backLabel="Attendance"
         title="Work Calendars"
         description="Composes holiday calendars, a weekly-off pattern, and dated exceptions into what kind of day it is."
         actions={

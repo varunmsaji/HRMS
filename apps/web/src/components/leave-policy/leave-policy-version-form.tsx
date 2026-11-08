@@ -1,3 +1,4 @@
+import { AdvancedSettings } from "@/components/policy/advanced-settings";
 import { FormField } from "@/components/common/form-field";
 import { PolicyCheckbox } from "@/components/policy/policy-checkbox";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,7 @@ import type {
   LeavePolicyVersionFormErrors,
   LeavePolicyVersionFormValues,
 } from "@/lib/leave-policy/validate-leave-policy";
+import { EMPTY_LEAVE_POLICY_VERSION_FORM_VALUES } from "@/lib/leave-policy/validate-leave-policy";
 
 interface LeavePolicyVersionFormProps {
   values: LeavePolicyVersionFormValues;
@@ -156,13 +158,28 @@ export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicy
         </div>
       </section>
 
-      <details
-        open={Boolean(errors.negativeBalanceFloor) || undefined}
-        className="rounded-md border border-border"
+      <AdvancedSettings
+        values={values}
+        defaults={EMPTY_LEAVE_POLICY_VERSION_FORM_VALUES}
+        fields={[
+          "maxBackdatedDays",
+          "maxRequestsPerMonth",
+          "attachmentRequired",
+          "reserveBalanceOnSubmission",
+          "allowedDuringProbation",
+          "accrueDuringProbation",
+          "allowNegativeBalance",
+          "negativeBalanceFloor",
+          "encashmentAllowed",
+          "maxEncashmentDays",
+          "minBalanceAfterEncashment",
+          "encashmentFrequency",
+          "encashmentCalculationBasis",
+          "preDeliveryDays",
+          "postDeliveryDays",
+        ]}
+        hasError={Boolean(errors.negativeBalanceFloor)}
       >
-        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
-          Advanced settings
-        </summary>
         <div className="space-y-6 border-t border-border p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField
@@ -316,7 +333,7 @@ export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicy
             </div>
           </div>
         </div>
-      </details>
+      </AdvancedSettings>
     </div>
   );
 }

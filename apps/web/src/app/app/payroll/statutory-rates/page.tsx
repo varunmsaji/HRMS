@@ -86,8 +86,8 @@ export default function StatutoryRatesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/payroll"
+        backLabel="Payroll"
         title="Statutory Rates"
         description="PF, ESI, professional tax and labour welfare fund rates used by pay runs."
         actions={

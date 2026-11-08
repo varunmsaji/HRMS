@@ -419,7 +419,7 @@ describe("PolicyAssignmentsPage", () => {
         )) as never);
       const user = userEvent.setup();
       render(<PolicyAssignmentsPage />);
-      await user.click(screen.getByRole("tab", { name: "Check an employee" }));
+      await user.click(screen.getByRole("tab", { name: "Check a person" }));
       const select = await screen.findByRole("combobox");
       await within(select).findByRole("option", { name: "Asha Rao (E1)" });
       await user.selectOptions(select, "e1");

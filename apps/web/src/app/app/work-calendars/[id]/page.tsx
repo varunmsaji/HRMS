@@ -11,8 +11,10 @@ import { ErrorState } from "@/components/common/error-state";
 import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { PolicyFollowersPanel } from "@/components/policy-assignment/policy-followers-panel";
 import { PaginationControls } from "@/components/common/pagination-controls";
 import { useToast } from "@/components/common/toast";
+import { TabBar } from "@/components/ui/tab-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,9 +34,10 @@ import type { ProposedChange } from "@/lib/work-calendar/change-impact";
 import { apiClient } from "@/lib/api/client";
 import { ApiError, describeApiError, getFieldError } from "@/lib/api/errors";
 import type { PaginationMeta } from "@/lib/api/types";
-import { formatDateTime } from "@/lib/attendance/format";
+import { businessToday, formatDateTime } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import { useInitialTab } from "@/lib/use-initial-tab";
 import type { HolidayCalendar } from "@/lib/holiday-calendar/types";
 import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
 import type {
@@ -59,11 +62,12 @@ import {
   type WorkCalendarFormValues,
 } from "@/lib/work-calendar/validate-work-calendar";
 
-type TabKey = "overview" | "calendar" | "exceptions" | "day-type";
+type TabKey = "overview" | "calendar" | "exceptions" | "followers" | "day-type";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
   { key: "calendar", label: "Calendar" },
   { key: "exceptions", label: "Exceptions" },
+  { key: "followers", label: "Who follows this" },
   { key: "day-type", label: "Day-type lookup" },
 ];
 
@@ -81,6 +85,8 @@ export default function WorkCalendarDetailPage() {
   const canManage = can("ORG.CALENDAR.MANAGE");
 
   const [tab, setTab] = useState<TabKey>("overview");
+  useInitialTab(TABS, setTab);
+  const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
 
   const [calendar, setCalendar] = useState<WorkCalendar | null>(null);
   const [holidayCalendars, setHolidayCalendars] = useState<HolidayCalendar[]>([]);
@@ -406,16 +412,9 @@ export default function WorkCalendarDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/app/work-calendars"
-          className="text-sm text-foreground-secondary hover:underline"
-        >
-          ← Work Calendars
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/work-calendars"
+        backLabel="Work Calendars"
         title={calendar?.name ?? "Work Calendar"}
         description="What kind of day it is — composed from holiday calendars, a weekly-off pattern, and dated exceptions."
         actions={
@@ -459,24 +458,7 @@ export default function WorkCalendarDetailPage() {
 
       {!loading && !error && calendar ? (
         <>
-          <div className="flex gap-1 overflow-x-auto border-b border-border" role="tablist">
-            {TABS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={tab === item.key}
-                onClick={() => setTab(item.key)}
-                className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-                  tab === item.key
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-foreground-muted hover:text-foreground"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+          <TabBar tabs={TABS} value={tab} onChange={setTab} label="Work calendar sections" />
 
           {tab === "overview" ? (
             <Card>
@@ -733,6 +715,21 @@ export default function WorkCalendarDetailPage() {
                 ) : null}
               </CardContent>
             </Card>
+          ) : null}
+
+          {tab === "followers" ? (
+            <PolicyFollowersPanel
+              policyKind="WORK_CALENDAR"
+              policyId={calendar.id}
+              policyName={calendar.name}
+              today={today}
+              canManage={canManage}
+              cannotAssignReason={
+                calendar.is_active
+                  ? null
+                  : "This calendar is inactive, so nobody new can follow it. Reactivate it to assign it."
+              }
+            />
           ) : null}
 
           {tab === "day-type" ? (

@@ -1,73 +1,120 @@
 "use client";
 
-import { ArrowUpRight, BookOpen, Search } from "lucide-react";
+import { ArrowRight, BookOpen, CircleCheck, Search } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { PageHeader } from "@/components/common/page-header";
-import { SetupChecklistBanner } from "@/components/company/setup-checklist-card";
-import { SETTINGS_NAV_GROUPS } from "@/components/layout/nav-items";
+import {
+  SetupChecklistBanner,
+  useSetupChecklist,
+} from "@/components/company/setup-checklist-card";
+import {
+  SETTINGS_MODULES,
+  SETTINGS_SHARED_GROUP,
+  settingsModuleHref,
+  type NavItem,
+  type SettingsModule,
+} from "@/components/layout/nav-items";
+import { SETTINGS_ITEM_DESCRIPTIONS } from "@/components/settings/item-descriptions";
+import { SettingsItemCard } from "@/components/settings/settings-item-card";
 import { Input } from "@/components/ui/input";
+import type { SetupChecklist } from "@/lib/company/setup-checklist";
 
-const ITEM_DESCRIPTIONS: Record<string, string> = {
-  "/app/company": "Name, registration and contact details",
-  "/app/legal-entities": "Legal entities that employ your people",
-  "/app/branches": "Offices and locations",
-  "/app/departments": "Teams and reporting structure",
-  "/app/designations": "Job titles across the company",
-  "/app/grades": "Levels and pay bands",
-  "/app/shifts": "Working hours and shift timings",
-  "/app/attendance-periods": "Open and lock attendance months",
-  "/app/attendance-geofences": "Approved workplaces for location checks",
-  "/app/work-calendars": "Working days per location or team",
-  "/app/holiday-calendars": "Public and company holidays",
-  "/app/weekly-off-patterns": "Weekly rest-day rules",
-  "/app/attendance-policies": "Late, early-exit and absence rules",
-  "/app/overtime-policies": "Overtime eligibility and rates",
-  "/app/regularization-policies": "Rules for correcting attendance",
-  "/app/leave-types": "Casual, sick, earned and more",
-  "/app/leave-policies": "Accrual, carry-forward and limits",
-  "/app/leave-combination-rules": "Which leaves can be taken together",
-  "/app/leave-year-setting": "When your leave year starts",
-  "/app/statutory-leave-minimums": "Legal minimum leave entitlements",
-  "/app/payroll/salary-components": "Earnings and deductions",
-  "/app/payroll/salary-structures": "Component bundles per grade",
-  "/app/payroll/statutory-rates": "PF, ESI and tax rates",
-  "/app/policy-assignments": "Assign policies by scope",
-  "/app/policy-resolution": "See which policy applies to whom",
-  "/app/setup": "Initial setup checklist",
-  "/app/users": "Accounts, roles and access",
-};
+function moduleItems(area: SettingsModule): NavItem[] {
+  return area.sections.flatMap((section) => section.items);
+}
+
+/** "2 of 5 setup steps done", or nothing when the checklist has no steps for this module. */
+function progressText(area: SettingsModule, checklist: SetupChecklist | null): {
+  text: string;
+  complete: boolean;
+} | null {
+  if (!checklist || area.checklistCodes.length === 0) return null;
+  const items = checklist.items.filter((item) => area.checklistCodes.includes(item.code));
+  if (items.length === 0) return null;
+  const done = items.filter((item) => item.is_complete).length;
+  return done === items.length
+    ? { text: "Set up", complete: true }
+    : { text: `${done} of ${items.length} setup steps done`, complete: false };
+}
+
+function ModuleCard({
+  area,
+  checklist,
+}: {
+  area: SettingsModule;
+  checklist: SetupChecklist | null;
+}) {
+  const Icon = area.icon;
+  const items = moduleItems(area).filter((item) => !item.advanced);
+  const progress = progressText(area, checklist);
+  return (
+    <Link
+      href={settingsModuleHref(area.slug)}
+      className="group flex flex-col gap-3 rounded-lg border border-border bg-card p-5 transition-all duration-motion-instant hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted text-foreground-secondary transition-colors group-hover:bg-primary/10 group-hover:text-primary">
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-md font-semibold text-foreground">{area.label}</span>
+          <span className="mt-0.5 block text-sm text-foreground-secondary">{area.description}</span>
+        </span>
+        <ArrowRight
+          className="mt-1 h-4 w-4 shrink-0 text-foreground-disabled transition-colors group-hover:text-primary"
+          aria-hidden="true"
+        />
+      </div>
+      <span className="text-xs text-foreground-muted">
+        {items.map((item) => item.label).join(" · ")}
+      </span>
+      {progress ? (
+        <span
+          className={
+            progress.complete
+              ? "inline-flex items-center gap-1 text-xs font-medium text-success"
+              : "text-xs font-medium text-warning"
+          }
+        >
+          {progress.complete ? <CircleCheck className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+          {progress.text}
+        </span>
+      ) : null}
+    </Link>
+  );
+}
 
 export default function SettingsPage() {
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const checklist = useSetupChecklist();
   const q = query.trim().toLowerCase();
 
-  // Rarely needed settings stay behind "Show more" until the group is expanded or searched for.
-  const groups = useMemo(
-    () =>
-      SETTINGS_NAV_GROUPS.map((group) => {
-        const matching = group.items.filter((item) => {
-          if (!q) return true;
-          const hay = `${item.label} ${ITEM_DESCRIPTIONS[item.href] ?? ""} ${group.label}`;
-          return hay.toLowerCase().includes(q);
-        });
-        const showAdvanced = Boolean(q) || expanded[group.label];
-        return {
-          ...group,
-          items: matching.filter((item) => !item.advanced || showAdvanced),
-          hiddenCount: matching.filter((item) => item.advanced && !showAdvanced).length,
-        };
-      }).filter((group) => group.items.length > 0),
-    [q, expanded],
-  );
+  // Searching lists matching screens directly, including ones tucked behind "Show more".
+  const results = useMemo(() => {
+    if (!q) return [];
+    const groups = [
+      ...SETTINGS_MODULES.map((area) => ({ label: area.label, items: moduleItems(area) })),
+      { label: SETTINGS_SHARED_GROUP.label, items: SETTINGS_SHARED_GROUP.items },
+    ];
+    return groups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) =>
+          `${item.label} ${SETTINGS_ITEM_DESCRIPTIONS[item.href] ?? ""} ${group.label}`
+            .toLowerCase()
+            .includes(q),
+        ),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [q]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Set up your organisation, time and leave rules, payroll, and who can access what."
+        description="Set up your organisation, attendance and leave rules, payroll, and who can access what. Each area has everything it needs on one page."
         actions={
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             <Link
@@ -95,106 +142,33 @@ export default function SettingsPage() {
         }
       />
 
-      <SetupChecklistBanner />
+      <SetupChecklistBanner checklist={checklist} />
 
-      <div className="grid gap-8 lg:grid-cols-[14rem_minmax(0,1fr)]">
-        <nav
-          aria-label="Settings categories"
-          className="hidden lg:sticky lg:top-6 lg:block lg:self-start"
-        >
-          <ul className="space-y-2">
-            {groups.map((group) => (
-              <li key={group.label}>
-                <a
-                  href={`#${slug(group.label)}`}
-                  className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2.5 text-sm font-medium text-foreground-secondary transition-colors hover:border-primary/40 hover:bg-primary-subtle hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <span>{group.label}</span>
-                  <span className="rounded-full border border-border bg-muted/60 px-2 py-0.5 text-xs text-foreground-muted">
-                    {group.items.length}
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        <div className="space-y-10">
-          {groups.length === 0 ? (
+      {q ? (
+        <div className="space-y-8">
+          {results.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-6 py-12 text-center text-sm text-foreground-secondary">
               No settings match “{query}”.
             </p>
           ) : null}
-
-          {groups.map((group) => (
-            <section
-              key={group.label}
-              id={slug(group.label)}
-              aria-labelledby={`${slug(group.label)}-title`}
-              className="scroll-mt-6"
-            >
-              <div className="mb-3">
-                <h2
-                  id={`${slug(group.label)}-title`}
-                  className="text-md font-semibold text-foreground"
-                >
-                  {group.label}
-                </h2>
-                {group.description ? (
-                  <p className="mt-0.5 text-sm text-foreground-secondary">
-                    {group.description}
-                  </p>
-                ) : null}
-              </div>
-
+          {results.map((group) => (
+            <section key={group.label} aria-label={group.label} className="space-y-3">
+              <h2 className="text-md font-semibold text-foreground">{group.label}</h2>
               <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-                {group.items.map((item) => {
-                  const Icon = item.icon;
-                  const description = ITEM_DESCRIPTIONS[item.href];
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className="group relative flex items-start gap-3 rounded-lg border border-border bg-card p-4 transition-all duration-motion-instant hover:border-primary/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground-secondary transition-colors group-hover:bg-primary/10 group-hover:text-primary">
-                        <Icon className="h-4 w-4" aria-hidden="true" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium text-foreground">
-                          {item.label}
-                        </span>
-                        {description ? (
-                          <span className="mt-0.5 block text-xs text-foreground-secondary">
-                            {description}
-                          </span>
-                        ) : null}
-                      </span>
-                      <ArrowUpRight
-                        className="h-4 w-4 shrink-0 text-foreground-disabled opacity-0 transition-opacity group-hover:opacity-100"
-                        aria-hidden="true"
-                      />
-                    </Link>
-                  );
-                })}
+                {group.items.map((item) => (
+                  <SettingsItemCard key={item.href} item={item} />
+                ))}
               </div>
-              {group.hiddenCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setExpanded((current) => ({ ...current, [group.label]: true }))}
-                  className="mt-3 text-sm font-medium text-primary hover:underline"
-                >
-                  Show {group.hiddenCount} more
-                </button>
-              ) : null}
             </section>
           ))}
         </div>
-      </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          {SETTINGS_MODULES.map((area) => (
+            <ModuleCard key={area.slug} area={area} checklist={checklist} />
+          ))}
+        </div>
+      )}
     </div>
   );
-}
-
-function slug(label: string) {
-  return label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }

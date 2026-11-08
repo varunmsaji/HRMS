@@ -151,8 +151,8 @@ export default function CompanyProfilePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/organisation"
+        backLabel="Company & structure"
         title="Company profile"
         description="Your organisation's registered details."
         actions={
