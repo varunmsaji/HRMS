@@ -17,6 +17,7 @@ class ResourceConfig {
     this.hasActive = true,
     this.canDeactivate = true,
     this.detailExtras,
+    this.detailFooter,
     this.emptyLabel,
     this.listFilters = const {},
     this.versions,
@@ -54,6 +55,9 @@ class ResourceConfig {
 
   /// Sub-resources shown under the record's fields (holidays of a calendar, versions of a shift…).
   final Widget Function(BuildContext context, Map<String, dynamic> row, VoidCallback reload)? detailExtras;
+
+  /// Like [detailExtras], but drawn last, under the versions (e.g. who follows a policy).
+  final Widget Function(BuildContext context, Map<String, dynamic> row, VoidCallback reload)? detailFooter;
 
   final String? emptyLabel;
 

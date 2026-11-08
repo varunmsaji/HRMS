@@ -110,7 +110,7 @@ final overtimePolicySetup = PolicySetupConfig(
 final _allTypes = [for (final t in regularizationTypes) {'regularization_type': t}];
 
 final regularizationPolicySetup = PolicySetupConfig(
-  title: 'New regularization policy',
+  title: 'New correction policy',
   path: '/regularization-policies',
   policyKind: 'REGULARIZATION_POLICY',
   rules: rulesWithout(regularizationPolicyVersionSpec, changes: {

@@ -394,6 +394,7 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
             ),
             if (_c.detailExtras != null) _c.detailExtras!(context, _row, _reload),
             if (_c.versions != null) VersionsSection(config: _c, parent: _row),
+            if (_c.detailFooter != null) _c.detailFooter!(context, _row, _reload),
           ],
         ),
       ),

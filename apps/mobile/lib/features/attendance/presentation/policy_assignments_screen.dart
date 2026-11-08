@@ -147,9 +147,9 @@ class _PolicyAssignmentsScreenState extends ConsumerState<PolicyAssignmentsScree
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Policy Assignments'),
+        title: const Text('Rules by Group'),
         actions: const [MoreAction()],
-        bottom: TabBar(controller: _tabs, tabs: const [Tab(text: 'Set policies'), Tab(text: 'All assignments')]),
+        bottom: TabBar(controller: _tabs, tabs: const [Tab(text: 'Set rules for a group'), Tab(text: 'All assignments')]),
       ),
       floatingActionButton: _tabs.index == 1 ? FloatingActionButton.extended(onPressed: _create, icon: const Icon(Icons.add), label: const Text('New assignment')) : null,
       body: TabBarView(controller: _tabs, children: [
