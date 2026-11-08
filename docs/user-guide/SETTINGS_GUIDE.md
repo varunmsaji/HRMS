@@ -7,39 +7,43 @@ What each setting is, what every option does, and how to use it, in plain Englis
 ## Contents
 
 - [How the settings fit together](#how-the-settings-fit-together)
-- **Organisation**
+- **Company**
   - [Company Profile](#company-profile)
-  - [Companies (Legal Entities)](#companies)
+  - [Legal Entities](#companies)
   - [Branches](#branches)
+- **People structure**
   - [Departments](#departments)
   - [Designations](#designations)
   - [Grades](#grades)
-- **Attendance & Time**
+- **When people work**
   - [Shifts](#shifts)
-  - [Attendance Periods](#attendance-periods)
   - [Work Calendars](#work-calendars)
   - [Holiday Calendars](#holiday-calendars)
   - [Weekly-Off Patterns](#weekly-off-patterns)
-  - [Attendance Policies](#attendance-policies)
+- **Where people punch**
   - [Workplace Geofences](#attendance-geofences)
+- **Attendance rules**
+  - [Attendance Policies](#attendance-policies)
   - [Overtime Policies](#overtime-policies)
-  - [Regularization Policies](#regularization-policies)
-- **Leave**
+  - [Correction Policies](#regularization-policies)
+- **Closing the month**
+  - [Attendance Periods](#attendance-periods)
+- **Leave types and rules**
   - [Leave Types](#leave-types)
   - [Leave Policies](#leave-policies)
-  - [Leave Combination Rules](#leave-combination-rules)
   - [Leave Year](#leave-year-setting)
+  - [Leave Combination Rules](#leave-combination-rules)
   - [Statutory Minimums](#statutory-leave-minimums)
-- **Policies**
-  - [Policy Assignments](#policy-assignments)
-  - [Policy Resolution](#policy-resolution)
-- **Payroll**
+- **Pay setup**
   - [Salary Components](#salary-components)
   - [Salary Structures](#salary-structures)
   - [Statutory Rates](#statutory-rates)
-- **Administration**
-  - [Setup](#setup)
+- **Access & setup**
   - [Users](#users)
+  - [Setup](#setup)
+- **Who follows what**
+  - [Rules by Group](#policy-assignments)
+  - [Check a Person's Rules](#policy-resolution)
 
 ## How the settings fit together
 
@@ -49,14 +53,14 @@ A rulebook does nothing until it is published and assigned to people. Most of th
 
 ### A sensible order to set things up
 
-1. Set up your organisation: the Company Profile first (country, currency, timezone, working days), then the company's legal registrations, branches, departments, designations and grades (all in the Organisation group of Settings).
+1. Set up your organisation: the Company Profile first (country, currency, timezone, working days), then the company's legal registrations, branches, departments, designations and grades (all under Company & structure in Settings).
 2. Create your Shifts and publish each shift's schedule.
 3. Create Holiday Calendars, a Weekly-Off Pattern, and then a Work Calendar that combines them.
-4. Create an Attendance Policy, an Overtime Policy and a Regularization Policy, and publish each.
+4. Create an Attendance Policy, an Overtime Policy and a Correction Policy, and publish each.
 5. Create your Leave Types, then a Leave Policy for each, then publish them. Set the Leave Year first, and add Statutory Minimums if the law in your state requires them.
-6. Open Policy Assignments and assign one policy of each kind to the whole Company. This is the safety net so that nobody is left without rules.
+6. Give each kind of policy to the whole company: open the policy and use its Who follows this tab, or set every kind at once in Rules by Group. This is the safety net so that nobody is left without rules.
 7. Add narrower assignments only where a group is different, such as one department or one grade.
-8. Use Policy Resolution to check a few real employees and confirm they get what you expect.
+8. Use Check a Person's Rules to check a few real employees and confirm they get what you expect.
 9. At the end of each month, use Attendance Periods to check and lock the month before payroll.
 10. Before the first pay run, create any extra Salary Components, check the Salary Structures, and verify the Statutory Rates (Payroll group).
 11. Invite your team under Users and give each person the lowest role that lets them do their job.
@@ -68,7 +72,7 @@ A rulebook does nothing until it is published and assigned to people. Most of th
 - **Scope**: The group a policy is assigned to: the whole company, a branch, a department, a grade, a designation, a shift, or one employee.
 - **Most specific wins**: If someone belongs to several groups that each have a policy, the smallest, most specific group wins. The order from strongest to weakest is employee, shift, designation, grade, department, branch, legal entity, company.
 
-# Organisation
+# Company
 
 <a id="company-profile"></a>
 ## Company Profile
@@ -122,7 +126,7 @@ The one record that describes your business as a whole: its name, country, curre
 - Every change is written to the audit log with who made it and what it was before.
 
 <a id="companies"></a>
-## Companies (Legal Entities)
+## Legal Entities
 
 A legal entity is the registered company that actually employs people and files returns. It carries the tax and statutory registrations that appear on payslips and compliance reports.
 
@@ -195,8 +199,10 @@ These three work together. Leave them empty to have no location check at this br
 **Good to know**
 
 - Open the office on a map, copy the coordinates of the entrance, and add a little extra radius for GPS drift. Too small a radius causes honest staff to be flagged.
-- Workplace Geofences (under Attendance & Time) decides what happens when a punch is outside the circle.
+- Workplace Geofences (under Attendance in Settings) decides what happens when a punch is outside the circle.
 - Branch timezone is the middle step in the order shift, then branch, then company.
+
+# People structure
 
 <a id="departments"></a>
 ## Departments
@@ -279,7 +285,7 @@ Every field except the name is optional.
 - At present the pay range, notice, probation and approval limit are recorded for reference. Other parts of the system do not yet enforce them, so they will not block a salary outside the range.
 - Grades can be the scope of a policy assignment, for example one leave policy for managers and another for trainees.
 
-# Attendance & Time
+# When people work
 
 <a id="shifts"></a>
 ## Shifts
@@ -333,44 +339,6 @@ Breaks are optional. Add them if you want unpaid breaks to reduce worked hours, 
 - Nothing changes for employees until you publish the draft from the Versions tab and give it an effective date.
 - To change a live schedule, edit it and publish again with a future effective date. The old version stays as history.
 
-<a id="attendance-periods"></a>
-## Attendance Periods
-
-An attendance period is a stretch of dates, usually a month, that you formally close once attendance for it is final. Closing it locks the month so nothing can be changed after payroll has used the numbers.
-
-**When to use it:** Use this at the end of each month, before running payroll. It is the point where you confirm that every exception is sorted out.
-
-### Creating a period
-
-- **Company:** Which company (legal entity) the period belongs to. Each company runs its own cycle.
-- **Cycle: calendar month:** Pick a month and the period covers the first to the last day of it.
-- **Cycle: custom date range:** Choose your own start and end dates, for example the 26th of one month to the 25th of the next.
-- **Label:** A name such as "October 2026". It is filled in for you for calendar months.
-
-### What you can do with a period
-
-- **Validate:** Checks whether the period is ready to close. It lists anything still blocking it, with a count for each.
-- **Finalize and lock:** Closes the period. After this, punches, roster changes, regularization requests and overtime approvals for those dates are refused until the period is reopened.
-- **Reopen:** Unlocks a closed period when a correction is genuinely needed. A reason is required, and only people with the unlock permission can do it.
-
-### What can block a period from closing
-
-- **Missing attendance:** Some employees have no calculated attendance for the period.
-- **Configuration errors:** Some days could not be calculated because a policy or shift is missing.
-- **Incomplete attendance:** Days that still need someone to resolve them by hand, such as a missing punch. Depending on the attendance policy, these may instead be automatically treated as absent or present when you lock.
-- **Pending regularization requests:** Correction requests that nobody has approved or rejected yet.
-- **Pending overtime approvals:** Overtime waiting for a decision.
-- **Unpublished roster entries:** Roster rows still in draft.
-- **Mismatched days:** Days where paid, unpaid and loss-of-pay shares do not add up to exactly one day.
-- **Work on approved leave:** Punches on a day of approved full-day leave, waiting for an HR decision.
-
-**Example:** On 1 November you create the October period. You press Validate and it shows 6 pending regularization requests. You get them decided, validate again, then Finalize and lock. Payroll can now rely on October.
-
-**Good to know**
-
-- Validate as often as you like. It changes nothing.
-- Lock only when you are sure. Reopening is possible but is meant for real corrections, and it is recorded.
-
 <a id="work-calendars"></a>
 ## Work Calendars
 
@@ -403,7 +371,7 @@ Each exception has a date, a type, and an optional name and reason.
 
 **Good to know**
 
-- A work calendar only affects people once it is assigned in Policy Assignments.
+- A work calendar only affects people once it is assigned: use its Who follows this section, or Rules by Group.
 - Changing a calendar can change past or future attendance results, which is why the impact preview exists.
 
 <a id="holiday-calendars"></a>
@@ -457,6 +425,40 @@ A weekly-off pattern is the rule for which days of the week people rest, such as
 
 - Attach the pattern to a work calendar so the calendar knows the weekly offs.
 - Use a shift-specific pattern only for people whose rest days really differ from the company calendar.
+
+# Where people punch
+
+<a id="attendance-geofences"></a>
+## Workplace Geofences
+
+Workplace geofences define the approved places employees may punch from. A workplace is a branch that has map coordinates and a radius. The location check itself is switched on inside each Attendance Policy.
+
+**When to use it:** Use this if you want to know, or enforce, that employees punch from the office or site rather than from anywhere.
+
+### Workplaces
+
+- **Workplace list:** Shows each branch with its coordinates and radius. A branch with no coordinates or radius cannot be used.
+- **Edit coordinates and radius:** Opens the branch so you can set its latitude, longitude and radius in metres. Employees within the radius count as at the workplace.
+
+### Extra workplaces for individual employees
+
+- **Employee and workplace:** Employees can always punch at the branch on their assignment. Use this to let a person work legitimately at other approved locations too. Employees cannot choose a workplace themselves.
+- **Authorise:** Saves the extra permission.
+
+### Location attempts
+
+Attempts appear here only once a policy with Optional or Required location checks is in use.
+
+- **Attempt list:** A record of location-checked punches, with how far from the workplace each one was and whether it was accepted. A switch shows only the rejected ones.
+
+**Example:** Your Kochi office has coordinates and a 150 metre radius. With a Required policy, staff there can punch in only within that radius. A sales executive who also visits the Bangalore office is authorised for that workplace too.
+
+**Good to know**
+
+- A phone's reported location can be spoofed, so treat results as evidence rather than proof.
+- Make the radius big enough to cover the whole building and car park, or honest employees will be rejected.
+
+# Attendance rules
 
 <a id="attendance-policies"></a>
 ## Attendance Policies
@@ -519,38 +521,8 @@ When several rules apply on the same day, the harshest result wins: absent, then
 **Good to know**
 
 - Open a policy and click Edit. You see the name and every setting at once. Save stores it as a draft.
-- A policy only takes effect after you publish the draft with an effective date and assign it in Policy Assignments.
+- A policy only takes effect after you publish the draft with an effective date and assign it, from its Who follows this tab or in Rules by Group.
 - Start location checks on Optional to see what Required would block before you switch it on.
-
-<a id="attendance-geofences"></a>
-## Workplace Geofences
-
-Workplace geofences define the approved places employees may punch from. A workplace is a branch that has map coordinates and a radius. The location check itself is switched on inside each Attendance Policy.
-
-**When to use it:** Use this if you want to know, or enforce, that employees punch from the office or site rather than from anywhere.
-
-### Workplaces
-
-- **Workplace list:** Shows each branch with its coordinates and radius. A branch with no coordinates or radius cannot be used.
-- **Edit coordinates and radius:** Opens the branch so you can set its latitude, longitude and radius in metres. Employees within the radius count as at the workplace.
-
-### Extra workplaces for individual employees
-
-- **Employee and workplace:** Employees can always punch at the branch on their assignment. Use this to let a person work legitimately at other approved locations too. Employees cannot choose a workplace themselves.
-- **Authorise:** Saves the extra permission.
-
-### Location attempts
-
-Attempts appear here only once a policy with Optional or Required location checks is in use.
-
-- **Attempt list:** A record of location-checked punches, with how far from the workplace each one was and whether it was accepted. A switch shows only the rejected ones.
-
-**Example:** Your Kochi office has coordinates and a 150 metre radius. With a Required policy, staff there can punch in only within that radius. A sales executive who also visits the Bangalore office is authorised for that workplace too.
-
-**Good to know**
-
-- A phone's reported location can be spoofed, so treat results as evidence rather than proof.
-- Make the radius big enough to cover the whole building and car park, or honest employees will be rejected.
 
 <a id="overtime-policies"></a>
 ## Overtime Policies
@@ -604,9 +576,9 @@ Each day class can appear once. If there is no night row, night overtime uses th
 - Add at least normal, weekly-off and holiday rate rows. Without them payroll cannot tell what kind of overtime it is.
 
 <a id="regularization-policies"></a>
-## Regularization Policies
+## Correction Policies
 
-Regularization means correcting an attendance record after the day has passed, for example when someone forgot to punch out. A regularization policy sets who may ask for a correction, how far back, and who approves it.
+A correction (also called a regularization) fixes an attendance record after the day has passed, for example when someone forgot to punch out. A correction policy sets who may ask for a correction, how far back, and who approves it.
 
 **When to use it:** Create one so that corrections follow clear rules rather than ad-hoc requests.
 
@@ -650,7 +622,47 @@ Only the types you tick can be requested under this policy.
 - Pair this with the attendance policy's missing-punch setting. Choosing Require regularization there leaves days waiting for a request under this policy.
 - Click Edit on the policy to set all of this together, then publish from the Versions tab.
 
-# Leave
+# Closing the month
+
+<a id="attendance-periods"></a>
+## Attendance Periods
+
+An attendance period is a stretch of dates, usually a month, that you formally close once attendance for it is final. Closing it locks the month so nothing can be changed after payroll has used the numbers.
+
+**When to use it:** Use this at the end of each month, before running payroll. It is the point where you confirm that every exception is sorted out.
+
+### Creating a period
+
+- **Company:** Which company (legal entity) the period belongs to. Each company runs its own cycle.
+- **Cycle: calendar month:** Pick a month and the period covers the first to the last day of it.
+- **Cycle: custom date range:** Choose your own start and end dates, for example the 26th of one month to the 25th of the next.
+- **Label:** A name such as "October 2026". It is filled in for you for calendar months.
+
+### What you can do with a period
+
+- **Validate:** Checks whether the period is ready to close. It lists anything still blocking it, with a count for each.
+- **Finalize and lock:** Closes the period. After this, punches, roster changes, regularization requests and overtime approvals for those dates are refused until the period is reopened.
+- **Reopen:** Unlocks a closed period when a correction is genuinely needed. A reason is required, and only people with the unlock permission can do it.
+
+### What can block a period from closing
+
+- **Missing attendance:** Some employees have no calculated attendance for the period.
+- **Configuration errors:** Some days could not be calculated because a policy or shift is missing.
+- **Incomplete attendance:** Days that still need someone to resolve them by hand, such as a missing punch. Depending on the attendance policy, these may instead be automatically treated as absent or present when you lock.
+- **Pending regularization requests:** Correction requests that nobody has approved or rejected yet.
+- **Pending overtime approvals:** Overtime waiting for a decision.
+- **Unpublished roster entries:** Roster rows still in draft.
+- **Mismatched days:** Days where paid, unpaid and loss-of-pay shares do not add up to exactly one day.
+- **Work on approved leave:** Punches on a day of approved full-day leave, waiting for an HR decision.
+
+**Example:** On 1 November you create the October period. You press Validate and it shows 6 pending regularization requests. You get them decided, validate again, then Finalize and lock. Payroll can now rely on October.
+
+**Good to know**
+
+- Validate as often as you like. It changes nothing.
+- Lock only when you are sure. Reopening is possible but is meant for real corrections, and it is recorded.
+
+# Leave types and rules
 
 <a id="leave-types"></a>
 ## Leave Types
@@ -681,7 +693,7 @@ A leave type is a kind of leave, such as Casual Leave, Sick Leave, Earned Leave 
 
 A leave policy holds the rules for one leave type: who can apply, how leave is earned, what happens at year end, and so on.
 
-**When to use it:** Create one for each leave type, publish it, and assign it in Policy Assignments.
+**When to use it:** Create one for each leave type, publish it, and assign it from its Who follows this tab or in Rules by Group.
 
 ### Who can apply
 
@@ -738,26 +750,6 @@ A leave policy holds the rules for one leave type: who can apply, how leave is e
 - If the leave type has a statutory category, the policy cannot be published below the legal minimum you set.
 - Open a policy and click Edit to set the name and all rules together, then publish from the Versions tab.
 
-<a id="leave-combination-rules"></a>
-## Leave Combination Rules
-
-These rules say whether an employee may have two different kinds of leave applied for on overlapping dates, for example Casual plus Sick.
-
-**When to use it:** Use it only where a pair of leave types should be blocked. By default every pair is allowed.
-
-### Fields
-
-- **Leave type and Combined with:** The two leave types the rule is about.
-- **Allowed:** Ticked means the two can overlap. Unticked means blocked.
-- **Reason:** An optional note shown to HR on the rule list.
-
-**Example:** A rule blocks Casual with Sick so that someone cannot claim both on the same day. Annual with Casual is left alone, so it stays allowed.
-
-**Good to know**
-
-- If there is no rule for a pair, it is allowed.
-- You can add an explicit "allowed" rule for clarity, but it changes nothing.
-
 <a id="leave-year-setting"></a>
 ## Leave Year
 
@@ -777,6 +769,26 @@ The leave year is the 12-month period that leave balances, yearly earning and ca
 **Good to know**
 
 - Pick the same year you use for payroll and reports to avoid confusion at year end.
+
+<a id="leave-combination-rules"></a>
+## Leave Combination Rules
+
+These rules say whether an employee may have two different kinds of leave applied for on overlapping dates, for example Casual plus Sick.
+
+**When to use it:** Use it only where a pair of leave types should be blocked. By default every pair is allowed.
+
+### Fields
+
+- **Leave type and Combined with:** The two leave types the rule is about.
+- **Allowed:** Ticked means the two can overlap. Unticked means blocked.
+- **Reason:** An optional note shown to HR on the rule list.
+
+**Example:** A rule blocks Casual with Sick so that someone cannot claim both on the same day. Annual with Casual is left alone, so it stays allowed.
+
+**Good to know**
+
+- If there is no rule for a pair, it is allowed.
+- You can add an explicit "allowed" rule for clarity, but it changes nothing.
 
 <a id="statutory-leave-minimums"></a>
 ## Statutory Minimums
@@ -800,76 +812,7 @@ This is where you record the minimum leave the law requires. A leave policy cann
 - Until a minimum is added for a category, publishing policies in that category is not restricted.
 - If several minimums apply, the strictest one is used.
 
-# Policies
-
-<a id="policy-assignments"></a>
-## Policy Assignments
-
-Policy assignments connect policies to people. A policy does nothing until it is assigned. You assign a policy to a group, called a scope, and everyone in the group follows it.
-
-**When to use it:** Use it after publishing policies. Start with one policy of each kind for the whole company, then add narrower assignments for groups that differ.
-
-### Scope: who it applies to
-
-Anything other than Company asks you to pick which one.
-
-- **Company:** Everyone.
-- **Legal entity:** One registered company within a group.
-- **Branch:** One office or location.
-- **Department:** For example Sales or Production.
-- **Grade:** For example Senior or Manager.
-- **Designation:** A job title.
-- **Shift:** People working a particular shift.
-- **Employee:** One person, for an exception.
-
-### What can be assigned
-
-- **Work calendar and weekly-off pattern:** These show an impact preview before they are saved.
-- **Attendance, overtime and regularization policies:** One of each kind per group.
-- **Leave policies:** One for each leave type, per group.
-
-### The New Assignment form
-
-- **Scope and target:** Chosen once at the top.
-- **Effective from:** The date the assignment starts applying.
-- **Policies to assign:** One dropdown per kind, and one per leave type for leave policies. Leave a row on No change to skip it. You can fill in several rows and create them together.
-- **Reason:** An optional note for your records.
-
-**Example:** You assign General Attendance to the whole company, then Factory Attendance to the Production department. Ravi in Accounts follows General. Priya in Production follows Factory, because the department is more specific than the company.
-
-**Good to know**
-
-- A group follows only one policy of each kind. A new assignment closes the old one from its effective date and keeps it as history.
-- A policy must be published to take effect. A draft is not enough.
-- Always keep a company-wide assignment of each kind as a safety net.
-
-<a id="policy-resolution"></a>
-## Policy Resolution
-
-Policy Resolution is a checking tool. It tells you which policy an employee follows on a given date and which group it came from.
-
-**When to use it:** Use it after changing assignments, or whenever someone asks why they were treated a certain way.
-
-### How to use it
-
-The result names the policy and the level that matched, such as Department: Production.
-
-- **Employee:** Who you are checking.
-- **Date:** The day you are checking.
-- **Policy kind:** Which type of policy to look up.
-
-### What the result can mean
-
-- **A policy is shown:** That is the one in force for that employee on that date.
-- **Config incomplete:** No policy of that kind is assigned to any group the employee belongs to, or the assigned policy has no published version for that date. The system never falls back to a made-up default. Fix it by assigning a policy at company level and publishing it.
-
-**Example:** You check Priya's attendance policy for 15 November. It shows Factory Attendance from the Production department, so you know the assignment is working.
-
-**Good to know**
-
-- Checking changes nothing. It is safe to use at any time.
-
-# Payroll
+# Pay setup
 
 <a id="salary-components"></a>
 ## Salary Components
@@ -1001,29 +944,7 @@ The government rates that pay runs use for provident fund, ESI, professional tax
 - Never type a rate from memory. Use the official notification, and put its reference in Notes.
 - Money is stored in paise internally, but you always type rupees.
 
-# Administration
-
-<a id="setup"></a>
-## Setup
-
-A progress checklist that shows how far the company's initial set-up has got and what to do next.
-
-**When to use it:** Check it after signing up. It is also shown as a welcome prompt when you first arrive.
-
-### What it shows
-
-- **Progress badge:** Setup complete, or the number of steps done out of the total.
-- **Next step:** The first unfinished step, with a button that goes straight to the page that finishes it.
-- **Step list:** Each step with a done or not-done mark.
-
-### How a step is completed
-
-- **Company Profile:** Currently the only tracked step. It is done once the company profile has been filled in. It is worked out by the system from your data; you cannot tick it by hand.
-
-**Good to know**
-
-- When every step is done the company is marked as onboarded, once.
-- This checklist only tracks the profile. The wider order for setting up time, leave and policies is in the overview at the top of this guide.
+# Access & setup
 
 <a id="users"></a>
 ## Users
@@ -1064,3 +985,98 @@ Everyone who can log in to this company, and the role each person holds. A role 
 - Give the least access that does the job. Most people only need Employee.
 - Invite someone from their employee record if they should be linked to it, so their own data and their team's data are found correctly.
 - Role changes and invites are written to the audit log.
+
+<a id="setup"></a>
+## Setup
+
+A progress checklist that shows how far the company's initial set-up has got and what to do next.
+
+**When to use it:** Check it after signing up. It is also shown as a welcome prompt when you first arrive.
+
+### What it shows
+
+- **Progress badge:** Setup complete, or the number of steps done out of the total.
+- **Next step:** The first unfinished step, with a button that goes straight to the page that finishes it.
+- **Step list:** Each step with a done or not-done mark.
+
+### How a step is completed
+
+- **Company Profile:** Currently the only tracked step. It is done once the company profile has been filled in. It is worked out by the system from your data; you cannot tick it by hand.
+
+**Good to know**
+
+- When every step is done the company is marked as onboarded, once.
+- This checklist only tracks the profile. The wider order for setting up time, leave and policies is in the overview at the top of this guide.
+
+# Who follows what
+
+<a id="policy-assignments"></a>
+## Rules by Group
+
+Assignments connect policies to people. A policy does nothing until it is assigned. You assign a policy to a group, called a scope, and everyone in the group follows it. Rules by Group shows every kind of policy for one group at once; to see who follows one policy, open that policy's Who follows this tab.
+
+**When to use it:** Use it after publishing policies. Start with one policy of each kind for the whole company, then add narrower assignments for groups that differ. To give one policy to several groups, the policy's own Who follows this tab is quicker.
+
+### Scope: who it applies to
+
+Anything other than Company asks you to pick which one.
+
+- **Company:** Everyone.
+- **Legal entity:** One registered company within a group.
+- **Branch:** One office or location.
+- **Department:** For example Sales or Production.
+- **Grade:** For example Senior or Manager.
+- **Designation:** A job title.
+- **Shift:** People working a particular shift.
+- **Employee:** One person, for an exception.
+
+### What can be assigned
+
+- **Work calendar and weekly-off pattern:** These show an impact preview before they are saved.
+- **Attendance, overtime and correction policies:** One of each kind per group.
+- **Leave policies:** One for each leave type, per group.
+
+### Set rules for a group
+
+The first tab. The other tabs are All assignments (every assignment, past and present) and Check a person.
+
+- **Who does this apply to?:** Choose the group once at the top: the whole company, a branch, a department, or one person.
+- **Applies today:** For each kind of policy, what the group follows now and where it comes from: set for this group, or inherited from a wider one.
+- **Change to:** Pick a new policy for any row you want to change. Rows you leave alone stay as they are. You can change several rows and save them together.
+- **Effective from:** The date the new assignments start applying.
+- **Reason (optional):** A note for your records.
+- **Review changes:** Shows what will change before anything is saved. Work calendar and weekly-off changes then show an impact preview.
+
+**Example:** You assign General Attendance to the whole company, then Factory Attendance to the Production department. Ravi in Accounts follows General. Priya in Production follows Factory, because the department is more specific than the company.
+
+**Good to know**
+
+- A group follows only one policy of each kind. A new assignment closes the old one from its effective date and keeps it as history.
+- A policy must be published to take effect. A draft is not enough.
+- Always keep a company-wide assignment of each kind as a safety net.
+
+<a id="policy-resolution"></a>
+## Check a Person's Rules
+
+Check a Person's Rules is a checking tool, the Check a person tab of Rules by Group. It tells you which policy an employee follows on a given date and which group it came from.
+
+**When to use it:** Use it after changing assignments, or whenever someone asks why they were treated a certain way.
+
+### How to use it
+
+The result names the policy and the level that matched, such as Department: Production.
+
+- **Employee:** Who you are checking.
+- **Date:** The day you are checking.
+- **Policy kind:** Which type of policy to look up.
+
+### What the result can mean
+
+- **A policy is shown:** That is the one in force for that employee on that date.
+- **Config incomplete:** No policy of that kind is assigned to any group the employee belongs to, or the assigned policy has no published version for that date. The system never falls back to a made-up default. Fix it by assigning a policy at company level and publishing it.
+
+**Example:** You check Priya's attendance policy for 15 November. It shows Factory Attendance from the Production department, so you know the assignment is working.
+
+**Good to know**
+
+- Checking changes nothing. It is safe to use at any time.
