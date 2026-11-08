@@ -81,7 +81,7 @@ void main() {
     await _pump(tester, [_version(1)], const []);
     await tester.tap(find.text('v2'));
     await tester.pumpAndSettle();
-    expect(find.text('Grace in (minutes)'), findsOneWidget);
+    expect(find.text('Late arrival grace (minutes)'), findsOneWidget);
     expect(find.text('Worked-hours bands (2)'), findsOneWidget);
     expect(find.textContaining('Result: Absent'), findsOneWidget);
   });

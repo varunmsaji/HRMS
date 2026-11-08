@@ -61,7 +61,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();
-      expect(find.text('Name is required.'), findsOneWidget);
+      expect(find.text('Department name is required.'), findsOneWidget);
       expect(client.calls, isEmpty);
 
       await tester.enterText(find.widgetWithText(TextField, '').first, 'Finance');

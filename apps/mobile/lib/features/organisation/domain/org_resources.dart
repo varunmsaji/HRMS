@@ -27,10 +27,10 @@ const legalEntitySpec = FormSpec(name: 'legal_entity', label: 'Legal entity', fi
   FieldSpec('tan', 'TAN', kind: FieldKind.upper),
   FieldSpec('cin', 'CIN', kind: FieldKind.upper),
   FieldSpec('gstin', 'GSTIN', kind: FieldKind.upper),
-  FieldSpec('pf_code', 'PF code'),
+  FieldSpec('pf_code', 'PF establishment code'),
   FieldSpec('esi_code', 'ESI code'),
-  FieldSpec('lwf_reg', 'LWF registration'),
-  FieldSpec('signatory_name', 'Authorised signatory'),
+  FieldSpec('lwf_reg', 'Labour welfare fund (LWF) registration'),
+  FieldSpec('signatory_name', 'Signatory name'),
   FieldSpec('signatory_designation', 'Signatory designation'),
   FieldSpec('signature_image_url', 'Signature image URL'),
   _active,
@@ -49,16 +49,16 @@ final legalEntityResource = ResourceConfig(
 /// Built at first use: the timezone options come from the tz database.
 FormSpec branchSpec() => FormSpec(name: 'branch', label: 'Branch', fields: [
       const FieldSpec('legal_entity_id', 'Legal entity', kind: FieldKind.choice, choiceKey: 'legal_entities', required: true),
-      const FieldSpec('name', 'Name', required: true),
+      const FieldSpec('name', 'Branch name', required: true),
       const FieldSpec('address_line1', 'Address line 1'),
       const FieldSpec('address_line2', 'Address line 2'),
       const FieldSpec('city', 'City'),
       const FieldSpec('state_code', 'State code'),
-      const FieldSpec('pincode', 'Pincode'),
+      const FieldSpec('pincode', 'PIN code'),
       FieldSpec('timezone', 'Timezone', kind: FieldKind.select, options: allTimeZones(), hint: "Leave unset to inherit the company's timezone."),
       const FieldSpec('latitude', 'Latitude', kind: FieldKind.decimal),
       const FieldSpec('longitude', 'Longitude', kind: FieldKind.decimal),
-      const FieldSpec('geofence_radius_m', 'Geofence radius (metres)', kind: FieldKind.integer),
+      const FieldSpec('geofence_radius_m', 'Geofence radius (m)', kind: FieldKind.integer),
       _active,
     ]);
 
@@ -73,7 +73,7 @@ ResourceConfig branchResource() => ResourceConfig(
     );
 
 const departmentSpec = FormSpec(name: 'department', label: 'Department', fields: [
-  FieldSpec('name', 'Name', required: true),
+  FieldSpec('name', 'Department name', required: true),
   FieldSpec('branch_id', 'Branch', kind: FieldKind.choice, choiceKey: 'branches'),
   FieldSpec('parent_id', 'Parent department', kind: FieldKind.choice, choiceKey: 'departments'),
   FieldSpec('head_employee_id', 'Department head', kind: FieldKind.choice, choiceKey: 'employees'),
@@ -91,7 +91,7 @@ final departmentResource = ResourceConfig(
 );
 
 const designationSpec = FormSpec(name: 'designation', label: 'Designation', fields: [
-  FieldSpec('title', 'Title', required: true),
+  FieldSpec('title', 'Designation title', required: true),
   FieldSpec('department_id', 'Department', kind: FieldKind.choice, choiceKey: 'departments'),
   FieldSpec('grade_id', 'Grade', kind: FieldKind.choice, choiceKey: 'grades'),
   _active,
@@ -108,13 +108,13 @@ final designationResource = ResourceConfig(
 );
 
 const gradeSpec = FormSpec(name: 'grade', label: 'Grade', fields: [
-  FieldSpec('name', 'Name', required: true),
+  FieldSpec('name', 'Grade name', required: true),
   FieldSpec('level', 'Level', kind: FieldKind.integer),
-  FieldSpec('min_ctc', 'Minimum CTC', kind: FieldKind.integer, hint: 'Whole rupees'),
-  FieldSpec('max_ctc', 'Maximum CTC', kind: FieldKind.integer, hint: 'Whole rupees'),
+  FieldSpec('min_ctc', 'Min CTC (₹)', kind: FieldKind.integer, hint: 'Whole rupees'),
+  FieldSpec('max_ctc', 'Max CTC (₹)', kind: FieldKind.integer, hint: 'Whole rupees'),
   FieldSpec('notice_period_days', 'Notice period (days)', kind: FieldKind.integer),
   FieldSpec('probation_days', 'Probation (days)', kind: FieldKind.integer),
-  FieldSpec('approval_limit', 'Approval limit', kind: FieldKind.integer),
+  FieldSpec('approval_limit', 'Approval limit (₹)', kind: FieldKind.integer),
   _active,
 ]);
 
