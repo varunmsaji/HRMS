@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
+import '../../../core/forms/choice_sources.dart';
+import '../../../core/forms/spec_form_screen.dart';
+import '../../../core/providers.dart';
+import '../../../core/requests/request_screens.dart';
+import '../../../core/theme/employee_theme_scope.dart';
 import '../../../core/time.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
+import '../domain/request_resources.dart';
 import '../../../core/widgets/employee/attendance_history.dart';
 import '../../../core/widgets/employee/employee_status_chip.dart';
 import '../../../core/widgets/employee/layout.dart';
@@ -16,7 +23,8 @@ import '../../../core/widgets/ui.dart';
 
 /// Mirrors `apps/web/src/app/app/attendance/[id]/page.tsx` — one computed attendance day:
 /// schedule, actuals and breaks, overtime and pay facts, the leave overlay, and the audit trail,
-/// with recompute and keep-leave for HR. Every timestamp is shown in the zone the day was
+/// with recompute and keep-leave for HR, and the corrections raised for the day with a way to raise
+/// one (web `components/attendance/day/day-regularization.tsx`). Every timestamp is shown in the zone the day was
 /// computed in (TZ-07), never the device's.
 class AttendanceDayDetailScreen extends ConsumerStatefulWidget {
   const AttendanceDayDetailScreen({super.key, required this.dayId, this.initial});
@@ -36,6 +44,9 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
   ApiError? _error;
   AttendanceDay? _day;
   List<LeaveDayProjection> _projections = const [];
+
+  /// Correction requests for this employee and date; null = not loaded or not visible to the viewer.
+  List<Map<String, dynamic>>? _corrections;
 
   AttendanceRepository get _repo => ref.read(attendanceRepositoryProvider);
 
@@ -65,11 +76,103 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
           _projections = projections;
         });
       }
+      await _loadCorrections(day);
     } catch (e) {
       if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  /// Best effort, as on web: a viewer who can't list requests just sees none.
+  Future<void> _loadCorrections(AttendanceDay day) async {
+    try {
+      final env = await ref.read(apiClientProvider).getList<Map<String, dynamic>>(
+        '/regularizations',
+        query: PageQuery(perPage: 100),
+        filters: {'employee_id': day.employeeId, 'date_from': day.attendanceDate, 'date_to': day.attendanceDate},
+        parseItem: (d) => d as Map<String, dynamic>,
+      );
+      if (mounted) setState(() => _corrections = [for (final r in env.data) if (r['attendance_date'] == day.attendanceDate) r]);
+    } catch (_) {
+      if (mounted) setState(() => _corrections = null);
+    }
+  }
+
+  /// `SELF` on the viewer's own day, `ON_BEHALF` for someone else's, null when they can't raise one.
+  /// Mirrors web's `requestMode`.
+  String? _requestMode(AttendanceDay day) {
+    final user = ref.read(authControllerProvider).user;
+    final perms = user?.permissions ?? const <String>[];
+    final own = user?.employeeId != null && user!.employeeId == day.employeeId;
+    if (own && perms.contains(attendanceRegularizationRequest)) return 'SELF';
+    if (perms.contains(attendanceRegularizationRequestOnBehalf)) return 'ON_BEHALF';
+    return null;
+  }
+
+  Future<void> _requestCorrection(AttendanceDay day, String mode) async {
+    final client = ref.read(apiClientProvider);
+    final user = ref.read(authControllerProvider).user;
+    final zone = user?.companyTimezone ?? 'Asia/Kolkata';
+    final denied = ref.read(deniedChoiceSourcesProvider(user?.id ?? '').notifier);
+    // The employee is fixed by the day, so the form never asks for one (web locks the field).
+    final saved = await openSpecForm(
+      context,
+      title: 'Raise a regularization request',
+      spec: regularizationSpec(false),
+      defaults: {'attendance_date': day.attendanceDate},
+      submitLabel: 'Submit request',
+      loadChoiceSet: () async {
+        final set = await loadChoicesTolerant(client, optional: regularizationConfig.optionalChoiceKeys, knownDenied: denied.state);
+        final newlyDenied = {for (final e in set.unavailable.entries) if (e.value == ChoiceUnavailable.denied) e.key};
+        if (newlyDenied.difference(denied.state).isNotEmpty) denied.state = {...denied.state, ...newlyDenied};
+        return set;
+      },
+      onSubmit: (payload, _) async => client.post<Object?>(
+        '/regularizations',
+        body: buildRegularizationBody({...payload, if (mode == 'ON_BEHALF') 'employee_id': day.employeeId}, zone),
+        parse: (_) => null,
+      ),
+    );
+    if (saved && mounted) {
+      _toast('Regularization request submitted');
+      await _loadCorrections(day);
+    }
+  }
+
+  List<Widget> _correctionsSection(AttendanceDay day) {
+    final list = _corrections ?? const <Map<String, dynamic>>[];
+    final mode = _requestMode(day);
+    if (list.isEmpty && mode == null) return const [];
+    final open = list.any((r) => r['status'] == 'SUBMITTED');
+    final r = day.raw;
+    final needsCorrection = r['missing_punch'] == true || r['is_late'] == true || r['is_early_out'] == true || r['attendance_status'] == 'INCOMPLETE';
+    final theme = Theme.of(context);
+    return [
+      const EmployeeSectionHeader('Corrections'),
+      if (list.isEmpty)
+        Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), child: Text('No correction has been requested for this day.', style: theme.textTheme.bodySmall))
+      else
+        EmployeeListGroup(children: [
+          for (final c in list)
+            ListTile(
+              title: Text(regularizationTypeLabels[c['request_type']] ?? '${c['request_type']}'),
+              subtitle: c['submitted_at'] == null ? null : Text('submitted ${relativeTime(c['submitted_at'] as String)}'),
+              trailing: RequestStatusChip(status: '${c['status']}', labels: requestStatusLabels),
+              onTap: () async {
+                await pushKeepingTheme<void>(context, (_) => RequestDetailScreen(config: regularizationConfig, requestId: c['id'] as String, initial: c));
+                await _loadCorrections(day);
+              },
+            ),
+        ]),
+      if (mode != null && !open)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: needsCorrection
+              ? FilledButton(onPressed: () => _requestCorrection(day, mode), child: const Text('Request a correction'))
+              : OutlinedButton(onPressed: () => _requestCorrection(day, mode), child: const Text('Request a correction')),
+        ),
+    ];
   }
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
@@ -269,6 +372,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
               ('Loss-of-pay fraction', _fraction(s('lop_fraction'))),
               if (flag('work_on_leave_flagged')) ('Work-on-leave decision', _pretty(s('work_on_leave_resolution'))),
             ]),
+            ..._correctionsSection(day),
             if (overlay.isNotEmpty) ..._facts('Approved leave on this date', overlay, footnote: 'Shown for reference; Leave owns the balance and approval.'),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),

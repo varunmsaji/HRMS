@@ -46,6 +46,9 @@ void main() {
 
     test('reads the totals and shifts', () {
       expect(schedule.totals.coveragePct, 66.7);
+      expect(schedule.totals.nightStaff, 2);
+      expect(schedule.totals.nightShiftCount, 1);
+      expect(schedule.totals.scheduledPct, 80);
       expect(schedule.totals.cellsBelowTarget, 2);
       expect(schedule.totals.pendingSwaps, 1);
       expect(schedule.shifts.map((s) => s.name), ['General', 'Night']);
@@ -89,9 +92,53 @@ void main() {
     testWidgets('shows totals and a day of shifts with the target', (tester) async {
       final api = FakeApiClient(objects: {'/rosters/weekly-schedule': _fixture()});
       await _pump(tester, api, [attendanceView, attendanceRosterManage], const WeeklyScheduleScreen());
-      expect(find.text('Coverage'), findsOneWidget);
+      // Web's four KPI cards, same wording.
+      expect(find.text('Rostered staff'), findsOneWidget);
+      expect(find.text('80% scheduled'), findsOneWidget);
+      expect(find.text('4 of 5 active headcount assigned'), findsOneWidget);
+      expect(find.text('Coverage efficiency'), findsOneWidget);
       expect(find.text('67%'), findsOneWidget);
-      expect(find.text('Below target'), findsOneWidget);
+      expect(find.text('2 shift days are below its minimum'), findsOneWidget);
+      expect(find.text('Night shift coverage'), findsOneWidget);
+      expect(find.text('2 Staff'), findsOneWidget);
+      expect(find.text('Rostered across 1 night shift this week'), findsOneWidget);
+      expect(find.text('Shift swap requests'), findsOneWidget);
+      expect(find.text('Peer swaps awaiting a supervisor decision'), findsOneWidget);
+      expect(find.text('What is schedule coverage?'), findsOneWidget);
+    });
+
+    testWidgets('department and branch narrow the week', (tester) async {
+      final api = FakeApiClient(objects: {'/rosters/weekly-schedule': _fixture()}, lists: {
+        '/departments': [
+          {'id': 'dep-1', 'name': 'Engineering'},
+        ],
+        '/branches': [
+          {'id': 'br-1', 'name': 'Pune'},
+        ],
+      });
+      final asked = <String>[];
+      final spy = _SpyApi(api, asked);
+      await _pump(tester, spy, [attendanceView, attendanceRosterManage], const WeeklyScheduleScreen());
+      expect(find.text('All Departments (1)'), findsOneWidget);
+      expect(find.text('All Branches (1)'), findsOneWidget);
+      await tester.tap(find.text('All Departments (1)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Engineering').last);
+      await tester.pumpAndSettle();
+      expect(asked.last, contains('department_id=dep-1'));
+      expect(asked.last, isNot(contains('branch_id')));
+      await tester.tap(find.text('All Branches (1)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pune').last);
+      await tester.pumpAndSettle();
+      expect(asked.last, allOf(contains('department_id=dep-1'), contains('branch_id=br-1')));
+    });
+
+    testWidgets('a week with nobody rostered says so instead of an empty day', (tester) async {
+      final empty = _fixture();
+      empty['totals'] = {...(empty['totals'] as Map<String, dynamic>), 'rostered_staff': 0};
+      await _pump(tester, FakeApiClient(objects: {'/rosters/weekly-schedule': empty}), [attendanceView], const WeeklyScheduleScreen());
+      expect(find.text('No one is rostered for this week.'), findsOneWidget);
     });
   });
 
@@ -121,4 +168,16 @@ void main() {
       expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Approve')).onPressed, isNull);
     });
   });
+}
+
+/// Records the full path of each GET (the fake drops the query) and forwards to [inner].
+class _SpyApi extends FakeApiClient {
+  _SpyApi(FakeApiClient inner, this.asked) : super(lists: inner.lists, objects: inner.objects);
+  final List<String> asked;
+
+  @override
+  Future<T> get<T>(String path, {required T Function(dynamic) parse, bool authenticated = true}) {
+    asked.add(path);
+    return super.get(path, parse: parse, authenticated: authenticated);
+  }
 }

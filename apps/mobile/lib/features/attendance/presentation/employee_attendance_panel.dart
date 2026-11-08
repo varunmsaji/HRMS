@@ -6,6 +6,7 @@ import '../../../core/auth/permissions.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
+import '../domain/employee_attendance_summary.dart';
 import 'attendance_day_detail_screen.dart';
 import 'attendance_widgets.dart';
 import 'face_enrollment_admin_card.dart';
@@ -13,7 +14,8 @@ import 'team_attendance_screen.dart' show openPunchOnBehalf;
 
 /// The Attendance tab of an employee record — mirrors
 /// `apps/web/src/components/attendance/employee-attendance-panel.tsx`: one employee's attendance
-/// days over a date range, with "Calculate today" and "Record punch" for HR.
+/// days over a date range (quick ranges, a range summary, then the days), with "Calculate today"
+/// and "Record punch" for HR.
 class EmployeeAttendancePanel extends ConsumerStatefulWidget {
   const EmployeeAttendancePanel({super.key, required this.employeeId, this.employeeLabel = 'this employee'});
   final String employeeId;
@@ -36,8 +38,9 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
   @override
   void initState() {
     super.initState();
-    _from = businessDayOffset(_zone, -13);
-    _to = businessToday(_zone);
+    final first = attendanceRangePresets(businessToday(_zone)).first;
+    _from = first.from;
+    _to = first.to;
     _load();
   }
 
@@ -66,6 +69,14 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
     _load();
   }
 
+  void _applyPreset(RangePreset p) {
+    setState(() {
+      _from = p.from;
+      _to = p.to;
+    });
+    _load();
+  }
+
   Future<void> _calculateToday() async {
     setState(() => _busy = true);
     try {
@@ -89,6 +100,11 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
         padding: const EdgeInsets.all(16),
         children: [
           if (permissions.contains(attendanceFaceEnrollmentManage)) FaceEnrollmentAdminCard(employeeId: widget.employeeId, employeeLabel: widget.employeeLabel),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final p in attendanceRangePresets(businessToday(_zone)))
+              ChoiceChip(label: Text(p.label), selected: _from == p.from && _to == p.to, onSelected: (_) => _applyPreset(p)),
+          ]),
+          const SizedBox(height: 8),
           Row(children: [
             Expanded(child: OutlinedButton(onPressed: () => _pick(true), child: Text('From $_from'))),
             const SizedBox(width: 8),
@@ -116,11 +132,64 @@ class _EmployeeAttendancePanelState extends ConsumerState<EmployeeAttendancePane
             ])
           else if (_days.isEmpty)
             Padding(padding: const EdgeInsets.all(32), child: Text('No attendance days in this range.', textAlign: TextAlign.center, style: TextStyle(color: scheme.onSurfaceVariant)))
-          else
+          else ...[
+            _RangeSummary(days: _days),
+            const SizedBox(height: 12),
             for (final d in _days)
               AttendanceDayTile(day: d, onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => AttendanceDayDetailScreen(dayId: d.id, initial: d)))),
+          ],
         ],
       ),
     );
+  }
+}
+
+/// Web `RangeSummary` in `employee-attendance-panel.tsx`.
+class _RangeSummary extends StatelessWidget {
+  const _RangeSummary({required this.days});
+  final List<AttendanceDay> days;
+
+  @override
+  Widget build(BuildContext context) {
+    final m = AttendanceRangeSummary.compute(days);
+    return Semantics(
+      label: 'Range summary',
+      container: true,
+      child: StatTiles(stats: [
+        ('Present', '${m.present}'),
+        ('Absent', '${m.count('ABSENT')}'),
+        ('On leave', '${m.count('LEAVE')}'),
+        ('Late', '${m.late}'),
+        ('Missing punch', '${m.missingPunch}'),
+        ('Worked', formatMinutes(m.workedMinutes)),
+      ]),
+    );
+  }
+}
+
+/// Label-over-figure tiles that wrap to the screen width (the web `<dl>` stat grids).
+class StatTiles extends StatelessWidget {
+  const StatTiles({super.key, required this.stats});
+  final List<(String, String)> stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return LayoutBuilder(builder: (context, c) {
+      final width = (c.maxWidth - 16) / 3;
+      return Wrap(spacing: 8, runSpacing: 8, children: [
+        for (final (label, value) in stats)
+          Container(
+            width: width < 96 ? (c.maxWidth - 8) / 2 : width,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: scheme.surfaceContainerLow, borderRadius: BorderRadius.circular(12)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+              const SizedBox(height: 2),
+              Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+            ]),
+          ),
+      ]);
+    });
   }
 }
