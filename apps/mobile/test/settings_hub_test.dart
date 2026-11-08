@@ -49,10 +49,10 @@ void main() {
   group('employee', () {
     testWidgets('sees exactly their four destinations, in employee wording, and Sign out', (tester) async {
       await _pump(tester, _employeeGrants);
-      for (final label in ['Leave balances', 'Corrections', 'Overtime', 'Sign out']) {
+      for (final label in ['Leave Balances', 'Corrections', 'Overtime', 'Sign out']) {
         expect(_t(label), findsOneWidget, reason: label);
       }
-      expect(_t('Payslips'), findsNothing, reason: 'payroll is outside the attendance-only release');
+      expect(_t('My Payslips'), findsNothing, reason: 'payroll is outside the attendance-only release');
       for (final label in _adminOnlyLabels) {
         expect(_t(label), findsNothing, reason: '$label must not be offered to an employee');
       }
@@ -71,7 +71,7 @@ void main() {
 
     testWidgets('an entry whose permission is missing is not shown', (tester) async {
       await _pump(tester, [...?null, attendanceView, leaveBalanceView]);
-      expect(_t('Payslips'), findsNothing);
+      expect(_t('My Payslips'), findsNothing);
       expect(_t('Overtime'), findsOneWidget);
     });
   });
@@ -103,7 +103,7 @@ void main() {
     testWidgets('a branch manager (employee surface with team permissions) keeps Employees and Team attendance', (tester) async {
       await _pump(tester, [..._employeeGrants, employeeViewAll]);
       expect(_t('Your work'), findsOneWidget);
-      expect(_t('Payslips'), findsNothing);
+      expect(_t('My Payslips'), findsNothing);
       await _search(tester, 'Employees');
       expect(_t('Employees'), findsOneWidget);
       await _search(tester, 'Team Attendance');

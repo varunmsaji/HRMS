@@ -59,15 +59,16 @@ const _teamView = [attendanceViewAll, employeeViewAll];
 /// What the attendance calendar reads besides [attendanceViewAll]: the employee list and the days.
 const attendanceCalendarReads = [attendanceView, employeeViewAll];
 
-/// The employee destinations (the entire employee menu besides Sign out).
+/// The employee destinations (the entire employee menu besides Sign out), with web's employee-menu
+/// names (`nav-items.ts` `EMPLOYEE_NAV_ITEMS`).
 const employeeNavEntries = [
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances',
-      anyOf: [leaveBalanceView, leaveBalanceViewAll], employeeLabel: 'Leave balances', guarded: false),
-  NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], employeeLabel: 'My calendar', guarded: false, requiresEmployee: true),
+      anyOf: [leaveBalanceView, leaveBalanceViewAll], guarded: false),
+  NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], guarded: false, requiresEmployee: true),
   NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Corrections', guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
-  NavEntry('Shift swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
-  NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], employeeLabel: 'Payslips', guarded: false),
+  NavEntry('Shift Swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
+  NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], guarded: false),
 ];
 
 /// Mirrors `apps/web/src/components/layout/nav-items.ts`'s `NAV_ITEMS` (the items not already in
