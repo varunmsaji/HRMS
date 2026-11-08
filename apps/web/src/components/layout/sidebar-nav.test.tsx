@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 let mockPathname = "/app/dashboard";
+let mockEmployeeMode = false;
 
 vi.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
@@ -12,7 +13,7 @@ vi.mock("@/lib/auth/auth-context", () => ({
 }));
 
 vi.mock("@/lib/auth/use-employee-mode", () => ({
-  useEmployeeMode: () => false,
+  useEmployeeMode: () => mockEmployeeMode,
 }));
 
 import { findActiveHref, SidebarNav } from "@/components/layout/sidebar-nav";
@@ -42,6 +43,7 @@ describe("findActiveHref", () => {
 describe("SidebarNav active state", () => {
   beforeEach(() => {
     mockPathname = "/app/dashboard";
+    mockEmployeeMode = false;
   });
 
   it.each([
@@ -60,5 +62,25 @@ describe("SidebarNav active state", () => {
     mockPathname = "/app/payroll/salary-components";
     render(<SidebarNav />);
     expect(activeLabels()).toEqual(["Settings"]);
+  });
+});
+
+describe("SidebarNav for an employee", () => {
+  beforeEach(() => {
+    mockEmployeeMode = true;
+  });
+
+  it("offers Shift Swaps after Overtime, as mobile does, opening the schedule that holds the swaps", () => {
+    mockPathname = "/app/dashboard";
+    render(<SidebarNav />);
+    const labels = screen.getAllByRole("link").map((link) => link.textContent);
+    expect(labels.indexOf("Shift Swaps")).toBe(labels.indexOf("Overtime") + 1);
+    expect(screen.getByRole("link", { name: "Shift Swaps" })).toHaveAttribute("href", "/app/rosters/schedule");
+  });
+
+  it("highlights Shift Swaps on the schedule", () => {
+    mockPathname = "/app/rosters/schedule";
+    render(<SidebarNav />);
+    expect(activeLabels()).toEqual(["Shift Swaps"]);
   });
 });
