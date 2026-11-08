@@ -119,7 +119,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Recompute'));
     await tester.pumpAndSettle();
-    expect(repo.calls, ['recompute']);
+    // The screen also looks up the neighbouring days for previous/next.
+    expect(repo.calls.where((c) => !c.startsWith('days:')), ['recompute']);
   });
 
   testWidgets('recompute is disabled when the day is locked', (tester) async {
@@ -140,7 +141,8 @@ void main() {
     await tester.enterText(find.byType(TextField).last, 'Leave approved earlier');
     await tester.tap(find.widgetWithText(FilledButton, 'Keep leave'));
     await tester.pumpAndSettle();
-    expect(repo.calls, ['keep-leave:Leave approved earlier']);
+    // The screen also looks up the neighbouring days for previous/next.
+    expect(repo.calls.where((c) => !c.startsWith('days:')), ['keep-leave:Leave approved earlier']);
   });
 
   testWidgets('keep leave is hidden once resolved', (tester) async {
