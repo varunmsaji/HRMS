@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
-import '../../../core/nav/nav_entries.dart' show isPayrollRoute, kPayrollInRelease;
+import '../../../core/nav/nav_entries.dart' show menuAllows;
 import '../../../core/providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
@@ -178,6 +178,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final t = EmployeeTokens.of(context);
     final overview = _overview;
     final insights = _insights;
+    final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     const leaveColours = <Color>[Color(0xFF1668E3), Color(0xFF16A34A), Color(0xFFF59E0B), Color(0xFF8B5CF6), Color(0xFF0EA5E9), Color(0xFF64748B)];
 
     return Scaffold(
@@ -246,7 +247,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                     DashListRow(icon: Icons.history, title: a.subject == null ? a.title : '${a.title} · ${a.subject}', caption: a.detail),
                 ]),
               ),
-            const Padding(padding: EdgeInsets.fromLTRB(16, 16, 16, 0), child: _QuickActions()),
+            Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 0), child: _QuickActions(permissions: permissions)),
             const SizedBox(height: 24),
           ],
         ),
@@ -409,8 +410,11 @@ class _QuickAction {
   final Color color;
 }
 
+/// Only the shortcuts the viewer can open, as web's action tiles; each follows the menu's rule.
 class _QuickActions extends StatelessWidget {
-  const _QuickActions();
+  const _QuickActions({required this.permissions});
+
+  final List<String> permissions;
 
   static const _actions = [
     _QuickAction('Employees', Icons.people_alt_outlined, '/app/employees', Color(0xFF2563EB)),
@@ -427,6 +431,8 @@ class _QuickActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
+    final shown = [for (final a in _actions) if (menuAllows(a.route, permissions)) a];
+    if (shown.isEmpty) return const SizedBox.shrink();
     return _Panel(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
       child: GridView.count(
@@ -437,7 +443,7 @@ class _QuickActions extends StatelessWidget {
         mainAxisSpacing: 12,
         childAspectRatio: 0.9,
         children: [
-          for (final action in _actions.where((a) => kPayrollInRelease || !isPayrollRoute(a.route)))
+          for (final action in shown)
             InkWell(
               onTap: () => context.push(action.route),
               borderRadius: BorderRadius.circular(12),

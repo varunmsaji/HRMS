@@ -156,6 +156,15 @@ List<NavGroup> visibleNavGroups(Iterable<String> permissions, {bool payroll = kP
         if (_visible(g.items, permissions, payroll, hasEmployee: hasEmployee).isNotEmpty) NavGroup(g.label, _visible(g.items, permissions, payroll, hasEmployee: hasEmployee)),
     ];
 
+/// Whether [route] is in the administrator menu for [permissions] — for shortcuts elsewhere (the
+/// dashboard tiles), so they never offer a screen the menu hides. A route not in the menu table is
+/// open to anyone signed in.
+bool menuAllows(String route, Iterable<String> permissions, {bool payroll = kPayrollInRelease}) {
+  final entries = [for (final g in [navQuickLinks, ...navSettingsGroups]) for (final e in g.items) if (e.route == route) e];
+  if (!payroll && isPayrollRoute(route)) return false;
+  return entries.isEmpty || entries.any((e) => e.allowedFor(permissions));
+}
+
 /// The employee menu: the destinations the user may open, with employee wording.
 List<NavEntry> visibleEmployeeEntries(Iterable<String> permissions, {bool payroll = kPayrollInRelease}) => _visible(employeeNavEntries, permissions, payroll);
 
