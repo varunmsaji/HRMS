@@ -167,8 +167,8 @@ export default function AttendanceGeofencesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/attendance"
+        backLabel="Attendance"
         title="Workplace Geofences"
         description="Approved workplaces for location-checked attendance. A device-reported location is evidence, not proof of presence: it can be spoofed. The check is switched on per attendance policy (Disabled, Optional or Required)."
       />

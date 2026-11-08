@@ -162,8 +162,8 @@ export default function SalaryComponentsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/payroll"
+        backLabel="Payroll"
         title="Salary Components"
         description="The earnings and employer contributions a salary structure is built from."
         actions={

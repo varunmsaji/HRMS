@@ -122,8 +122,8 @@ export default function HolidayCalendarsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/attendance"
+        backLabel="Attendance"
         title="Holiday Calendars"
         description="Reusable holiday date collections — e.g. India National, Kerala Office, Company FY26."
         actions={

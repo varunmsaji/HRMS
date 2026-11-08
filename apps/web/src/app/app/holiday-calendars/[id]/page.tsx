@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -346,16 +345,9 @@ export default function HolidayCalendarDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link
-          href="/app/holiday-calendars"
-          className="text-sm text-foreground-secondary hover:underline"
-        >
-          ← Holiday Calendars
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/holiday-calendars"
+        backLabel="Holiday Calendars"
         title={calendar?.name ?? "Holiday Calendar"}
         description="Holiday dates in this reusable calendar."
         actions={

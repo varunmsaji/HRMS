@@ -148,8 +148,8 @@ export default function SalaryStructuresPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/payroll"
+        backLabel="Payroll"
         title="Salary Structures"
         description="How an employee's CTC splits into salary components."
         actions={

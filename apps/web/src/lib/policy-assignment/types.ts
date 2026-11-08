@@ -60,7 +60,7 @@ export const POLICY_KIND_LABELS: Record<PolicyKind, string> = {
   WEEKLY_OFF: "Weekly-Off Pattern",
   ATTENDANCE_POLICY: "Attendance Policy",
   OVERTIME_POLICY: "Overtime Policy",
-  REGULARIZATION_POLICY: "Regularization Policy",
+  REGULARIZATION_POLICY: "Correction Policy",
   LEAVE_POLICY: "Leave Policy",
 };
 
@@ -145,4 +145,14 @@ export function canEndAssignment(
 export function appliedSourceLabel(applied: PolicyCoverageApplied): string {
   const label = SCOPE_TYPE_LABELS[applied.scope_type];
   return applied.scope_name ? `${label}: ${applied.scope_name}` : label;
+}
+
+/** Mirrors `_require_policy_assignment_permission`: the permissions needed to see and change
+ * assignments of one kind. Leave policies currently need both, like an unfiltered list. */
+export function assignmentPermissions(kind: PolicyKind): string[] {
+  if (kind === "WORK_CALENDAR" || kind === "WEEKLY_OFF") return ["ORG.CALENDAR.MANAGE"];
+  if (kind === "ATTENDANCE_POLICY" || kind === "OVERTIME_POLICY" || kind === "REGULARIZATION_POLICY") {
+    return ["ATTENDANCE.POLICY_MANAGE"];
+  }
+  return ["ORG.CALENDAR.MANAGE", "ATTENDANCE.POLICY_MANAGE"];
 }

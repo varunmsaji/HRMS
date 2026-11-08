@@ -119,8 +119,8 @@ export default function GradesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/organisation"
+        backLabel="Company & structure"
         title="Grades"
         description="Compensation grades/bands your designations can reference."
         actions={

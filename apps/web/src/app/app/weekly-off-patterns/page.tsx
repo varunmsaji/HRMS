@@ -131,8 +131,8 @@ export default function WeeklyOffPatternsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/attendance"
+        backLabel="Attendance"
         title="Weekly-Off Patterns"
         description="Configurable weekly-off rules — every Sunday, alternate Saturday, 2nd & 4th Saturday, and more."
         actions={

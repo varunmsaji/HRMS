@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -211,13 +210,9 @@ export default function LegalEntityDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/legal-entities" className="text-sm text-foreground-secondary hover:underline">
-          ← Companies
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/legal-entities"
+        backLabel="Legal Entities"
         title={entity?.name ?? "Company"}
         description="Registration and statutory details for this company."
         actions={

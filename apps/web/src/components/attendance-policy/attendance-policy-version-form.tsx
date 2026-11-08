@@ -1,3 +1,4 @@
+import { AdvancedSettings } from "@/components/policy/advanced-settings";
 import { FormField } from "@/components/common/form-field";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -209,13 +210,24 @@ export function AttendancePolicyVersionForm({
         </div>
       </section>
 
-      <details
-        open={advancedHasError || Boolean(errors.earlyInAllowanceMinutes) || undefined}
-        className="rounded-md border border-border"
+      <AdvancedSettings
+        values={values}
+        defaults={DEFAULTS}
+        fields={[
+          "earlyInAllowanceMinutes",
+          "multiPunchMode",
+          "duplicatePunchWindowSeconds",
+          "missingShiftBehaviour",
+          "excessBreakDaysToHalfDayCount",
+          "incompleteAtLockBehaviour",
+          "coreHoursBreachBehaviour",
+          "splitShiftMissedBlockBehaviour",
+          "onDutyRequiresPunch",
+          "lateBands",
+          "earlyDepartureBands",
+        ]}
+        hasError={advancedHasError || Boolean(errors.earlyInAllowanceMinutes)}
       >
-        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
-          Advanced settings
-        </summary>
         <div className="space-y-6 border-t border-border p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <FormField
@@ -351,7 +363,7 @@ export function AttendancePolicyVersionForm({
             onChange={(rows) => update("earlyDepartureBands", rows)}
           />
         </div>
-      </details>
+      </AdvancedSettings>
     </div>
   );
 }

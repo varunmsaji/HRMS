@@ -143,8 +143,8 @@ export default function StatutoryLeaveMinimumsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/leave"
+        backLabel="Leave"
         title="Statutory Leave Minimums"
         description="The legal compliance floor (client spec §16) — a leave policy cannot be published below the strictest minimum configured here for its leave type's statutory category. No figures are pre-filled; enter the minimums that apply to your states."
         actions={

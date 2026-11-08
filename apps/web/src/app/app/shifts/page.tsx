@@ -180,8 +180,8 @@ export default function ShiftsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/attendance"
+        backLabel="Attendance"
         title="Shifts"
         description="Shift timings, breaks, and grace periods your company can assign later."
         actions={

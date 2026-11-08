@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -243,13 +242,9 @@ export default function DepartmentDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/departments" className="text-sm text-foreground-secondary hover:underline">
-          ← Departments
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/departments"
+        backLabel="Departments"
         title={department?.name ?? "Department"}
         description="Hierarchy and branch details for this department."
         actions={

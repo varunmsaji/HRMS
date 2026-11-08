@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -221,13 +220,9 @@ export default function BranchDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/branches" className="text-sm text-foreground-secondary hover:underline">
-          ← Branches
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/branches"
+        backLabel="Branches"
         title={branch?.name ?? "Branch"}
         description="Location and geofence details for this branch."
         actions={

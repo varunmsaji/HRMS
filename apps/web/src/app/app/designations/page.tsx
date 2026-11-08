@@ -152,8 +152,8 @@ export default function DesignationsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/organisation"
+        backLabel="Company & structure"
         title="Designations"
         description="Job titles your employees will hold — optionally scoped to a department."
         actions={

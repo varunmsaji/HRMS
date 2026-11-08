@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -204,13 +203,9 @@ export default function GradeDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/grades" className="text-sm text-foreground-secondary hover:underline">
-          ← Grades
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/grades"
+        backLabel="Grades"
         title={grade?.name ?? "Grade"}
         description="Compensation band and override details for this grade."
         actions={

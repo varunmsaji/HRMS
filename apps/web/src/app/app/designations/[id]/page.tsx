@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -220,13 +219,9 @@ export default function DesignationDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/app/designations" className="text-sm text-foreground-secondary hover:underline">
-          ← Designations
-        </Link>
-      </div>
-
       <PageHeader
+        backHref="/app/designations"
+        backLabel="Designations"
         title={designation?.title ?? "Designation"}
         description="Department, grade, and identity details for this designation."
         actions={

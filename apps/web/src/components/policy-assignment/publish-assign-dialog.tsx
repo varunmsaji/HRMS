@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { FormField } from "@/components/common/form-field";
-import { EmployeeSelect } from "@/components/employee/employee-select";
+import {
+  ScopeTargetField,
+  useCoverageRow,
+} from "@/components/policy-assignment/scope-target";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,35 +16,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { apiClient } from "@/lib/api/client";
 import { formatCompanyDate } from "@/lib/dates/company-date";
 import { useCompanyDatePattern } from "@/lib/dates/use-company-date";
-import { useEmployeeDirectory } from "@/lib/employee/use-employee-directory";
 import {
-  coveragePath,
   SCOPE_TYPE_LABELS,
   SCOPE_TYPES,
-  type PolicyCoverage,
-  type PolicyCoverageRow,
   type PolicyKind,
   type ScopeType,
 } from "@/lib/policy-assignment/types";
-
-const SCOPE_LIST_PATH: Partial<Record<ScopeType, string>> = {
-  LEGAL_ENTITY: "/legal-entities",
-  BRANCH: "/branches",
-  DEPARTMENT: "/departments",
-  GRADE: "/grades",
-  DESIGNATION: "/designations",
-  SHIFT: "/shifts",
-};
-
-interface NamedOption {
-  id: string;
-  name?: string;
-  title?: string;
-  is_active?: boolean;
-}
+import { usePolicyFollowers } from "@/lib/policy-assignment/use-policy-followers";
 
 export interface PublishAssignment {
   scopeType: ScopeType;
@@ -90,84 +73,31 @@ export function PublishAssignDialog({
   // Until the user chooses, the default follows what the company already has.
   const [chosenWho, setChosenWho] = useState<WhoValue | null>(null);
   const [targetId, setTargetId] = useState("");
-  const [companyRow, setCompanyRow] = useState<PolicyCoverageRow | null | undefined>(undefined);
-  const [targetRow, setTargetRow] = useState<{ key: string; row: PolicyCoverageRow | null } | null>(
-    null,
-  );
-  const [scopeOptions, setScopeOptions] = useState<NamedOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
-  function matching(coverage: PolicyCoverage): PolicyCoverageRow | null {
-    return (
-      coverage.rows.find(
-        (row) => row.policy_kind === policyKind && row.leave_type_id === leaveTypeId,
-      ) ?? null
-    );
-  }
-
-  useEffect(() => {
-    let current = true;
-    apiClient
-      .get<PolicyCoverage>(coveragePath("COMPANY", null, today))
-      .then((coverage) => {
-        if (current) setCompanyRow(matching(coverage));
-      })
-      .catch(() => {
-        if (current) setCompanyRow(null);
-      });
-    return () => {
-      current = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [today]);
+  const companyRow = useCoverageRow({
+    policyKind,
+    leaveTypeId,
+    scopeType: "COMPANY",
+    scopeId: null,
+    today,
+  });
+  const followers = usePolicyFollowers({ policyKind, policyId, today });
 
   // A brand-new policy in a company with none of this kind almost always applies company-wide.
   // Publishing new rules for an existing policy leaves who follows it alone.
   const defaultWho: WhoValue = policyId || companyRow?.own ? "NOBODY" : "COMPANY";
   const who = chosenWho ?? defaultWho;
-  const directory = useEmployeeDirectory({ enabled: who === "EMPLOYEE" });
 
-  useEffect(() => {
-    const path = who === "NOBODY" ? undefined : SCOPE_LIST_PATH[who];
-    if (!path) return;
-    let current = true;
-    apiClient
-      .get<NamedOption[]>(path)
-      .then((list) => {
-        if (current) setScopeOptions(list.filter((option) => option.is_active !== false));
-      })
-      .catch(() => {
-        if (current) setScopeOptions([]);
-      });
-    return () => {
-      current = false;
-    };
-  }, [who]);
-
-  const targetKey = who !== "NOBODY" && who !== "COMPANY" && targetId ? `${who}:${targetId}` : null;
-
-  useEffect(() => {
-    if (!targetKey || who === "NOBODY") return;
-    let current = true;
-    apiClient
-      .get<PolicyCoverage>(coveragePath(who, targetId, today))
-      .then((coverage) => {
-        if (current) setTargetRow({ key: targetKey, row: matching(coverage) });
-      })
-      .catch(() => {
-        if (current) setTargetRow({ key: targetKey, row: null });
-      });
-    return () => {
-      current = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetKey, today]);
-
-  const row = useMemo(() => {
-    if (who === "NOBODY") return null;
-    if (who === "COMPANY") return companyRow ?? null;
-    return targetRow?.key === targetKey ? targetRow?.row : null;
-  }, [who, companyRow, targetRow, targetKey]);
+  const targetRow = useCoverageRow({
+    policyKind,
+    leaveTypeId,
+    scopeType: who === "NOBODY" || who === "COMPANY" ? null : who,
+    scopeId: targetId || null,
+    today,
+  });
+  const row =
+    who === "NOBODY" ? null : who === "COMPANY" ? (companyRow ?? null) : (targetRow ?? null);
 
   const replacesSamePolicy = Boolean(policyId && row?.own?.policy_id === policyId);
 
@@ -248,22 +178,20 @@ export function PublishAssignDialog({
             ))}
           </NativeSelect>
         </FormField>
-        {who === "EMPLOYEE" ? (
-          <FormField id="publish-employee" label="Employee" required>
-            <EmployeeSelect directory={directory} value={targetId} onChange={setTargetId} />
-          </FormField>
+        {who === "NOBODY" && policyId && followers.assignments ? (
+          <p className="text-sm text-foreground-secondary">
+            {followers.assignments.length === 0
+              ? "Nobody follows it yet. You can add who follows it from the policy's Who follows this tab."
+              : `Followed by: ${followers.assignments.map((a) => followers.scopeLabel(a)).join(", ")}.`}
+          </p>
         ) : null}
-        {who !== "NOBODY" && who !== "COMPANY" && who !== "EMPLOYEE" ? (
-          <FormField id="publish-target" label={SCOPE_TYPE_LABELS[who]} required>
-            <NativeSelect value={targetId} onChange={(e) => setTargetId(e.target.value)}>
-              <option value="">Choose…</option>
-              {scopeOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name ?? option.title ?? option.id}
-                </option>
-              ))}
-            </NativeSelect>
-          </FormField>
+        {who !== "NOBODY" ? (
+          <ScopeTargetField
+            idPrefix="publish"
+            scopeType={who}
+            value={targetId}
+            onChange={setTargetId}
+          />
         ) : null}
         {replacesSamePolicy ? (
           <p className="text-sm text-foreground-secondary">They already follow this policy.</p>

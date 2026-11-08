@@ -168,8 +168,8 @@ export default function LeaveCombinationRulesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/leave"
+        backLabel="Leave"
         title="Leave Combination Rules"
         description="Whether two leave types may be applied for on overlapping dates — e.g. Casual + Sick not allowed, Annual + Casual allowed. No rule for a pair means allowed."
         actions={

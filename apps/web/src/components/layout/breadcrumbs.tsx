@@ -4,7 +4,13 @@ import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { NAV_ITEMS, SETTINGS_NAV_GROUPS } from "@/components/layout/nav-items";
+import {
+  NAV_ITEMS,
+  SETTINGS_MODULES,
+  SETTINGS_NAV_GROUPS,
+  settingsModuleFor,
+  settingsModuleHref,
+} from "@/components/layout/nav-items";
 
 interface Crumb {
   label: string;
@@ -16,15 +22,24 @@ function resolveBreadcrumbs(pathname: string | null): Crumb[] {
     return [{ label: "Dashboard" }];
   }
 
-  // Check if path belongs to a Settings module
+  // Settings module pages: /app/settings/<module>
+  const moduleMatch = SETTINGS_MODULES.find((m) => pathname === settingsModuleHref(m.slug));
+  if (moduleMatch) {
+    return [{ label: "Settings", href: "/app/settings" }, { label: moduleMatch.label }];
+  }
+
+  // Check if path belongs to a Settings screen
   for (const group of SETTINGS_NAV_GROUPS) {
     for (const item of group.items) {
+      const owner = settingsModuleFor(item.href);
+      const parent: Crumb[] = owner
+        ? [
+            { label: "Settings", href: "/app/settings" },
+            { label: owner.label, href: settingsModuleHref(owner.slug) },
+          ]
+        : [{ label: "Settings", href: "/app/settings" }];
       if (pathname === item.href) {
-        return [
-          { label: "Settings", href: "/app/settings" },
-          { label: group.label, href: "/app/settings" },
-          { label: item.label },
-        ];
+        return [...parent, { label: item.label }];
       }
       if (pathname.startsWith(`${item.href}/`)) {
         const subSegment = pathname.slice(item.href.length + 1);
@@ -34,11 +49,7 @@ function resolveBreadcrumbs(pathname: string | null): Crumb[] {
             : subSegment === "calendar"
               ? "Calendar"
               : "Details";
-        return [
-          { label: "Settings", href: "/app/settings" },
-          { label: item.label, href: item.href },
-          { label: subLabel },
-        ];
+        return [...parent, { label: item.label, href: item.href }, { label: subLabel }];
       }
     }
   }

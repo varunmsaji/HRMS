@@ -78,8 +78,8 @@ export default function AttendancePeriodsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/attendance"
+        backLabel="Attendance"
         title="Attendance Periods"
         description="Close and lock each company's attendance for a month once every exception in it is resolved."
         actions={

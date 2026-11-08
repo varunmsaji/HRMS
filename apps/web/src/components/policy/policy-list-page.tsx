@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/common/empty-state";
 import { ErrorState } from "@/components/common/error-state";
 import { LoadingState } from "@/components/common/loading-state";
 import { PageHeader } from "@/components/common/page-header";
+import { settingsModuleFor, settingsModuleHref } from "@/components/layout/nav-items";
 import type {
   PolicyBase,
   PolicyKindConfig,
@@ -105,11 +106,13 @@ export function PolicyListPage<
     </Button>
   );
 
+  const area = settingsModuleFor(`/app${config.path}`);
+
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref={area ? settingsModuleHref(area.slug) : "/app/settings"}
+        backLabel={area?.label ?? "Settings"}
         title={config.pluralLabel}
         description={config.listDescription}
         actions={
@@ -184,7 +187,13 @@ export function PolicyListPage<
                     <PolicyStatus policy={policy} today={today} />
                   </TableCell>
                   <TableCell className="text-sm text-foreground-secondary">
-                    {appliesToLabel(policy)}
+                    <Link
+                      href={`/app${path}/${policy.id}?tab=followers`}
+                      className="hover:text-primary hover:underline"
+                      aria-label={`${appliesToLabel(policy)}: see who follows ${policy.name}`}
+                    >
+                      {appliesToLabel(policy)}
+                    </Link>
                   </TableCell>
                   <TableCell align="right">
                     <TableRowAction href={`/app${path}/${policy.id}`}>Open</TableRowAction>

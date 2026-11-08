@@ -1,3 +1,4 @@
+import { AdvancedSettings } from "@/components/policy/advanced-settings";
 import { FormField } from "@/components/common/form-field";
 import { PolicyCheckbox } from "@/components/policy/policy-checkbox";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import type {
   RegularizationPolicyVersionFormErrors,
   RegularizationPolicyVersionFormValues,
 } from "@/lib/regularization-policy/validate-regularization-policy";
+import { EMPTY_REGULARIZATION_POLICY_VERSION_FORM_VALUES } from "@/lib/regularization-policy/validate-regularization-policy";
 
 interface RegularizationPolicyVersionFormProps {
   values: RegularizationPolicyVersionFormValues;
@@ -150,10 +152,13 @@ export function RegularizationPolicyVersionForm({
         </div>
       </section>
 
-      <details className="rounded-md border border-border">
-        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">
-          Advanced settings
-        </summary>
+      <AdvancedSettings
+        values={values}
+        defaults={EMPTY_REGULARIZATION_POLICY_VERSION_FORM_VALUES}
+        fields={[
+          "blockedWhenLocked",
+        ]}
+      >
         <div className="border-t border-border p-4">
           <PolicyCheckbox
             label="Refuse corrections for days that have been locked"
@@ -162,7 +167,7 @@ export function RegularizationPolicyVersionForm({
             onChange={(v) => update("blockedWhenLocked", v)}
           />
         </div>
-      </details>
+      </AdvancedSettings>
     </div>
   );
 }

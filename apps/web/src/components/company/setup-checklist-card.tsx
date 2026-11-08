@@ -13,9 +13,10 @@ import { cn } from "@/lib/utils";
 
 /** Loads the checklist. `null` until it arrives or when the user may not see it, so callers
  * render nothing rather than an error for something that is only a nudge. */
-function useSetupChecklist(): SetupChecklist | null {
+export function useSetupChecklist({ enabled = true }: { enabled?: boolean } = {}): SetupChecklist | null {
   const [checklist, setChecklist] = useState<SetupChecklist | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let current = true;
     apiClient
       .get<SetupChecklist>("/companies/current/setup-checklist")
@@ -29,14 +30,20 @@ function useSetupChecklist(): SetupChecklist | null {
     return () => {
       current = false;
     };
-  }, []);
+  }, [enabled]);
   return checklist;
 }
 
 /** A single line on the Settings page: how far along, and the next thing to do. Hidden once the
  * essentials are done, so it never nags. */
-export function SetupChecklistBanner() {
-  const checklist = useSetupChecklist();
+export function SetupChecklistBanner({
+  checklist: given,
+}: {
+  /** Pass the checklist when the page already loaded it, to avoid a second request. */
+  checklist?: SetupChecklist | null;
+} = {}) {
+  const loaded = useSetupChecklist({ enabled: given === undefined });
+  const checklist = given === undefined ? loaded : given;
   if (!checklist || checklist.required_complete >= checklist.required_total) return null;
   const next = checklist.items.find((item) => item.code === checklist.next_code);
   return (

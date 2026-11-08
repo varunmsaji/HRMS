@@ -189,8 +189,8 @@ export default function UsersPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        backHref="/app/settings"
-        backLabel="Settings"
+        backHref="/app/settings/access"
+        backLabel="Access & setup"
         title="Users"
         description="Everyone with a login to this company, and the roles they hold."
         actions={

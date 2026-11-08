@@ -43,11 +43,11 @@ export const regularizationPolicyConfig: PolicyKindConfig<
 > = {
   kind: "REGULARIZATION_POLICY",
   path: "/regularization-policies",
-  pluralLabel: "Regularization Policies",
-  singularLabel: "regularization policy",
+  pluralLabel: "Correction Policies",
+  singularLabel: "correction policy",
   listDescription:
     "Who can ask for an attendance correction after the day has passed, how far back, and who approves it.",
-  emptyListTitle: "No regularization policies have been configured yet.",
+  emptyListTitle: "No correction policies have been set up yet.",
   icon: FileClock,
   templates: REGULARIZATION_POLICY_TEMPLATES,
   emptyValues: EMPTY_REGULARIZATION_POLICY_VERSION_FORM_VALUES,

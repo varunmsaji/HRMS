@@ -227,4 +227,42 @@ describe("attendance policy detail", () => {
     await screen.findByLabelText(/Flexible shifts/);
     expect(screen.getByLabelText(/Split shifts/)).toBeInTheDocument();
   });
+
+  it("opens on Who follows this when linked there, and lists who follows the policy", async () => {
+    serve([live]);
+    mockedGetList.mockResolvedValue({
+      data: [
+        {
+          id: "a1",
+          company_id: "c1",
+          policy_kind: "ATTENDANCE_POLICY",
+          policy_id: "p1",
+          leave_type_id: null,
+          scope_type: "COMPANY",
+          scope_id: null,
+          effective_from: "2026-01-01",
+          effective_to: null,
+          priority: 0,
+          reason: null,
+          is_active: true,
+          version: 1,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      pagination: { page: 1, per_page: 100, total: 1, total_pages: 1, has_next: false, has_prev: false },
+    } as never);
+    window.history.pushState({}, "", "/app/attendance-policies/p1?tab=followers");
+    try {
+      render(<AttendancePolicyDetailPage />);
+      expect(await screen.findByRole("tab", { name: "Who follows this" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(await screen.findByText("Whole company")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /add who follows it/i })).toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
 });
