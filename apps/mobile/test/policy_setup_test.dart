@@ -205,10 +205,10 @@ void main() {
     await _pump(tester, _api(), leavePolicySetup);
     await tester.tap(find.text('Start from scratch'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Accrual per cycle', findRichText: true), findsNothing);
+    expect(find.textContaining('Days credited each time', findRichText: true), findsNothing);
     await tester.tap(find.text('Casual leave'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Accrual per cycle', findRichText: true), findsOneWidget);
+    expect(find.textContaining('Days credited each time', findRichText: true), findsOneWidget);
   });
 
   testWidgets('a night shift template is published as a shift with no assignment', (tester) async {

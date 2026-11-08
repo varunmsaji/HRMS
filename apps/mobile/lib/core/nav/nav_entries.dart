@@ -64,7 +64,7 @@ const employeeNavEntries = [
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances',
       anyOf: [leaveBalanceView, leaveBalanceViewAll], employeeLabel: 'Leave balances', guarded: false),
   NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], employeeLabel: 'My calendar', guarded: false, requiresEmployee: true),
-  NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Attendance corrections', guarded: false),
+  NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Corrections', guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
   NavEntry('Shift swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
   NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], employeeLabel: 'Payslips', guarded: false),
@@ -94,7 +94,7 @@ const navQuickLinks = NavGroup('Quick links', [
 /// Mirrors `SETTINGS_NAV_GROUPS` in full.
 const navSettingsGroups = [
   NavGroup('Organisation', [
-    NavEntry('Company', Icons.apartment_outlined, '/app/company', anyOf: [orgCompanyManage]),
+    NavEntry('Company Profile', Icons.apartment_outlined, '/app/company', anyOf: [orgCompanyManage]),
     NavEntry('Branches', Icons.business_outlined, '/app/branches', anyOf: [orgBranchManage]),
     NavEntry('Departments', Icons.account_tree_outlined, '/app/departments', anyOf: [orgDepartmentManage]),
     NavEntry('Designations', Icons.work_outline, '/app/designations', anyOf: [orgDesignationManage]),

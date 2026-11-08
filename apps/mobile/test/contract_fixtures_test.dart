@@ -518,7 +518,6 @@ void writeFormTests() {
     _writeFormMatches('employmentEditSpec', employmentEditSpec, 'employee.EmploymentUpdate');
     _writeFormMatches('employmentTerminateSpec', employmentTerminateSpec, 'employee.EmploymentTerminate');
     _writeFormMatches('assignmentSpec', assignmentSpec(const ['INITIAL']), 'employee.AssignmentCreate', notInForm: {
-      'cost_centre_id',
       // Not offered on the web either.
       'clear_reporting_manager',
       // Sent by the confirmation step, not typed into the form.

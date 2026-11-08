@@ -49,7 +49,7 @@ void main() {
   group('employee', () {
     testWidgets('sees exactly their four destinations, in employee wording, and Sign out', (tester) async {
       await _pump(tester, _employeeGrants);
-      for (final label in ['Leave balances', 'Attendance corrections', 'Overtime', 'Sign out']) {
+      for (final label in ['Leave balances', 'Corrections', 'Overtime', 'Sign out']) {
         expect(_t(label), findsOneWidget, reason: label);
       }
       expect(_t('Payslips'), findsNothing, reason: 'payroll is outside the attendance-only release');
@@ -117,7 +117,7 @@ void main() {
       expect(_t('Regularizations'), findsOneWidget);
       expect(_t('Leave Balances'), findsOneWidget);
       expect(_t('My Payslips'), findsNothing);
-      expect(_t('Attendance corrections'), findsNothing);
+      expect(_t('Corrections'), findsNothing);
     });
   });
 
