@@ -194,6 +194,53 @@ async def test_policy_assignment_chain_rules(client: AsyncClient) -> None:
         await wipe_tenant(company_id=company_id, user_id=user_id)
 
 
+async def test_assignments_can_be_listed_for_one_policy(client: AsyncClient) -> None:
+    """A policy's own screen lists who follows it: `policy_id` narrows the list to that policy."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        c1 = await _create_work_calendar(client, headers, name="One")
+        c2 = await _create_work_calendar(client, headers, name="Two")
+        dept = (
+            await client.post("/v1/departments", headers=headers, json={"name": "Sales"})
+        ).json()["data"]
+
+        assert (
+            await _assign(client, headers, _body("WORK_CALENDAR", c1["id"], "2027-01-01"))
+        ).status_code == 201
+        assert (
+            await _assign(
+                client,
+                headers,
+                _body(
+                    "WORK_CALENDAR",
+                    c2["id"],
+                    "2027-01-01",
+                    scope_type="DEPARTMENT",
+                    scope_id=dept["id"],
+                ),
+            )
+        ).status_code == 201
+
+        r = await client.get(
+            "/v1/policy-assignments",
+            headers=headers,
+            params={"policy_kind": "WORK_CALENDAR", "policy_id": c2["id"], "current_only": True},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert [row["scope_id"] for row in body["data"]] == [dept["id"]]
+        assert body["pagination"]["total"] == 1
+
+        r = await client.get(
+            "/v1/policy-assignments",
+            headers=headers,
+            params={"policy_kind": "WORK_CALENDAR", "policy_id": str(uuid4())},
+        )
+        assert r.status_code == 200 and r.json()["data"] == []
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
 async def test_stale_assignment_is_reported_as_stale_whatever_its_date(client: AsyncClient) -> None:
     """Someone assigned a later date first. The stale caller must hear that it is stale, not that
     its date is invalid against a row it has never seen."""

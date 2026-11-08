@@ -4801,6 +4801,7 @@ class OrganisationService:
         scope_id: UUID | None = None,
         leave_type_id: UUID | None = None,
         current_only: bool = False,
+        policy_id: UUID | None = None,
         page: PageParams,
     ) -> tuple[list[PolicyAssignmentRead], int]:
         rows = await self._policy_assignment_repo.list_assignments(
@@ -4811,6 +4812,7 @@ class OrganisationService:
             scope_id=scope_id,
             leave_type_id=leave_type_id,
             current_only=current_only,
+            policy_id=policy_id,
             limit=page.limit,
             offset=page.offset,
         )
@@ -4822,6 +4824,7 @@ class OrganisationService:
             scope_id=scope_id,
             leave_type_id=leave_type_id,
             current_only=current_only,
+            policy_id=policy_id,
         )
         return [policy_assignment_to_read(row) for row in rows], total
 
