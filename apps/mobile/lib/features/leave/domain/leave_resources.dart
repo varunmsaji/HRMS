@@ -1,6 +1,7 @@
 import '../../../core/auth/permissions.dart';
 import '../../../core/forms/form_spec.dart';
 import '../../../core/resource/resource_config.dart';
+import '../../attendance/presentation/policy_followers_section.dart' show followersFooter;
 
 /// Leave policies — an identity per leave type plus versions (mirrors `LeavePolicyCreate`/
 /// `LeavePolicyVersionCreate` in `apps/api/.../leave/schemas.py` and the web `leave-policies/[id]` page).
@@ -60,6 +61,7 @@ final leavePolicyResource = ResourceConfig(
     noun: 'policy version',
     summary: (v) => 'Accrual ${prettyEnum('${v['accrual_frequency']}')} · ${prettyEnum('${v['approval_chain']}')}',
   ),
+  detailFooter: followersFooter('LEAVE_POLICY', manage: leavePolicyManage, versionsPath: '/leave-policies', leaveTyped: true),
 );
 
 // ---- leave types, combination rules, statutory minimums --------------------------------------

@@ -91,47 +91,58 @@ const navQuickLinks = NavGroup('Quick links', [
   NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], guarded: false),
 ]);
 
-/// Mirrors `SETTINGS_NAV_GROUPS` in full.
+/// Mirrors `SETTINGS_NAV_GROUPS` in full: web's Settings sections in setup order, area by area
+/// (Company & structure, Attendance, Leave, Payroll, Access & setup), then the shared
+/// "Who follows what" screens.
 const navSettingsGroups = [
-  NavGroup('Organisation', [
+  NavGroup('Company', [
     NavEntry('Company Profile', Icons.apartment_outlined, '/app/company', anyOf: [orgCompanyManage]),
+    NavEntry('Legal Entities', Icons.gavel_outlined, '/app/legal-entities', anyOf: [orgLegalEntityManage]),
     NavEntry('Branches', Icons.business_outlined, '/app/branches', anyOf: [orgBranchManage]),
+  ]),
+  NavGroup('People structure', [
     NavEntry('Departments', Icons.account_tree_outlined, '/app/departments', anyOf: [orgDepartmentManage]),
     NavEntry('Designations', Icons.work_outline, '/app/designations', anyOf: [orgDesignationManage]),
     NavEntry('Grades', Icons.layers_outlined, '/app/grades', anyOf: [orgGradeManage]),
-    NavEntry('Legal Entities', Icons.gavel_outlined, '/app/legal-entities', anyOf: [orgLegalEntityManage]),
   ]),
-  NavGroup('Attendance & Time', [
+  NavGroup('When people work', [
     NavEntry('Shifts', Icons.schedule_outlined, '/app/shifts', anyOf: [orgShiftManage]),
-    NavEntry('Workplace Geofences', Icons.location_on_outlined, '/app/attendance-geofences', anyOf: [attendancePolicyManage, attendanceViewAll]),
-    NavEntry('Attendance Periods', Icons.lock_clock_outlined, '/app/attendance-periods', anyOf: [attendanceLock, attendanceUnlock, ..._teamView]),
-    NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
     NavEntry('Work Calendars', Icons.date_range_outlined, '/app/work-calendars', anyOf: [orgCalendarManage]),
     NavEntry('Holiday Calendars', Icons.calendar_month_outlined, '/app/holiday-calendars', anyOf: [orgHolidayManage]),
     NavEntry('Weekly-Off Patterns', Icons.event_busy_outlined, '/app/weekly-off-patterns', anyOf: [orgCalendarManage]),
+    // Mobile only: web shows the roster calendar as a tab of Shift Rosters.
+    NavEntry('Roster Calendar', Icons.calendar_view_month_outlined, '/app/roster-calendar', anyOf: [attendanceRosterManage, ..._teamView], allOf: [attendanceView]),
+  ]),
+  NavGroup('Where people punch', [
+    NavEntry('Workplace Geofences', Icons.location_on_outlined, '/app/attendance-geofences', anyOf: [attendancePolicyManage, attendanceViewAll]),
+  ]),
+  NavGroup('Attendance rules', [
     NavEntry('Attendance Policies', Icons.assignment_outlined, '/app/attendance-policies', anyOf: [attendancePolicyManage]),
     NavEntry('Overtime Policies', Icons.timer_outlined, '/app/overtime-policies', anyOf: [attendancePolicyManage]),
-    NavEntry('Regularization Policies', Icons.history_edu_outlined, '/app/regularization-policies', anyOf: [attendancePolicyManage]),
+    NavEntry('Correction Policies', Icons.history_edu_outlined, '/app/regularization-policies', anyOf: [attendancePolicyManage]),
   ]),
-  NavGroup('Leave', [
+  NavGroup('Closing the month', [
+    NavEntry('Attendance Periods', Icons.lock_clock_outlined, '/app/attendance-periods', anyOf: [attendanceLock, attendanceUnlock, ..._teamView]),
+  ]),
+  NavGroup('Leave types and rules', [
     NavEntry('Leave Types', Icons.sell_outlined, '/app/leave-types', anyOf: [leaveTypeManage]),
     NavEntry('Leave Policies', Icons.assignment_turned_in_outlined, '/app/leave-policies', anyOf: [leavePolicyManage]),
-    NavEntry('Leave Combination Rules', Icons.merge_type_outlined, '/app/leave-combination-rules', anyOf: [leaveCombinationRuleManage]),
     NavEntry('Leave Year', Icons.event_repeat_outlined, '/app/leave-year-setting', anyOf: [leaveYearSettingManage]),
+    NavEntry('Leave Combination Rules', Icons.merge_type_outlined, '/app/leave-combination-rules', anyOf: [leaveCombinationRuleManage]),
     NavEntry('Statutory Minimums', Icons.balance_outlined, '/app/statutory-leave-minimums', anyOf: [leaveStatutoryMinimumManage]),
   ]),
-  NavGroup('Payroll', [
+  NavGroup('Pay setup', [
     NavEntry('Salary Components', Icons.attach_money_outlined, '/app/payroll/salary-components', anyOf: [payrollSetupManage]),
     NavEntry('Salary Structures', Icons.view_list_outlined, '/app/payroll/salary-structures', anyOf: [payrollSetupManage]),
     NavEntry('Statutory Rates', Icons.account_balance_outlined, '/app/payroll/statutory-rates', anyOf: [payrollStatutoryManage]),
   ]),
-  NavGroup('Policies', [
-    NavEntry('Policy Assignments', Icons.link_outlined, '/app/policy-assignments', anyOf: [orgCalendarManage, attendancePolicyManage]),
-    NavEntry('Policy Resolution', Icons.search_outlined, '/app/policy-resolution', anyOf: [orgCalendarManage, attendancePolicyManage]),
-  ]),
-  NavGroup('Administration', [
-    NavEntry('Setup', Icons.checklist_outlined, '/app/setup', anyOf: [orgCompanyManage]),
+  NavGroup('Access & setup', [
     NavEntry('Users', Icons.manage_accounts_outlined, '/app/users', anyOf: [settingsUserManage, settingsRoleManage]),
+    NavEntry('Setup', Icons.checklist_outlined, '/app/setup', anyOf: [orgCompanyManage]),
+  ]),
+  NavGroup('Who follows what', [
+    NavEntry('Rules by Group', Icons.link_outlined, '/app/policy-assignments', anyOf: [orgCalendarManage, attendancePolicyManage]),
+    NavEntry("Check a Person's Rules", Icons.search_outlined, '/app/policy-resolution', anyOf: [orgCalendarManage, attendancePolicyManage]),
   ]),
 ];
 

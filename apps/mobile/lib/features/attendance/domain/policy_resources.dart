@@ -4,6 +4,7 @@ import '../../../core/resource/resource_config.dart';
 import '../../../core/time.dart';
 import '../presentation/face_enrollment_policy_card.dart';
 import '../presentation/shift_delete_screen.dart' show openShiftDelete;
+import '../presentation/policy_followers_section.dart' show followersFooter;
 
 /// Versioned resources of the attendance module — attendance / overtime / regularization policies
 /// and shifts. Each version spec mirrors a `*VersionCreate`/`*VersionUpdate` schema (and the web
@@ -100,6 +101,7 @@ final attendancePolicyResource = ResourceConfig(
     noun: 'policy version',
     summary: (v) => 'Grace ${v['grace_in_minutes']}/${v['grace_out_minutes']} min · ${prettyEnum('${v['missing_punch_behaviour']}')}',
   ),
+  detailFooter: followersFooter('ATTENDANCE_POLICY', manage: attendancePolicyManage, versionsPath: '/attendance-policies'),
 );
 
 // ---- overtime policy --------------------------------------------------------------------------
@@ -147,11 +149,12 @@ final overtimePolicyResource = ResourceConfig(
     noun: 'policy version',
     summary: (v) => '${prettyEnum('${v['eligibility']}')} · min ${v['min_ot_minutes']} min',
   ),
+  detailFooter: followersFooter('OVERTIME_POLICY', manage: attendancePolicyManage, versionsPath: '/overtime-policies'),
 );
 
 // ---- regularization policy --------------------------------------------------------------------
 
-const regularizationPolicyIdentitySpec = FormSpec(name: 'regularization_policy', label: 'Regularization policy', fields: [
+const regularizationPolicyIdentitySpec = FormSpec(name: 'regularization_policy', label: 'Correction policy', fields: [
   FieldSpec('name', 'Name', required: true),
   _active,
 ]);
@@ -176,8 +179,8 @@ const regularizationPolicyVersionSpec = FormSpec(name: 'regularization_policy_ve
 ]);
 
 final regularizationPolicyResource = ResourceConfig(
-  title: 'Regularization Policies',
-  singular: 'Regularization policy',
+  title: 'Correction Policies',
+  singular: 'Correction policy',
   path: '/regularization-policies',
   spec: regularizationPolicyIdentitySpec,
   rowTitle: (r) => r['name'] as String,
@@ -188,6 +191,7 @@ final regularizationPolicyResource = ResourceConfig(
     noun: 'policy version',
     summary: (v) => '${prettyEnum('${v['approval_chain']}')}${v['max_backdated_days'] != null ? ' · back ${v['max_backdated_days']} days' : ''}',
   ),
+  detailFooter: followersFooter('REGULARIZATION_POLICY', manage: attendancePolicyManage, versionsPath: '/regularization-policies'),
 );
 
 // ---- shifts -----------------------------------------------------------------------------------

@@ -132,7 +132,7 @@ class _PolicyResolutionScreenState extends ConsumerState<PolicyResolutionScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Policy Resolution'), actions: const [MoreAction()]),
+      appBar: AppBar(title: const Text("Check a Person's Rules"), actions: const [MoreAction()]),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

@@ -9,6 +9,7 @@ import '../presentation/day_type_lookup.dart';
 import '../presentation/holiday_year_view.dart';
 import '../presentation/work_calendar_month_view.dart';
 import 'package:go_router/go_router.dart';
+import '../../attendance/presentation/policy_followers_section.dart' show followersFooter;
 
 /// Resource configs for the organisation module — each spec mirrors a `*Create`/`*Update` schema
 /// in `apps/api/.../organisation/schemas.py` and the matching web form.
@@ -273,6 +274,7 @@ final workCalendarResource = ResourceConfig(
     ),
     DayTypeLookup(calendarId: row['id'] as String),
   ]),
+  detailFooter: followersFooter('WORK_CALENDAR', manage: orgCalendarManage),
 );
 
 // ---- weekly-off patterns ----------------------------------------------------------------------
@@ -302,4 +304,5 @@ final weeklyOffPatternResource = ResourceConfig(
   rowTitle: (r) => r['name'] as String,
   rowSubtitle: (r) => _join([r['code'], prettyEnum('${r['pattern_kind']}')]),
   manage: orgCalendarManage,
+  detailFooter: followersFooter('WEEKLY_OFF', manage: orgCalendarManage),
 );
