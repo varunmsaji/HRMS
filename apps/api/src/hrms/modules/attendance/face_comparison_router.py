@@ -61,8 +61,12 @@ async def list_face_comparisons(
     date_from: Annotated[datetime | None, Query()] = None,
     date_to: Annotated[datetime | None, Query()] = None,
     employee_id: Annotated[UUID | None, Query()] = None,
-    primary_provider: Annotated[Literal["opensource", "facepp"] | None, Query()] = None,
-    shadow_provider: Annotated[Literal["opensource", "facepp"] | None, Query()] = None,
+    primary_provider: Annotated[
+        Literal["opensource", "facepp", "azure", "compreface"] | None, Query()
+    ] = None,
+    shadow_provider: Annotated[
+        Literal["opensource", "facepp", "azure", "compreface"] | None, Query()
+    ] = None,
     agreement: Annotated[Literal["agree", "disagree"] | None, Query()] = None,
     errors_only: Annotated[bool, Query()] = False,
 ) -> ListEnvelope[ComparisonRead]:
@@ -93,8 +97,12 @@ async def face_comparison_summary(
     date_from: Annotated[datetime | None, Query()] = None,
     date_to: Annotated[datetime | None, Query()] = None,
     employee_id: Annotated[UUID | None, Query()] = None,
-    primary_provider: Annotated[Literal["opensource", "facepp"] | None, Query()] = None,
-    shadow_provider: Annotated[Literal["opensource", "facepp"] | None, Query()] = None,
+    primary_provider: Annotated[
+        Literal["opensource", "facepp", "azure", "compreface"] | None, Query()
+    ] = None,
+    shadow_provider: Annotated[
+        Literal["opensource", "facepp", "azure", "compreface"] | None, Query()
+    ] = None,
     agreement: Annotated[Literal["agree", "disagree"] | None, Query()] = None,
     errors_only: Annotated[bool, Query()] = False,
 ) -> DataEnvelope[ComparisonSummary]:

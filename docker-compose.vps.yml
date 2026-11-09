@@ -21,6 +21,17 @@
 
 name: hrms-prod
 
+# Shared by compreface-admin and compreface-api. COMPREFACE_POSTGRES_PASSWORD goes in this file's
+# `.env`; it is only needed with the `compreface` profile (CompreFace's Postgres refuses to start
+# without it).
+x-compreface-db-env: &compreface-db-env
+  POSTGRES_USER: compreface
+  POSTGRES_PASSWORD: ${COMPREFACE_POSTGRES_PASSWORD:-}
+  POSTGRES_URL: jdbc:postgresql://compreface-postgres-db:5432/frs
+  SPRING_PROFILES_ACTIVE: dev
+  MAX_FILE_SIZE: 5MB
+  MAX_REQUEST_SIZE: 10MB
+
 x-logging: &default-logging
   # STEP 10/11 — bounds each container's own log volume so Docker's default json-file driver
   # (unbounded by default) cannot fill the VPS disk on its own; see docs/deployment/
@@ -33,9 +44,13 @@ x-logging: &default-logging
 networks:
   data:
   edge:
+  # CompreFace only (profile `compreface`): its containers plus api and worker, which call it
+  # (worker carries out queued face deletions). No route from edge, nothing published publicly.
+  face:
 
 volumes:
   postgres_data:
+  compreface_data:
   redis_data:
   minio_data:
   # Per-module application log files, shared by api, worker and beat (multi-process-safe
@@ -155,7 +170,7 @@ services:
       - metrics_mp:/app/metrics
     environment:
       PROMETHEUS_MULTIPROC_DIR: /app/metrics
-    networks: [data, edge]
+    networks: [data, edge, face]
     logging: *default-logging
     # HEALTHCHECK is inherited from the image (apps/api/Dockerfile) — liveness only, deliberately
     # (STEP 7): a Postgres/Redis blip must not make Docker restart an otherwise-healthy API
@@ -200,7 +215,7 @@ services:
       - metrics_mp:/app/metrics
     environment:
       PROMETHEUS_MULTIPROC_DIR: /app/metrics
-    networks: [data]
+    networks: [data, face]
     # Overrides the image's inherited HEALTHCHECK (an HTTP GET on :8000 — this container runs
     # Celery, not the API's HTTP server, so that check would fail permanently). `inspect ping`
     # only proves *some* worker answers on the broker — correct for today's single-replica
@@ -260,4 +275,79 @@ services:
     image: hrms-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     networks: [edge]
+    logging: *default-logging
+
+  # CompreFace (self-hosted face recognition; docs/operations/COMPREFACE_FACE_PROVIDER_SETUP.md).
+  # Opt-in: `docker compose -f docker-compose.vps.yml --profile compreface up -d`. The API reaches
+  # it at COMPREFACE_BASE_URL=http://compreface-api:8080 over the `face` network. The admin UI is
+  # on 127.0.0.1:8091 only, for an SSH tunnel. Budget about 2-3 GB RAM, mostly compreface-core.
+  compreface-postgres-db:
+    image: exadel/compreface-postgres-db:1.2.0
+    profiles: [compreface]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: compreface
+      POSTGRES_PASSWORD: ${COMPREFACE_POSTGRES_PASSWORD:-}
+      POSTGRES_DB: frs
+    volumes:
+      - compreface_data:/var/lib/postgresql/data
+    networks: [face]
+    logging: *default-logging
+
+  compreface-admin:
+    image: exadel/compreface-admin:1.2.0
+    profiles: [compreface]
+    restart: unless-stopped
+    environment:
+      <<: *compreface-db-env
+      ENABLE_EMAIL_SERVER: "false"
+      ADMIN_JAVA_OPTS: -Xmx512m
+    depends_on: [compreface-postgres-db, compreface-api]
+    networks: [face]
+    logging: *default-logging
+
+  compreface-api:
+    image: exadel/compreface-api:1.2.0
+    profiles: [compreface]
+    restart: unless-stopped
+    environment:
+      <<: *compreface-db-env
+      API_JAVA_OPTS: -Xmx1g
+      # Embeddings only: no employee photo is kept by CompreFace.
+      SAVE_IMAGES_TO_DB: "false"
+      CONNECTION_TIMEOUT: "10000"
+      READ_TIMEOUT: "60000"
+    depends_on: [compreface-postgres-db]
+    networks: [face]
+    logging: *default-logging
+
+  compreface-core:
+    image: exadel/compreface-core:1.2.0
+    profiles: [compreface]
+    restart: unless-stopped
+    environment:
+      ML_PORT: "3000"
+      IMG_LENGTH_LIMIT: "640"
+      UWSGI_PROCESSES: "2"
+      UWSGI_THREADS: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:3000/healthcheck || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [face]
+    logging: *default-logging
+
+  compreface-fe:
+    image: exadel/compreface-fe:1.2.0
+    profiles: [compreface]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8091:80"
+    environment:
+      CLIENT_MAX_BODY_SIZE: 10M
+      PROXY_READ_TIMEOUT: 60000ms
+      PROXY_CONNECT_TIMEOUT: 10000ms
+    depends_on: [compreface-api, compreface-admin]
+    networks: [face]
     logging: *default-logging

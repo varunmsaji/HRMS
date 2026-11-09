@@ -6,6 +6,9 @@
     # real Face++ (reads FACEPP_API_KEY/SECRET from the environment; creates ONE FaceSet from the
     # first image and deletes it afterwards; every request is a billable API call)
     python scripts/face/provider_benchmark.py facepp --images DIR --concurrency 1,4,10 --requests 40
+    # self-hosted CompreFace (reads COMPREFACE_BASE_URL/API_KEY; same one-subject enroll/delete as
+    # Face++, no billing). Each verify is one call per enrolled example plus a listing.
+    python scripts/face/provider_benchmark.py compreface --images DIR --concurrency 1,4,10
     # NO model or network: queueing model with fixed per-call latencies. A SIMULATION - it shows
     # how a concurrency cap shapes tail latency, it says nothing about real model speed.
     python scripts/face/provider_benchmark.py simulate --service-ms 150 --cap 1 \
@@ -107,10 +110,21 @@ async def run(args: argparse.Namespace) -> list[dict[str, object]]:
 
     else:
         from hrms.core.config.settings import get_settings
-        from hrms.modules.attendance.face_verification import FaceppFaceVerificationProvider
+        from hrms.modules.attendance.face_verification import (
+            FaceppFaceVerificationProvider,
+            FaceVerificationProvider,
+        )
 
         images = load_images(Path(args.images))
-        provider = FaceppFaceVerificationProvider(get_settings())
+        provider: FaceVerificationProvider
+        if args.mode == "compreface":
+            from hrms.modules.attendance.compreface_face_provider import (
+                CompreFaceVerificationProvider,
+            )
+
+            provider = CompreFaceVerificationProvider(get_settings())
+        else:
+            provider = FaceppFaceVerificationProvider(get_settings())
         person = await provider.enroll(
             label="benchmark", image=images[0], content_type="image/jpeg"
         )
@@ -136,7 +150,7 @@ async def run(args: argparse.Namespace) -> list[dict[str, object]]:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    p.add_argument("mode", choices=["opensource", "facepp", "simulate"])
+    p.add_argument("mode", choices=["opensource", "facepp", "compreface", "simulate"])
     p.add_argument("--images")
     p.add_argument("--model-dir")
     p.add_argument("--concurrency", default="1,10,25,50,100")
