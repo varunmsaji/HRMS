@@ -11,11 +11,11 @@ import '../auth/surface.dart';
 /// **Hiding is not security.** The API enforces every permission below; the menu and the guard
 /// only stop an employee from landing on screens that can only answer 403. `anyOf` mirrors the
 /// permission the screen's own list endpoint checks (verified against the API routers).
-/// Payroll is outside the attendance-only release: its menu entries and routes are hidden and
-/// its deep links land on the user's landing page. The screens, API client and models stay in the
-/// code base untouched; flipping this switches everything back on. UX only, the API still
-/// enforces every payroll permission.
-const kPayrollInRelease = false;
+/// Whether payroll ships in this release: its menu entries, routes, the employee Salary tab and
+/// pay on the employee home. Switched on 2026-11-09 (it was off for the attendance-only release,
+/// when payroll deep links landed on the user's landing page). UX only, the API still enforces
+/// every payroll permission.
+const kPayrollInRelease = true;
 
 /// Whether [route] belongs to payroll (pay runs, salary setup, statutory rates, own payslips).
 bool isPayrollRoute(String route) => route == '/app/payroll' || route.startsWith('/app/payroll/') || route == '/app/me/payslips' || route.startsWith('/app/me/payslips/');

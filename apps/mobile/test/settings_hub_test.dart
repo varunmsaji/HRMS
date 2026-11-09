@@ -47,12 +47,11 @@ const _adminOnlyLabels = ['Users', 'Payroll', 'Departments', 'Employees', 'Compa
 
 void main() {
   group('employee', () {
-    testWidgets('sees exactly their four destinations, in employee wording, and Sign out', (tester) async {
+    testWidgets('sees exactly their destinations, in employee wording, with My Payslips and Sign out', (tester) async {
       await _pump(tester, _employeeGrants);
-      for (final label in ['Leave Balances', 'Corrections', 'Overtime', 'Sign out']) {
+      for (final label in ['Leave Balances', 'Corrections', 'Overtime', 'My Payslips', 'Sign out']) {
         expect(_t(label), findsOneWidget, reason: label);
       }
-      expect(_t('My Payslips'), findsNothing, reason: 'payroll is outside the attendance-only release');
       for (final label in _adminOnlyLabels) {
         expect(_t(label), findsNothing, reason: '$label must not be offered to an employee');
       }
@@ -66,7 +65,7 @@ void main() {
         expect(_t('No matches'), findsOneWidget, reason: word);
       }
       await _search(tester, 'payslip');
-      expect(_t('No matches'), findsOneWidget, reason: 'payslips are unavailable in this release');
+      expect(_t('My Payslips'), findsOneWidget, reason: 'their own payslips are an employee destination');
     });
 
     testWidgets('an entry whose permission is missing is not shown', (tester) async {
@@ -97,13 +96,13 @@ void main() {
       await _search(tester, 'Departments');
       expect(_t('Departments'), findsOneWidget);
       await _search(tester, 'Payroll');
-      expect(_t('No matches'), findsOneWidget, reason: 'payroll is unavailable in this release even for an administrator');
+      expect(_t('Payroll'), findsOneWidget, reason: 'PAYROLL.RUN_VIEW opens pay runs');
     });
 
     testWidgets('a branch manager (employee surface with team permissions) keeps Employees and Team attendance', (tester) async {
       await _pump(tester, [..._employeeGrants, employeeViewAll]);
       expect(_t('Your work'), findsOneWidget);
-      expect(_t('My Payslips'), findsNothing);
+      expect(_t('My Payslips'), findsOneWidget);
       await _search(tester, 'Employees');
       expect(_t('Employees'), findsOneWidget);
       await _search(tester, 'Team Attendance');
@@ -116,7 +115,7 @@ void main() {
       await _pump(tester, [dashboardCompanyView, attendanceView, leaveBalanceView, payrollPayslipViewOwn]);
       expect(_t('Regularizations'), findsOneWidget);
       expect(_t('Leave Balances'), findsOneWidget);
-      expect(_t('My Payslips'), findsNothing);
+      expect(_t('My Payslips'), findsOneWidget);
       expect(_t('Corrections'), findsNothing);
     });
   });

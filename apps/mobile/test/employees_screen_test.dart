@@ -93,7 +93,7 @@ Future<void> _pump(WidgetTester tester, FakeApiClient api, {CsvSharer? sharer}) 
 void main() {
   final people = [_employee(1, 'Asha'), _employee(2, 'Ben'), _employee(3, 'Bianca'), _employee(4, 'Cy')];
 
-  testWidgets('while payroll is paused the record has no Salary tab, but keeps Compensation', (tester) async {
+  testWidgets('the record has both the Salary and Compensation tabs', (tester) async {
     tester.view.physicalSize = const Size(1600, 2000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -103,7 +103,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.text('Compensation'), findsOneWidget);
-    expect(find.text('Salary'), findsNothing);
+    expect(find.text('Salary'), findsOneWidget);
   });
 
   testWidgets('shows the first page and loads the next on demand', (tester) async {
