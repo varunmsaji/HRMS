@@ -38,7 +38,10 @@ from hrms.core.rbac.dependencies import require_permission
 from hrms.core.rbac.types import DataScope
 from hrms.core.tenancy.context import TenantContext, current_request_id
 from hrms.core.tenancy.dependencies import get_tenant_context
-from hrms.modules.employee.permissions import EMPLOYEE_VIEW_COMPENSATION
+from hrms.modules.employee.permissions import (
+    EMPLOYEE_UPDATE_COMPENSATION,
+    EMPLOYEE_VIEW_COMPENSATION,
+)
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.payroll.dependencies import (
     get_employee_salary_service,
@@ -65,6 +68,10 @@ from hrms.modules.payroll.schemas import (
     EmployeeSalaryBulkResult,
     EmployeeSalaryCreate,
     EmployeeSalaryRead,
+    EmployeeSalarySetupPreviewInput,
+    EmployeeSalarySetupPreviewRead,
+    EmployeeSalarySetupRead,
+    EmployeeSalarySetupSave,
     PayAdjustmentCreate,
     PayAdjustmentRead,
     PayrollSettingRead,
@@ -403,6 +410,55 @@ async def get_employee_salary_breakup(
         as_of=as_of,
         scope=scope,
         caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.get("/employees/{employee_id}/salary/setup", status_code=status.HTTP_200_OK)
+async def get_employee_salary_setup(
+    employee_id: UUID,
+    tenant: _Tenant,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_VIEW_COMPENSATION))],
+    service: _Salaries,
+    as_of: Annotated[date | None, Query()] = None,
+) -> DataEnvelope[EmployeeSalarySetupRead]:
+    data = await service.setup(
+        tenant.company_id,
+        employee_id,
+        as_of=as_of,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+    )
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/employees/{employee_id}/salary/setup/preview", status_code=status.HTTP_200_OK)
+async def preview_employee_salary_setup(
+    employee_id: UUID,
+    body: EmployeeSalarySetupPreviewInput,
+    tenant: _Tenant,
+    _scope: _SetupScope,
+    service: _Salaries,
+) -> DataEnvelope[EmployeeSalarySetupPreviewRead]:
+    data = await service.setup_preview(tenant.company_id, employee_id, body)
+    return DataEnvelope(data=data, meta=_meta())
+
+
+@router.post("/employees/{employee_id}/salary/setup", status_code=status.HTTP_200_OK)
+async def save_employee_salary_setup(
+    employee_id: UUID,
+    body: EmployeeSalarySetupSave,
+    request: Request,
+    tenant: _Tenant,
+    _scope: _SetupScope,
+    _compensation: Annotated[object, Depends(require_permission(EMPLOYEE_UPDATE_COMPENSATION))],
+    service: _Salaries,
+) -> DataEnvelope[EmployeeSalarySetupRead]:
+    """Saves the CTC and the salary structure together — needs both `PAYROLL.SETUP_MANAGE` and
+    `EMPLOYEE.UPDATE_COMPENSATION`."""
+    data = await service.save_setup(
+        tenant.company_id, employee_id, body, actor_user_id=tenant.user_id, **_client(request)
     )
     return DataEnvelope(data=data, meta=_meta())
 
