@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -102,12 +104,14 @@ class _WorkCalendarSetupScreenState extends ConsumerState<WorkCalendarSetupScree
       _previewing = true;
       _previewError = null;
     });
+    final sent = _proposal;
     try {
-      final preview = await _client.post<Rec>('/work-calendar-setup/preview', body: _proposal, parse: (d) => d as Rec);
+      final preview = await _client.post<Rec>('/work-calendar-setup/preview', body: sent, parse: (d) => d as Rec);
       if (mounted) {
         setState(() {
           _preview = preview;
-          _previewStale = false;
+          // Edited while it loaded: this preview shows the earlier proposal, not the one Activate sends.
+          _previewStale = jsonEncode(_proposal) != jsonEncode(sent);
         });
       }
     } catch (e) {

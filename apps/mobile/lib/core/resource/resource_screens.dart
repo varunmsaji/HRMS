@@ -209,6 +209,7 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
   late Rec _row = widget.initial;
   Map<String, Map<String, String>> _names = const {};
   bool _busy = false;
+  int _versionChanges = 0;
 
   ResourceConfig get _c => widget.config;
   ApiClient get _client => ref.read(apiClientProvider);
@@ -393,8 +394,10 @@ class _ResourceDetailScreenState extends ConsumerState<ResourceDetailScreen> {
               ]),
             ),
             if (_c.detailExtras != null) _c.detailExtras!(context, _row, _reload),
-            if (_c.versions != null) VersionsSection(config: _c, parent: _row),
-            if (_c.detailFooter != null) _c.detailFooter!(context, _row, _reload),
+            if (_c.versions != null) VersionsSection(config: _c, parent: _row, onChanged: () => setState(() => _versionChanges++)),
+            // Rebuilt from scratch after a publish: "Who follows this" can only be offered once the
+            // policy has published rules, and publishing does not change the policy record itself.
+            if (_c.detailFooter != null) KeyedSubtree(key: ValueKey('footer-$_versionChanges'), child: _c.detailFooter!(context, _row, _reload)),
           ],
         ),
       ),

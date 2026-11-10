@@ -17,3 +17,12 @@ export function employeeFullName(employee: EmployeeNameParts): string {
     .filter(Boolean)
     .join(" ");
 }
+
+/** What a name search matches: the display name and every part of the legal name, so someone
+ * shown by a preferred name is still found by their first, middle or last name. */
+export function employeeNameSearchText(employee: EmployeeNameParts): string {
+  return [employee.display_name, employee.first_name, employee.middle_name, employee.last_name]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
+}
