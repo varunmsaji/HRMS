@@ -11,6 +11,8 @@ build/
 .next/
 **/.next/
 .next-e2e/
+# Next.js rewrites it on every dev or build run; `next typegen` recreates it.
+apps/web/next-env.d.ts
 
 # Python
 __pycache__/
