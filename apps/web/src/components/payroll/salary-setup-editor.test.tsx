@@ -201,11 +201,11 @@ describe("SalarySetupEditor", () => {
     // ₹12,00,000 a year, Basic 50% of gross → ₹50,000 a month; HRA 40% of Basic → ₹20,000.
     await waitFor(() =>
       expect(screen.getByTestId("line-amount-c-basic")).toHaveTextContent(
-        "₹50,000 a month",
+        "₹50,000",
       ),
     );
     expect(screen.getByTestId("line-amount-c-hra")).toHaveTextContent(
-      "₹20,000 a month",
+      "₹20,000",
     );
     expect(screen.getByText("Same as Standard")).toBeInTheDocument();
 
@@ -215,11 +215,11 @@ describe("SalarySetupEditor", () => {
     });
     await waitFor(() =>
       expect(screen.getByTestId("line-amount-c-basic")).toHaveTextContent(
-        "₹40,000 a month",
+        "₹40,000",
       ),
     );
     expect(screen.getByTestId("line-amount-c-hra")).toHaveTextContent(
-      "₹16,000 a month",
+      "₹16,000",
     );
     expect(
       screen.getByText("Customised for this employee"),

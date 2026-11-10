@@ -75,12 +75,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
 
-    expect(find.text('₹50,000 a month · ₹6,00,000 a year'), findsOneWidget);
-    expect(find.text('₹20,000 a month · ₹2,40,000 a year'), findsOneWidget);
+    expect(find.text('₹50,000'), findsOneWidget);
+    expect(find.text('50% of gross'), findsOneWidget);
+    expect(find.text('₹20,000'), findsOneWidget);
+    expect(find.text('₹1,00,000'), findsWidgets, reason: 'CTC a month and the cost-to-company total');
     expect(find.text('Same as Standard'), findsOneWidget);
     final preview = api.calls.where((c) => c.path == '/employees/emp-1/salary/setup/preview').last;
     expect((preview.body as Map)['annual_ctc_minor'], 120000000);
 
+    await tester.tap(find.text('Basic'));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('pct-c-basic')), '40');
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
@@ -93,9 +97,11 @@ void main() {
     final api = _api();
     await _pump(tester, api, const SalarySetupScreen(employeeId: 'emp-1', today: '2026-09-24'));
 
-    await tester.enterText(find.widgetWithText(TextField, 'Annual CTC (₹) *'), '1500000');
+    await tester.enterText(find.widgetWithText(TextField, 'Annual CTC (₹)'), '1500000');
+    await tester.tap(find.text('Basic'));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('pct-c-basic')), '45');
-    await tester.enterText(find.widgetWithText(TextField, 'Reason *'), 'Annual review');
+    await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Annual review');
     await tester.pump(const Duration(milliseconds: 500));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save salary'));

@@ -8,7 +8,6 @@ import '../../../core/api/api_error.dart';
 import '../../../core/format.dart';
 import '../../../core/providers.dart';
 import '../domain/payroll_resources.dart';
-import 'salary_breakup_view.dart';
 
 typedef Rec = Map<String, dynamic>;
 
@@ -128,6 +127,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
   bool _saving = false;
   Timer? _debounce;
   int _previewSeq = 0;
+  int? _expanded;
 
   String get _base => '/employees/${widget.employeeId}/salary/setup';
 
@@ -302,6 +302,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
     );
     if (picked == null) return;
     _lines.add(_Line(componentId: picked, calc: 'FIXED'));
+    _expanded = _lines.length - 1;
     _changed();
   }
 
@@ -324,9 +325,25 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
     return null;
   }
 
-  Widget _lineCard(BuildContext context, int index) {
+  String _summary(_Line line) {
+    final pct = line.percentage.text.trim();
+    var text = switch (line.calc) {
+      'FIXED' => '${formatInr(rupeesToMinor(line.amount.text) ?? 0)} fixed',
+      'PERCENTAGE_OF_CTC' => '$pct% of CTC',
+      'PERCENTAGE_OF_GROSS' => '$pct% of gross',
+      'PERCENTAGE_OF_COMPONENT' => '$pct% of ${line.baseId.isEmpty ? '…' : _componentName(line.baseId)}',
+      _ => 'Rest of gross',
+    };
+    if (line.cap.text.trim().isNotEmpty) text += ' · cap ${formatInr(rupeesToMinor(line.cap.text) ?? 0)}';
+    if (line.appliesWhen != 'ALWAYS') text += ' · ${appliesWhenLabels[line.appliesWhen]!.replaceFirst('O', 'o')}';
+    return text;
+  }
+
+  /// One component: name, what it is, and what it pays; tapped, its fields open underneath.
+  Widget _lineTile(BuildContext context, int index) {
     final line = _lines[index];
     final scheme = Theme.of(context).colorScheme;
+    final expanded = _expanded == index;
     final employer = _componentType(line.componentId) == 'EMPLOYER_CONTRIBUTION';
     final calcs = [
       for (final t in calculationTypeLabels.keys)
@@ -337,111 +354,173 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
         if (c['component_type'] == 'EARNING' && c['id'] != line.componentId) c,
     ];
     final amount = _amounts[line.componentId];
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 8, 6, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    const dense = InputDecoration(isDense: true, border: OutlineInputBorder());
+    return Column(
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = expanded ? null : index),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
               children: [
-                Expanded(child: Text(_componentName(line.componentId), style: const TextStyle(fontWeight: FontWeight.w600))),
-                IconButton(
-                  tooltip: 'Remove line',
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  onPressed: () {
-                    _lines.removeAt(index).dispose();
-                    _changed();
-                  },
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_componentName(line.componentId), style: const TextStyle(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
+                      Text(_summary(line), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  amount == null ? '—' : formatInr(amount),
+                  key: ValueKey('line-amount-${line.componentId}'),
+                  style: TextStyle(fontWeight: FontWeight.w600, fontFeatures: const [FontFeature.tabularFigures()], color: amount == null ? scheme.onSurfaceVariant : scheme.onSurface),
+                ),
+                Icon(expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: scheme.onSurfaceVariant),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          Container(
+            color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey('calc-${line.componentId}'),
+                        value: calcs.contains(line.calc) ? line.calc : calcs.first,
+                        isExpanded: true,
+                        decoration: dense.copyWith(labelText: 'Calculated as'),
+                        items: [for (final t in calcs) DropdownMenuItem(value: t, child: Text(calculationTypeLabels[t]!))],
+                        onChanged: (v) {
+                          if (v == null) return;
+                          line.calc = v;
+                          _changed();
+                        },
+                      ),
+                    ),
+                    if (line.calc != 'BALANCING') ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 110,
+                        child:
+                            line.calc == 'FIXED'
+                                ? TextField(
+                                  key: ValueKey('amount-${line.componentId}'),
+                                  controller: line.amount,
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  decoration: dense.copyWith(labelText: '₹ a month'),
+                                  onChanged: (_) => _changed(),
+                                )
+                                : TextField(
+                                  key: ValueKey('pct-${line.componentId}'),
+                                  controller: line.percentage,
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  decoration: dense.copyWith(labelText: 'Percent', suffixText: '%'),
+                                  onChanged: (_) => _changed(),
+                                ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (line.calc == 'PERCENTAGE_OF_COMPONENT') ...[
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    key: ValueKey('base-${line.componentId}'),
+                    value: earnings.any((c) => c['id'] == line.baseId) ? line.baseId : null,
+                    isExpanded: true,
+                    decoration: dense.copyWith(labelText: 'Of component'),
+                    items: [for (final c in earnings) DropdownMenuItem(value: c['id'] as String, child: Text('${c['name']}'))],
+                    onChanged: (v) {
+                      line.baseId = v ?? '';
+                      _changed();
+                    },
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    if (line.calc != 'BALANCING') ...[
+                      SizedBox(
+                        width: 120,
+                        child: TextField(
+                          controller: line.cap,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: dense.copyWith(labelText: 'Cap ₹/mo'),
+                          onChanged: (_) => _changed(),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey('applies-${line.componentId}'),
+                        value: line.appliesWhen,
+                        isExpanded: true,
+                        decoration: dense.copyWith(labelText: 'Applies'),
+                        items: [for (final e in appliesWhenLabels.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
+                        onChanged: (v) {
+                          line.appliesWhen = v ?? 'ALWAYS';
+                          _changed();
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(foregroundColor: scheme.error),
+                    onPressed: () {
+                      _lines.removeAt(index).dispose();
+                      _expanded = null;
+                      _changed();
+                    },
+                    icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                    label: const Text('Remove'),
+                  ),
                 ),
               ],
             ),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  DropdownButtonFormField<String>(
-                    key: ValueKey('calc-${line.componentId}'),
-                    value: calcs.contains(line.calc) ? line.calc : calcs.first,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Calculation'),
-                    items: [for (final t in calcs) DropdownMenuItem(value: t, child: Text(calculationTypeLabels[t]!))],
-                    onChanged: (v) {
-                      if (v == null) return;
-                      line.calc = v;
-                      _changed();
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  if (line.calc == 'FIXED')
-                    TextField(
-                      key: ValueKey('amount-${line.componentId}'),
-                      controller: line.amount,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Monthly amount (₹)'),
-                      onChanged: (_) => _changed(),
-                    )
-                  else if (line.calc == 'BALANCING')
-                    Text('Takes whatever remains of gross', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant))
-                  else
-                    TextField(
-                      key: ValueKey('pct-${line.componentId}'),
-                      controller: line.percentage,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Percentage', suffixText: '%'),
-                      onChanged: (_) => _changed(),
-                    ),
-                  if (line.calc == 'PERCENTAGE_OF_COMPONENT') ...[
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      key: ValueKey('base-${line.componentId}'),
-                      value: earnings.any((c) => c['id'] == line.baseId) ? line.baseId : null,
-                      isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Of component'),
-                      items: [for (final c in earnings) DropdownMenuItem(value: c['id'] as String, child: Text('${c['name']}'))],
-                      onChanged: (v) {
-                        line.baseId = v ?? '';
-                        _changed();
-                      },
-                    ),
-                  ],
-                  if (line.calc != 'BALANCING') ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: line.cap,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Monthly cap (₹, optional)'),
-                      onChanged: (_) => _changed(),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    key: ValueKey('applies-${line.componentId}'),
-                    value: line.appliesWhen,
-                    isExpanded: true,
-                    decoration: const InputDecoration(labelText: 'Applies'),
-                    items: [for (final e in appliesWhenLabels.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
-                    onChanged: (v) {
-                      line.appliesWhen = v ?? 'ALWAYS';
-                      _changed();
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    amount == null ? '—' : '${formatInr(amount)} a month · ${formatInr(amount * 12)} a year',
-                    key: ValueKey('line-amount-${line.componentId}'),
-                    style: TextStyle(fontWeight: FontWeight.w600, color: amount == null ? scheme.onSurfaceVariant : scheme.onSurface),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
+
+  Widget _section(BuildContext context, String label) => Container(
+    width: double.infinity,
+    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    child: Text(label.toUpperCase(), style: TextStyle(fontSize: 11, letterSpacing: 0.6, fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+  );
+
+  Widget _total(BuildContext context, String label, num monthly, {bool strong = false}) {
+    final style = TextStyle(fontWeight: strong ? FontWeight.w700 : FontWeight.w500, fontFeatures: const [FontFeature.tabularFigures()]);
+    return Container(
+      color: strong ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6) : null,
+      padding: const EdgeInsets.fromLTRB(12, 10, 36, 10),
+      child: Row(children: [Expanded(child: Text(label, style: style)), Text(formatInr(monthly), style: style)]),
+    );
+  }
+
+  Widget _stat(BuildContext context, String label, String value) => Expanded(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()])),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -467,88 +546,144 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
       final annual = _annualMinor;
       final breakup = _preview?['breakup'] as Rec?;
       final canSave = !_saving && _dirty && _reason.text.trim().isNotEmpty && _templateId.isNotEmpty && _complete;
+      const dense = InputDecoration(isDense: true, border: OutlineInputBorder());
+      final employerIdx = [
+        for (var i = 0; i < _lines.length; i++)
+          if (_componentType(_lines[i].componentId) == 'EMPLOYER_CONTRIBUTION') i,
+      ];
+      final earningIdx = [
+        for (var i = 0; i < _lines.length; i++)
+          if (!employerIdx.contains(i)) i,
+      ];
+      final border = BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12));
       body = ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          if (template != null)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Chip(
-                avatar: Icon(_customised ? Icons.tune_rounded : Icons.check_circle_outline_rounded, size: 18),
-                label: Text(_customised ? 'Customised for this employee' : 'Same as ${template['name']}'),
+          Container(
+            decoration: border,
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _ctc,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: dense.copyWith(labelText: 'Annual CTC (₹)'),
+                        onChanged: (_) => _changed(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        value: _templateId.isEmpty ? null : _templateId,
+                        isExpanded: true,
+                        decoration: dense.copyWith(labelText: 'Structure'),
+                        items: [for (final s in _templates) DropdownMenuItem(value: s['id'] as String, child: Text('${s['name']}', overflow: TextOverflow.ellipsis))],
+                        onChanged: (v) {
+                          if (v == null) return;
+                          _templateId = v;
+                          _setLines(_templateLines(_template));
+                          _expanded = null;
+                          _changed();
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _stat(context, 'CTC a month', annual == null ? '—' : formatInr((annual / 12).round())),
+                    _stat(context, 'Gross a month', breakup == null ? '—' : formatInr(breakup['gross_monthly_minor'] as num)),
+                  ],
+                ),
+                if (template != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(_customised ? Icons.tune_rounded : Icons.check_circle_outline_rounded, size: 16, color: _customised ? scheme.tertiary : scheme.primary),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text(_customised ? 'Customised for this employee' : 'Same as ${template['name']}', style: const TextStyle(fontSize: 13))),
+                      if (_customised)
+                        TextButton(
+                          style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                          onPressed: () {
+                            _setLines(_templateLines(template));
+                            _expanded = null;
+                            _changed();
+                          },
+                          child: const Text('Reset'),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: border,
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (employerIdx.isNotEmpty) _section(context, 'Earnings'),
+                for (final i in earningIdx) ...[_lineTile(context, i), const Divider(height: 1)],
+                if (breakup != null) _total(context, 'Gross', breakup['gross_monthly_minor'] as num),
+                if (employerIdx.isNotEmpty) _section(context, 'Employer contributions'),
+                for (final i in employerIdx) ...[_lineTile(context, i), const Divider(height: 1)],
+                if (breakup != null) _total(context, 'Cost to company', breakup['monthly_ctc_minor'] as num, strong: true),
+              ],
+            ),
+          ),
+          Align(alignment: Alignment.centerLeft, child: TextButton.icon(onPressed: _addLine, icon: const Icon(Icons.add_rounded), label: const Text('Add component'))),
+          if (_previewError != null)
+            Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_previewError!, style: TextStyle(color: scheme.error)))
+          else
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Monthly amounts. One earning takes the rest of gross; employer contributions sit inside CTC. PF ${setup['pf_applicable'] == true ? 'applies' : 'does not apply'}.',
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _ctc,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(labelText: 'Annual CTC (₹) *', helperText: annual == null ? null : '${formatInr((annual / 12).round())} a month'),
-            onChanged: (_) => _changed(),
+          const Divider(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () async {
+                    final picked = await showDatePicker(context: context, initialDate: DateTime.tryParse(_effectiveFrom) ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
+                    if (picked == null) return;
+                    _effectiveFrom = _iso(picked);
+                    _changed();
+                  },
+                  icon: const Icon(Icons.calendar_today_outlined, size: 16),
+                  label: Text('From $_effectiveFrom'),
+                ),
+              ),
+              if (_ctcChanged) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _revisionType,
+                    isExpanded: true,
+                    decoration: dense.copyWith(labelText: 'CTC change'),
+                    items: [for (final e in _revisionLabels.entries) DropdownMenuItem(value: e.key, child: Text(e.value, overflow: TextOverflow.ellipsis))],
+                    onChanged: (v) => setState(() => _revisionType = v ?? _revisionType),
+                  ),
+                ),
+              ],
+            ],
           ),
+          const SizedBox(height: 10),
+          TextField(controller: _reason, maxLength: 500, decoration: dense.copyWith(labelText: 'Reason', hintText: 'e.g. Annual review', counterText: ''), onChanged: (_) => setState(() {})),
+          if (_formError != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_formError!, style: TextStyle(color: scheme.error))),
           const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _templateId.isEmpty ? null : _templateId,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Start from structure', helperText: 'Changes below apply to this employee only.'),
-            items: [for (final s in _templates) DropdownMenuItem(value: s['id'] as String, child: Text('${s['name']}'))],
-            onChanged: (v) {
-              if (v == null) return;
-              _templateId = v;
-              _setLines(_templateLines(_template));
-              _changed();
-            },
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed:
-                  _customised
-                      ? () {
-                        _setLines(_templateLines(template));
-                        _changed();
-                      }
-                      : null,
-              icon: const Icon(Icons.restart_alt_rounded),
-              label: Text('Reset to ${template?['name'] ?? 'template'}'),
-            ),
-          ),
-          const SizedBox(height: 4),
-          for (var i = 0; i < _lines.length; i++) _lineCard(context, i),
-          Align(alignment: Alignment.centerLeft, child: OutlinedButton.icon(onPressed: _addLine, icon: const Icon(Icons.add_rounded), label: const Text('Add component'))),
-          const SizedBox(height: 8),
-          Text(
-            'Exactly one earning must be "Balance of gross". Employer contributions are part of CTC, so gross = CTC − employer contributions. '
-            'PF ${setup['pf_applicable'] == true ? 'applies' : 'does not apply'} to this employee.',
-            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-          ),
-          if (_previewError != null) Padding(padding: const EdgeInsets.only(top: 10), child: Text(_previewError!, style: TextStyle(color: scheme.error))),
-          if (breakup != null) Padding(padding: const EdgeInsets.only(top: 12), child: SalaryBreakupView(breakup: breakup)),
-          const Divider(height: 32),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final picked = await showDatePicker(context: context, initialDate: DateTime.tryParse(_effectiveFrom) ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
-              if (picked == null) return;
-              _effectiveFrom = _iso(picked);
-              _changed();
-            },
-            icon: const Icon(Icons.calendar_today_outlined, size: 18),
-            label: Text('Effective from $_effectiveFrom'),
-          ),
-          if (_ctcChanged) ...[
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: _revisionType,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Why the CTC is changing *'),
-              items: [for (final e in _revisionLabels.entries) DropdownMenuItem(value: e.key, child: Text(e.value))],
-              onChanged: (v) => setState(() => _revisionType = v ?? _revisionType),
-            ),
-          ],
-          const SizedBox(height: 12),
-          TextField(controller: _reason, maxLength: 500, decoration: const InputDecoration(labelText: 'Reason *'), onChanged: (_) => setState(() {})),
-          if (_formError != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(_formError!, style: TextStyle(color: scheme.error))),
           FilledButton(onPressed: canSave ? _save : null, child: Text(_saving ? 'Saving…' : 'Save salary')),
-          const SizedBox(height: 24),
         ],
       );
     }

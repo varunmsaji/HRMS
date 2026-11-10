@@ -8,10 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
-import { SalaryBreakupTable } from "@/components/payroll/salary-breakup-table";
 import {
   StructureLinesEditor,
   toInput,
@@ -247,10 +245,13 @@ export function SalarySetupEditor({
   if (!setup) return <LoadingState label="Loading salary…" />;
   if (setup.pay_basis !== "MONTHLY") return <>{fallback}</>;
 
+  const breakup = preview?.breakup ?? null;
+  const label = "mb-1 block text-xs font-medium text-foreground-secondary";
+
   return (
     <Card>
-      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-        <CardTitle>Salary setup</CardTitle>
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
+        <CardTitle className="text-base">Salary setup</CardTitle>
         {template ? (
           customised ? (
             <Badge variant="warning" dot>
@@ -263,30 +264,38 @@ export function SalarySetupEditor({
           )
         ) : null}
       </CardHeader>
-      <CardContent className="space-y-5">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <FormField
-            id="setup-ctc"
-            label="Annual CTC (₹)"
-            required
-            description={
-              annualMinor !== null
-                ? `${formatInr(Math.round(annualMinor / 12))} a month`
-                : undefined
-            }
-          >
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 rounded-md bg-surface-secondary/50 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <div>
+            <label htmlFor="setup-ctc" className={label}>
+              Annual CTC (₹)
+            </label>
             <Input
+              id="setup-ctc"
+              className="h-9"
               inputMode="decimal"
               value={ctc}
               onChange={(e) => setCtc(e.target.value)}
             />
-          </FormField>
-          <FormField
-            id="setup-template"
-            label="Start from structure"
-            description="Changes below apply to this employee only."
-          >
+          </div>
+          <div>
+            <div className="flex items-baseline justify-between gap-2">
+              <label htmlFor="setup-template" className={label}>
+                Structure
+              </label>
+              {customised ? (
+                <button
+                  type="button"
+                  className="text-xs text-primary hover:underline"
+                  onClick={() => setRows(templateRows(template))}
+                >
+                  Reset to {template?.name}
+                </button>
+              ) : null}
+            </div>
             <NativeSelect
+              id="setup-template"
+              className="h-9"
               value={templateId}
               onChange={(e) => {
                 setTemplateId(e.target.value);
@@ -303,17 +312,23 @@ export function SalarySetupEditor({
                 </option>
               ))}
             </NativeSelect>
-          </FormField>
-          <div className="flex items-end">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={!customised}
-              onClick={() => setRows(templateRows(template))}
-            >
-              Reset to {template?.name ?? "template"}
-            </Button>
           </div>
+          <dl className="flex gap-5 sm:pl-2">
+            <div>
+              <dt className={label}>CTC a month</dt>
+              <dd className="text-lg font-semibold tabular-nums text-foreground">
+                {annualMinor !== null
+                  ? formatInr(Math.round(annualMinor / 12))
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className={label}>Gross a month</dt>
+              <dd className="text-lg font-semibold tabular-nums text-foreground">
+                {breakup ? formatInr(breakup.gross_monthly_minor) : "—"}
+              </dd>
+            </div>
+          </dl>
         </div>
 
         <StructureLinesEditor
@@ -321,38 +336,41 @@ export function SalarySetupEditor({
           onChange={setRows}
           components={components}
           amounts={amounts}
+          breakup={breakup}
         />
-        <p className="text-xs text-foreground-muted">
-          Exactly one earning must be &quot;Balance of gross&quot;. Employer
-          contributions are part of CTC, so gross = CTC − employer
-          contributions.{" "}
-          {setup.pf_applicable
-            ? "PF applies to this employee."
-            : "PF does not apply to this employee."}
-        </p>
-
         {previewError ? (
           <p role="alert" className="text-sm text-danger">
             {previewError}
           </p>
-        ) : null}
-        {preview ? <SalaryBreakupTable breakup={preview.breakup} /> : null}
+        ) : (
+          <p className="text-xs text-foreground-muted">
+            One earning takes the rest of gross; employer contributions sit
+            inside CTC. PF {setup.pf_applicable ? "applies" : "does not apply"}{" "}
+            to this employee.
+          </p>
+        )}
 
-        <div className="grid grid-cols-1 gap-4 border-t border-border pt-4 md:grid-cols-3">
-          <FormField id="setup-effective-from" label="Effective from" required>
+        <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4">
+          <div className="w-40">
+            <label htmlFor="setup-effective-from" className={label}>
+              Effective from
+            </label>
             <Input
+              id="setup-effective-from"
               type="date"
+              className="h-9"
               value={effectiveFrom}
               onChange={(e) => setEffectiveFrom(e.target.value)}
             />
-          </FormField>
+          </div>
           {ctcChanged ? (
-            <FormField
-              id="setup-revision-type"
-              label="Why the CTC is changing"
-              required
-            >
+            <div className="w-48">
+              <label htmlFor="setup-revision-type" className={label}>
+                Why the CTC is changing
+              </label>
               <NativeSelect
+                id="setup-revision-type"
+                className="h-9"
                 value={revisionType}
                 onChange={(e) =>
                   setRevisionType(e.target.value as RevisionType)
@@ -364,22 +382,21 @@ export function SalarySetupEditor({
                   </option>
                 ))}
               </NativeSelect>
-            </FormField>
+            </div>
           ) : null}
-          <FormField id="setup-reason" label="Reason" required>
+          <div className="min-w-48 flex-1">
+            <label htmlFor="setup-reason" className={label}>
+              Reason
+            </label>
             <Input
+              id="setup-reason"
+              className="h-9"
+              placeholder="e.g. Annual review"
               value={reason}
               maxLength={500}
               onChange={(e) => setReason(e.target.value)}
             />
-          </FormField>
-        </div>
-        {formError ? (
-          <p role="alert" className="text-sm text-danger">
-            {formError}
-          </p>
-        ) : null}
-        <div className="flex justify-end">
+          </div>
           <Button
             type="button"
             onClick={() => void handleSave()}
@@ -395,6 +412,11 @@ export function SalarySetupEditor({
             {saving ? "Saving…" : "Save salary"}
           </Button>
         </div>
+        {formError ? (
+          <p role="alert" className="text-sm text-danger">
+            {formError}
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );
