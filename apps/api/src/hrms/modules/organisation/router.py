@@ -1459,6 +1459,7 @@ async def list_policy_assignments(
     leave_type_id: Annotated[UUID | None, Query()] = None,
     current_only: Annotated[bool, Query()] = False,
     policy_id: Annotated[UUID | None, Query()] = None,
+    live_on: Annotated[date | None, Query()] = None,
 ) -> ListEnvelope[PolicyAssignmentRead]:
     await _require_policy_assignment_permission(policy_kind, user, rbac)
     data, total = await service.list_policy_assignments(
@@ -1469,6 +1470,7 @@ async def list_policy_assignments(
         leave_type_id=leave_type_id,
         current_only=current_only,
         policy_id=policy_id,
+        live_on=live_on,
         page=page,
     )
     return ListEnvelope(
