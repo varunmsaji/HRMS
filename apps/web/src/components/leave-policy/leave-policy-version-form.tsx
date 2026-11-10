@@ -84,7 +84,7 @@ export function LeavePolicyVersionForm({ values, errors, onChange }: LeavePolicy
           />
           <PolicyCheckbox
             label="Count weekly offs and holidays between two leave days"
-            description="If someone takes leave on both sides of a weekend or holiday, that day is counted as leave too."
+            description="If someone takes leave on both sides of a weekend or holiday, that day is counted as leave too, even when the two sides are separate applications of the same leave type."
             checked={values.sandwichRuleEnabled}
             onChange={(checked) => update("sandwichRuleEnabled", checked)}
           />

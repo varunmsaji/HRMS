@@ -1347,7 +1347,7 @@
           "items": [
             {
               "name": "Sandwich rule",
-              "text": "A weekend or holiday between two leave days counts as leave too. Leave on Friday and Monday also uses Saturday and Sunday."
+              "text": "A weekend or holiday between two leave days counts as leave too. Leave on Friday and Monday also uses Saturday and Sunday, whether it is one application or two of the same leave type. If one side is rejected or cancelled, the weekend is given back."
             },
             {
               "name": "Reserve balance on submission",
