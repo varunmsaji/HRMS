@@ -1,0 +1,19 @@
+# infra/monitoring/hrms_monitor.sh: emails failing checks through hrms_notify_email.py.
+# Exit 1 means "checks failed, alert handled by the script", so it is not a unit failure. Exit 2
+# (the monitor itself could not run) is a failure and is emailed by hrms-alert@.
+[Unit]
+Description=HRMS health monitor
+After=docker.service
+OnFailure=hrms-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hrms
+Environment=HRMS_COMPOSE_CMD="docker compose -f docker-compose.vps.yml"
+Environment=BACKUP_ROOT=/var/backups/hrms
+Environment=HRMS_ALERT_COMMAND=/opt/hrms/infra/monitoring/hrms_notify_email.py
+ExecStart=/opt/hrms/infra/monitoring/hrms_monitor.sh
+SuccessExitStatus=1
+StandardOutput=null
+Nice=10
+TimeoutStartSec=4min

@@ -1,0 +1,7 @@
+# Emails the recent journal of a failed unit. Used as OnFailure=hrms-alert@%n.service.
+[Unit]
+Description=Email alert: %i failed
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'journalctl -u "%i" -n 80 --no-pager | /opt/hrms/infra/monitoring/hrms_notify_email.py --subject "[HRMS ALERT] %i failed on %H"'
