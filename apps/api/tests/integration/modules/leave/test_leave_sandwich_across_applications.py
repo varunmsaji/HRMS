@@ -5,6 +5,7 @@ weekend of 5-6 September. Applying for the two days separately must charge the w
 whichever application completes the sandwich, and releasing either side must give it back.
 """
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from tests.integration.modules.leave.test_leave_application import (
 from tests.integration.modules.organisation.test_registration_flow import _cleanup
 
 from hrms.core.db.session import get_session_factory, set_rls_company_id
+from hrms.modules.leave.service import LeaveApplicationService
 
 pytestmark = pytest.mark.asyncio
 
@@ -240,6 +242,41 @@ async def test_rejecting_a_pending_anchor_releases_the_weekend_from_a_pending_de
         assert "SANDWICH_LINKED" in actions and "SANDWICH_RELEASED" in actions
         # Nothing was ever debited, so nothing moves.
         assert await _get_balance(client, headers, ctx["employee_id"]) == "20.00"
+    finally:
+        await _teardown(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_cancelling_the_anchor_while_a_bridge_is_being_submitted_still_releases_it(
+    client: AsyncClient, seeded_plan_catalogue: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Monday's submission has found Friday as its anchor but not yet committed when Friday is
+    cancelled. The cancellation must wait for it and then release the weekend; otherwise its scan
+    sees no dependents and Monday commits a weekend charged to a cancelled anchor."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        ctx = await _setup(client, headers)
+        friday = await _apply(client, headers, ctx, FRI)
+
+        real = LeaveApplicationService._cross_application_bridges
+        found = asyncio.Event()
+
+        async def parked(self: Any, *args: Any, **kwargs: Any) -> Any:
+            bridges = await real(self, *args, **kwargs)
+            found.set()
+            await asyncio.sleep(1.0)
+            return bridges
+
+        monkeypatch.setattr(LeaveApplicationService, "_cross_application_bridges", parked)
+        submitting = asyncio.create_task(_apply(client, headers, ctx, MON))
+        await asyncio.wait_for(found.wait(), timeout=10)
+        monkeypatch.setattr(LeaveApplicationService, "_cross_application_bridges", real)
+        await _cancel(client, headers, friday)
+        monday = await submitting
+
+        monday = await _get(client, headers, monday["id"])
+        assert _dates(monday) == [MON] and monday["total_days"] == "1.00"
+        assert await _get_balance(client, headers, ctx["employee_id"]) == "19.00"
     finally:
         await _teardown(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
