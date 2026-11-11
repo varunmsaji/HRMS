@@ -78,7 +78,7 @@ class _PolicyFollowersSectionState extends ConsumerState<PolicyFollowersSection>
       final env = await _client.getList<Rec>(
         '/policy-assignments',
         query: PageQuery(perPage: followersPageSize),
-        filters: {'policy_kind': widget.kind, 'policy_id': _id},
+        filters: {'policy_kind': widget.kind, 'policy_id': _id, 'live_on': _today},
         parseItem: (d) => d as Rec,
       );
       if (!mounted) return;

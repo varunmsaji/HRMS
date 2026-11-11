@@ -23,7 +23,7 @@ import type { PaginationMeta } from "@/lib/api/types";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
-import { employeeFullName } from "@/lib/employee/names";
+import { employeeFullName, employeeNameSearchText } from "@/lib/employee/names";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
 import { buildCoverage } from "@/lib/shift-roster/coverage";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
@@ -237,7 +237,7 @@ export default function RosterGridPage() {
     return (employees ?? []).filter((e) => {
       if (onlyRostered && !rosteredIds.has(e.id)) return false;
       if (!q) return true;
-      return `${employeeFullName(e)} ${e.employee_code ?? ""}`.toLowerCase().includes(q);
+      return `${employeeNameSearchText(e)} ${e.employee_code ?? ""}`.toLowerCase().includes(q);
     });
   }, [employees, rosteredIds, search, onlyRostered]);
 

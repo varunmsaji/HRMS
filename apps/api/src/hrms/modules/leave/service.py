@@ -2744,7 +2744,11 @@ class LeaveApplicationService:
         A bridged run sits at the edge of the dependent application (sandwich days inside one
         application are always between two of its own leave days), and the day just beyond the
         run is one of the anchor's own leave days. That is what identifies it, so no link column
-        is needed."""
+        is needed.
+
+        The caller takes the employee's leave-date lock before changing the anchor's status, so a
+        submission bridging onto the anchor either commits before this scan (and is found here)
+        or waits, then sees the anchor inactive."""
         anchor_days = await self._day_repo.list_for_application(
             self._session, company_id=company_id, leave_application_id=anchor.id
         )
@@ -2764,9 +2768,6 @@ class LeaveApplicationService:
         dependent_ids = sorted({d.leave_application_id for d in nearby if d.is_sandwich_generated})
         if not dependent_ids:
             return
-        await self._repo.lock_employee_leave_dates(
-            self._session, company_id=company_id, employee_id=anchor.employee_id
-        )
         for dependent_id in dependent_ids:
             days = await self._day_repo.list_for_application(
                 self._session, company_id=company_id, leave_application_id=dependent_id
@@ -3440,6 +3441,11 @@ class LeaveApplicationService:
         row = await self._get_reviewable(
             company_id, application_id, scope=scope, caller_employee_id=caller_employee_id
         )
+        # R-02 - before the status change, so a concurrent submission bridging onto this
+        # application serialises against `_release_bridged_days` below.
+        await self._repo.lock_employee_leave_dates(
+            self._session, company_id=company_id, employee_id=row.employee_id
+        )
         before_read = await self._read(row, company_id=company_id)
         now = datetime.now(UTC)
         updated = await self._repo.update(
@@ -3990,6 +3996,11 @@ class LeaveApplicationService:
                 company_id, row.employee_id, row.start_date, row.end_date
             )
 
+        # R-02 - before the status change, so a concurrent submission bridging onto this
+        # application serialises against `_release_bridged_days` below.
+        await self._repo.lock_employee_leave_dates(
+            self._session, company_id=company_id, employee_id=row.employee_id
+        )
         before_read = await self._read(row, company_id=company_id)
         was_approved = row.status == "APPROVED"
         now = datetime.now(UTC)

@@ -57,6 +57,8 @@ jobs:
             exit 1
           fi
           # grep exits 1 when nothing matches, which is the normal case; anything above 1 is an error.
+          # pipefail makes the pipeline report grep's status rather than sort's.
+          set -o pipefail
           sensitive=$(grep -E '^(\.github/|\.gitleaks\.toml$|AGENTS\.md$|CLAUDE\.md$|apps/api/alembic/)' \
             <<<"$files" | sort -u) || [ $? -eq 1 ]
           if [ -n "$sensitive" ]; then

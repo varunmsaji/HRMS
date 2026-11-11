@@ -343,6 +343,11 @@ jobs:
         continue-on-error: true
         run: npx eslint .
 
+      # next-env.d.ts is untracked (Next rewrites it differently for dev and build); typegen
+      # writes it and the route types tsc needs.
+      - name: Generate Next.js types
+        run: npx next typegen
+
       - name: Typecheck
         run: npx tsc --noEmit
 
