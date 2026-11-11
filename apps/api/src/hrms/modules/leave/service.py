@@ -143,6 +143,10 @@ if TYPE_CHECKING:
 
 _logger = get_logger(__name__)
 
+#: R-02 — the longest run of days off the sandwich rule bridges between two separate applications
+#: (a long shutdown is not bridged). A run inside one application has no such limit.
+_BRIDGE_MAX_DAYS = 14
+
 #: Decision 11 — the leave-type fields that define what historical applications and ledger entries
 #: mean; frozen once the type has been used.
 LEAVE_APPLICATION_APPROVE_CODE = "LEAVE.APPLICATION_APPROVE"
@@ -2608,6 +2612,318 @@ class LeaveApplicationService:
     # Submit
     # -----------------------------------------------------------------
 
+    async def _working_shares(
+        self, company_id: UUID, employee_id: UUID, date_from: date, date_to: date
+    ) -> dict[date, Decimal]:
+        """How much of each date in `[date_from, date_to]` can be taken as leave (Work Calendar
+        policy A): the day's working share from the same calendar rule attendance reads - 1.00 on
+        a working day, 0.50 on a half-day weekly off (the off half is already a paid day off),
+        0.00 on a full weekly off, holiday or shutdown. Fails closed when a date's calendar does
+        not resolve."""
+        from hrms.modules.attendance.service import ShiftRosterService
+        from hrms.modules.organisation.calendar_resolution import (
+            CalendarResolutionService,
+            working_fraction_of,
+        )
+
+        resolver = CalendarResolutionService(self._session)
+        working: dict[date, Decimal] = {}
+        one_date = date_from
+        while one_date <= date_to:
+            resolved = await resolver.resolve_for_employee(company_id, employee_id, one_date)
+            if resolved.config_incomplete or resolved.day_type is None:
+                raise LeaveApplicationCalendarNotResolvedError()
+            working[one_date] = working_fraction_of(resolved.day_type)
+            one_date += timedelta(days=1)
+
+        # F7 (D-6) — a published roster outranks the calendar, as it does in attendance: a roster
+        # day off consumes no leave, and a rostered working day on a holiday or weekly off does.
+        overrides = await ShiftRosterService(self._session).published_day_overrides(
+            company_id, employee_id, date_from=date_from, date_to=date_to
+        )
+        for override_date, (week_off, holiday_working) in overrides.items():
+            if override_date not in working:
+                continue
+            if week_off:
+                working[override_date] = Decimal("0.00")
+            elif holiday_working:
+                working[override_date] = Decimal("1.00")
+        return working
+
+    async def _cross_application_bridges(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID,
+        breakdown: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """R-02 / D-12 — the sandwich rule across applications of the same leave type. When this
+        application's first (or last) leave day is a full day, and the dates just before it (or
+        after it) are a run of days off ending at a full leave day of an active application of the
+        same type, the run is charged to this application as sandwich days.
+
+        Returns extra breakdown entries (whole days, `is_sandwich_generated`), each carrying the
+        `anchor_application_id` it depends on. Such days always sit at an edge of this
+        application, which is how a later release finds them (`_release_bridged_days`). A run
+        already booked, longer than `_BRIDGE_MAX_DAYS`, or anchored by a half day, is left alone."""
+        bridges: list[dict[str, Any]] = []
+        own_dates = {entry["date"] for entry in breakdown}
+        for edge, step in ((breakdown[0], -1), (breakdown[-1], 1)):
+            if edge["is_sandwich_generated"] or edge["half"] is not None:
+                continue
+            if edge["fraction"] != edge["cap"]:
+                continue
+            run: list[date] = []
+            anchor_date: date | None = None
+            anchor_share = Decimal("0.00")
+            probe = edge["date"] + timedelta(days=step)
+            for _ in range(_BRIDGE_MAX_DAYS + 1):
+                try:
+                    shares = await self._working_shares(company_id, employee_id, probe, probe)
+                except LeaveApplicationCalendarNotResolvedError:
+                    break  # outside the employee's calendar: nothing to bridge to
+                if shares[probe] > Decimal("0.00"):
+                    anchor_date, anchor_share = probe, shares[probe]
+                    break
+                run.append(probe)
+                probe += timedelta(days=step)
+            if anchor_date is None or not run or len(run) > _BRIDGE_MAX_DAYS:
+                continue
+            if any(d in own_dates for d in run):
+                continue
+            window_from, window_to = min(run + [anchor_date]), max(run + [anchor_date])
+            existing = await self._day_repo.list_active_for_type(
+                self._session,
+                company_id=company_id,
+                employee_id=employee_id,
+                leave_type_id=leave_type_id,
+                date_from=window_from,
+                date_to=window_to,
+            )
+            if any(day.calendar_date in run for day in existing):
+                continue  # already sandwiched by another application
+            anchor = next(
+                (
+                    day
+                    for day in existing
+                    if day.calendar_date == anchor_date
+                    and not day.is_sandwich_generated
+                    and day.half is None
+                    and day.fraction == anchor_share
+                ),
+                None,
+            )
+            if anchor is None:
+                continue
+            for d in sorted(run):
+                bridges.append(
+                    {
+                        "date": d,
+                        "fraction": Decimal("1.00"),
+                        "half": None,
+                        "is_sandwich_generated": True,
+                        "cap": Decimal("1.00"),
+                        "anchor_application_id": anchor.leave_application_id,
+                    }
+                )
+        return bridges
+
+    async def _release_bridged_days(
+        self,
+        company_id: UUID,
+        anchor: Any,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        """R-02 — `anchor` was just rejected or cancelled. Any other active application of the
+        same type that holds sandwich days only because of it gives them back: the days are
+        removed, their attendance projections cancelled and, if they were debited, refunded.
+
+        A bridged run sits at the edge of the dependent application (sandwich days inside one
+        application are always between two of its own leave days), and the day just beyond the
+        run is one of the anchor's own leave days. That is what identifies it, so no link column
+        is needed.
+
+        The caller takes the employee's leave-date lock before changing the anchor's status, so a
+        submission bridging onto the anchor either commits before this scan (and is found here)
+        or waits, then sees the anchor inactive."""
+        anchor_days = await self._day_repo.list_for_application(
+            self._session, company_id=company_id, leave_application_id=anchor.id
+        )
+        anchor_leave_dates = {d.calendar_date for d in anchor_days if not d.is_sandwich_generated}
+        if not anchor_leave_dates:
+            return
+        first, last = min(anchor_leave_dates), max(anchor_leave_dates)
+        nearby = await self._day_repo.list_active_for_type(
+            self._session,
+            company_id=company_id,
+            employee_id=anchor.employee_id,
+            leave_type_id=anchor.leave_type_id,
+            date_from=first - timedelta(days=_BRIDGE_MAX_DAYS + 1),
+            date_to=last + timedelta(days=_BRIDGE_MAX_DAYS + 1),
+            exclude_application_id=anchor.id,
+        )
+        dependent_ids = sorted({d.leave_application_id for d in nearby if d.is_sandwich_generated})
+        if not dependent_ids:
+            return
+        for dependent_id in dependent_ids:
+            days = await self._day_repo.list_for_application(
+                self._session, company_id=company_id, leave_application_id=dependent_id
+            )
+            own = [i for i, d in enumerate(days) if not d.is_sandwich_generated]
+            if not own:
+                continue
+            released = []
+            leading = days[: own[0]]
+            if leading and leading[0].calendar_date - timedelta(days=1) in anchor_leave_dates:
+                released.extend(leading)
+            trailing = days[own[-1] + 1 :]
+            if trailing and trailing[-1].calendar_date + timedelta(days=1) in anchor_leave_dates:
+                released.extend(trailing)
+            if released:
+                await self._release_days(
+                    company_id,
+                    dependent_id,
+                    days,
+                    released,
+                    anchor=anchor,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+
+    async def _release_days(
+        self,
+        company_id: UUID,
+        application_id: UUID,
+        days: list[Any],
+        released: list[Any],
+        *,
+        anchor: Any,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        from hrms.modules.attendance.schemas import LeaveProjectionCancelInput
+        from hrms.modules.attendance.service import LeaveProjectionService
+
+        row = await self._repo.get(
+            self._session, company_id=company_id, application_id=application_id
+        )
+        if row is None or row.status not in ("SUBMITTED", "APPROVED"):
+            return
+        released_ids = {d.id for d in released}
+        released_dates = sorted(d.calendar_date for d in released)
+        before_read = await self._read(row, company_id=company_id)
+        anchor_word = "rejected" if anchor.status == "REJECTED" else "cancelled"
+        reason = (
+            f"Sandwich days {released_dates[0]} to {released_dates[-1]} released: the leave "
+            f"application for {anchor.start_date} to {anchor.end_date} that bracketed them was "
+            f"{anchor_word}"
+        )
+
+        if row.status == "APPROVED":
+            # Same checks and ordering as a cancellation of approved leave (`cancel`).
+            await self._ensure_period_open(
+                company_id, row.employee_id, released_dates[0], released_dates[-1]
+            )
+            await lock_attendance_period_close(self._session, company_id, exclusive=False)
+            debited = -await self._ledger_repo.sum_for_reference(
+                self._session,
+                company_id=company_id,
+                employee_id=row.employee_id,
+                entry_type="APPLICATION",
+                reference_id=row.id,
+            )
+            refunded = await self._ledger_repo.sum_refunds_for_reference(
+                self._session,
+                company_id=company_id,
+                employee_id=row.employee_id,
+                reference_id=row.id,
+            )
+            paid_released = sum((d.fraction for d in released if not d.is_lop), Decimal("0.00"))
+            refund = min(paid_released, max(debited - refunded, Decimal("0.00")))
+            if refund > 0:
+                today = await self._business_today(company_id)
+                await self._ledger_repo.insert(
+                    self._session,
+                    data={
+                        "id": uuid4(),
+                        "company_id": company_id,
+                        "employee_id": row.employee_id,
+                        "leave_type_id": row.leave_type_id,
+                        "entry_type": "ADJUSTMENT",
+                        "amount": refund,
+                        "effective_date": today,
+                        "reference_id": row.id,
+                        "reason": reason,
+                        "created_by_user_id": actor_user_id,
+                    },
+                )
+                await self._apply_closed_year_rule(
+                    company_id, row, refund, today=today, actor_user_id=actor_user_id
+                )
+            full_scope = DataScope(levels=frozenset({DataScopeLevel.COMPANY}))
+            projection_service = LeaveProjectionService(self._session)
+            for day in released:
+                if day.leave_day_projection_id is None:
+                    continue
+                projection = await projection_service.get_projection(
+                    company_id,
+                    day.leave_day_projection_id,
+                    scope=full_scope,
+                    caller_employee_id=None,
+                )
+                await projection_service.cancel(
+                    company_id,
+                    day.leave_day_projection_id,
+                    LeaveProjectionCancelInput(reason="Sandwich day released"),
+                    expected_version=projection.version,
+                    scope=full_scope,
+                    caller_employee_id=None,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+
+        await self._day_repo.delete_days(
+            self._session, company_id=company_id, day_ids=list(released_ids)
+        )
+        remaining = [d for d in days if d.id not in released_ids]
+        updated = await self._repo.shrink_after_release(
+            self._session,
+            company_id=company_id,
+            application_id=row.id,
+            start_date=min(d.calendar_date for d in remaining),
+            end_date=max(d.calendar_date for d in remaining),
+            total_days=sum((d.fraction for d in remaining), Decimal("0.00")),
+            lop_days=sum((d.fraction for d in remaining if d.is_lop), Decimal("0.00")),
+            now=datetime.now(UTC),
+        )
+        await self._record_action(
+            company_id=company_id,
+            leave_application_id=row.id,
+            action="SANDWICH_RELEASED",
+            actor_user_id=actor_user_id,
+            actor_employee_id=None,
+            stage=None,
+            comment=reason,
+        )
+        await self._audit.record(
+            self._session,
+            company_id=company_id,
+            actor_user_id=actor_user_id,
+            action="LEAVE_APPLICATION_SANDWICH_RELEASED",
+            entity_type="leave_application",
+            entity_id=row.id,
+            before=leave_application_to_audit_dict(before_read),
+            after=leave_application_to_audit_dict(await self._read(updated, company_id=company_id)),
+            ip=ip_address,
+            user_agent=user_agent,
+        )
+
     async def _compute_day_breakdown(
         self,
         company_id: UUID,
@@ -2625,40 +2941,13 @@ class LeaveApplicationService:
         roster day off consumes nothing, a rostered working day on an off day consumes a day.
         Full WEEKLY_OFF/HOLIDAY/SHUTDOWN days are not leave-consuming, unless the
         sandwich rule brackets a run of them (a Saturday and Sunday, say) between two consuming
-        days *within this same application's range* (no cross-application look-back — a separate,
-        earlier application on an adjacent date is not consulted here)."""
-        from hrms.modules.organisation.calendar_resolution import (
-            CalendarResolutionService,
-            working_fraction_of,
-        )
-
-        resolver = CalendarResolutionService(self._session)
+        days *within this same application's range*. Runs that reach another application of the same
+        leave type are added by `_cross_application_bridges` (R-02), not here."""
         span_days = (body.end_date - body.start_date).days + 1
         dates = [body.start_date + timedelta(days=i) for i in range(span_days)]
-
-        # Work Calendar policy A: how much of each date can be taken as leave is the day's working
-        # share, from the same calendar rule attendance reads - 1.00 on a working day, 0.50 on a
-        # half-day weekly off (the off half is already a paid day off), 0.00 on a full weekly off,
-        # holiday or shutdown.
-        working: dict[date, Decimal] = {}
-        for one_date in dates:
-            resolved = await resolver.resolve_for_employee(company_id, employee_id, one_date)
-            if resolved.config_incomplete or resolved.day_type is None:
-                raise LeaveApplicationCalendarNotResolvedError()
-            working[one_date] = working_fraction_of(resolved.day_type)
-
-        # F7 (D-6) — a published roster outranks the calendar, as it does in attendance: a roster
-        # day off consumes no leave, and a rostered working day on a holiday or weekly off does.
-        from hrms.modules.attendance.service import ShiftRosterService
-
-        overrides = await ShiftRosterService(self._session).published_day_overrides(
-            company_id, employee_id, date_from=body.start_date, date_to=body.end_date
+        working = await self._working_shares(
+            company_id, employee_id, body.start_date, body.end_date
         )
-        for one_date, (week_off, holiday_working) in overrides.items():
-            if week_off:
-                working[one_date] = Decimal("0.00")
-            elif holiday_working:
-                working[one_date] = Decimal("1.00")
 
         consuming: dict[date, bool] = {d: working[d] > Decimal("0.00") for d in dates}
 
@@ -2851,6 +3140,22 @@ class LeaveApplicationService:
         day_breakdown = await self._compute_day_breakdown(
             company_id, employee_id, body, policy_version.sandwich_rule_enabled
         )
+        # R-02 / D-12 — the sandwich rule also reaches across applications of the same type: a
+        # Friday application followed by a Monday one charges the weekend to the Monday one.
+        bridges: list[dict[str, Any]] = []
+        if policy_version.sandwich_rule_enabled:
+            bridges = await self._cross_application_bridges(
+                company_id, employee_id, body.leave_type_id, day_breakdown
+            )
+        app_start, app_end = body.start_date, body.end_date
+        if bridges:
+            day_breakdown = sorted(day_breakdown + bridges, key=lambda d: d["date"])
+            app_start = min(app_start, day_breakdown[0]["date"])
+            app_end = max(app_end, day_breakdown[-1]["date"])
+            await _ensure_within_employment(
+                self._session, company_id, employee_id, app_start, app_end
+            )
+            await self._ensure_period_open(company_id, employee_id, app_start, app_end)
         total_days = sum((d["fraction"] for d in day_breakdown), Decimal("0.00"))
 
         # PRA-15: leave of one type on one date cannot exceed one day in total (a second full-day
@@ -2861,8 +3166,8 @@ class LeaveApplicationService:
             company_id=company_id,
             employee_id=employee_id,
             leave_type_id=body.leave_type_id,
-            start_date=body.start_date,
-            end_date=body.end_date,
+            start_date=app_start,
+            end_date=app_end,
         )
         if any(
             booked.get(d["date"], Decimal("0.00")) + d["fraction"] > d["cap"] for d in day_breakdown
@@ -2948,8 +3253,8 @@ class LeaveApplicationService:
             "employee_id": employee_id,
             "leave_type_id": body.leave_type_id,
             "leave_policy_version_id": policy_version.id,
-            "start_date": body.start_date,
-            "end_date": body.end_date,
+            "start_date": app_start,
+            "end_date": app_end,
             "total_days": total_days,
             "reason": body.reason,
             "attachment_reference": body.attachment_reference,
@@ -2989,6 +3294,20 @@ class LeaveApplicationService:
             stage=None,
             comment=body.reason,
         )
+        for anchor_id in sorted({b["anchor_application_id"] for b in bridges}):
+            linked = sorted(b["date"] for b in bridges if b["anchor_application_id"] == anchor_id)
+            await self._record_action(
+                company_id=company_id,
+                leave_application_id=application_id,
+                action="SANDWICH_LINKED",
+                actor_user_id=None,
+                actor_employee_id=None,
+                stage=None,
+                comment=(
+                    f"Days off {linked[0]} to {linked[-1]} counted under the sandwich rule: they "
+                    f"sit between this leave and leave application {anchor_id}"
+                ),
+            )
         manager_stage_chains = ("MANAGER", "MANAGER_THEN_HR", "MANAGER_THEN_HOD_THEN_HR")
         if approval_chain in manager_stage_chains and resolved_manager_id is None:
             await self._record_action(
@@ -3122,6 +3441,11 @@ class LeaveApplicationService:
         row = await self._get_reviewable(
             company_id, application_id, scope=scope, caller_employee_id=caller_employee_id
         )
+        # R-02 - before the status change, so a concurrent submission bridging onto this
+        # application serialises against `_release_bridged_days` below.
+        await self._repo.lock_employee_leave_dates(
+            self._session, company_id=company_id, employee_id=row.employee_id
+        )
         before_read = await self._read(row, company_id=company_id)
         now = datetime.now(UTC)
         updated = await self._repo.update(
@@ -3150,6 +3474,13 @@ class LeaveApplicationService:
             actor_employee_id=caller_employee_id,
             stage=row.approval_stage,
             comment=body.rejection_reason or body.reviewer_comment,
+        )
+        await self._release_bridged_days(
+            company_id,
+            updated,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
         )
         read = await self._read(updated, company_id=company_id)
         await self._audit.record(
@@ -3665,6 +3996,11 @@ class LeaveApplicationService:
                 company_id, row.employee_id, row.start_date, row.end_date
             )
 
+        # R-02 - before the status change, so a concurrent submission bridging onto this
+        # application serialises against `_release_bridged_days` below.
+        await self._repo.lock_employee_leave_dates(
+            self._session, company_id=company_id, employee_id=row.employee_id
+        )
         before_read = await self._read(row, company_id=company_id)
         was_approved = row.status == "APPROVED"
         now = datetime.now(UTC)
@@ -3703,6 +4039,13 @@ class LeaveApplicationService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
+        await self._release_bridged_days(
+            company_id,
+            updated,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
         read = await self._read(updated, company_id=company_id)
         await self._audit.record(
@@ -3926,13 +4269,15 @@ class LeaveApplicationService:
             entry_type="APPLICATION",
             reference_id=row.id,
         )
-        already_reversed = await self._ledger_repo.exists_with_reference(
+        # R-02 — sandwich days released earlier were already refunded; only the rest is owed.
+        refunded = await self._ledger_repo.sum_refunds_for_reference(
             self._session,
             company_id=company_id,
-            entry_type="ADJUSTMENT",
+            employee_id=row.employee_id,
             reference_id=row.id,
         )
-        if debited > 0 and not already_reversed:
+        owed = debited - refunded
+        if owed > 0:
             today = await self._business_today(company_id)
             await self._ledger_repo.insert(
                 self._session,
@@ -3942,7 +4287,7 @@ class LeaveApplicationService:
                     "employee_id": row.employee_id,
                     "leave_type_id": row.leave_type_id,
                     "entry_type": "ADJUSTMENT",
-                    "amount": debited,
+                    "amount": owed,
                     "effective_date": today,
                     "reference_id": row.id,
                     "reason": "Reversal: leave application cancelled after approval",
@@ -3950,7 +4295,7 @@ class LeaveApplicationService:
                 },
             )
             await self._apply_closed_year_rule(
-                company_id, row, debited, today=today, actor_user_id=actor_user_id
+                company_id, row, owed, today=today, actor_user_id=actor_user_id
             )
 
         days = await self._day_repo.list_for_application(

@@ -24,10 +24,13 @@ List<String> _versionChoiceKeys(FormSpec spec) => choiceSourcesOf(spec);
 ///  * **Publish** — `POST …/versions/{id}/publish` with an optional reason; published versions
 ///    are immutable (a correction needs a new draft).
 class VersionsSection extends ConsumerStatefulWidget {
-  const VersionsSection({super.key, required this.config, required this.parent});
+  const VersionsSection({super.key, required this.config, required this.parent, this.onChanged});
 
   final ResourceConfig config;
   final Rec parent;
+
+  /// After a publish or discard, for parts of the screen that depend on which versions exist.
+  final VoidCallback? onChanged;
 
   @override
   ConsumerState<VersionsSection> createState() => _VersionsSectionState();
@@ -111,6 +114,7 @@ class _VersionsSectionState extends ConsumerState<VersionsSection> {
     } finally {
       if (mounted) setState(() => _busy = false);
       await _load();
+      if (mounted) widget.onChanged?.call();
     }
   }
 

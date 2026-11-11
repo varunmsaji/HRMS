@@ -115,7 +115,9 @@ void main() {
         _a('e', 'EMPLOYEE', 'e-1', from: '2099-01-01'),
       ]);
       final call = api.listCalls.firstWhere((c) => c.path == '/policy-assignments');
-      expect(call.filters, {'policy_kind': 'ATTENDANCE_POLICY', 'policy_id': 'p-1'});
+      expect(call.filters, {'policy_kind': 'ATTENDANCE_POLICY', 'policy_id': 'p-1', 'live_on': isA<String>()});
+      // The server drops ended assignments before paging (company-local today).
+      expect('${call.filters!['live_on']}', matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
       expect(find.text('Whole company'), findsOneWidget);
       expect(find.text('Branch: Pune'), findsOneWidget);
       expect(find.text('Employee: Asha K Rao'), findsOneWidget);

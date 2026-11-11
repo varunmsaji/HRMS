@@ -229,7 +229,8 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     final user = ref.read(authControllerProvider).user;
     final perms = user?.permissions ?? const <String>[];
     final own = user?.employeeId != null && user!.employeeId == day.employeeId;
-    if (own && perms.contains(attendanceRegularizationRequest)) return 'SELF';
+    if (own) return perms.contains(attendanceRegularizationRequest) ? 'SELF' : null;
+    // The API treats a request naming the caller's own employee as a self request.
     if (perms.contains(attendanceRegularizationRequestOnBehalf)) return 'ON_BEHALF';
     return null;
   }

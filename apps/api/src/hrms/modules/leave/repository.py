@@ -616,6 +616,27 @@ class LeaveLedgerRepository:
         )
         return Decimal((await session.execute(stmt)).scalar_one())
 
+    async def sum_refunds_for_reference(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        reference_id: UUID,
+    ) -> Decimal:
+        """R-02 — what has already been credited back to an application: its positive
+        `ADJUSTMENT` entries (a sandwich-day release, an earlier reversal). The negative
+        `ADJUSTMENT`s a closed-year rule writes against the same reference are lapses, not
+        refunds, so they are left out."""
+        stmt = select(func.coalesce(func.sum(LeaveLedgerEntry.amount), 0)).where(
+            LeaveLedgerEntry.company_id == company_id,
+            LeaveLedgerEntry.employee_id == employee_id,
+            LeaveLedgerEntry.entry_type == "ADJUSTMENT",
+            LeaveLedgerEntry.reference_id == reference_id,
+            LeaveLedgerEntry.amount > 0,
+        )
+        return Decimal((await session.execute(stmt)).scalar_one())
+
     async def list_credits_for_expiry(
         self, session: AsyncSession, *, company_id: UUID, leave_type_id: UUID
     ) -> list[LeaveLedgerEntry]:
@@ -992,6 +1013,40 @@ class LeaveApplicationRepository:
         )
         return (await session.execute(stmt)).scalar_one_or_none()
 
+    async def shrink_after_release(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        application_id: UUID,
+        start_date: date,
+        end_date: date,
+        total_days: Decimal,
+        lop_days: Decimal,
+        now: datetime,
+    ) -> LeaveApplication:
+        """R-02 — the application lost sandwich days it held only because of another, now
+        inactive, application. Not version-guarded (the caller holds the employee's leave-dates
+        lock), but the version is bumped so a reviewer still showing the old totals gets a stale
+        error instead of approving figures that no longer exist."""
+        stmt = (
+            update(LeaveApplication)
+            .where(
+                LeaveApplication.id == application_id,
+                LeaveApplication.company_id == company_id,
+            )
+            .values(
+                start_date=start_date,
+                end_date=end_date,
+                total_days=total_days,
+                lop_days=lop_days,
+                version=LeaveApplication.version + 1,
+                updated_at=now,
+            )
+            .returning(LeaveApplication)
+        )
+        return (await session.execute(stmt)).scalar_one()
+
     async def set_lop_days(
         self, session: AsyncSession, *, company_id: UUID, application_id: UUID, lop_days: Decimal
     ) -> LeaveApplication:
@@ -1044,6 +1099,56 @@ class LeaveApplicationDayRepository:
             .order_by(LeaveApplicationDay.calendar_date, LeaveApplication.status)
         )
         return [(r[0], r[1], r[2], r[3]) for r in (await session.execute(stmt)).all()]
+
+    async def list_active_for_type(
+        self,
+        session: AsyncSession,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        leave_type_id: UUID,
+        date_from: date,
+        date_to: date,
+        exclude_application_id: UUID | None = None,
+    ) -> list[LeaveApplicationDay]:
+        """R-02 — day rows in `[date_from, date_to]` of this employee's active (`SUBMITTED` or
+        `APPROVED`) applications of one leave type, in date order. Used to find the application
+        on the far side of a run of off days that the sandwich rule bridges."""
+        conditions = [
+            LeaveApplicationDay.company_id == company_id,
+            LeaveApplication.company_id == company_id,
+            LeaveApplication.employee_id == employee_id,
+            LeaveApplication.leave_type_id == leave_type_id,
+            LeaveApplication.status.in_(("SUBMITTED", "APPROVED")),
+            LeaveApplicationDay.calendar_date >= date_from,
+            LeaveApplicationDay.calendar_date <= date_to,
+        ]
+        if exclude_application_id is not None:
+            conditions.append(LeaveApplication.id != exclude_application_id)
+        stmt = (
+            select(LeaveApplicationDay)
+            .join(
+                LeaveApplication,
+                LeaveApplication.id == LeaveApplicationDay.leave_application_id,
+            )
+            .where(*conditions)
+            .order_by(LeaveApplicationDay.calendar_date, LeaveApplicationDay.leave_application_id)
+        )
+        return list((await session.execute(stmt)).scalars().all())
+
+    async def delete_days(
+        self, session: AsyncSession, *, company_id: UUID, day_ids: list[UUID]
+    ) -> None:
+        """R-02 — removes sandwich days released from an application. The release itself is kept
+        as a `SANDWICH_RELEASED` action and an audit event; cancelled projections stay on record."""
+        if not day_ids:
+            return
+        await session.execute(
+            delete(LeaveApplicationDay).where(
+                LeaveApplicationDay.id.in_(day_ids),
+                LeaveApplicationDay.company_id == company_id,
+            )
+        )
 
     async def insert_many(
         self, session: AsyncSession, *, rows: list[dict[str, Any]]

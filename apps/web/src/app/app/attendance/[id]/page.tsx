@@ -163,10 +163,14 @@ export default function AttendanceDayDetailPage() {
     [day, punches, breakEvents],
   );
   const isOwnDay = Boolean(day && user?.employee_id && day.employee_id === user.employee_id);
+  // The API treats a request naming the caller's own employee as a self request, so on-behalf
+  // is never offered on the viewer's own day.
   const requestMode: "SELF" | "ON_BEHALF" | null = !day
     ? null
-    : isOwnDay && can("ATTENDANCE.REGULARIZATION_REQUEST")
-      ? "SELF"
+    : isOwnDay
+      ? can("ATTENDANCE.REGULARIZATION_REQUEST")
+        ? "SELF"
+        : null
       : can("ATTENDANCE.REGULARIZATION_REQUEST_ON_BEHALF")
         ? "ON_BEHALF"
         : null;

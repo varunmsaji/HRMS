@@ -69,6 +69,8 @@ export function usePolicyFollowers({
       .getList<PolicyAssignment>("/policy-assignments", {
         policy_kind: policyKind,
         policy_id: policyId,
+        // Filter before paging: ended assignments sorted first must not crowd out live ones.
+        live_on: today,
         per_page: PAGE_SIZE,
       })
       .then(({ data, pagination }) => {

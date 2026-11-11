@@ -15,7 +15,7 @@ import { ApiError, describeApiError } from "@/lib/api/errors";
 import { businessToday } from "@/lib/attendance/format";
 import { useAuth } from "@/lib/auth/auth-context";
 import { usePermissions } from "@/lib/auth/use-permissions";
-import { employeeFullName } from "@/lib/employee/names";
+import { employeeFullName, employeeNameSearchText } from "@/lib/employee/names";
 import type { EmployeeOption } from "@/lib/employee/use-employee-directory";
 import type { ShiftRoster } from "@/lib/shift-roster/types";
 
@@ -144,7 +144,7 @@ export default function RosterBoardPage() {
     for (const c of columns) map.set(c.key, []);
     const q = search.trim().toLowerCase();
     for (const e of employees ?? []) {
-      if (q && !`${fullName(e)} ${e.employee_code ?? ""}`.toLowerCase().includes(q)) continue;
+      if (q && !`${employeeNameSearchText(e)} ${e.employee_code ?? ""}`.toLowerCase().includes(q)) continue;
       const key = columnOf(entryByEmployee.get(e.id));
       (map.get(key) ?? map.get(UNASSIGNED))!.push(e);
     }

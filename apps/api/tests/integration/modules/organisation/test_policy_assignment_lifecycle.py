@@ -131,6 +131,41 @@ async def test_current_only_finds_the_open_row_to_replace(client: AsyncClient) -
         await wipe_tenant(company_id=company_id, user_id=user_id)
 
 
+async def test_live_on_drops_assignments_ended_before_the_date(client: AsyncClient) -> None:
+    """ "Who follows this" filters before paging, so ended rows can't fill the first page."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        first = await _publish_attendance_policy(client, headers, "First")
+        second = await _publish_attendance_policy(client, headers, "Second")
+        created = await client.post(
+            "/v1/policy-assignments", headers=headers, json=_body(first["id"], "2027-01-01")
+        )
+        assert created.status_code == 201, created.text
+        replaced = await client.post(
+            "/v1/policy-assignments",
+            headers={**headers, "If-Match": str(created.json()["data"]["version"])},
+            json=_body(second["id"], "2027-02-01"),
+        )
+        assert replaced.status_code == 201, replaced.text
+
+        async def live(policy_id: str, on: str) -> dict:
+            r = await client.get(
+                "/v1/policy-assignments",
+                headers=headers,
+                params={"policy_kind": "ATTENDANCE_POLICY", "policy_id": policy_id, "live_on": on},
+            )
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        assert len((await live(first["id"], "2027-01-31"))["data"]) == 1
+        ended = await live(first["id"], "2027-02-01")
+        assert ended["data"] == []
+        assert ended["pagination"]["total"] == 0
+        assert len((await live(second["id"], "2027-01-15"))["data"]) == 1
+    finally:
+        await wipe_tenant(company_id=company_id, user_id=user_id)
+
+
 async def test_ending_an_override_falls_back_to_the_company_policy(client: AsyncClient) -> None:
     headers, company_id, user_id = await _register_tenant(client)
     try:

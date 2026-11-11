@@ -118,6 +118,7 @@ describe("PolicyFollowersPanel", () => {
     expect(mockedGetList).toHaveBeenCalledWith("/policy-assignments", {
       policy_kind: "ATTENDANCE_POLICY",
       policy_id: "p1",
+      live_on: "2026-06-15",
       per_page: 100,
     });
 
