@@ -1553,6 +1553,8 @@ class EmployeeSalaryService:
         body: EmployeeSalarySetupSave,
         *,
         actor_user_id: UUID | None,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> EmployeeSalarySetupRead:
@@ -1562,7 +1564,11 @@ class EmployeeSalaryService:
         from hrms.modules.employee.schemas import CompensationCreate
         from hrms.modules.employee.service import EmployeeCompensationService
 
-        await self._ensure_visible(company_id, employee_id, scope=None, caller_employee_id=None)
+        # `scope` is `EMPLOYEE.UPDATE_COMPENSATION`'s: a team or branch grant reaches only those
+        # employees. `PAYROLL.SETUP_MANAGE` is company-level.
+        await self._ensure_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
         await self._structures.ensure_defaults(company_id)
         day = body.effective_from
         template = await self._structure_repo.get(
@@ -1620,6 +1626,8 @@ class EmployeeSalaryService:
                 ),
                 expected_version=open_row.version if open_row is not None else None,
                 actor_user_id=actor_user_id,
+                scope=scope,
+                caller_employee_id=caller_employee_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
             )

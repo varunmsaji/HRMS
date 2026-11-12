@@ -2,6 +2,7 @@
 template changed for one employee saved as that employee's own structure."""
 
 from typing import Any
+from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
@@ -13,6 +14,7 @@ from tests.integration.modules.attendance.test_attendance_security import (
     _cleanup_scoped_users,
     _create_permission_scoped_user,
 )
+from tests.integration.modules.employee.test_employee_compensation import _create_employee
 from tests.integration.modules.organisation.test_registration_flow import _cleanup
 from tests.integration.modules.payroll.test_salary_structure import (
     _CTC,
@@ -208,6 +210,44 @@ async def test_setup_rejects_invalid_lines_and_needs_both_permissions(
             f"/v1/employees/{employee_id}/salary/setup", headers=scoped_headers, json=body
         )
         assert response.status_code == 403, response.text
+    finally:
+        await _cleanup_payroll(company_id=company_id)
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+        await _cleanup_scoped_users()
+
+
+async def test_setup_save_stays_inside_the_compensation_scope(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """`EMPLOYEE.UPDATE_COMPENSATION` granted at SELF scope reaches the caller's own record only;
+    another employee's salary is 404, as for every out-of-scope employee."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        own_id = await _setup_employee(client, headers)
+        other_id = (await _create_employee(client, headers, first_name="Ravi"))["id"]
+        standard = (await _structures(client, headers))["STANDARD"]
+        body = {
+            "effective_from": "2026-01-01",
+            "reason": "Joining",
+            "template_structure_id": standard["id"],
+            "lines": _inputs(standard["versions"][0]["lines"]),
+        }
+        scoped_headers, _ = await _create_permission_scoped_user(
+            company_id=company_id,
+            permission_codes=["PAYROLL.SETUP_MANAGE", "EMPLOYEE.UPDATE_COMPENSATION"],
+            data_scope="SELF",
+            caller_employee_id=UUID(own_id),
+        )
+
+        other = await client.post(
+            f"/v1/employees/{other_id}/salary/setup", headers=scoped_headers, json=body
+        )
+        assert other.status_code == 404, other.text
+        own = await client.post(
+            f"/v1/employees/{own_id}/salary/setup", headers=scoped_headers, json=body
+        )
+        assert own.status_code == 200, own.text
     finally:
         await _cleanup_payroll(company_id=company_id)
         await _cleanup_attendance_day(company_id=company_id)

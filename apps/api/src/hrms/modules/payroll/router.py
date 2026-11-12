@@ -451,14 +451,21 @@ async def save_employee_salary_setup(
     body: EmployeeSalarySetupSave,
     request: Request,
     tenant: _Tenant,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     _scope: _SetupScope,
-    _compensation: Annotated[object, Depends(require_permission(EMPLOYEE_UPDATE_COMPENSATION))],
+    scope: Annotated[DataScope, Depends(require_permission(EMPLOYEE_UPDATE_COMPENSATION))],
     service: _Salaries,
 ) -> DataEnvelope[EmployeeSalarySetupRead]:
     """Saves the CTC and the salary structure together — needs both `PAYROLL.SETUP_MANAGE` and
-    `EMPLOYEE.UPDATE_COMPENSATION`."""
+    `EMPLOYEE.UPDATE_COMPENSATION`, and the employee must be inside the latter's scope."""
     data = await service.save_setup(
-        tenant.company_id, employee_id, body, actor_user_id=tenant.user_id, **_client(request)
+        tenant.company_id,
+        employee_id,
+        body,
+        actor_user_id=tenant.user_id,
+        scope=scope,
+        caller_employee_id=user.employee_id,
+        **_client(request),
     )
     return DataEnvelope(data=data, meta=_meta())
 
