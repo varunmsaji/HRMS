@@ -77,6 +77,21 @@ describe("buildTimeline", () => {
     );
     expect(kept.map((p) => p.id)).toEqual(["1"]);
   });
+
+  it("a day with no window keeps only its own punches, not the next day fetched alongside", () => {
+    const offDay = day({
+      attendance_date: "2026-08-10",
+      scheduled_start: null,
+      scheduled_end: null,
+      actual_first_in: null,
+      actual_last_out: null,
+    });
+    const kept = punchesForDay(
+      [punch("1", "2026-08-10T11:00:00Z", "IN"), punch("2", "2026-08-11T03:30:00Z", "IN")],
+      offDay,
+    );
+    expect(kept.map((p) => p.id)).toEqual(["1"]);
+  });
 });
 
 import { exceptionLabels, minutesSince, rangePresets } from "./day-detail";

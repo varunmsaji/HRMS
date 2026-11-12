@@ -49,6 +49,12 @@ void main() {
     expect(kept.map((p) => p.id), ['1']);
   });
 
+  test('a day with no window keeps only its own punches, not the next day fetched alongside', () {
+    final offDay = _day(over: {'scheduled_start': null, 'scheduled_end': null, 'actual_first_in': null, 'actual_last_out': null});
+    final kept = punchesForDay([_punch('1', '2026-08-10T11:00:00Z', 'IN'), _punch('2', '2026-08-11T03:30:00Z', 'IN')], offDay);
+    expect(kept.map((p) => p.id), ['1']);
+  });
+
   test('skips a break event with no time and title-cases unknown sources', () {
     final items = buildTimeline(
       _day(),

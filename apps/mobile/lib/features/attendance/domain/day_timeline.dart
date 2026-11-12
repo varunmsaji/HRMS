@@ -58,7 +58,11 @@ const _sixHours = Duration(hours: 6);
 List<Punch> punchesForDay(List<Punch> punches, AttendanceDay day) {
   final start = (day.raw['scheduled_start'] as String?) ?? day.actualFirstIn;
   final end = (day.raw['scheduled_end'] as String?) ?? day.actualLastOut;
-  if (start == null && end == null) return punches;
+  // No window (an off day nobody punched on): the fetch spans the next day too, for overnight
+  // shifts, so keep only this day's punches by the endpoint's own UTC-date rule.
+  if (start == null && end == null) {
+    return [for (final p in punches) if (DateTime.parse(p.punchTime).toUtc().toIso8601String().startsWith(day.attendanceDate)) p];
+  }
   final lo = start == null ? null : DateTime.parse(start).subtract(_sixHours);
   final hi = end == null ? null : DateTime.parse(end).add(_sixHours);
   return [

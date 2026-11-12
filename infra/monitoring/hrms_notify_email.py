@@ -42,8 +42,10 @@ def load_config() -> dict[str, str]:
     return cfg
 
 
-def monitor_message(report: dict, repeat_hours: float) -> tuple[str, str] | None:
-    """Subject and body for a monitor report, or None when this failure set was sent recently."""
+def monitor_message(report: dict, repeat_hours: float) -> tuple[str, str, dict] | None:
+    """Subject, body and the cooldown record for a monitor report, or None when this failure set
+    was sent recently. The record is written by `main` only after the mail is accepted, so a
+    failed send is retried on the next run instead of being suppressed."""
     failing = [c for c in report.get("checks", []) if not c.get("ok")]
     names = sorted(c.get("name", "?") for c in failing)
     key = hashlib.sha256(",".join(names).encode()).hexdigest()
@@ -54,8 +56,7 @@ def monitor_message(report: dict, repeat_hours: float) -> tuple[str, str] | None
             return None
     except (OSError, ValueError):
         pass
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps({"key": key, "sent_at": now, "checks": names}))
+    sent = {"key": key, "sent_at": now, "checks": names}
 
     worst = "critical" if any(c.get("severity") == "critical" for c in failing) else "high"
     subject = f"[HRMS {worst.upper()}] {len(names)} check(s) failing: {', '.join(names)[:150]}"
@@ -73,7 +74,7 @@ def monitor_message(report: dict, repeat_hours: float) -> tuple[str, str] | None
         "Full report:",
         json.dumps(report, indent=2),
     ]
-    return subject, "\n".join(lines)
+    return subject, "\n".join(lines), sent
 
 
 def main() -> int:
@@ -82,6 +83,7 @@ def main() -> int:
     parser.add_argument("--test", action="store_true", help="send a test message")
     args = parser.parse_args()
     cfg = load_config()
+    sent: dict | None = None
 
     if args.test:
         subject = f"[HRMS] Test alert from {socket.gethostname()}"
@@ -99,7 +101,7 @@ def main() -> int:
             if msg is None:
                 print('{"alert_email":"skipped_repeat"}', file=sys.stderr)
                 return 0
-            subject, body = msg
+            subject, body, sent = msg
 
     message = EmailMessage()
     message["Subject"] = subject
@@ -110,6 +112,9 @@ def main() -> int:
         smtp.starttls()
         smtp.login(cfg["ALERT_SMTP_USER"], cfg["ALERT_SMTP_PASSWORD"])
         smtp.send_message(message)
+    if sent is not None:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps(sent))
     print('{"alert_email":"sent"}', file=sys.stderr)
     return 0
 
