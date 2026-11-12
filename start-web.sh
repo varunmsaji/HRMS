@@ -16,7 +16,7 @@ until docker compose -f "$ROOT/docker-compose.yml" exec -T postgres pg_isready -
 
 cd "$ROOT/apps/api"
 [[ -f .env ]] || cp .env.example .env
-uv sync --all-groups
+uv sync --all-groups --extra liveness
 uv run --no-sync python -m alembic upgrade head
 uv run --no-sync python -m uvicorn entrypoints.api:app --reload --host 0.0.0.0 --port 8000 >"$LOG_DIR/api.log" 2>&1 &
 PIDS+=("$!")
