@@ -1,0 +1,29 @@
+{
+ "annual_ctc_minor": null,
+ "as_of": "2026-01-15",
+ "assignment": null,
+ "employee_id": "00000000-0000-0000-0000-000000001234",
+ "esi_applicable": true,
+ "is_customised": true,
+ "lines": [
+  {
+   "amount_monthly_minor": null,
+   "applies_when": "x",
+   "base_salary_component_id": null,
+   "calculation_type": "x",
+   "component_code": "x",
+   "component_name": "x",
+   "component_type": "x",
+   "display_order": 1,
+   "id": "00000000-0000-0000-0000-000000001234",
+   "max_monthly_minor": null,
+   "percentage": null,
+   "salary_component_id": "00000000-0000-0000-0000-000000001234"
+  }
+ ],
+ "pay_basis": null,
+ "pf_applicable": true,
+ "salary_structure_id": null,
+ "salary_structure_name": null,
+ "template_structure_id": null
+}

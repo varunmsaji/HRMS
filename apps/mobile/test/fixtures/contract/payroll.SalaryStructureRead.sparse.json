@@ -1,8 +1,10 @@
 {
+ "based_on_structure_id": null,
  "code": "x",
  "company_id": "00000000-0000-0000-0000-000000001234",
  "created_at": "2026-01-15T10:00:00Z",
  "description": null,
+ "employee_id": null,
  "id": "00000000-0000-0000-0000-000000001234",
  "is_active": true,
  "name": "x",
