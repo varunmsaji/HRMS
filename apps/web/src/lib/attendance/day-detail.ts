@@ -40,7 +40,11 @@ const SIX_HOURS = 6 * 3_600_000;
 export function punchesForDay(punches: Punch[], day: AttendanceDay): Punch[] {
   const start = day.scheduled_start ?? day.actual_first_in;
   const end = day.scheduled_end ?? day.actual_last_out;
-  if (!start && !end) return punches;
+  // No window (an off day nobody punched on): the fetch spans the next day too, for overnight
+  // shifts, so keep only this day's punches by the endpoint's own UTC-date rule.
+  if (!start && !end) {
+    return punches.filter((p) => new Date(p.punch_time).toISOString().startsWith(day.attendance_date));
+  }
   const lo = start ? new Date(start).getTime() - SIX_HOURS : Number.NEGATIVE_INFINITY;
   const hi = end ? new Date(end).getTime() + SIX_HOURS : Number.POSITIVE_INFINITY;
   return punches.filter((p) => {

@@ -1,10 +1,40 @@
 # Web / mobile parity: handoff
 
-Written 3 Nov 2026, updated 8 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 0.
+Written 3 Nov 2026, updated 12 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 0.
 
 Read first: [MOBILE_PARITY_PLAN.md](MOBILE_PARITY_PLAN.md) (the full plan and the parity matrix G1 to G14). This file records what is done, what is left, how to run things, and the traps.
 
-## 0a. Audit on 8 Nov 2026 (newest; read first)
+## 0c. Review on 12 Nov 2026 (newest; read first)
+
+A fresh pass over both apps after payroll was switched on for mobile (`kPayrollInRelease = true`, f99b340), so payroll was compared for the first time. Routes and API endpoints are at parity (every endpoint web calls, mobile calls; `/attendance-policies/form-context` is the known core-hours / split-shift difference). Pay run detail, the employee Salary tab and payslips match. Closed on mobile:
+
+| Gap | Mobile now has | Main files (`apps/mobile/lib/`) |
+|---|---|---|
+| Salary structure page | Web's in-place editor (shared with the employee salary setup, as on web): component tiles in Earnings / Employer contributions, "Save draft" (only when changed), "Publish" only once saved; employer contributions can't take "Balance of gross" or "% of gross"; "Preview a CTC" runs as soon as a version opens, "Calculate" reruns it; version chips "v{n} · …"; web's publish dialog wording; line text "₹X" and ", at most ₹X" as web's `describeLine` | `features/payroll/presentation/structure_lines_editor.dart` (new), `salary_structure_versions_section.dart`, `salary_setup_screen.dart` |
+| Shift board search | Matches the display name and every legal name part (web's `employeeNameSearchText`) | `features/profile/data/employee_repository.dart` (`nameSearchText`), `features/attendance/presentation/shift_board_screen.dart` |
+| Pay runs wording | "Pay Runs", "Company" / "All companies", "Create pay run", web's empty state and dialog notes. Payroll settings now need `PAYROLL.SETUP_MANAGE` (the API's rule; mobile used `RUN_PROCESS`) | `features/payroll/presentation/pay_runs_screen.dart`, `pay_run_detail_screen.dart` |
+| Sandwich rule | Web's description under the leave policy toggle | `features/leave/domain/leave_resources.dart` |
+
+**Differences kept:** web's sidebar shows every admin menu item and each page checks access; mobile hides items the user can't open (stricter, harmless). The pay run list has no name search on mobile (filter chips only).
+
+**Still open:** employee Home items (owner's call), Settings guide (no mobile screen).
+
+## 0b. Audit on 9 Nov 2026
+
+A fresh pass over the committed code (routes, endpoints, menus and permissions, screens) after PR #52. It found gaps the 8 Nov audit missed, and they are now closed on mobile:
+
+| Gap | Mobile now has | Main files (`apps/mobile/lib/`) |
+|---|---|---|
+| Attendance day | Web's "Punch timeline" (punches and break events in order with their source, "Punch-out missing" at the end; break events from `GET /attendance/breaks/day`), the employee's name, code and shift (name opens the attendance profile for `ATTENDANCE.VIEW_ALL`), "Previous day" / "Next day", "Missing" last out, shift version, and leave rows that open the application | `features/attendance/domain/day_timeline.dart`, `presentation/attendance_day_detail_screen.dart` |
+| Dashboard shortcuts | Tiles follow the menu's permission rule (`menuAllows` in `core/nav/nav_entries.dart`); before, every tile showed and an unpermitted one bounced back silently | `features/dashboard/presentation/dashboard_screen.dart` |
+| Company dashboard | Web's tile names and notes (change vs last month / yesterday, expected to work, late arrivals, half-day), onboarding in Pending Approvals, a Pending Approvals list with names, web's attendance buckets and "No check-ins recorded yet", Leave Statistics This Month / This Year | same, `features/dashboard/data/dashboard_repository.dart` |
+| Wording | Onboarding wizard labels and the employee menu ("Leave Balances", "My Calendar", "Shift Swaps", "My Payslips") as on web | `features/onboarding/domain/onboarding_form_spec.dart`, `core/nav/nav_entries.dart` |
+
+**Correction to 0a:** web's dashboard no longer has the "Today's Workforce Overview" filters or the old quick actions. `components/dashboard/workforce-overview.tsx`, `quick-actions.tsx` and `pending-approvals.tsx` are not imported anywhere (unused since 2 Nov).
+
+**Still open:** employee Home items (owner's call, unchanged), Settings guide (no mobile screen). Kept on purpose: the Home quick-action titles (web's longer titles would be cut off in the tiles); web hides the core-hours and split-shift fields of the attendance policy form when no shift uses them, mobile always shows them (harmless).
+
+## 0a. Audit on 8 Nov 2026
 
 A full comparison of the committed code of both apps: routes, every API endpoint each app calls, form field keys, user-facing labels, and the screens side by side.
 

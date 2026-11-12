@@ -40,7 +40,7 @@ const leavePolicyVersionSpec = FormSpec(name: 'leave_policy_version', label: 'Le
   FieldSpec('min_balance_after_encashment', 'Balance that must stay after encashing', kind: FieldKind.decimal, showWhen: 'encashment_allowed'),
   FieldSpec('encashment_frequency', 'How often (note only)', showWhen: 'encashment_allowed'),
   FieldSpec('encashment_calculation_basis', 'How it is paid (note only)', showWhen: 'encashment_allowed'),
-  FieldSpec('sandwich_rule_enabled', 'Count weekly offs and holidays between two leave days', kind: FieldKind.toggle),
+  FieldSpec('sandwich_rule_enabled', 'Count weekly offs and holidays between two leave days', kind: FieldKind.toggle, hint: 'If someone takes leave on both sides of a weekend or holiday, that day is counted as leave too, even when the two sides are separate applications of the same leave type.'),
   FieldSpec('reserve_balance_on_submission', 'Hold the days as soon as someone applies', kind: FieldKind.toggle),
   FieldSpec('pre_delivery_days', 'Days before delivery (maternity, note only)', kind: FieldKind.integer),
   FieldSpec('post_delivery_days', 'Days after delivery (maternity, note only)', kind: FieldKind.integer),

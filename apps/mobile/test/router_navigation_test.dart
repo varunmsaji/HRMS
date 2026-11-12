@@ -134,20 +134,22 @@ void main() {
       expect(appRedirect(admin, '/app/departments'), '/app/dashboard');
     });
 
-    test('payroll is outside this release: every payroll route lands on the landing page, whoever asks', () {
+    test('payroll routes open for whoever holds the permission; an employee reaches only their payslips', () {
       final admin = _auth(_user([dashboardCompanyView, payrollRunView, payrollPayslipViewOwn, payrollSetupManage, payrollStatutoryManage], employeeId: 'e'));
       for (final path in ['/app/payroll/pay-runs', '/app/payroll/pay-runs/abc', '/app/payroll/salary-components', '/app/payroll/salary-structures', '/app/payroll/statutory-rates', '/app/me/payslips']) {
-        expect(appRedirect(employee, path), '/app/home', reason: path);
-        expect(appRedirect(admin, path), '/app/dashboard', reason: path);
+        expect(appRedirect(admin, path), isNull, reason: path);
       }
+      expect(appRedirect(employee, '/app/me/payslips'), isNull);
+      expect(appRedirect(employee, '/app/payroll/pay-runs'), '/app/home');
     });
 
-    test('...but the payroll entries still exist in the table and come back when the release switch is on', () {
+    test('the release switch still hides every payroll entry and route when it is off', () {
       const grants = [payrollRunView, payrollPayslipViewOwn, payrollSetupManage, payrollStatutoryManage];
-      expect(visibleNavGroups(grants).expand((g) => g.items).where((e) => isPayrollRoute(e.route)), isEmpty);
-      expect(visibleEmployeeEntries(grants), isEmpty);
-      expect(visibleNavGroups(grants, payroll: true).expand((g) => g.items).where((e) => isPayrollRoute(e.route)), isNotEmpty);
-      expect(visibleEmployeeEntries(grants, payroll: true).map((e) => e.route), contains('/app/me/payslips'));
+      expect(visibleNavGroups(grants).expand((g) => g.items).where((e) => isPayrollRoute(e.route)), isNotEmpty);
+      expect(visibleEmployeeEntries(grants).map((e) => e.route), contains('/app/me/payslips'));
+      expect(visibleNavGroups(grants, payroll: false).expand((g) => g.items).where((e) => isPayrollRoute(e.route)), isEmpty);
+      expect(visibleEmployeeEntries(grants, payroll: false), isEmpty);
+      expect(guardRedirect('/app/payroll/pay-runs', _user([dashboardCompanyView, payrollRunView]), landing: '/app/dashboard', payroll: false), '/app/dashboard');
     });
 
     test('a signed-out user is sent to login, not to the landing page', () {

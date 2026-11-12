@@ -139,12 +139,27 @@ class SalaryStructureRepository:
     async def list_for_company(
         self, session: AsyncSession, *, company_id: UUID
     ) -> list[SalaryStructure]:
+        """The company's templates — an employee's own structure is not one of them."""
         stmt = (
             select(SalaryStructure)
-            .where(SalaryStructure.company_id == company_id, SalaryStructure.deleted_at.is_(None))
+            .where(
+                SalaryStructure.company_id == company_id,
+                SalaryStructure.employee_id.is_(None),
+                SalaryStructure.deleted_at.is_(None),
+            )
             .order_by(SalaryStructure.name)
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    async def get_for_employee(
+        self, session: AsyncSession, *, company_id: UUID, employee_id: UUID
+    ) -> SalaryStructure | None:
+        stmt = select(SalaryStructure).where(
+            SalaryStructure.company_id == company_id,
+            SalaryStructure.employee_id == employee_id,
+            SalaryStructure.deleted_at.is_(None),
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
 
     async def update(
         self,

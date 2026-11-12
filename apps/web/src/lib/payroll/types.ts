@@ -90,6 +90,9 @@ export interface SalaryStructure {
   name: string;
   description: string | null;
   is_active: boolean;
+  /** Set on one employee's own structure (a template changed for them alone). */
+  employee_id?: string | null;
+  based_on_structure_id?: string | null;
   version: number;
   versions: SalaryStructureVersion[];
   created_at: string;
@@ -149,6 +152,29 @@ export interface EmployeeSalary {
   created_at: string;
   updated_at: string;
 }
+
+/** What the employee's Salary tab editor opens with (`GET /employees/{id}/salary/setup`). */
+export interface EmployeeSalarySetup {
+  employee_id: string;
+  as_of: string;
+  pay_basis: string | null;
+  annual_ctc_minor: number | null;
+  pf_applicable: boolean;
+  esi_applicable: boolean;
+  assignment: EmployeeSalary | null;
+  salary_structure_id: string | null;
+  salary_structure_name: string | null;
+  template_structure_id: string | null;
+  is_customised: boolean;
+  lines: SalaryStructureLine[];
+}
+
+export interface EmployeeSalarySetupPreview {
+  pf_applicable: boolean;
+  esi_applicable: boolean;
+  breakup: SalaryBreakup;
+}
+
 
 export interface EmployeeSalaryBulkResult {
   assigned: string[];

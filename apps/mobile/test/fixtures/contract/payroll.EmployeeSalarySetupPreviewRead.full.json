@@ -1,0 +1,20 @@
+{
+ "breakup": {
+  "annual_ctc_minor": 1,
+  "employer_contributions_monthly_minor": 1,
+  "gross_monthly_minor": 1,
+  "lines": [
+   {
+    "annual_minor": 1,
+    "basis": "x",
+    "component_code": "x",
+    "component_name": "x",
+    "component_type": "x",
+    "monthly_minor": 1
+   }
+  ],
+  "monthly_ctc_minor": 1
+ },
+ "esi_applicable": true,
+ "pf_applicable": true
+}

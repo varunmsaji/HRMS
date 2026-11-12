@@ -1,22 +1,22 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
-import '../../../core/forms/choice_sources.dart';
-import '../../../core/forms/spec_form_screen.dart';
 import '../../../core/format.dart';
 import '../../../core/providers.dart';
 import '../../auth/state/auth_controller.dart';
 import '../domain/payroll_resources.dart';
 import 'salary_breakup_view.dart';
-
-typedef Rec = Map<String, dynamic>;
+import 'structure_lines_editor.dart';
 
 /// The versions of a salary structure — mirrors `apps/web/src/app/app/payroll/salary-structures/[id]/page.tsx`:
 /// published versions are read-only; "Edit (new draft)" copies the current version into a draft,
-/// whose lines are edited as a whole (`PUT …/lines`), previewed against a CTC, then published from
-/// an effective date. A draft can be discarded.
+/// whose components are edited in place with the shared [StructureLinesEditor] and saved as a whole
+/// (`PUT …/lines`), then published from an effective date. A draft can be discarded. Whichever
+/// version is selected is previewed against a CTC as soon as it is opened.
 class SalaryStructureVersionsSection extends ConsumerStatefulWidget {
   const SalaryStructureVersionsSection({super.key, required this.structure, required this.onChanged});
 
@@ -37,6 +37,16 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
   bool _pf = true;
   Rec? _preview;
   String? _previewError;
+  int _previewSeq = 0;
+
+  /// The draft's components as edited, and the draft (`id@version`) they were read from.
+  List<StructureLine> _rows = [];
+  String? _rowsFor;
+
+  /// The version (`id@version`) the preview was last run for automatically.
+  String? _previewedFor;
+
+  List<Rec> _components = const [];
 
   String get _base => '/payroll/salary-structures/${widget.structure['id']}';
 
@@ -57,6 +67,80 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
     }
     return _draft ??
         versions.lastWhere((v) => v['status'] == 'PUBLISHED' && v['effective_to'] == null, orElse: () => versions.last);
+  }
+
+  static String _key(Rec? v) => v == null ? '' : '${v['id']}@${v['version']}';
+
+  static List<Rec> _linesOf(Rec? v) => ((v?['lines'] as List?) ?? const []).cast<Rec>();
+
+  @override
+  void initState() {
+    super.initState();
+    _syncRows();
+    _loadComponents();
+    _autoPreview();
+  }
+
+  @override
+  void didUpdateWidget(SalaryStructureVersionsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncRows();
+    _autoPreview();
+  }
+
+  @override
+  void dispose() {
+    _ctc.dispose();
+    for (final r in _rows) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _loadComponents() async {
+    try {
+      final page = await ref.read(apiClientProvider).getList<Rec>('/payroll/salary-components', parseItem: (d) => d as Rec);
+      if (mounted) setState(() => _components = page.data);
+    } catch (_) {
+      // The editor still shows the lines by name; adding a component needs the list.
+    }
+  }
+
+  /// Rebuilds the editable rows when the draft itself changed (a save, a new draft, a discard).
+  void _syncRows() {
+    final draft = _draft;
+    final key = draft == null ? null : _key(draft);
+    if (key == _rowsFor) return;
+    for (final r in _rows) {
+      r.dispose();
+    }
+    _rows = [for (final l in _linesOf(draft)) StructureLine.fromRead(l)];
+    _rowsFor = key;
+  }
+
+  bool get _dirty {
+    final draft = _draft;
+    if (draft == null) return false;
+    return jsonEncode([for (var i = 0; i < _rows.length; i++) _rows[i].toInput(i)]) != jsonEncode(structureLineInputs(_linesOf(draft)));
+  }
+
+  /// As on web: opening a version with lines previews it with the CTC and PF already entered.
+  void _autoPreview() {
+    final selected = _selected;
+    final key = _key(selected);
+    if (key == _previewedFor) return;
+    _previewedFor = key;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (selected != null && _linesOf(selected).isNotEmpty) {
+        _runPreview(selected);
+      } else {
+        setState(() {
+          _preview = null;
+          _previewError = null;
+        });
+      }
+    });
   }
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
@@ -88,29 +172,19 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
     if (mounted) setState(() => _selectedId = null);
   }
 
-  Future<void> _editLines(Rec draft) async {
-    final client = ref.read(apiClientProvider);
-    final saved = await openSpecForm(
-      context,
-      title: 'Edit lines',
-      spec: structureLinesSpec,
-      initial: {'lines': draft['lines']},
-      loadChoices: () => loadChoices(client, const ['salary_components']),
-      onSubmit: (payload, changed) async =>
-          client.put<Object?>('$_base/versions/${draft['id']}/lines', body: {'lines': payload['lines']}, ifMatch: draft['version'].toString(), parse: (_) => null),
-    );
-    if (saved && mounted) {
-      _toast('Draft saved.');
-      widget.onChanged();
-    }
-  }
+  Future<void> _saveDraft(Rec draft) => _run(
+    () async => ref
+        .read(apiClientProvider)
+        .put<Object?>('$_base/versions/${draft['id']}/lines', body: {'lines': [for (var i = 0; i < _rows.length; i++) _rows[i].toInput(i)]}, ifMatch: draft['version'].toString(), parse: (_) => null),
+    'Draft saved.',
+  );
 
   Future<void> _discard(Rec draft) async {
     final yes = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Discard draft?'),
-        content: const Text('The draft and its lines will be deleted.'),
+        content: const Text('The draft and its components will be deleted.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
           FilledButton(style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error), onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Discard')),
@@ -129,15 +203,15 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Publish this version?'),
+          title: const Text('Publish this version'),
           content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('The current version ends the day before. A published version cannot be edited.'),
+            const Text('Employees on this structure are paid by this version from the date you choose; the current version ends the day before. A published version cannot be edited.'),
             const SizedBox(height: 12),
             if (error != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(error!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
             TextField(
               controller: date,
               readOnly: true,
-              decoration: const InputDecoration(labelText: 'Effective from *', hintText: 'YYYY-MM-DD', suffixIcon: Icon(Icons.calendar_today_outlined, size: 18)),
+              decoration: const InputDecoration(labelText: 'Effective from', hintText: 'YYYY-MM-DD', suffixIcon: Icon(Icons.calendar_today_outlined, size: 18)),
               onTap: () async {
                 final picked = await showDatePicker(context: ctx, initialDate: DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
                 if (picked != null) date.text = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
@@ -170,12 +244,13 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
       setState(() => _previewError = 'Enter an annual CTC in rupees.');
       return;
     }
+    final seq = ++_previewSeq;
     setState(() => _previewError = null);
     try {
       final result = await ref.read(apiClientProvider).post<Rec>('$_base/versions/${version['id']}/preview', body: {'annual_ctc_minor': annual, 'pf_applicable': _pf}, parse: (d) => d as Rec);
-      if (mounted) setState(() => _preview = result);
+      if (mounted && seq == _previewSeq) setState(() => _preview = result);
     } catch (e) {
-      if (mounted) {
+      if (mounted && seq == _previewSeq) {
         setState(() {
           _preview = null;
           _previewError = _explain(e);
@@ -183,6 +258,18 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
       }
     }
   }
+
+  String _chipLabel(Rec v) {
+    final n = v['version_number'];
+    final when = v['status'] == 'DRAFT' ? 'Draft' : '${v['effective_from']} → ${v['effective_to'] ?? 'now'}';
+    return n == null ? when : 'v$n · $when';
+  }
+
+  Widget _badge(BuildContext context, String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+    decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(999)),
+    child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -192,8 +279,9 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
     final versions = _versions;
     final selected = _selected;
     final draft = _draft;
-    final lines = ((selected?['lines'] as List?) ?? const []).cast<Rec>();
+    final lines = _linesOf(selected);
     final editing = selected != null && selected['status'] == 'DRAFT' && canManage;
+    final dirty = _dirty;
     return Container(
       margin: const EdgeInsets.only(top: 16),
       padding: const EdgeInsets.all(14),
@@ -211,31 +299,37 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
           Wrap(spacing: 8, runSpacing: 4, children: [
             for (final v in versions)
               ChoiceChip(
-                label: Text(v['status'] == 'DRAFT' ? 'Draft' : '${v['effective_from']} → ${v['effective_to'] ?? 'now'}'),
+                label: Text(_chipLabel(v)),
                 selected: selected?['id'] == v['id'],
-                onSelected: (_) => setState(() {
-                  _selectedId = v['id'] as String;
-                  _preview = null;
-                }),
+                onSelected: (_) {
+                  setState(() => _selectedId = v['id'] as String);
+                  _autoPreview();
+                },
               ),
           ]),
         if (selected != null) ...[
           const SizedBox(height: 12),
           Row(children: [
-            Text(selected['status'] == 'DRAFT' ? 'Draft' : 'Published', style: const TextStyle(fontWeight: FontWeight.w700)),
-            const Spacer(),
+            Text('Components', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(width: 8),
+            selected['status'] == 'DRAFT' ? _badge(context, 'Draft', Colors.orange.shade800) : _badge(context, 'Published', Colors.green.shade700),
           ]),
-          if (editing)
+          if (editing) ...[
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Wrap(spacing: 8, runSpacing: 8, children: [
-                FilledButton(onPressed: _busy ? null : () => _editLines(selected), child: const Text('Edit lines')),
-                FilledButton.tonal(onPressed: (_busy || lines.isEmpty) ? null : () => _publish(selected), child: const Text('Publish')),
                 OutlinedButton(onPressed: _busy ? null : () => _discard(selected), child: const Text('Discard draft')),
+                OutlinedButton(onPressed: (_busy || !dirty) ? null : () => _saveDraft(selected), child: const Text('Save draft')),
+                FilledButton(onPressed: (_busy || dirty || lines.isEmpty) ? null : () => _publish(selected), child: const Text('Publish')),
               ]),
             ),
-          if (lines.isEmpty)
-            Text(editing ? 'No lines yet — use "Edit lines" to add components.' : 'No lines in this version.', style: TextStyle(color: scheme.onSurfaceVariant))
+            StructureLinesEditor(lines: _rows, components: _components, onChanged: () => setState(() {})),
+            Text(
+              'Exactly one earning must be "Balance of gross". Employer contributions are part of CTC, so gross = CTC − employer contributions. Save the draft to preview it.',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ] else if (lines.isEmpty)
+            Padding(padding: const EdgeInsets.only(top: 8), child: Text('No components yet.', style: TextStyle(color: scheme.onSurfaceVariant)))
           else
             for (final l in lines)
               ListTile(
@@ -246,7 +340,7 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
               ),
           if (lines.isNotEmpty) ...[
             const Divider(height: 24),
-            Text('Preview', style: Theme.of(context).textTheme.titleSmall),
+            Text('Preview a CTC', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             TextField(
               controller: _ctc,
@@ -254,7 +348,7 @@ class _SalaryStructureVersionsSectionState extends ConsumerState<SalaryStructure
               decoration: const InputDecoration(labelText: 'Annual CTC (₹)'),
             ),
             SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('PF applies'), value: _pf, onChanged: (v) => setState(() => _pf = v)),
-            Align(alignment: Alignment.centerLeft, child: OutlinedButton(onPressed: () => _runPreview(selected), child: const Text('Preview breakup'))),
+            Align(alignment: Alignment.centerLeft, child: OutlinedButton(onPressed: () => _runPreview(selected), child: const Text('Calculate'))),
             if (_previewError != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_previewError!, style: TextStyle(color: scheme.error))),
             if (_preview != null) Padding(padding: const EdgeInsets.only(top: 10), child: SalaryBreakupView(breakup: _preview!)),
           ],

@@ -7,6 +7,7 @@ import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { SalaryBreakupTable } from "@/components/payroll/salary-breakup-table";
+import { SalarySetupEditor } from "@/components/payroll/salary-setup-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -35,13 +36,14 @@ import {
 
 /** Payroll Phase 5.1 — the employee's salary: the breakup of their CTC under their assigned
  * structure as of a date, the assignment history, and (with `PAYROLL.SETUP_MANAGE`) assigning a
- * structure or, for a daily-wage employee, a daily rate (D5). CTC itself is edited on the
- * Compensation tab. */
+ * structure or, for a daily-wage employee, a daily rate (D5). With `EMPLOYEE.UPDATE_COMPENSATION`
+ * too, a monthly-paid employee's CTC and structure are edited together in `SalarySetupEditor`. */
 export function SalaryPanel({ employeeId }: { employeeId: string }) {
   const { toast } = useToast();
   const { user } = useAuth();
   const { can } = usePermissions();
   const canAssign = can("PAYROLL.SETUP_MANAGE");
+  const canEditSetup = canAssign && can("EMPLOYEE.UPDATE_COMPENSATION");
   const today = businessToday(user?.company_timezone ?? "Asia/Kolkata");
 
   const [asOf, setAsOf] = useState(today);
@@ -66,15 +68,22 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
       const [rows, breakupResult] = await Promise.all([
         apiClient.get<EmployeeSalary[]>(`/employees/${employeeId}/salary`),
         apiClient
-          .get<EmployeeSalaryBreakup>(`/employees/${employeeId}/salary/breakup?as_of=${asOf}`)
+          .get<EmployeeSalaryBreakup>(
+            `/employees/${employeeId}/salary/breakup?as_of=${asOf}`,
+          )
           .then((data) => ({ data, message: null }))
-          .catch((err: unknown) => ({ data: null, message: describeApiError(err) })),
+          .catch((err: unknown) => ({
+            data: null,
+            message: describeApiError(err),
+          })),
       ]);
       setHistory(rows);
       setBreakup(breakupResult.data);
       setBreakupMessage(breakupResult.message);
       if (canAssign) {
-        setStructures(await apiClient.get<SalaryStructure[]>("/payroll/salary-structures"));
+        setStructures(
+          await apiClient.get<SalaryStructure[]>("/payroll/salary-structures"),
+        );
       }
     } catch (err) {
       setBreakupMessage(
@@ -92,7 +101,8 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
   }, [load]);
 
   const structureName = (id: string | null) =>
-    structures.find((s) => s.id === id)?.name ?? (id ? "Salary structure" : "—");
+    structures.find((s) => s.id === id)?.name ??
+    (id ? "Customised structure" : "—");
   const assignable = structures.filter((s) => s.is_active && currentVersion(s));
 
   async function handleAssign() {
@@ -121,67 +131,100 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
     }
   }
 
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <FormField id="salary-as-of" label="Salary as of" className="w-48">
-              <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
-            </FormField>
-            {canAssign ? (
-              <Button
-                type="button"
-                onClick={() => {
-                  setStructureId(assignable[0]?.id ?? "");
-                  setReason("");
-                  setFormError(null);
-                  setAssignOpen(true);
-                }}
-              >
-                Assign salary
-              </Button>
+  const currentCard = (
+    <Card>
+      <CardContent className="space-y-4 pt-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <FormField id="salary-as-of" label="Salary as of" className="w-48">
+            <Input
+              type="date"
+              value={asOf}
+              onChange={(e) => setAsOf(e.target.value)}
+            />
+          </FormField>
+          {canAssign ? (
+            <Button
+              type="button"
+              onClick={() => {
+                setStructureId(assignable[0]?.id ?? "");
+                setReason("");
+                setFormError(null);
+                setAssignOpen(true);
+              }}
+            >
+              Assign salary
+            </Button>
+          ) : null}
+        </div>
+        {loading ? <LoadingState label="Loading salary…" /> : null}
+        {!loading && breakupMessage ? (
+          <p className="text-sm text-foreground-muted">{breakupMessage}</p>
+        ) : null}
+        {!loading && breakup ? (
+          <div className="space-y-3">
+            <p className="text-sm text-foreground-secondary">
+              {breakup.pay_basis === "DAILY_WAGE"
+                ? `Daily-wage employee — ${formatInr(breakup.daily_rate_minor ?? 0)} a day.`
+                : `${structureName(breakup.salary_structure_id)} · PF ${
+                    breakup.pf_applicable ? "applies" : "does not apply"
+                  }`}
+            </p>
+            {breakup.breakup ? (
+              <SalaryBreakupTable breakup={breakup.breakup} />
             ) : null}
           </div>
-          {loading ? <LoadingState label="Loading salary…" /> : null}
-          {!loading && breakupMessage ? (
-            <p className="text-sm text-foreground-muted">{breakupMessage}</p>
-          ) : null}
-          {!loading && breakup ? (
-            <div className="space-y-3">
-              <p className="text-sm text-foreground-secondary">
-                {breakup.pay_basis === "DAILY_WAGE"
-                  ? `Daily-wage employee — ${formatInr(breakup.daily_rate_minor ?? 0)} a day.`
-                  : `${structureName(breakup.salary_structure_id)} · PF ${
-                      breakup.pf_applicable ? "applies" : "does not apply"
-                    }`}
-              </p>
-              {breakup.breakup ? <SalaryBreakupTable breakup={breakup.breakup} /> : null}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+
+  return (
+    <div className="space-y-4">
+      {canEditSetup ? (
+        <SalarySetupEditor
+          employeeId={employeeId}
+          today={today}
+          onSaved={() => void load()}
+          fallback={currentCard}
+        />
+      ) : (
+        currentCard
+      )}
 
       <Card>
         <CardContent className="pt-6">
-          <h3 className="mb-3 text-sm font-medium text-foreground">Salary history</h3>
+          <h3 className="mb-3 text-sm font-medium text-foreground">
+            Salary history
+          </h3>
           {history.length === 0 ? (
-            <p className="text-sm text-foreground-muted">No salary assigned yet.</p>
+            <p className="text-sm text-foreground-muted">
+              No salary assigned yet.
+            </p>
           ) : (
             <ul className="divide-y divide-border rounded-md border border-border text-sm">
               {[...history].reverse().map((row) => (
-                <li key={row.id} className="flex flex-wrap justify-between gap-2 px-3 py-2">
+                <li
+                  key={row.id}
+                  className="flex flex-wrap justify-between gap-2 px-3 py-2"
+                >
                   <span className="text-foreground">
                     {row.daily_rate_minor !== null
                       ? `Daily rate ${formatInr(row.daily_rate_minor)}`
                       : structureName(row.salary_structure_id)}
                     {row.reason ? (
-                      <span className="text-foreground-muted"> · {row.reason}</span>
+                      <span className="text-foreground-muted">
+                        {" "}
+                        · {row.reason}
+                      </span>
                     ) : null}
                   </span>
                   <span className="text-foreground-secondary">
                     <CompanyDate value={row.effective_from} /> →{" "}
-                    {row.effective_to ? <CompanyDate value={row.effective_to} /> : "now"}
+                    {row.effective_to ? (
+                      <CompanyDate value={row.effective_to} />
+                    ) : (
+                      "now"
+                    )}
                   </span>
                 </li>
               ))}
@@ -190,28 +233,38 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
         </CardContent>
       </Card>
 
-      <Dialog open={assignOpen} onOpenChange={(next) => !saving && setAssignOpen(next)}>
+      <Dialog
+        open={assignOpen}
+        onOpenChange={(next) => !saving && setAssignOpen(next)}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Assign salary</DialogTitle>
             <DialogDescription>
-              Replaces the current assignment from the chosen date. The CTC itself comes from the
-              Compensation tab.
+              Replaces the current assignment from the chosen date. The CTC
+              itself comes from the Compensation tab.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <FormField id="salary-basis" label="Paid by">
               <NativeSelect
                 value={basis}
-                onChange={(e) => setBasis(e.target.value as "STRUCTURE" | "DAILY")}
+                onChange={(e) =>
+                  setBasis(e.target.value as "STRUCTURE" | "DAILY")
+                }
               >
-                <option value="STRUCTURE">Salary structure (monthly-paid)</option>
+                <option value="STRUCTURE">
+                  Salary structure (monthly-paid)
+                </option>
                 <option value="DAILY">Daily rate (daily-wage)</option>
               </NativeSelect>
             </FormField>
             {basis === "STRUCTURE" ? (
               <FormField id="salary-structure" label="Structure">
-                <NativeSelect value={structureId} onChange={(e) => setStructureId(e.target.value)}>
+                <NativeSelect
+                  value={structureId}
+                  onChange={(e) => setStructureId(e.target.value)}
+                >
                   {assignable.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -221,7 +274,10 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
               </FormField>
             ) : (
               <FormField id="salary-daily-rate" label="Daily rate (₹)">
-                <Input value={dailyRate} onChange={(e) => setDailyRate(e.target.value)} />
+                <Input
+                  value={dailyRate}
+                  onChange={(e) => setDailyRate(e.target.value)}
+                />
               </FormField>
             )}
             <FormField id="salary-effective-from" label="Effective from">
@@ -232,7 +288,11 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
               />
             </FormField>
             <FormField id="salary-reason" label="Reason" required>
-              <Input value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
+              <Input
+                value={reason}
+                maxLength={500}
+                onChange={(e) => setReason(e.target.value)}
+              />
             </FormField>
             {formError ? (
               <p role="alert" className="text-sm text-danger">
@@ -241,14 +301,22 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
             ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setAssignOpen(false)} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAssignOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button
               type="button"
               onClick={() => void handleAssign()}
               disabled={
-                saving || !reason.trim() || !effectiveFrom || (basis === "STRUCTURE" && !structureId)
+                saving ||
+                !reason.trim() ||
+                !effectiveFrom ||
+                (basis === "STRUCTURE" && !structureId)
               }
             >
               {saving ? "Saving…" : "Assign"}

@@ -12,19 +12,26 @@ import '../../../core/theme/employee_theme_scope.dart';
 import '../../../core/time.dart';
 import '../../auth/presentation/widgets/auth_form_field.dart';
 import '../../auth/state/auth_controller.dart';
+import '../../leave/presentation/leave_application_detail_screen.dart';
+import '../../profile/data/employee_repository.dart' show Employee;
+import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/attendance_repository.dart';
+import '../domain/day_timeline.dart';
+import '../domain/roster_views.dart' show addDaysIso;
 import '../domain/request_resources.dart';
 import '../../../core/widgets/employee/attendance_history.dart';
 import '../../../core/widgets/employee/employee_status_chip.dart';
 import '../../../core/widgets/employee/layout.dart';
 import '../../../core/widgets/employee/status_map.dart';
 import 'attendance_summary.dart';
+import 'employee_attendance_profile_screen.dart';
 import '../../../core/widgets/ui.dart';
 
 /// Mirrors `apps/web/src/app/app/attendance/[id]/page.tsx` — one computed attendance day:
-/// schedule, actuals and breaks, overtime and pay facts, the leave overlay, and the audit trail,
-/// with recompute and keep-leave for HR, and the corrections raised for the day with a way to raise
-/// one (web `components/attendance/day/day-regularization.tsx`). Every timestamp is shown in the zone the day was
+/// who and which shift, previous/next day, the punch timeline (web `day-timeline.tsx`), schedule,
+/// actuals and breaks, overtime and pay facts, the leave overlay, and the audit trail, with recompute
+/// and keep-leave for HR, and the corrections raised for the day with a way to raise one (web
+/// `components/attendance/day/day-regularization.tsx`). Every timestamp is shown in the zone the day was
 /// computed in (TZ-07), never the device's.
 class AttendanceDayDetailScreen extends ConsumerStatefulWidget {
   const AttendanceDayDetailScreen({super.key, required this.dayId, this.initial});
@@ -39,6 +46,7 @@ class AttendanceDayDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailScreen> {
+  late String _dayId = widget.dayId;
   bool _loading = true;
   bool _busy = false;
   ApiError? _error;
@@ -47,6 +55,14 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
 
   /// Correction requests for this employee and date; null = not loaded or not visible to the viewer.
   List<Map<String, dynamic>>? _corrections;
+
+  // Context around the day, each best effort as on web: a piece that fails is simply not shown.
+  List<Punch>? _punches;
+  List<BreakEvent> _breakEvents = const [];
+  Employee? _employee;
+  String? _shiftName;
+  String? _prevDayId;
+  String? _nextDayId;
 
   AttendanceRepository get _repo => ref.read(attendanceRepositoryProvider);
 
@@ -63,7 +79,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       _error = null;
     });
     try {
-      final day = await _repo.getAttendanceDay(widget.dayId);
+      final day = await _repo.getAttendanceDay(_dayId);
       var projections = const <LeaveDayProjection>[];
       try {
         projections = await _repo.listLeaveProjections(employeeId: day.employeeId, dateFrom: day.attendanceDate, dateTo: day.attendanceDate);
@@ -76,7 +92,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
           _projections = projections;
         });
       }
-      await _loadCorrections(day);
+      await Future.wait([_loadCorrections(day), _loadContext(day)]);
     } catch (e) {
       if (mounted) setState(() => _error = e is ApiError ? e : ApiError(status: 0, code: 'UNKNOWN_ERROR', message: 'Something went wrong.'));
     } finally {
@@ -97,6 +113,114 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     } catch (_) {
       if (mounted) setState(() => _corrections = null);
     }
+  }
+
+  Future<void> _loadContext(AttendanceDay day) async {
+    Future<T?> quiet<T>(Future<T> Function() f) async {
+      try {
+        return await f();
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final shiftId = day.raw['shift_id'] as String?;
+    final date = day.attendanceDate;
+    final (punches, breaks, employee, shifts, neighbours) = await (
+      quiet(() => _repo.listPunches(employeeId: day.employeeId, dateFrom: date, dateTo: addDaysIso(date, 1))),
+      quiet(() => _repo.listBreakEvents(employeeId: day.employeeId, date: date)),
+      quiet(() => ref.read(employeeRepositoryProvider).getEmployee(day.employeeId)),
+      shiftId == null ? Future<List<Shift>?>.value(null) : quiet(_repo.listShifts),
+      quiet(() => _repo.listAttendanceDays(employeeId: day.employeeId, dateFrom: addDaysIso(date, -1), dateTo: addDaysIso(date, 1))),
+    ).wait;
+    if (!mounted || day.id != _dayId) return;
+    String? idOn(String d) => neighbours?.where((n) => n.attendanceDate == d).firstOrNull?.id;
+    setState(() {
+      _punches = punches ?? const [];
+      _breakEvents = breaks ?? const [];
+      _employee = employee;
+      _shiftName = shifts?.where((s) => s.id == shiftId).firstOrNull?.name;
+      _prevDayId = idOn(addDaysIso(date, -1));
+      _nextDayId = idOn(addDaysIso(date, 1));
+    });
+  }
+
+  /// Previous/next day for the same employee, opened in place as web's arrows do.
+  void _goTo(String id) {
+    setState(() {
+      _dayId = id;
+      _day = null;
+      _projections = const [];
+      _corrections = null;
+      _punches = null;
+      _breakEvents = const [];
+      _prevDayId = null;
+      _nextDayId = null;
+    });
+    _load();
+  }
+
+  List<Widget> _identityRow(AttendanceDay day) {
+    final e = _employee;
+    final permissions = ref.read(authControllerProvider).user?.permissions ?? const <String>[];
+    final theme = Theme.of(context);
+    final name = e == null ? null : (e.fullName.isEmpty ? e.employeeCode : e.fullName);
+    final rest = [if (e != null && e.fullName.isNotEmpty) e.employeeCode, if (_shiftName != null) _shiftName!].join(' · ');
+    return [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+        child: Row(children: [
+          Expanded(
+            child: name == null
+                ? const SizedBox.shrink()
+                : InkWell(
+                    // Web links the name to the employee's attendance profile, an HR page.
+                    onTap: permissions.contains(attendanceViewAll) ? () => pushKeepingTheme<void>(context, (_) => EmployeeAttendanceProfileScreen(employeeId: day.employeeId, employeeLabel: name)) : null,
+                    child: Text.rich(
+                      TextSpan(children: [
+                        TextSpan(text: name, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                        if (rest.isNotEmpty) TextSpan(text: ' · $rest', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                      ]),
+                    ),
+                  ),
+          ),
+          IconButton(tooltip: 'Previous day', icon: const Icon(Icons.chevron_left_rounded), onPressed: _prevDayId == null ? null : () => _goTo(_prevDayId!)),
+          IconButton(tooltip: 'Next day', icon: const Icon(Icons.chevron_right_rounded), onPressed: _nextDayId == null ? null : () => _goTo(_nextDayId!)),
+        ]),
+      ),
+    ];
+  }
+
+  /// Web's "Punch timeline": punches and break events in order, with where each came from.
+  List<Widget> _timelineSection(AttendanceDay day) {
+    final punches = _punches;
+    final theme = Theme.of(context);
+    final items = punches == null ? null : buildTimeline(day, punches, _breakEvents);
+    (IconData, Color) look(TimelineKind k) => switch (k) {
+          TimelineKind.punchIn => (Icons.login_rounded, statusColors(context, StatusKind.success).glyph),
+          TimelineKind.punchOut => (Icons.logout_rounded, statusColors(context, StatusKind.info).glyph),
+          TimelineKind.breakStart || TimelineKind.breakEnd => (Icons.coffee_outlined, statusColors(context, StatusKind.warning).glyph),
+          TimelineKind.missingOut => (Icons.warning_amber_rounded, statusColors(context, StatusKind.danger).glyph),
+        };
+    return [
+      const EmployeeSectionHeader('Punch timeline'),
+      if (items == null || items.isEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Text(items == null ? 'Loading punches…' : 'No punches or breaks recorded for this day.', style: theme.textTheme.bodySmall),
+        )
+      else
+        EmployeeListGroup(children: [
+          for (final item in items)
+            ListTile(
+              key: ValueKey(item.key),
+              leading: Icon(look(item.kind).$1, color: look(item.kind).$2),
+              title: Text(item.label, style: item.kind == TimelineKind.missingOut ? TextStyle(color: look(item.kind).$2, fontWeight: FontWeight.w600) : null),
+              subtitle: item.source == null ? null : Text(item.source!),
+              trailing: Text(item.time == null ? '—' : formatClockTime(item.time, day.timezone)),
+            ),
+        ]),
+    ];
   }
 
   /// `SELF` on the viewer's own day, `ON_BEHALF` for someone else's, null when they can't raise one.
@@ -193,7 +317,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     if (yes != true) return;
     setState(() => _busy = true);
     try {
-      final day = await _repo.recomputeAttendanceDay(widget.dayId);
+      final day = await _repo.recomputeAttendanceDay(_dayId);
       if (mounted) setState(() => _day = day);
       _toast('Attendance day recomputed.');
     } catch (e) {
@@ -233,7 +357,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
     if (ok != true) return;
     setState(() => _busy = true);
     try {
-      final day = await _repo.keepLeaveOverPunches(widget.dayId, reason: reason.text.trim());
+      final day = await _repo.keepLeaveOverPunches(_dayId, reason: reason.text.trim());
       if (mounted) setState(() => _day = day);
       _toast('Leave kept.');
     } catch (e) {
@@ -253,6 +377,21 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       if (footnote != null) Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Text(footnote, style: Theme.of(context).textTheme.bodySmall)),
     ];
   }
+
+  /// Approved leave on the date; each row opens its application, as web's "view application" link.
+  List<Widget> _leaveOverlay() => [
+        const EmployeeSectionHeader('Approved leave on this date'),
+        EmployeeListGroup(children: [
+          for (final p in _projections)
+            ListTile(
+              title: Text('${p.leaveTypeCode ?? 'Leave'} ${p.fraction}${p.half != null ? ' · ${p.half}' : ''}'),
+              subtitle: Text('${p.isPaid ? 'Paid' : 'Unpaid'} · ${p.status}'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => pushKeepingTheme<void>(context, (_) => LeaveApplicationDetailScreen(applicationId: p.leaveApplicationId)),
+            ),
+        ]),
+        Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Text('Shown for reference; Leave owns the balance and approval.', style: Theme.of(context).textTheme.bodySmall)),
+      ];
 
   static String _nonZero(String minutes) => (minutes == '0h 0m') ? '—' : minutes;
   static String _fraction(String v) => (num.tryParse(v) == 0) ? '—' : v;
@@ -307,10 +446,6 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
       final headerCaption = closed
           ? 'Worked · $punchLine'
           : (day.actualFirstIn != null ? '$punchLine · no punch-out recorded' : (provisional ? null : 'No punches recorded'));
-      final overlay = [
-        for (final p in _projections)
-          ('Leave ${p.fraction}${p.half != null ? ' · ${p.half}' : ''}', '${p.isPaid ? 'Paid' : 'Unpaid'} · ${p.status}'),
-      ];
       body = RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -323,6 +458,7 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
               figure: closed ? formatMinutes(day.workedMinutes) : null,
               figureCaption: headerCaption,
             ),
+            ..._identityRow(day),
             if (flags.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -338,15 +474,17 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
                   if (canKeepLeave) OutlinedButton(onPressed: _busy ? null : _keepLeave, child: const Text('Keep leave')),
                 ]),
               ),
+            ..._timelineSection(day),
             ..._facts('Schedule', [
               ('Calendar day type', _pretty(s('calendar_day_type'))),
               ('Holiday', s('holiday_name')),
+              ('Shift', _shiftName ?? '—'),
               ('Scheduled', r['scheduled_start'] == null ? '—' : '${formatClockTime(r['scheduled_start'] as String?, tz)} – ${formatClockTime(r['scheduled_end'] as String?, tz)}'),
               ('Scheduled time', _nonZero(mins('scheduled_minutes'))),
             ]),
             ..._facts('Actual', [
               ('First in', formatDateTime(day.actualFirstIn, tz)),
-              ('Last out', formatDateTime(day.actualLastOut, tz)),
+              ('Last out', day.actualLastOut == null && flag('missing_punch') ? 'Missing' : formatDateTime(day.actualLastOut, tz)),
               ('Worked', closed ? mins('worked_minutes') : '—'),
               ('Late', _nonZero(mins('late_minutes'))),
               ('Early departure', _nonZero(mins('early_departure_minutes'))),
@@ -374,13 +512,14 @@ class _AttendanceDayDetailScreenState extends ConsumerState<AttendanceDayDetailS
               if (flag('work_on_leave_flagged')) ('Work-on-leave decision', _pretty(s('work_on_leave_resolution'))),
             ]),
             ..._correctionsSection(day),
-            if (overlay.isNotEmpty) ..._facts('Approved leave on this date', overlay, footnote: 'Shown for reference; Leave owns the balance and approval.'),
+            if (_projections.isNotEmpty) ..._leaveOverlay(),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 24, 16, 0),
               child: EmployeeCalculationDetails(
                 rows: [
                   ('Calculation version', s('calculation_version')),
                   ('Calculated at', formatDateTime(r['calculated_at'] as String?, tz)),
+                  ('Shift version', s('shift_version_id')),
                   ('Attendance policy version', s('attendance_policy_version_id')),
                   ('Overtime policy version', s('overtime_policy_version_id')),
                   ('Regularization policy version', s('regularization_policy_version_id')),

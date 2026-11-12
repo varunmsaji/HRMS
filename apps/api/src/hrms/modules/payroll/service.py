@@ -108,6 +108,10 @@ from hrms.modules.payroll.schemas import (
     EmployeeSalaryBulkSkip,
     EmployeeSalaryCreate,
     EmployeeSalaryRead,
+    EmployeeSalarySetupPreviewInput,
+    EmployeeSalarySetupPreviewRead,
+    EmployeeSalarySetupRead,
+    EmployeeSalarySetupSave,
     PayAdjustmentCreate,
     PayAdjustmentRead,
     PayrollSettingRead,
@@ -131,6 +135,7 @@ from hrms.modules.payroll.schemas import (
     SalaryComponentUpdate,
     SalaryStructureCreate,
     SalaryStructureLineInput,
+    SalaryStructureLineRead,
     SalaryStructureRead,
     SalaryStructureUpdate,
     SalaryStructureVersionCreate,
@@ -266,6 +271,77 @@ def _breakup_to_read(breakup: Breakup) -> SalaryBreakupRead:
 # ---------------------------------------------------------------------------
 # Salary components
 # ---------------------------------------------------------------------------
+
+
+def _line_key(
+    component_id: UUID,
+    calculation_type: str,
+    percentage: Decimal | str | None,
+    amount_monthly_minor: int | None,
+    base_component_id: UUID | None,
+    max_monthly_minor: int | None,
+    applies_when: str,
+) -> tuple[Any, ...]:
+    """What a line pays, without its display order — two line sets with the same keys pay the
+    same. Fields the calculation type does not use are ignored."""
+    uses_percentage = calculation_type.startswith("PERCENTAGE")
+    return (
+        str(component_id),
+        calculation_type,
+        Decimal(str(percentage)).normalize()
+        if uses_percentage and percentage is not None
+        else None,
+        amount_monthly_minor if calculation_type == "FIXED" else None,
+        str(base_component_id) if calculation_type == "PERCENTAGE_OF_COMPONENT" else None,
+        max_monthly_minor,
+        applies_when,
+    )
+
+
+def _input_keys(lines: list[SalaryStructureLineInput]) -> list[tuple[Any, ...]]:
+    return sorted(
+        _line_key(
+            line.salary_component_id,
+            line.calculation_type,
+            line.percentage,
+            line.amount_monthly_minor,
+            line.base_salary_component_id,
+            line.max_monthly_minor,
+            line.applies_when,
+        )
+        for line in lines
+    )
+
+
+def _read_keys(lines: list[SalaryStructureLineRead]) -> list[tuple[Any, ...]]:
+    return sorted(
+        _line_key(
+            line.salary_component_id,
+            line.calculation_type,
+            line.percentage,
+            line.amount_monthly_minor,
+            line.base_salary_component_id,
+            line.max_monthly_minor,
+            line.applies_when,
+        )
+        for line in lines
+    )
+
+
+def _published_as_of(
+    structure: SalaryStructureRead, as_of: date
+) -> SalaryStructureVersionRead | None:
+    return next(
+        (
+            v
+            for v in structure.versions
+            if v.status == "PUBLISHED"
+            and v.effective_from is not None
+            and v.effective_from <= as_of
+            and (v.effective_to is None or v.effective_to >= as_of)
+        ),
+        None,
+    )
 
 
 class SalaryComponentService:
@@ -940,6 +1016,133 @@ class SalaryStructureService:
             user_agent=user_agent,
         )
 
+    async def structure_lines_for(
+        self, company_id: UUID, lines: list[SalaryStructureLineInput]
+    ) -> list[StructureLine]:
+        """Unsaved line inputs, validated as a structure (`_line_rows`), ready for
+        `compute_breakup`."""
+        rows = await self._line_rows(company_id, uuid4(), lines)
+        component_ids = {r["salary_component_id"] for r in rows} | {
+            r["base_salary_component_id"] for r in rows if r["base_salary_component_id"]
+        }
+        components = await self._component_repo.get_many(
+            self._session, company_id=company_id, component_ids=component_ids
+        )
+        return _to_structure_lines([SalaryStructureLine(**r) for r in rows], components)
+
+    async def save_for_employee(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        template: SalaryStructure,
+        lines: list[SalaryStructureLineInput],
+        effective_from: date,
+        *,
+        actor_user_id: UUID | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> UUID:
+        """The employee's own structure paying `lines` from `effective_from`: created (published
+        from that date) the first time, otherwise a new version published from that date — or
+        left alone when the version in effect already pays exactly these lines. Returns its id."""
+        existing = await self._repo.get_for_employee(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if existing is None:
+            now = datetime.now(UTC)
+            structure_id = uuid4()
+            version_id = uuid4()
+            line_rows = await self._line_rows(company_id, version_id, lines)
+            await self._repo.insert(
+                self._session,
+                data={
+                    "id": structure_id,
+                    "company_id": company_id,
+                    "code": f"EMP_{employee_id.hex[:26]}",
+                    "name": f"{template.name} (customised)",
+                    "description": f"Changed for one employee from {template.name}",
+                    "is_active": True,
+                    "employee_id": employee_id,
+                    "based_on_structure_id": template.id,
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            await self._repo.insert_version(
+                self._session,
+                data={
+                    "id": version_id,
+                    "company_id": company_id,
+                    "salary_structure_id": structure_id,
+                    "version_number": 1,
+                    "status": "PUBLISHED",
+                    "effective_from": effective_from,
+                    "published_at": now,
+                    "published_by_user_id": actor_user_id,
+                    "version": 1,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            await self._repo.replace_lines(
+                self._session, company_id=company_id, version_id=version_id, rows=line_rows
+            )
+            await self._record(
+                company_id,
+                structure_id,
+                "PAYROLL_SALARY_STRUCTURE_CREATED",
+                actor_user_id=actor_user_id,
+                before=None,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            return structure_id
+
+        current = await self.get(company_id, existing.id)
+        in_effect = _published_as_of(current, effective_from)
+        if in_effect is not None and _read_keys(in_effect.lines) == _input_keys(lines):
+            return existing.id
+        if existing.based_on_structure_id != template.id:
+            # Re-based on another template; the version audit below records the change.
+            await self._repo.update(
+                self._session,
+                company_id=company_id,
+                structure_id=existing.id,
+                values={
+                    "based_on_structure_id": template.id,
+                    "name": f"{template.name} (customised)",
+                    "description": f"Changed for one employee from {template.name}",
+                },
+                expected_version=existing.version,
+                now=datetime.now(UTC),
+            )
+        draft = next((v for v in current.versions if v.status == "DRAFT"), None)
+        if draft is not None:
+            await self._repo.delete_version(
+                self._session, company_id=company_id, version_id=draft.id
+            )
+        created = await self.create_version(
+            company_id,
+            existing.id,
+            SalaryStructureVersionCreate(lines=lines),
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        new_draft = next(v for v in created.versions if v.status == "DRAFT")
+        await self.publish_version(
+            company_id,
+            existing.id,
+            new_draft.id,
+            SalaryStructureVersionPublish(effective_from=effective_from),
+            expected_version=new_draft.version,
+            actor_user_id=actor_user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return existing.id
+
     async def preview(
         self,
         company_id: UUID,
@@ -1068,6 +1271,17 @@ class EmployeeSalaryService:
         self, company_id: UUID, employee_id: UUID, body: EmployeeSalaryCreate
     ) -> None:
         """Everything that must hold for the assignment to produce a pay on its first day."""
+        structure = (
+            await self._structure_repo.get(
+                self._session, company_id=company_id, structure_id=body.salary_structure_id
+            )
+            if body.salary_structure_id is not None
+            else None
+        )
+        if structure is not None and structure.employee_id not in (None, employee_id):
+            raise EmployeeSalaryInvalidError(
+                "That salary structure belongs to another employee", field="salary_structure_id"
+            )
         pay_basis = await self._pay_basis(company_id, employee_id, body.effective_from)
         if pay_basis is None:
             raise EmployeeSalaryInvalidError(
@@ -1084,9 +1298,6 @@ class EmployeeSalaryService:
             )
         if body.salary_structure_id is None:
             return
-        structure = await self._structure_repo.get(
-            self._session, company_id=company_id, structure_id=body.salary_structure_id
-        )
         if structure is None or not structure.is_active:
             raise EmployeeSalaryInvalidError(
                 "Salary structure not found or inactive", field="salary_structure_id"
@@ -1257,6 +1468,213 @@ class EmployeeSalaryService:
             raise SalaryBreakupUnavailableError(str(exc)) from exc
         return result.model_copy(
             update={"salary_structure_version_id": version_id, "breakup": _breakup_to_read(breakup)}
+        )
+
+    # -- salary setup (CTC + structure on the employee's Salary tab) --------------------
+
+    async def setup(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        *,
+        as_of: date | None,
+        scope: DataScope | None,
+        caller_employee_id: UUID | None,
+    ) -> EmployeeSalarySetupRead:
+        await self._ensure_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        await self._structures.ensure_defaults(company_id)
+        if as_of is None:
+            from hrms.modules.organisation.service import OrganisationService
+
+            company = await OrganisationService(self._session).get_company_profile(company_id)
+            as_of = business_today(company.timezone)
+        pf, esi = await self._statutory_flags(company_id, employee_id, as_of)
+        salary = await self._repo.get_as_of(
+            self._session, company_id=company_id, employee_id=employee_id, as_of=as_of
+        )
+        result = EmployeeSalarySetupRead(
+            employee_id=employee_id,
+            as_of=as_of,
+            pay_basis=await self._pay_basis(company_id, employee_id, as_of),
+            annual_ctc_minor=await self._annual_ctc(company_id, employee_id, as_of),
+            pf_applicable=pf,
+            esi_applicable=esi,
+            assignment=employee_salary_to_read(salary) if salary is not None else None,
+            salary_structure_id=None,
+            salary_structure_name=None,
+            template_structure_id=None,
+            is_customised=False,
+            lines=[],
+        )
+        if salary is None or salary.salary_structure_id is None:
+            return result
+        structure = await self._structures.get(company_id, salary.salary_structure_id)
+        version = _published_as_of(structure, as_of)
+        return result.model_copy(
+            update={
+                "salary_structure_id": structure.id,
+                "salary_structure_name": structure.name,
+                "template_structure_id": (
+                    structure.based_on_structure_id
+                    if structure.employee_id is not None
+                    else structure.id
+                ),
+                "is_customised": structure.employee_id is not None,
+                "lines": version.lines if version is not None else [],
+            }
+        )
+
+    async def setup_preview(
+        self, company_id: UUID, employee_id: UUID, body: EmployeeSalarySetupPreviewInput
+    ) -> EmployeeSalarySetupPreviewRead:
+        """The breakup the Salary tab shows as HR types — nothing is saved."""
+        await self._ensure_visible(company_id, employee_id, scope=None, caller_employee_id=None)
+        pf, esi = await self._statutory_flags(company_id, employee_id, body.as_of)
+        lines = await self._structures.structure_lines_for(company_id, body.lines)
+        try:
+            breakup = compute_breakup(
+                lines,
+                annual_ctc_minor=body.annual_ctc_minor,
+                pf_applicable=pf,
+                esi_applicable=esi,
+            )
+        except BreakupError as exc:
+            raise SalaryStructureInvalidError(str(exc)) from exc
+        return EmployeeSalarySetupPreviewRead(
+            pf_applicable=pf, esi_applicable=esi, breakup=_breakup_to_read(breakup)
+        )
+
+    async def save_setup(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        body: EmployeeSalarySetupSave,
+        *,
+        actor_user_id: UUID | None,
+        scope: DataScope,
+        caller_employee_id: UUID | None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> EmployeeSalarySetupRead:
+        """One transaction: the CTC (a new compensation row when it changes), then the structure —
+        the template itself when the lines are the template's, otherwise the employee's own
+        structure — assigned from `effective_from` unless already assigned."""
+        from hrms.modules.employee.schemas import CompensationCreate
+        from hrms.modules.employee.service import EmployeeCompensationService
+
+        # `scope` is `EMPLOYEE.UPDATE_COMPENSATION`'s: a team or branch grant reaches only those
+        # employees. `PAYROLL.SETUP_MANAGE` is company-level.
+        await self._ensure_visible(
+            company_id, employee_id, scope=scope, caller_employee_id=caller_employee_id
+        )
+        await self._structures.ensure_defaults(company_id)
+        day = body.effective_from
+        template = await self._structure_repo.get(
+            self._session, company_id=company_id, structure_id=body.template_structure_id
+        )
+        if template is None or not template.is_active or template.employee_id is not None:
+            raise EmployeeSalaryInvalidError(
+                "Choose an active company salary structure", field="template_structure_id"
+            )
+        pay_basis = await self._pay_basis(company_id, employee_id, day)
+        if pay_basis is None:
+            raise EmployeeSalaryInvalidError(
+                "The employee has no employment covering effective_from"
+            )
+        if pay_basis != "MONTHLY":
+            raise EmployeeSalaryInvalidError(
+                "A daily-wage employee is paid a daily rate, not a salary structure"
+            )
+
+        # Validate everything before writing anything.
+        structure_lines = await self._structures.structure_lines_for(company_id, body.lines)
+        current_ctc = await self._annual_ctc(company_id, employee_id, day)
+        annual_ctc = body.annual_ctc_minor or current_ctc
+        if annual_ctc is None:
+            raise EmployeeSalaryInvalidError("Enter the employee's CTC", field="annual_ctc_minor")
+        pf, esi = await self._statutory_flags(company_id, employee_id, day)
+        try:
+            compute_breakup(
+                structure_lines, annual_ctc_minor=annual_ctc, pf_applicable=pf, esi_applicable=esi
+            )
+        except BreakupError as exc:
+            raise EmployeeSalaryInvalidError(str(exc), field="lines") from exc
+
+        if annual_ctc != current_ctc:
+            compensations = EmployeeCompensationService(self._session)
+            history = await compensations.list_compensations(company_id, employee_id)
+            open_row = next((c for c in history if c.effective_to is None), None)
+            revision_type = body.revision_type or ("JOINING" if open_row is None else None)
+            if revision_type is None:
+                raise EmployeeSalaryInvalidError(
+                    "Choose why the CTC is changing", field="revision_type"
+                )
+            from hrms.modules.organisation.service import OrganisationService
+
+            company = await OrganisationService(self._session).get_company_profile(company_id)
+            await compensations.create_compensation(
+                company_id,
+                employee_id,
+                CompensationCreate(
+                    effective_from=day,
+                    annual_ctc_minor=annual_ctc,
+                    currency=company.currency,
+                    revision_type=revision_type,  # type: ignore[arg-type]
+                    revision_reason=body.reason,
+                ),
+                expected_version=open_row.version if open_row is not None else None,
+                actor_user_id=actor_user_id,
+                scope=scope,
+                caller_employee_id=caller_employee_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+
+        template_read = await self._structures.get(company_id, template.id)
+        template_version = _published_as_of(template_read, day)
+        if template_version is not None and _read_keys(template_version.lines) == _input_keys(
+            body.lines
+        ):
+            target_id = template.id
+        else:
+            try:
+                target_id = await self._structures.save_for_employee(
+                    company_id,
+                    employee_id,
+                    template,
+                    body.lines,
+                    day,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            except SalaryStructureEffectiveFromError as exc:
+                raise EmployeeSalaryInvalidError(
+                    "This employee's salary structure already changed on or after "
+                    f"{day.isoformat()} — choose a later effective date",
+                    field="effective_from",
+                ) from exc
+
+        open_salary = await self._repo.get_open(
+            self._session, company_id=company_id, employee_id=employee_id
+        )
+        if open_salary is None or open_salary.salary_structure_id != target_id:
+            item = EmployeeSalaryCreate(
+                salary_structure_id=target_id, effective_from=day, reason=body.reason
+            )
+            await self._validate(company_id, employee_id, item)
+            await self._insert(
+                company_id,
+                employee_id,
+                item,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        return await self.setup(
+            company_id, employee_id, as_of=day, scope=None, caller_employee_id=None
         )
 
     async def bulk_assign(

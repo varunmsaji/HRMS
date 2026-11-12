@@ -71,8 +71,9 @@ void main() {
       final lines = [_line('basic', 'Basic', 'PERCENTAGE_OF_CTC', percentage: '40'), _line('hra', 'HRA', 'PERCENTAGE_OF_COMPONENT', percentage: '50', baseId: 'basic'), _line('conv', 'Conveyance', 'FIXED', amount: 160000, applies: 'PF_APPLICABLE'), _line('sp', 'Special', 'BALANCING')];
       expect(describeStructureLine(lines[0], lines), '40% of monthly CTC');
       expect(describeStructureLine(lines[1], lines), '50% of Basic');
-      expect(describeStructureLine(lines[2], lines), '₹1,600 a month (only if pf applies)');
+      expect(describeStructureLine(lines[2], lines), '₹1,600 (only if pf applies)');
       expect(describeStructureLine(lines[3], lines), 'Balance of gross');
+      expect(describeStructureLine({...lines[0], 'max_monthly_minor': 1500000}, lines), '40% of monthly CTC, at most ₹15,000');
     });
 
     testWidgets('shows the current version, its lines, and no actions without the permission', (tester) async {
@@ -80,51 +81,81 @@ void main() {
       expect(find.text('Published'), findsOneWidget);
       expect(find.text('50% of Basic'), findsOneWidget);
       expect(find.text('Edit (new draft)'), findsNothing);
+      expect(find.text('Save draft'), findsNothing);
     });
 
     testWidgets('a draft can be started from the current version', (tester) async {
       final client = await _pumpStructure(tester, _structure(versions: [_version('v1', 'PUBLISHED')]), [payrollSetupManage]);
       await tester.tap(find.text('Edit (new draft)'));
       await tester.pumpAndSettle();
-      final call = client.calls.first;
+      final call = client.calls.singleWhere((c) => c.path == '/payroll/salary-structures/s1/versions');
       expect(call.method, 'POST');
-      expect(call.path, '/payroll/salary-structures/s1/versions');
       expect(call.body, isEmpty);
     });
 
-    testWidgets('editing lines replaces them all (PUT) with money as minor units, ordered, and the draft version', (tester) async {
+    testWidgets('components are edited in place and saved as a whole (PUT) with money as minor units, ordered, and the draft version', (tester) async {
       final draft = _version('v2', 'DRAFT', from: null, rowVersion: 9, lines: [_line('basic', 'Basic', 'FIXED', amount: 5000000)]);
       final client = await _pumpStructure(tester, _structure(versions: [_version('v1', 'PUBLISHED', to: null), draft]), [payrollSetupManage]);
-      await tester.tap(find.text('Edit lines'));
-      await tester.pumpAndSettle();
+      expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Save draft')).onPressed, isNull, reason: 'nothing changed yet');
+      expect(find.text('₹50,000 fixed'), findsOneWidget);
       // change the fixed amount from ₹50,000 to ₹60,000
-      await tester.enterText(find.widgetWithText(TextField, '50000'), '60000');
-      await tester.drag(find.byType(ListView).last, const Offset(0, -20000));
+      await tester.tap(find.text('Basic'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
+      await tester.enterText(find.byKey(const ValueKey('amount-basic')), '60000');
       await tester.pumpAndSettle();
-      final call = client.calls.single;
-      expect(call.method, 'PUT');
+      expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Publish')).onPressed, isNull, reason: 'unsaved changes must be saved before publishing');
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Save draft'));
+      await tester.pumpAndSettle();
+      final call = client.calls.singleWhere((c) => c.method == 'PUT');
       expect(call.path, '/payroll/salary-structures/s1/versions/v2/lines');
       expect(call.ifMatch, '9');
       final lines = (call.body as Map)['lines'] as List;
       expect(lines.single['amount_monthly_minor'], 6000000);
       expect(lines.single['calculation_type'], 'FIXED');
-      expect(lines.single['display_order'], 0);
+      expect(lines.single['display_order'], 10);
     });
 
-    testWidgets('a fixed line without an amount is rejected before anything is sent', (tester) async {
-      final draft = _version('v2', 'DRAFT', from: null, lines: [_line('basic', 'Basic', 'FIXED', amount: 100)]);
+    testWidgets('a component can be added and removed in the draft', (tester) async {
+      final draft = _version('v2', 'DRAFT', from: null, lines: [_line('basic', 'Basic', 'BALANCING')]);
       final client = await _pumpStructure(tester, _structure(versions: [draft]), [payrollSetupManage]);
-      await tester.tap(find.text('Edit lines'));
+      await tester.tap(find.text('Add component'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.widgetWithText(TextField, '1'), '');
-      await tester.drag(find.byType(ListView).last, const Offset(0, -20000));
+      await tester.tap(find.text('HRA').last);
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Save draft'));
       await tester.pumpAndSettle();
-      expect(find.text('Enter the monthly amount.'), findsOneWidget);
-      expect(client.calls, isEmpty);
+      final lines = (client.calls.singleWhere((c) => c.method == 'PUT').body as Map)['lines'] as List;
+      expect([for (final l in lines) l['salary_component_id']], ['basic', 'hra']);
+    });
+
+    testWidgets('an employer contribution cannot take the balance of gross or a share of gross', (tester) async {
+      tester.view.physicalSize = const Size(800, 9000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final draft = _version('v2', 'DRAFT', from: null, lines: [_line('basic', 'Basic', 'BALANCING'), {..._line('pf', 'Employer PF', 'PERCENTAGE_OF_COMPONENT', percentage: '12', baseId: 'basic'), 'component_type': 'EMPLOYER_CONTRIBUTION'}]);
+      final structure = _structure(versions: [draft]);
+      final client = FakeApiClient(
+        lists: {
+          '/payroll/salary-components': [
+            {'id': 'basic', 'name': 'Basic', 'code': 'BASIC', 'component_type': 'EARNING', 'is_active': true},
+            {'id': 'pf', 'name': 'Employer PF', 'code': 'EPF', 'component_type': 'EMPLOYER_CONTRIBUTION', 'is_active': true},
+          ],
+        },
+        objects: {'/payroll/salary-structures/s1': structure},
+      );
+      await tester.pumpWidget(ProviderScope(
+        overrides: [apiClientProvider.overrideWithValue(client), fakeAuth([payrollSetupManage])],
+        child: MaterialApp(home: ResourceDetailScreen(config: salaryStructureResource, initial: structure)),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('EMPLOYER CONTRIBUTIONS'), findsOneWidget);
+      await tester.tap(find.text('Employer PF'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('calc-pf')));
+      await tester.pumpAndSettle();
+      expect(find.text('% of monthly CTC'), findsWidgets);
+      expect(find.text('Balance of gross'), findsNothing);
+      expect(find.text('% of gross'), findsNothing);
     });
 
     testWidgets('publishing needs an effective date and carries the draft version', (tester) async {
@@ -140,7 +171,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Publish').last);
       await tester.pumpAndSettle();
-      final call = client.calls.single;
+      final call = client.calls.singleWhere((c) => c.path.endsWith('/publish'));
       expect(call.path, '/payroll/salary-structures/s1/versions/v2/publish');
       expect(call.ifMatch, '4');
       expect((call.body as Map)['effective_from'], matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
@@ -152,13 +183,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Discard'));
       await tester.pumpAndSettle();
-      final call = client.calls.single;
-      expect(call.method, 'DELETE');
+      final call = client.calls.singleWhere((c) => c.method == 'DELETE');
       expect(call.path, '/payroll/salary-structures/s1/versions/v2');
       expect(call.ifMatch, '6');
     });
 
-    testWidgets('preview posts the CTC in paise and shows the breakup', (tester) async {
+    testWidgets('opening a version previews it with the CTC in paise, and Calculate runs it again', (tester) async {
       final client = await _pumpStructure(
         tester,
         _structure(versions: [_version('v1', 'PUBLISHED')]),
@@ -175,13 +205,14 @@ void main() {
           },
         },
       );
-      await tester.tap(find.text('Preview breakup'));
-      await tester.pumpAndSettle();
-      final call = client.calls.single;
-      expect(call.path, '/payroll/salary-structures/s1/versions/v1/preview');
-      expect(call.body, {'annual_ctc_minor': 120000000, 'pf_applicable': true});
+      final previews = client.calls.where((c) => c.path == '/payroll/salary-structures/s1/versions/v1/preview').toList();
+      expect(previews, hasLength(1), reason: 'previewed on open, as on web');
+      expect(previews.single.body, {'annual_ctc_minor': 120000000, 'pf_applicable': true});
       expect(find.text('Cost to company'), findsOneWidget);
       expect(find.textContaining('₹1,00,000 / mo'), findsOneWidget);
+      await tester.tap(find.text('Calculate'));
+      await tester.pumpAndSettle();
+      expect(client.calls.where((c) => c.path.endsWith('/preview')), hasLength(2));
     });
   });
 

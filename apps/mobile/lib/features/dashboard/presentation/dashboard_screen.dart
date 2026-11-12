@@ -4,11 +4,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_error.dart';
 import '../../../core/auth/permissions.dart';
-import '../../../core/nav/nav_entries.dart' show isPayrollRoute, kPayrollInRelease;
+import '../../../core/nav/nav_entries.dart' show menuAllows;
 import '../../../core/providers.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/employee_tokens.dart';
+import '../../../core/time.dart' show relativeTime;
 import '../../../core/widgets/dashboard_kit.dart';
 import '../../../core/widgets/ui.dart';
 import '../../../features/shell/more_action.dart';
@@ -30,17 +31,47 @@ String _longDate() {
   return '${wd[d.weekday - 1]}, ${d.day} ${mo[d.month - 1]} ${d.year}';
 }
 
-/// Pending approval counts by queue; a queue the viewer can't approve (or that fails) is null and omitted.
+/// Onboarding cases waiting on HR, and on the candidate — web `ONBOARDING_HR_STATUSES` /
+/// `ONBOARDING_CANDIDATE_STATUSES`; both count toward "Pending Approvals", as on web.
+const _onboardingHrStatuses = ['SUBMITTED', 'UNDER_REVIEW'];
+const _onboardingCandidateStatuses = ['INVITED', 'IN_PROGRESS', 'CHANGES_REQUESTED'];
+
+/// Pending approvals by queue — web `usePendingApprovals`; a queue the viewer can't approve (or that
+/// fails) is null and omitted.
 class _Pending {
-  const _Pending({this.leave, this.attendance, this.overtime});
-  final int? leave;
-  final int? attendance;
-  final int? overtime;
-  int get total => (leave ?? 0) + (attendance ?? 0) + (overtime ?? 0);
-  bool get any => leave != null || attendance != null || overtime != null;
+  const _Pending({this.leave, this.attendance, this.overtime, this.onboardingHr, this.onboardingCandidate});
+  final PendingQueue? leave;
+  final PendingQueue? attendance;
+  final PendingQueue? overtime;
+  final int? onboardingHr;
+  final int? onboardingCandidate;
+  int get total => (leave?.total ?? 0) + (attendance?.total ?? 0) + (overtime?.total ?? 0) + (onboardingHr ?? 0) + (onboardingCandidate ?? 0);
+  bool get any => leave != null || attendance != null || overtime != null || onboardingHr != null || onboardingCandidate != null;
+
+  /// The four newest waiting requests across leave, regularization and overtime — web `pendingRows`.
+  List<PendingItem> get newest {
+    final all = [...?leave?.items, ...?attendance?.items, ...?overtime?.items]..sort((a, b) => b.at.compareTo(a.at));
+    return all.take(4).toList();
+  }
 }
 
-/// The company dashboard on mobile: the web dashboard's headline figures in one column. Growth,
+/// Web's pending row titles and the queue each opens.
+const _pendingTitle = {'leave': 'Leave Request', 'regularization': 'Regularization', 'overtime': 'Overtime'};
+const _pendingRoute = {'leave': '/app/leave-applications', 'regularization': '/app/regularizations', 'overtime': '/app/overtime'};
+const _pendingIcon = {'leave': Icons.event_busy_outlined, 'regularization': Icons.schedule_outlined, 'overtime': Icons.more_time_outlined};
+
+/// "01 Oct 2026 – 31 Oct 2026" — web `periodLabel`.
+String _periodLabel(String start, String end) {
+  const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  String f(String iso) {
+    final p = iso.split('-');
+    return p.length < 3 ? iso : '${p[2]} ${mo[int.parse(p[1]) - 1]} ${p[0]}';
+  }
+
+  return '${f(start)} – ${f(end)}';
+}
+
+/// The company dashboard on mobile: the web dashboard's figures in one column. Growth,
 /// birthdays and the department table stay web-only (they need the width); every figure shown is
 /// the backend's, and a block whose source the viewer can't read is left out, never shown as 0.
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -57,6 +88,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   AttendanceOverviewSummary? _overview;
   CompanyInsights? _insights;
   _Pending _pending = const _Pending();
+  Map<String, String> _names = const {};
+
+  /// Web's Leave Statistics switch: 'month' or 'year'.
+  String _leaveScope = 'month';
+  bool _insightsLoading = false;
   ApiError? _error;
 
   @override
@@ -94,28 +130,60 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       }
     }
 
-    Future<int?> count(bool allowed, String path, Map<String, dynamic> filters) async =>
-        allowed ? quiet(() => repository.countPending(path, filters)) : null;
+    Future<PendingQueue?> queue(bool allowed, String kind, String path, Map<String, dynamic> filters, {String timeField = 'submitted_at'}) async =>
+        allowed ? quiet(() => repository.pendingQueue(kind, path, filters, timeField: timeField)) : null;
 
-    final (dashboard, profile, overview, insights, leave, attendance, overtime) = await (
+    // One onboarding bucket spans several statuses and the list filters on one, so the totals add.
+    final onboarding = permissions.contains(onboardingReview) && permissions.contains(onboardingView);
+    Future<int?> onboardingCount(List<String> statuses) async {
+      if (!onboarding) return null;
+      final parts = await Future.wait([for (final s in statuses) quiet(() => repository.countPending('/onboarding-cases', {'status': s}))]);
+      return parts.every((p) => p == null) ? null : parts.fold<int>(0, (sum, p) => sum + (p ?? 0));
+    }
+
+    final (dashboard, profile, overview, insights, leave, attendance, overtime, onboardingHr, onboardingCandidate) = await (
       fetch(repository.getCompanyDashboard),
       fetch(repository.getCompanyProfile),
       permissions.contains(attendanceView) ? quiet(repository.getAttendanceOverview) : Future<AttendanceOverviewSummary?>.value(null),
-      quiet(repository.getInsights),
-      count(permissions.contains(_leaveApprove), '/leave-applications', {'application_status': 'SUBMITTED'}),
-      count(permissions.contains(_regularizationApprove), '/regularizations', {'request_status': 'SUBMITTED'}),
-      count(permissions.contains(_overtimeApprove), '/overtime', {'record_status': 'PENDING'}),
+      quiet(() => repository.getInsights(leaveScope: _leaveScope)),
+      queue(permissions.contains(_leaveApprove), 'leave', '/leave-applications', {'application_status': 'SUBMITTED'}),
+      queue(permissions.contains(_regularizationApprove), 'regularization', '/regularizations', {'request_status': 'SUBMITTED'}),
+      queue(permissions.contains(_overtimeApprove), 'overtime', '/overtime', {'record_status': 'PENDING'}, timeField: 'created_at'),
+      onboardingCount(_onboardingHrStatuses),
+      onboardingCount(_onboardingCandidateStatuses),
     ).wait;
 
     if (!mounted) return;
+    final pending = _Pending(leave: leave, attendance: attendance, overtime: overtime, onboardingHr: onboardingHr, onboardingCandidate: onboardingCandidate);
     setState(() {
       _dashboard = dashboard.data;
       _profile = profile.data;
       _overview = overview;
       _insights = insights;
-      _pending = _Pending(leave: leave, attendance: attendance, overtime: overtime);
+      _pending = pending;
       _error = dashboard.error ?? profile.error;
       _loading = false;
+    });
+    final names = await quiet(() => repository.employeeNames(pending.newest.map((i) => i.employeeId)));
+    if (mounted && names != null) setState(() => _names = names);
+  }
+
+  Future<void> _setLeaveScope(String scope) async {
+    if (scope == _leaveScope) return;
+    setState(() {
+      _leaveScope = scope;
+      _insightsLoading = true;
+    });
+    CompanyInsights? insights;
+    try {
+      insights = await ref.read(dashboardRepositoryProvider).getInsights(leaveScope: scope);
+    } catch (_) {
+      // Keep the figures already shown; the switch shows the period they cover.
+    }
+    if (!mounted || scope != _leaveScope) return;
+    setState(() {
+      if (insights != null) _insights = insights;
+      _insightsLoading = false;
     });
   }
 
@@ -178,6 +246,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final t = EmployeeTokens.of(context);
     final overview = _overview;
     final insights = _insights;
+    final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     const leaveColours = <Color>[Color(0xFF1668E3), Color(0xFF16A34A), Color(0xFFF59E0B), Color(0xFF8B5CF6), Color(0xFF0EA5E9), Color(0xFF64748B)];
 
     return Scaffold(
@@ -200,57 +269,136 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             if (!dashboard.setupProgress.isComplete)
               Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: _SetupProgressCard(progress: dashboard.setupProgress, companyName: companyName)),
             StatGrid(tiles: [
-              StatTile(icon: Icons.groups_outlined, label: 'Total employees', value: dashboard.employeeCount?.toString() ?? '—'),
-              if (overview != null) StatTile(icon: Icons.check_circle_outline, label: 'Present today', value: '${overview.present}', hint: 'Of ${overview.total} counted', accent: const Color(0xFF16A34A)),
-              if (overview != null) StatTile(icon: Icons.beach_access_outlined, label: 'On leave today', value: '${overview.onLeave}', accent: const Color(0xFF8B5CF6)),
+              StatTile(
+                icon: Icons.groups_outlined,
+                label: 'Total Employees',
+                // Web counts from today's attendance overview; without attendance access, the company count.
+                value: '${overview?.total ?? dashboard.employeeCount ?? '—'}',
+                hint: _hint(trendOf(overview?.total, insights?.headcountPrevMonthEnd, 'vs last month'), overview == null ? null : '${overview.expectedEmployees} expected to work today'),
+              ),
+              if (overview != null)
+                StatTile(
+                  icon: Icons.check_circle_outline,
+                  label: 'Present Today',
+                  value: '${overview.present}',
+                  hint: _hint(trendOf(overview.present, insights?.yesterdayPresent, 'vs yesterday'), overview.late > 0 ? '${overview.late} late arrivals' : null),
+                  accent: const Color(0xFF16A34A),
+                ),
+              if (overview != null)
+                StatTile(
+                  icon: Icons.beach_access_outlined,
+                  label: 'On Leave Today',
+                  value: '${overview.onLeave}',
+                  hint: _hint(trendOf(overview.onLeave, insights?.yesterdayOnLeave, 'vs yesterday'), overview.halfDayLeave > 0 ? '${overview.halfDayLeave} half-day' : null),
+                  accent: const Color(0xFF8B5CF6),
+                ),
               if (_pending.any)
                 StatTile(
                   icon: Icons.hourglass_bottom_outlined,
-                  label: 'Pending approvals',
+                  label: 'Pending Approvals',
                   value: '${_pending.total}',
                   hint: [
-                    if (_pending.leave != null) '${_pending.leave} leave',
-                    if (_pending.attendance != null) '${_pending.attendance} attendance',
-                    if (_pending.overtime != null) '${_pending.overtime} overtime',
+                    if (_pending.leave != null) '${_pending.leave!.total} Leave',
+                    if (_pending.attendance != null) '${_pending.attendance!.total} Attendance',
+                    if (_pending.overtime != null) '${_pending.overtime!.total} Overtime',
                   ].join(' · '),
                   accent: const Color(0xFFF59E0B),
                 ),
             ]),
-            if (overview != null && overview.total > 0)
+            if (overview != null)
               DashPanel(
-                title: 'Attendance today',
+                title: 'Attendance Overview',
                 actionLabel: 'View all',
                 onAction: () => context.push('/app/team-attendance'),
-                child: DonutChart(centerLabel: 'People', segments: [
-                  DonutSegment('Present', overview.present, const Color(0xFF16A34A)),
-                  DonutSegment('On leave', overview.onLeave, const Color(0xFF8B5CF6)),
-                  DonutSegment('Absent', overview.absent, const Color(0xFFEF4444)),
-                  DonutSegment('Not in yet', overview.notCheckedIn, const Color(0xFF94A3B8)),
-                  DonutSegment('Other', overview.other, const Color(0xFF0EA5E9)),
+                child: overview.nobodyRecorded
+                    ? _NoCheckIns(overview: overview)
+                    : DonutChart(centerLabel: 'People', segments: [
+                        DonutSegment('Present', overview.present, const Color(0xFF16A34A)),
+                        DonutSegment('On leave', overview.onLeave, const Color(0xFF8B5CF6)),
+                        DonutSegment('Absent', overview.absent, const Color(0xFFEF4444)),
+                        DonutSegment('WFH', overview.remoteWork, const Color(0xFF0D9488)),
+                        DonutSegment('On duty', overview.onDuty, const Color(0xFF0EA5E9)),
+                        DonutSegment('Others', overview.others, const Color(0xFF94A3B8)),
+                      ]),
+              ),
+            if (insights != null)
+              DashPanel(
+                title: 'Leave Statistics',
+                caption: insights.leavePeriodStart != null && insights.leavePeriodEnd != null ? _periodLabel(insights.leavePeriodStart!, insights.leavePeriodEnd!) : null,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  SegmentedButton<String>(
+                    segments: const [ButtonSegment(value: 'month', label: Text('This Month')), ButtonSegment(value: 'year', label: Text('This Year'))],
+                    selected: {_leaveScope},
+                    showSelectedIcon: false,
+                    onSelectionChanged: _insightsLoading ? null : (v) => _setLeaveScope(v.first),
+                  ),
+                  const SizedBox(height: 12),
+                  if (insights.leaveByType.isEmpty)
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 16), child: Text('No approved leave in this period.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall))
+                  else
+                    DonutChart(centerLabel: 'Days', segments: [
+                      for (var i = 0; i < insights.leaveByType.length; i++)
+                        DonutSegment(insights.leaveByType[i].name.replaceAll(RegExp(r' Leave$'), ''), insights.leaveByType[i].days, leaveColours[i % leaveColours.length]),
+                    ]),
                 ]),
               ),
-            if (insights != null && insights.leaveByType.isNotEmpty)
+            if (_pending.any)
               DashPanel(
-                title: 'Leave this month',
-                caption: 'Days taken by type',
-                child: DonutChart(centerLabel: 'Days', segments: [
-                  for (var i = 0; i < insights.leaveByType.length; i++)
-                    DonutSegment(insights.leaveByType[i].name.replaceAll(RegExp(r' Leave$'), ''), insights.leaveByType[i].days, leaveColours[i % leaveColours.length]),
-                ]),
+                title: 'Pending Approvals',
+                actionLabel: 'View all',
+                onAction: () => context.push('/app/leave-applications'),
+                child: _pending.newest.isEmpty
+                    ? Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text('Nothing pending.', style: Theme.of(context).textTheme.bodySmall))
+                    : Column(children: [
+                        for (final p in _pending.newest)
+                          DashListRow(
+                            icon: _pendingIcon[p.kind]!,
+                            title: _pendingTitle[p.kind]!,
+                            caption: '${_names[p.employeeId] ?? 'Employee'}${p.at.isEmpty ? '' : ' · ${relativeTime(p.at)}'}',
+                            onTap: () => context.push(_pendingRoute[p.kind]!),
+                          ),
+                      ]),
               ),
             if (insights != null && insights.recentActivities.isNotEmpty)
               DashPanel(
-                title: 'Recent activity',
+                title: 'Recent Activities',
                 child: Column(children: [
                   for (final a in insights.recentActivities.take(4))
                     DashListRow(icon: Icons.history, title: a.subject == null ? a.title : '${a.title} · ${a.subject}', caption: a.detail),
                 ]),
               ),
-            const Padding(padding: EdgeInsets.fromLTRB(16, 16, 16, 0), child: _QuickActions()),
+            Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 0), child: _QuickActions(permissions: permissions)),
             const SizedBox(height: 24),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// A trend ("+5% vs yesterday") and a note on one line, either optional.
+String? _hint(({int pct, String label})? trend, String? note) {
+  final parts = [if (trend != null) trendText(trend), if (note != null) note];
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
+/// Web `NoCheckIns`: nobody is in a tracked status yet, so no chart.
+class _NoCheckIns extends StatelessWidget {
+  const _NoCheckIns({required this.overview});
+  final AttendanceOverviewSummary overview;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Column(children: [
+        Icon(Icons.monitor_heart_outlined, color: theme.colorScheme.onSurfaceVariant),
+        const SizedBox(height: 8),
+        Text('No check-ins recorded yet', style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 2),
+        Text('${overview.total} employees · ${overview.expectedEmployees} expected to work today', textAlign: TextAlign.center, style: theme.textTheme.bodySmall),
+      ]),
     );
   }
 }
@@ -409,8 +557,11 @@ class _QuickAction {
   final Color color;
 }
 
+/// Only the shortcuts the viewer can open, as web's action tiles; each follows the menu's rule.
 class _QuickActions extends StatelessWidget {
-  const _QuickActions();
+  const _QuickActions({required this.permissions});
+
+  final List<String> permissions;
 
   static const _actions = [
     _QuickAction('Employees', Icons.people_alt_outlined, '/app/employees', Color(0xFF2563EB)),
@@ -427,6 +578,8 @@ class _QuickActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
+    final shown = [for (final a in _actions) if (menuAllows(a.route, permissions)) a];
+    if (shown.isEmpty) return const SizedBox.shrink();
     return _Panel(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
       child: GridView.count(
@@ -437,7 +590,7 @@ class _QuickActions extends StatelessWidget {
         mainAxisSpacing: 12,
         childAspectRatio: 0.9,
         children: [
-          for (final action in _actions.where((a) => kPayrollInRelease || !isPayrollRoute(a.route)))
+          for (final action in shown)
             InkWell(
               onTap: () => context.push(action.route),
               borderRadius: BorderRadius.circular(12),

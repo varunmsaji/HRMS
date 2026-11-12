@@ -1,0 +1,17 @@
+# Encrypted offsite HRMS backup (infra/backup/hrms_backup.sh). Installed to /etc/systemd/system/.
+[Unit]
+Description=HRMS encrypted backup (Postgres, MinIO, config) to Google Drive
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+OnFailure=hrms-alert@%n.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/hrms-backup/hrms-backup.env
+ExecStart=/opt/hrms/infra/backup/hrms_backup.sh
+# Background priority, so a backup never competes with the API or with Hirico.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=45min

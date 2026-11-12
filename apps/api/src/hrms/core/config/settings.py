@@ -79,6 +79,18 @@ def _web_app_base_url_is_unsafe_outside_development(value: str) -> bool:
     return False
 
 
+def _is_allowed_compreface_url(value: str) -> bool:
+    """CompreFace receives face photos, so plain http is accepted only to a host that cannot be
+    on the public internet: a single-label Docker service name (`compreface-api`) or loopback."""
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not host or parsed.username is not None or parsed.password is not None:
+        return False
+    if parsed.scheme == "https":
+        return True
+    return parsed.scheme == "http" and (host in _LOOPBACK_WEB_HOSTS or "." not in host)
+
+
 class Settings(BaseSettings):
     """Application settings — validated at boot (Document 10 §4, Document 13 §1)."""
 
@@ -245,13 +257,17 @@ class Settings(BaseSettings):
     # Face attendance (`attendance/face_verification.py`). `"disabled"` (the default) rejects every
     # face punch/enrollment as unavailable — there is deliberately no fake always-match provider,
     # since one leaking into a real deployment would let anyone punch as anyone.
-    face_verification_provider: Literal["disabled", "facepp", "opensource", "azure"] = "disabled"
+    face_verification_provider: Literal[
+        "disabled", "facepp", "opensource", "azure", "compreface"
+    ] = "disabled"
     # Shadow comparison (`attendance/face_comparison.py`). The provider above is the ONLY one that
     # decides a punch. When `face_provider_comparison_enabled` is true the shadow provider is run
     # on the same frames purely for observation (timeout-bounded, errors swallowed) and its result
     # goes to `face_verification_comparison`, never to the punch, the attempt log or the
     # failed-attempt limit. Off (the default) = no shadow code path executes at all.
-    face_verification_shadow_provider: Literal["disabled", "facepp", "opensource"] = "disabled"
+    face_verification_shadow_provider: Literal["disabled", "facepp", "opensource", "compreface"] = (
+        "disabled"
+    )
     face_provider_comparison_enabled: bool = False
     # Wall-clock ceiling for the shadow provider's work on one punch (all frames together).
     face_provider_shadow_timeout_seconds: float = Field(default=8.0, gt=0.0, le=60.0)
@@ -264,6 +280,16 @@ class Settings(BaseSettings):
     azure_endpoint: str = ""
     azure_face_api_key: str = ""
     azure_face_person_group_id: str = "hrms-employees"
+    # CompreFace (`attendance/compreface_face_provider.py`), self-hosted on the internal Docker
+    # network, used when either provider setting is `"compreface"`. Set via COMPREFACE_BASE_URL /
+    # COMPREFACE_API_KEY (a Recognition service key from its admin UI). Plain http is accepted only
+    # for an internal host (a Docker service name or loopback). Its own threshold, because its
+    # scores are not on the Face++/Azure distribution. UNCALIBRATED default.
+    compreface_base_url: str = ""
+    compreface_api_key: str = ""
+    compreface_det_prob_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
+    compreface_match_min_similarity: float = Field(default=0.90, ge=0.0, le=1.0)
+    compreface_enrollment_angle_min_similarity: float = Field(default=0.80, ge=0.0, le=1.0)
     # Applied on top of the provider's own verified/not-verified verdict.
     face_match_min_similarity: float = Field(default=0.90, ge=0.0, le=1.0)
     face_provider_timeout_seconds: float = Field(default=15.0, gt=0.0)
@@ -592,6 +618,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "azure_endpoint (https URL) and azure_face_api_key must both be set when "
                 "face_verification_provider='azure' — refusing to boot without credentials."
+            )
+        if "compreface" in (
+            self.face_verification_provider,
+            self.face_verification_shadow_provider if self.face_provider_comparison_enabled else "",
+        ) and not (
+            _is_allowed_compreface_url(self.compreface_base_url) and self.compreface_api_key
+        ):
+            raise ValueError(
+                "compreface_base_url (https, or http to an internal host) and compreface_api_key "
+                "must both be set when CompreFace is selected — refusing to boot without them."
             )
         if self.face_verification_provider == "opensource":
             if not self.face_os_enabled:

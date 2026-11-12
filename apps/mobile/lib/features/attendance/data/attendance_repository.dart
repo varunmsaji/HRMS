@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
+import '../domain/day_timeline.dart';
 import '../domain/punch_location.dart';
 
 class Shift {
@@ -167,8 +168,9 @@ class Punch {
 
 /// `LeaveDayProjectionRead` — approved leave published onto a calendar day (provenance only).
 class LeaveDayProjection {
-  LeaveDayProjection({required this.leaveApplicationId, required this.fraction, this.half, required this.isPaid, required this.status});
+  LeaveDayProjection({required this.leaveApplicationId, this.leaveTypeCode, required this.fraction, this.half, required this.isPaid, required this.status});
   final String leaveApplicationId;
+  final String? leaveTypeCode;
   final String fraction;
   final String? half;
   final bool isPaid;
@@ -176,6 +178,7 @@ class LeaveDayProjection {
 
   factory LeaveDayProjection.fromJson(Map<String, dynamic> json) => LeaveDayProjection(
         leaveApplicationId: json['leave_application_id'] as String,
+        leaveTypeCode: json['leave_type_code'] as String?,
         fraction: json['fraction'].toString(),
         half: json['half'] as String?,
         isPaid: json['is_paid'] as bool,
@@ -495,6 +498,12 @@ class AttendanceRepository {
     }
     return all;
   }
+
+  /// `GET /attendance/breaks/day` — the break start/end events recorded for one employee-date.
+  Future<List<BreakEvent>> listBreakEvents({required String employeeId, required String date}) => _client.get(
+        '/attendance/breaks/day?employee_id=$employeeId&date=$date',
+        parse: (d) => [for (final e in ((d as Map<String, dynamic>)['events'] as List? ?? const [])) BreakEvent.fromJson(e as Map<String, dynamic>)],
+      );
 
   /// `POST /attendance/punches` (`ATTENDANCE.PUNCH_ON_BEHALF`) — [punchTimeUtcIso] is the UTC instant.
   Future<Punch> createPunchOnBehalf({required String employeeId, required String direction, required String punchTimeUtcIso, required String reference}) => _client.post(

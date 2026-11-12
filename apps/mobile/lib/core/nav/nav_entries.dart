@@ -11,11 +11,11 @@ import '../auth/surface.dart';
 /// **Hiding is not security.** The API enforces every permission below; the menu and the guard
 /// only stop an employee from landing on screens that can only answer 403. `anyOf` mirrors the
 /// permission the screen's own list endpoint checks (verified against the API routers).
-/// Payroll is outside the attendance-only release: its menu entries and routes are hidden and
-/// its deep links land on the user's landing page. The screens, API client and models stay in the
-/// code base untouched; flipping this switches everything back on. UX only, the API still
-/// enforces every payroll permission.
-const kPayrollInRelease = false;
+/// Whether payroll ships in this release: its menu entries, routes, the employee Salary tab and
+/// pay on the employee home. Switched on 2026-11-09 (it was off for the attendance-only release,
+/// when payroll deep links landed on the user's landing page). UX only, the API still enforces
+/// every payroll permission.
+const kPayrollInRelease = true;
 
 /// Whether [route] belongs to payroll (pay runs, salary setup, statutory rates, own payslips).
 bool isPayrollRoute(String route) => route == '/app/payroll' || route.startsWith('/app/payroll/') || route == '/app/me/payslips' || route.startsWith('/app/me/payslips/');
@@ -59,15 +59,16 @@ const _teamView = [attendanceViewAll, employeeViewAll];
 /// What the attendance calendar reads besides [attendanceViewAll]: the employee list and the days.
 const attendanceCalendarReads = [attendanceView, employeeViewAll];
 
-/// The employee destinations (the entire employee menu besides Sign out).
+/// The employee destinations (the entire employee menu besides Sign out), with web's employee-menu
+/// names (`nav-items.ts` `EMPLOYEE_NAV_ITEMS`).
 const employeeNavEntries = [
   NavEntry('Leave Balances', Icons.account_balance_wallet_outlined, '/app/leave-balances',
-      anyOf: [leaveBalanceView, leaveBalanceViewAll], employeeLabel: 'Leave balances', guarded: false),
-  NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], employeeLabel: 'My calendar', guarded: false, requiresEmployee: true),
+      anyOf: [leaveBalanceView, leaveBalanceViewAll], guarded: false),
+  NavEntry('My Calendar', Icons.calendar_month_outlined, '/app/me/calendar', anyOf: [attendanceView], guarded: false, requiresEmployee: true),
   NavEntry('Regularizations', Icons.edit_note, '/app/regularizations', anyOf: [attendanceView], employeeLabel: 'Corrections', guarded: false),
   NavEntry('Overtime', Icons.alarm_on_outlined, '/app/overtime', anyOf: [attendanceView], guarded: false),
-  NavEntry('Shift swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
-  NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], employeeLabel: 'Payslips', guarded: false),
+  NavEntry('Shift Swaps', Icons.swap_horiz_rounded, '/app/shift-swaps', anyOf: [attendanceView], guarded: false),
+  NavEntry('My Payslips', Icons.description_outlined, '/app/me/payslips', anyOf: [payrollPayslipViewOwn], guarded: false),
 ];
 
 /// Mirrors `apps/web/src/components/layout/nav-items.ts`'s `NAV_ITEMS` (the items not already in
@@ -155,6 +156,15 @@ List<NavGroup> visibleNavGroups(Iterable<String> permissions, {bool payroll = kP
       for (final g in [navQuickLinks, ...navSettingsGroups])
         if (_visible(g.items, permissions, payroll, hasEmployee: hasEmployee).isNotEmpty) NavGroup(g.label, _visible(g.items, permissions, payroll, hasEmployee: hasEmployee)),
     ];
+
+/// Whether [route] is in the administrator menu for [permissions] — for shortcuts elsewhere (the
+/// dashboard tiles), so they never offer a screen the menu hides. A route not in the menu table is
+/// open to anyone signed in.
+bool menuAllows(String route, Iterable<String> permissions, {bool payroll = kPayrollInRelease}) {
+  final entries = [for (final g in [navQuickLinks, ...navSettingsGroups]) for (final e in g.items) if (e.route == route) e];
+  if (!payroll && isPayrollRoute(route)) return false;
+  return entries.isEmpty || entries.any((e) => e.allowedFor(permissions));
+}
 
 /// The employee menu: the destinations the user may open, with employee wording.
 List<NavEntry> visibleEmployeeEntries(Iterable<String> permissions, {bool payroll = kPayrollInRelease}) => _visible(employeeNavEntries, permissions, payroll);

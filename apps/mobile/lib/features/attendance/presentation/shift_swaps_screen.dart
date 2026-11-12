@@ -86,7 +86,7 @@ class _ShiftSwapsScreenState extends ConsumerState<ShiftSwapsScreen> {
     final waiting = [for (final s in swaps) if (s.isPending && !action.contains(s)) s];
     final recent = [for (final s in swaps) if (!s.isPending) s];
     return Scaffold(
-      appBar: AppBar(title: const Text('Shift swaps'), actions: const [MoreAction()]),
+      appBar: AppBar(title: const Text('Shift Swaps'), actions: const [MoreAction()]),
       floatingActionButton: me == null ? null : FloatingActionButton.extended(onPressed: _request, icon: const Icon(Icons.swap_horiz_rounded), label: const Text('Request a swap')),
       body: _loading && _swaps == null
           ? const ListSkeleton()

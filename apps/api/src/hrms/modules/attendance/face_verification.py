@@ -415,6 +415,8 @@ def _provider_by_selection(settings: Settings, selection: str) -> FaceVerificati
         return _shared_opensource_provider(settings)
     if selection == "azure":
         return _shared_azure_provider(settings)
+    if selection == "compreface":
+        return _shared_compreface_provider(settings)
     if selection != "facepp":
         return None
     key = (
@@ -450,6 +452,28 @@ def _shared_azure_provider(settings: Settings) -> FaceVerificationProvider:
     provider = _shared_azure.get(key)
     if provider is None:
         provider = _shared_azure[key] = AzureFaceVerificationProvider(settings)
+    return provider
+
+
+_shared_compreface: dict[tuple[object, ...], FaceVerificationProvider] = {}
+
+
+def _shared_compreface_provider(settings: Settings) -> FaceVerificationProvider:
+    from hrms.modules.attendance.compreface_face_provider import CompreFaceVerificationProvider
+
+    key = (
+        settings.compreface_base_url,
+        settings.compreface_api_key,
+        settings.compreface_det_prob_threshold,
+        settings.compreface_match_min_similarity,
+        settings.compreface_enrollment_angle_min_similarity,
+        settings.face_provider_timeout_seconds,
+        settings.face_provider_connect_timeout_seconds,
+        settings.face_provider_max_concurrency,
+    )
+    provider = _shared_compreface.get(key)
+    if provider is None:
+        provider = _shared_compreface[key] = CompreFaceVerificationProvider(settings)
     return provider
 
 
@@ -501,6 +525,17 @@ def provider_for_stored_name(
 
         return AzureFaceVerificationProvider(settings)
     if (
+        name == "COMPREFACE"
+        and settings.face_verification_provider != "disabled"
+        and settings.compreface_base_url
+        and settings.compreface_api_key
+    ):
+        from hrms.modules.attendance.compreface_face_provider import (
+            CompreFaceVerificationProvider,
+        )
+
+        return CompreFaceVerificationProvider(settings)
+    if (
         name == PROVIDER_FACEPP
         and settings.face_verification_provider != "disabled"
         and settings.facepp_api_key
@@ -517,8 +552,10 @@ async def close_face_verification_providers() -> None:
         *_shared_providers.values(),
         *_shared_opensource.values(),
         *_shared_azure.values(),
+        *_shared_compreface.values(),
     ]
     _shared_azure.clear()
+    _shared_compreface.clear()
     _shared_providers.clear()
     _shared_opensource.clear()
     for provider in providers:

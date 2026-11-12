@@ -1,0 +1,11 @@
+# Hourly at :15 UTC. The first run after 00:00 UTC is the daily run (restore test, MinIO, config).
+[Unit]
+Description=Hourly HRMS backup
+
+[Timer]
+OnCalendar=*-*-* *:15:00 UTC
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -11,6 +11,7 @@ import '../../../core/providers.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
 import 'salary_breakup_view.dart';
+import 'salary_setup_screen.dart';
 import '../../../core/widgets/ui.dart';
 
 /// Assign a salary structure — or, for a daily-wage employee, a daily rate (D5). The `rate_kind`
@@ -29,7 +30,8 @@ const employeeSalaryAssignSpec = FormSpec(
 
 /// The Salary tab of an employee record — mirrors `apps/web/src/components/payroll/salary-panel.tsx`:
 /// the CTC breakup under the assigned structure as of a date, the assignment history, and (with
-/// `PAYROLL.SETUP_MANAGE`) assigning a structure or daily rate.
+/// `PAYROLL.SETUP_MANAGE`) assigning a structure or daily rate. With `EMPLOYEE.UPDATE_COMPENSATION`
+/// too, "Edit salary & structure" opens [SalarySetupScreen] for the CTC and structure together.
 class EmployeeSalaryPanel extends ConsumerStatefulWidget {
   const EmployeeSalaryPanel({super.key, required this.employeeId});
   final String employeeId;
@@ -123,7 +125,13 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
     }
   }
 
-  String _structure(String? id) => id == null ? '—' : (_structureNames[id] ?? 'Salary structure');
+  Future<void> _editSetup() async {
+    final today = businessToday(ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata');
+    final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(builder: (_) => SalarySetupScreen(employeeId: widget.employeeId, today: today)));
+    if (saved == true && mounted) await _load();
+  }
+
+  String _structure(String? id) => id == null ? '—' : (_structureNames[id] ?? 'Customised structure');
 
   @override
   Widget build(BuildContext context) {
@@ -140,8 +148,13 @@ class _EmployeeSalaryPanelState extends ConsumerState<EmployeeSalaryPanel> {
         children: [
           Row(children: [
             Expanded(child: OutlinedButton.icon(onPressed: _pickAsOf, icon: const Icon(Icons.calendar_today_outlined, size: 18), label: Text('Salary as of $_asOf'))),
-            if (permissions.contains(payrollSetupManage)) ...[const SizedBox(width: 8), FilledButton(onPressed: _assign, child: const Text('Assign'))],
+            if (permissions.contains(payrollSetupManage)) ...[const SizedBox(width: 8), OutlinedButton(onPressed: _assign, child: const Text('Assign'))],
           ]),
+          if (permissions.contains(payrollSetupManage) && permissions.contains(employeeUpdateCompensation))
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: FilledButton.icon(onPressed: _editSetup, icon: const Icon(Icons.tune_rounded, size: 18), label: const Text('Edit salary & structure')),
+            ),
           const SizedBox(height: 12),
           if (_breakupMessage != null) Text(_breakupMessage!, style: TextStyle(color: scheme.onSurfaceVariant)),
           if (b != null) ...[

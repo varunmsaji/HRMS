@@ -238,6 +238,9 @@ class SalaryStructureRead(BaseModel):
     name: str
     description: str | None
     is_active: bool
+    # Set on an employee's own structure (see `SalaryStructure.employee_id`).
+    employee_id: UUID | None = None
+    based_on_structure_id: UUID | None = None
     version: int
     versions: list[SalaryStructureVersionRead]
     created_at: str
@@ -291,6 +294,8 @@ def salary_structure_to_read(
         name=row.name,
         description=row.description,
         is_active=row.is_active,
+        employee_id=row.employee_id,
+        based_on_structure_id=row.based_on_structure_id,
         version=row.version,
         versions=versions,
         created_at=_format_timestamp(row.created_at) or "",
@@ -414,6 +419,71 @@ class EmployeeSalaryBulkSkip(BaseModel):
 class EmployeeSalaryBulkResult(BaseModel):
     assigned: list[UUID]
     skipped: list[EmployeeSalaryBulkSkip]
+
+
+# ---------------------------------------------------------------------------
+# Employee salary setup — CTC and structure edited together on the employee's Salary tab
+# ---------------------------------------------------------------------------
+
+#: `employee_compensation.revision_type` values (mirrors `employee.schemas.RevisionType`).
+COMPENSATION_REVISION_TYPES = ("JOINING", "ANNUAL", "PROMOTION", "CORRECTION", "MARKET")
+
+
+class EmployeeSalarySetupRead(BaseModel):
+    """What the Salary tab editor opens with, as of a date: the CTC, the structure lines in
+    effect and the template they come from. `is_customised` — the lines are the employee's own
+    (an employee-owned structure), not the template's."""
+
+    employee_id: UUID
+    as_of: date
+    pay_basis: str | None
+    annual_ctc_minor: int | None
+    pf_applicable: bool
+    esi_applicable: bool
+    assignment: EmployeeSalaryRead | None
+    salary_structure_id: UUID | None
+    salary_structure_name: str | None
+    template_structure_id: UUID | None
+    is_customised: bool
+    lines: list[SalaryStructureLineRead]
+
+
+class EmployeeSalarySetupPreviewInput(BaseModel):
+    """Unsaved lines and CTC → the breakup, with the employee's PF/ESI applicability on `as_of`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    annual_ctc_minor: int = Field(gt=0)
+    as_of: date
+    lines: list[SalaryStructureLineInput] = Field(min_length=1, max_length=50)
+
+
+class EmployeeSalarySetupPreviewRead(BaseModel):
+    pf_applicable: bool
+    esi_applicable: bool
+    breakup: SalaryBreakupRead
+
+
+class EmployeeSalarySetupSave(BaseModel):
+    """One save for the Salary tab: a new CTC (when `annual_ctc_minor` differs from the CTC on
+    `effective_from`) and the structure from `effective_from`. Lines equal to the template's are
+    assigned as the template; changed lines become the employee's own structure."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    effective_from: date
+    reason: str = Field(min_length=1, max_length=500)
+    template_structure_id: UUID
+    lines: list[SalaryStructureLineInput] = Field(min_length=1, max_length=50)
+    annual_ctc_minor: int | None = Field(default=None, gt=0)
+    revision_type: str | None = None
+
+    @field_validator("revision_type")
+    @classmethod
+    def validate_revision_type(cls, value: str | None) -> str | None:
+        if value is not None:
+            _check_choice("revision_type", value, COMPENSATION_REVISION_TYPES)
+        return value
 
 
 # ---------------------------------------------------------------------------

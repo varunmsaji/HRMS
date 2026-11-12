@@ -1961,6 +1961,36 @@
   "updated_at",
   "version"
  ],
+ "payroll.EmployeeSalarySetupPreviewInput": [
+  "annual_ctc_minor",
+  "as_of",
+  "lines"
+ ],
+ "payroll.EmployeeSalarySetupPreviewRead": [
+  "breakup",
+  "esi_applicable",
+  "pf_applicable"
+ ],
+ "payroll.EmployeeSalarySetupRead": [
+  "annual_ctc_minor",
+  "as_of",
+  "assignment",
+  "employee_id",
+  "esi_applicable",
+  "is_customised",
+  "lines",
+  "pay_basis",
+  "pf_applicable",
+  "salary_structure_id",
+  "salary_structure_name",
+  "template_structure_id"
+ ],
+ "payroll.EmployeeSalarySetupSave": [
+  "effective_from",
+  "lines",
+  "reason",
+  "template_structure_id"
+ ],
  "payroll.EsiParameters": [
   "employee_exempt_daily_wage_minor",
   "employee_percent",

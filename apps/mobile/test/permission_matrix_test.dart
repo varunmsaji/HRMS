@@ -73,9 +73,9 @@ void main() {
     test('sees every administrator destination', () {
       expect(_reachable(_companyAdmin, _allGuarded), _allGuarded);
     });
-    test('payroll stays unavailable in this release, even for the administrator', () {
-      expect(_menu(_companyAdmin).where(isPayrollRoute), isEmpty);
-      expect(appRedirect(_auth(_companyAdmin), '/app/payroll/pay-runs'), '/app/dashboard');
+    test('reaches payroll: pay runs and statutory rates', () {
+      expect(_menu(_companyAdmin), containsAll(['/app/payroll/pay-runs', '/app/payroll/statutory-rates']));
+      expect(appRedirect(_auth(_companyAdmin), '/app/payroll/pay-runs'), isNull);
     });
   });
 
@@ -120,8 +120,8 @@ void main() {
   });
 
   group('employee', () {
-    test('menu is exactly the request destinations, My Calendar and shift swaps (payslips unavailable in this release)', () {
-      expect([for (final e in visibleEmployeeEntries(_employeeRole)) e.route], ['/app/leave-balances', '/app/me/calendar', '/app/regularizations', '/app/overtime', '/app/shift-swaps']);
+    test('menu is exactly the request destinations, My Calendar, shift swaps and My Payslips', () {
+      expect([for (final e in visibleEmployeeEntries(_employeeRole)) e.route], ['/app/leave-balances', '/app/me/calendar', '/app/regularizations', '/app/overtime', '/app/shift-swaps', '/app/me/payslips']);
     });
     test('every administrator destination lands on Home', () {
       expect(_reachable(_employeeRole, _allGuarded), isEmpty);

@@ -15,8 +15,9 @@ import 'pay_run_detail_screen.dart';
 
 final payrollRepositoryProvider = Provider<PayrollRepository>((ref) => PayrollRepository(ref.watch(apiClientProvider)));
 
-/// Mirrors `apps/web/src/app/app/payroll/pay-runs/page.tsx`: pay runs per legal entity, create
-/// (legal entity + month + optional pay date) and the company-wide variance threshold.
+/// Mirrors `apps/web/src/app/app/payroll/pay-runs/page.tsx`: pay runs per company (legal entity),
+/// create (company + month + optional pay date) and, with `PAYROLL.SETUP_MANAGE`, the company-wide
+/// variance threshold.
 class PayRunsScreen extends ConsumerStatefulWidget {
   const PayRunsScreen({super.key});
 
@@ -67,7 +68,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
     for (final e in _entities) {
       if (e.id == id) return e.name;
     }
-    return 'Legal entity';
+    return 'Company';
   }
 
   String _defaultMonth() {
@@ -90,8 +91,12 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               if (error != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(error!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text("One pay run per company per month. Its inputs can be locked once that month's attendance period is closed.", style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+              ),
               AuthFormField(
-                label: 'Legal entity',
+                label: 'Company',
                 required: true,
                 child: DropdownButtonFormField<String>(
                   value: entityId,
@@ -111,7 +116,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
             TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
             FilledButton(
               onPressed: () async {
-                if (entityId == null) return setLocal(() => error = 'Choose a legal entity.');
+                if (entityId == null) return setLocal(() => error = 'Choose a company.');
                 if (!RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(month.text.trim())) return setLocal(() => error = 'Month must look like 2026-09.');
                 if (payDate.text.trim().isNotEmpty && DateTime.tryParse(payDate.text.trim()) == null) return setLocal(() => error = 'Pay date must look like 2026-10-01.');
                 try {
@@ -125,7 +130,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
                   setLocal(() => error = e is ApiError ? e.message : 'Something went wrong.');
                 }
               },
-              child: const Text('Create'),
+              child: const Text('Create pay run'),
             ),
           ],
         ),
@@ -155,7 +160,7 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
             if (error != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(error!, style: TextStyle(color: Theme.of(ctx).colorScheme.error))),
             AuthFormField(
               label: 'Variance threshold (%)',
-              description: "A pay run flags an employee whose net pay moves by more than this since the previous run.",
+              description: "An employee whose net pay changes by more than this against the previous finalised run is flagged, and needs a reason before the run can be approved.",
               child: TextField(controller: threshold, keyboardType: const TextInputType.numberWithOptions(decimal: true)),
             ),
           ]),
@@ -184,12 +189,14 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
   Widget build(BuildContext context) {
     final permissions = ref.watch(authControllerProvider).user?.permissions ?? const <String>[];
     final canProcess = permissions.contains(payrollRunProcess);
+    // The API's /payroll/settings needs the setup permission, as on web.
+    final canSetup = permissions.contains(payrollSetupManage);
     final visible = _runs.where((r) => _entityFilter == null || r.legalEntityId == _entityFilter).toList();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Payroll'),
+        title: const Text('Pay Runs'),
         actions: [
-          if (canProcess) IconButton(tooltip: 'Payroll settings', icon: const Icon(Icons.tune_rounded), onPressed: _openSettings),
+          if (canSetup) IconButton(tooltip: 'Payroll settings', icon: const Icon(Icons.tune_rounded), onPressed: _openSettings),
           const MoreAction(),
         ],
       ),
@@ -216,15 +223,15 @@ class _PayRunsScreenState extends ConsumerState<PayRunsScreen> {
                           child: DropdownButtonFormField<String?>(
                             value: _entityFilter,
                             isExpanded: true,
-                            decoration: const InputDecoration(labelText: 'Legal entity'),
-                            items: [const DropdownMenuItem(value: null, child: Text('All legal entities')), for (final e in _entities) DropdownMenuItem(value: e.id, child: Text(e.name))],
+                            decoration: const InputDecoration(labelText: 'Company'),
+                            items: [const DropdownMenuItem(value: null, child: Text('All companies')), for (final e in _entities) DropdownMenuItem(value: e.id, child: Text(e.name))],
                             onChanged: (v) => setState(() => _entityFilter = v),
                           ),
                         ),
                       if (visible.isEmpty)
                         SizedBox(
                           height: MediaQuery.sizeOf(context).height * 0.5,
-                          child: const StateMessage(icon: Icons.payments_outlined, title: 'No pay runs yet', message: 'Create a pay run to start processing salaries.'),
+                          child: const StateMessage(icon: Icons.payments_outlined, title: 'No pay runs yet.', message: "Close the month's attendance period for a company, then create its pay run."),
                         ),
                       for (final run in visible)
                         Padding(
