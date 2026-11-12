@@ -204,7 +204,7 @@ class _ShiftBoardScreenState extends ConsumerState<ShiftBoardScreen> {
     final known = columns.map((c) => c.key).toSet();
     final byColumn = {for (final c in columns) c.key: <Employee>[]};
     for (final e in _employees ?? const <Employee>[]) {
-      if (query.isNotEmpty && !'${e.fullName} ${e.employeeCode}'.toLowerCase().contains(query)) continue;
+      if (query.isNotEmpty && !'${e.nameSearchText} ${e.employeeCode}'.toLowerCase().contains(query)) continue;
       final key = boardColumnOf(_entries[e.id]);
       byColumn[known.contains(key) ? key : unassignedColumn]!.add(e);
     }

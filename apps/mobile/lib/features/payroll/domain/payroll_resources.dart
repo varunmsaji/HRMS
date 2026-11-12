@@ -83,6 +83,7 @@ const calculationTypeLabels = {
 
 const appliesWhenLabels = {'ALWAYS': 'Always', 'PF_APPLICABLE': 'Only if PF applies', 'ESI_APPLICABLE': 'Only if ESI applies'};
 
+/// The fields of a `SalaryStructureLineInput`; the contract test checks them against the API.
 const structureLineSpec = FormSpec(name: 'structure_line', label: 'Line', defaults: {'applies_when': 'ALWAYS'}, extraValidate: _validateLine, fields: [
   FieldSpec('salary_component_id', 'Component', kind: FieldKind.choice, choiceKey: 'salary_components', required: true),
   FieldSpec('calculation_type', 'Calculation', kind: FieldKind.select, required: true, options: ['FIXED', 'PERCENTAGE_OF_CTC', 'PERCENTAGE_OF_GROSS', 'PERCENTAGE_OF_COMPONENT', 'BALANCING'], optionLabels: calculationTypeLabels),
@@ -91,11 +92,6 @@ const structureLineSpec = FormSpec(name: 'structure_line', label: 'Line', defaul
   FieldSpec('base_salary_component_id', 'Percentage of', kind: FieldKind.choice, choiceKey: 'salary_components', hint: 'For "% of another component"'),
   FieldSpec('max_monthly_minor', 'Monthly cap (₹)', kind: FieldKind.money),
   FieldSpec('applies_when', 'Applies', kind: FieldKind.select, required: true, options: ['ALWAYS', 'PF_APPLICABLE', 'ESI_APPLICABLE'], optionLabels: appliesWhenLabels),
-]);
-
-/// `PUT …/versions/{id}/lines` — replaces every line of a draft.
-const structureLinesSpec = FormSpec(name: 'structure_lines', label: 'Lines', fields: [
-  FieldSpec('lines', 'Lines', kind: FieldKind.rows, required: true, rowNoun: 'line', orderKey: 'display_order', rowSpec: structureLineSpec),
 ]);
 
 final salaryStructureResource = ResourceConfig(
@@ -120,7 +116,7 @@ final salaryStructureResource = ResourceConfig(
 bool hasCurrentVersion(Map<String, dynamic> s) =>
     s['is_active'] != false && ((s['versions'] as List?) ?? const []).any((v) => v is Map && v['status'] == 'PUBLISHED' && v['effective_to'] == null);
 
-/// One line of a structure as text (mirrors the web `describeLine`).
+/// One line of a structure as text (mirrors `describeLine` in web's salary-structures/[id]/page.tsx).
 String describeStructureLine(Map<String, dynamic> line, List<Map<String, dynamic>> allLines) {
   String baseName() {
     final id = line['base_salary_component_id'];
@@ -131,14 +127,14 @@ String describeStructureLine(Map<String, dynamic> line, List<Map<String, dynamic
   }
 
   var text = switch (line['calculation_type']) {
-    'FIXED' => '${formatInr((line['amount_monthly_minor'] as num?) ?? 0)} a month',
+    'FIXED' => formatInr((line['amount_monthly_minor'] as num?) ?? 0),
     'PERCENTAGE_OF_CTC' => '${line['percentage']}% of monthly CTC',
     'PERCENTAGE_OF_GROSS' => '${line['percentage']}% of gross',
     'PERCENTAGE_OF_COMPONENT' => '${line['percentage']}% of ${baseName()}',
     'BALANCING' => 'Balance of gross',
     final other => '$other',
   };
-  if (line['max_monthly_minor'] != null) text += ', capped at ${formatInr(line['max_monthly_minor'] as num)}';
+  if (line['max_monthly_minor'] != null) text += ', at most ${formatInr(line['max_monthly_minor'] as num)}';
   final applies = line['applies_when'];
   if (applies != null && applies != 'ALWAYS') text += ' (${(appliesWhenLabels[applies] ?? '$applies').toLowerCase()})';
   return text;

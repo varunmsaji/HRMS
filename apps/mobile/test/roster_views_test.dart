@@ -177,6 +177,19 @@ void main() {
       expect(find.text('Person 1'), findsNothing);
     });
 
+    testWidgets('search finds someone by a legal name hidden behind their display name', (tester) async {
+      final api = FakeApiClient(lists: {
+        '/shifts': const [_general, _night],
+        '/employees': [_employee(1), {..._employee(2), 'first_name': 'Ashwini', 'middle_name': 'Kumari', 'last_name': 'Rao', 'display_name': 'Ash'}],
+        '/rosters': const <Map<String, dynamic>>[],
+      });
+      await _pump(tester, api, screen());
+      await tester.enterText(find.byType(TextField), 'kumari');
+      await tester.pumpAndSettle();
+      expect(find.text('Ash'), findsOneWidget);
+      expect(find.text('Person 1'), findsNothing);
+    });
+
     testWidgets('a manager taps someone, picks a shift, and can undo it', (tester) async {
       final api = _api(objects: {
         '/rosters': _entry('r-9', 'e-1', status: 'DRAFT', version: 1),

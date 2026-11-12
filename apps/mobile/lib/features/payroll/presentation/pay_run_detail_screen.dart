@@ -321,7 +321,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
               ),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
-                  Expanded(child: Text(_entityName ?? 'Legal entity', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16))),
+                  Expanded(child: Text(_entityName ?? 'Company', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16))),
                   StatusChip.status(run.status),
                 ]),
                 const SizedBox(height: 4),
@@ -386,7 +386,7 @@ class _PayRunDetailScreenState extends ConsumerState<PayRunDetailScreen> {
             if (run.status == 'DRAFT')
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text('Lock the inputs once this month\'s attendance period for the legal entity is closed. Everything the pay is computed from is copied into the run at that moment.', style: TextStyle(color: scheme.onSurfaceVariant)),
+                child: Text('Lock the inputs once this month\'s attendance period for the company is closed. Everything the pay is computed from is copied into the run at that moment.', style: TextStyle(color: scheme.onSurfaceVariant)),
               ),
             if (run.status == 'COMPUTED' && (run.errorCount > 0 || run.varianceOpenCount > 0))
               Container(

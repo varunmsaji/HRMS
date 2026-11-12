@@ -71,6 +71,12 @@ class Employee {
     return [firstName, middleName, lastName].where((p) => p != null && p.trim().isNotEmpty).join(' ');
   }
 
+  /// What a name search matches (mirrors web's `employeeNameSearchText`): the display name and
+  /// every part of the legal name, so someone shown by a preferred name is still found by their
+  /// first, middle or last name.
+  String get nameSearchText =>
+      [displayName, firstName, middleName, lastName].map((p) => p?.trim()).where((p) => p != null && p.isNotEmpty).join(' ');
+
   factory Employee.fromJson(Map<String, dynamic> json) => Employee(
         id: json['id'] as String,
         employeeCode: json['employee_code'] as String,
