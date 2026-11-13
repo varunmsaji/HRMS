@@ -6,12 +6,16 @@
 --
 -- Idempotent and re-runnable (run it again on a later day to extend the window to that day):
 --   * every row it writes is tagged ('MOCK-SEED-GAP' punches, {"mock_gap_seed": true} snapshots,
---     'mock-gap-seed' reasons) and removed first;
+--     'mock-gap-seed' reasons) and removed first - but only for days it still owns: a day the
+--     attendance engine has recalculated since (tag gone) keeps its punches and requests;
 --   * it never touches or replaces an employee-day that already has an attendance row.
+-- Afterwards run `.venv/bin/python scripts/seed_mock_payroll.py current` (API up): the engine
+-- re-decides the weekends written here and realigns any day whose punches miss the roster.
 --
 -- Shape of the data (deterministic per employee + date, so a re-run reproduces it):
 --   * working days: ~85% present (some late, some leave early), a few half days, a few absent,
---     a few with a missing OUT punch; weekly offs follow each employee's pattern of the week before;
+--     a few with a missing OUT punch; shift and week-offs from the published roster when there is
+--     one, else the assignment's shift and the employee's weekend of the week before;
 --   * today: only what has happened by the time the script runs - people checked in and still
 --     working, the rest not yet checked in (the overview reads these as PRESENT / NOT_CHECKED_IN);
 --   * leave: approved leave covering today and recent days, upcoming approved leave, pending
@@ -32,11 +36,20 @@ DO $$ BEGIN
 END $$;
 
 -- ---- clean previous run ---------------------------------------------------------------------
+-- Only what still hangs off a day this script owns: a day the attendance engine has since
+-- recalculated (e.g. by scripts/seed_mock_payroll.py) loses the tag and keeps its punches and
+-- requests, so re-running never strips the punches out from under an engine-calculated day.
+CREATE TEMP TABLE _owned ON COMMIT DROP AS
+SELECT id, employee_id, attendance_date FROM attendance_day
+WHERE company_id = (SELECT company_id FROM _co) AND computation_snapshot @> '{"mock_gap_seed": true}';
+
 DELETE FROM attendance_regularization_requested_punch WHERE request_id IN
   (SELECT id FROM attendance_regularization_request
-   WHERE reason = 'mock-gap-seed' AND company_id = (SELECT company_id FROM _co));
+   WHERE reason = 'mock-gap-seed' AND company_id = (SELECT company_id FROM _co)
+     AND (attendance_day_id IS NULL OR attendance_day_id IN (SELECT id FROM _owned)));
 DELETE FROM attendance_regularization_request
-  WHERE reason = 'mock-gap-seed' AND company_id = (SELECT company_id FROM _co);
+  WHERE reason = 'mock-gap-seed' AND company_id = (SELECT company_id FROM _co)
+    AND (attendance_day_id IS NULL OR attendance_day_id IN (SELECT id FROM _owned));
 DELETE FROM leave_ledger
   WHERE company_id = (SELECT company_id FROM _co) AND reason LIKE 'mock-gap-seed%';
 DELETE FROM leave_application_day WHERE leave_application_id IN
@@ -45,10 +58,11 @@ DELETE FROM leave_day_projection WHERE leave_application_id IN
   (SELECT id FROM leave_application WHERE reason = 'mock-gap-seed' AND company_id = (SELECT company_id FROM _co));
 DELETE FROM leave_application
   WHERE reason = 'mock-gap-seed' AND company_id = (SELECT company_id FROM _co);
-DELETE FROM attendance_day
-  WHERE company_id = (SELECT company_id FROM _co) AND computation_snapshot @> '{"mock_gap_seed": true}';
 DELETE FROM punch
-  WHERE company_id = (SELECT company_id FROM _co) AND reference = 'MOCK-SEED-GAP';
+  WHERE company_id = (SELECT company_id FROM _co) AND reference = 'MOCK-SEED-GAP'
+    AND idempotency_key IN (SELECT 'mock-gap-' || employee_id || '-' || attendance_date || '-' || dir
+                            FROM _owned CROSS JOIN (VALUES ('IN'), ('OUT')) AS v(dir));
+DELETE FROM attendance_day WHERE id IN (SELECT id FROM _owned);
 
 -- ---- who and when ---------------------------------------------------------------------------
 CREATE TEMP TABLE _emp ON COMMIT DROP AS
@@ -154,22 +168,45 @@ FROM _plan_days d;
 -- ---- attendance: one decision per employee-day that has no row yet ---------------------------
 CREATE TEMP TABLE _gen ON COMMIT DROP AS
 WITH base AS (
-  SELECT em.*, d::date AS day,
+  -- A published roster entry decides the day: its shift (e.g. someone rotated onto Evening) or a
+  -- week off. Without one, the assignment's shift, and a weekend repeats the week before (a
+  -- one-off SPECIAL_WORKING exception, or a rostered-off day, is not repeated).
+  SELECT em.employee_id, em.company_id, em.user_id, em.employee_code,
+         coalesce(rs.shift_id, em.shift_id) AS shift_id,
+         coalesce(rv.id, em.shift_version_id) AS shift_version_id,
+         coalesce(rv.start_time, em.start_time) AS start_time,
+         coalesce(rv.end_time, em.end_time) AS end_time,
+         coalesce(rv.end_time < rv.start_time, em.crosses_midnight) AS crosses_midnight,
+         em.work_calendar_id, em.attendance_policy_version_id,
+         em.overtime_policy_version_id, em.regularization_policy_version_id, em.tz, em.fresh,
+         d::date AS day,
          abs(hashtext(em.employee_id::text || d::date::text)) % 100 AS r,
-         CASE WHEN extract(isodow FROM d) >= 6
-              THEN coalesce((SELECT x.calendar_day_type FROM attendance_day x
+         CASE WHEN rs.is_week_off_override THEN 'WEEKLY_OFF'
+              WHEN rs.shift_id IS NOT NULL THEN 'WORKING'
+              WHEN extract(isodow FROM d) >= 6
+              THEN coalesce((SELECT CASE WHEN x.calendar_day_type = 'WORKING'
+                                          AND x.attendance_status <> 'NOT_EXPECTED'
+                                         THEN 'WORKING' ELSE 'WEEKLY_OFF' END
+                             FROM attendance_day x
                              WHERE x.employee_id = em.employee_id AND x.attendance_date = d::date - 7),
                             'WEEKLY_OFF')
               ELSE 'WORKING' END AS day_type
   FROM _emp em
   CROSS JOIN generate_series(DATE '2026-10-27', current_date, interval '1 day') AS d
+  LEFT JOIN shift_roster rs ON rs.employee_id = em.employee_id AND rs.roster_date = d::date
+                           AND rs.status = 'PUBLISHED' AND rs.deleted_at IS NULL
+  LEFT JOIN LATERAL (SELECT * FROM shift_version v WHERE v.shift_id = rs.shift_id AND v.status = 'PUBLISHED'
+                     ORDER BY v.version DESC LIMIT 1) rv ON true
   WHERE NOT EXISTS (SELECT 1 FROM attendance_day x WHERE x.employee_id = em.employee_id AND x.attendance_date = d::date)
 ), sched AS (
   SELECT b.*,
          (b.day + b.start_time) AT TIME ZONE b.tz AS s_start,
          (b.day + CASE WHEN b.crosses_midnight THEN 1 ELSE 0 END + b.end_time) AT TIME ZONE b.tz AS s_end,
-         EXISTS (SELECT 1 FROM _plan_days l WHERE l.employee_id = b.employee_id AND l.day = b.day
-                 AND l.status = 'APPROVED') AS on_leave
+         (EXISTS (SELECT 1 FROM _plan_days l WHERE l.employee_id = b.employee_id AND l.day = b.day
+                  AND l.status = 'APPROVED')
+          -- approved full-day leave from any other seed or real request counts too
+          OR EXISTS (SELECT 1 FROM leave_day_projection pr WHERE pr.employee_id = b.employee_id
+                     AND pr.attendance_date = b.day AND pr.status = 'APPROVED' AND pr.fraction >= 1)) AS on_leave
   FROM base b
 ), planned AS (
   SELECT s.*,
