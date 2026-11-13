@@ -112,6 +112,10 @@ export function punctualitySummary(rows: AttendanceDay[]): PunctualitySummary {
   const counts = new Map<string, number>(LATE_BANDS.map((b) => [b.key, 0]));
   for (const day of rows) {
     if (!day.actual_first_in) continue;
+    // Checked in but no complete IN/OUT pair yet (mid-shift, or a forgotten checkout): the engine
+    // records the arrival but judges lateness only on complete pairs, so leave it out rather
+    // than count it as on time.
+    if (!day.actual_last_out) continue;
     checkedIn += 1;
     if (!day.is_late) continue;
     late += 1;

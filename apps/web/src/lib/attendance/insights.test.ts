@@ -63,6 +63,8 @@ describe("punctualitySummary", () => {
       makeDay({ employee_id: "c", is_late: true, late_minutes: 45 }),
       makeDay({ employee_id: "d", is_late: true, late_minutes: 90 }),
       makeAbsentDay({ employee_id: "e" }),
+      // Checked in, not out yet: lateness is not judged until the day has a complete pair.
+      makeDay({ employee_id: "f", actual_last_out: null, missing_punch: true, worked_minutes: 0 }),
     ];
     const s = punctualitySummary(rows);
     expect(s.checkedIn).toBe(4);

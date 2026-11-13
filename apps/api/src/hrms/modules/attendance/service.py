@@ -4343,6 +4343,55 @@ class AttendanceDayService:
             "calculated_at": datetime.now(UTC),
         }
 
+    async def _prior_day_window_end(
+        self,
+        organisation_service: Any,
+        assignment_service: Any,
+        *,
+        company_id: UUID,
+        employee_id: UUID,
+        target_date: date,
+        company_timezone: str,
+        load_start: datetime,
+    ) -> datetime | None:
+        """Where the previous date's shift stops loading punches, if that is after this date's
+        own window starts (an overnight shift). Resolved the same way the previous date's own
+        calculation resolves its shift: published roster row first, then the assignment."""
+        prior_date = target_date - timedelta(days=1)
+        assignment = await assignment_service.get_assignment_as_of(
+            company_id, employee_id, prior_date
+        )
+        roster_entry = await self._roster_repo.get_published_for_date(
+            self._session, company_id=company_id, employee_id=employee_id, roster_date=prior_date
+        )
+        shift_id = (
+            roster_entry.shift_id
+            if roster_entry is not None
+            else (assignment.shift_id if assignment else None)
+        )
+        if shift_id is None:
+            return None
+        branch_timezone: str | None = None
+        if assignment is not None and assignment.branch_id is not None:
+            branch_timezone = (
+                await organisation_service.get_branch(company_id, assignment.branch_id)
+            ).timezone
+        try:
+            prior = await _resolve_shift_schedule(
+                organisation_service,
+                company_id=company_id,
+                shift_id=shift_id,
+                target_date=prior_date,
+                branch_timezone=branch_timezone,
+                company_timezone=company_timezone,
+            )
+        except (TimezoneConfigurationError, ZoneInfoNotFoundError):
+            # The previous date fails on its own; this date keeps every punch it loaded.
+            return None
+        if prior.shift_inputs is None or prior.window.load_end <= load_start:
+            return None
+        return prior.window.load_end
+
     async def _build_calculation_input(
         self, company_id: UUID, employee_id: UUID, target_date: date
     ) -> tuple[
@@ -4435,6 +4484,21 @@ class AttendanceDayService:
         shift_version_id = schedule.shift_version_id
         tz_name = schedule.tz_name
         window = schedule.window
+
+        # A date with no shift loads its whole calendar day, which can include the morning end
+        # of the previous date's overnight shift. Hand the engine where that shift's punch
+        # window ends so those punches stay with the previous date.
+        prior_day_window_end: datetime | None = None
+        if shift_inputs is None and population_status == "ACTIVE":
+            prior_day_window_end = await self._prior_day_window_end(
+                organisation_service,
+                assignment_service,
+                company_id=company_id,
+                employee_id=employee_id,
+                target_date=target_date,
+                company_timezone=company.timezone,
+                load_start=window.load_start,
+            )
 
         calendar_result = await calendar_service.resolve_for_employee(
             company_id, employee_id, target_date
@@ -4749,6 +4813,7 @@ class AttendanceDayService:
             on_duty_approved=on_duty_approved,
             break_events=break_events,
             day_open=day_open,
+            prior_day_window_end=prior_day_window_end,
         )
         resolved_refs: dict[str, UUID | None] = {
             "shift_id": shift_id,

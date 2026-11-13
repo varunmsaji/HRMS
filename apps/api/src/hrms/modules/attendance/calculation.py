@@ -65,7 +65,11 @@ from hrms.shared.timezone import TimezoneConfigurationError, resolve_zoneinfo
 #: 9 = an ON_DUTY day that does not require punches earns no overtime (F11, D-5).
 #: 10 = an OUT and an IN at the same instant pair OUT first, so the result no longer depends on the
 #: order the punches were loaded in.
-ENGINE_VERSION = 10
+#: 11 = on a day with no shift, punches inside the previous day's overnight punch window are left
+#: to that day (a night worker's rostered week-off is no longer INCOMPLETE).
+#: 12 = a day with an IN and no complete pair (checked in, not yet out) records that IN as
+#: `actual_first_in`, so the overview counts a mid-shift employee as present.
+ENGINE_VERSION = 12
 
 # ---------------------------------------------------------------------------
 # Inputs
@@ -286,6 +290,10 @@ class AttendanceCalculationInput:
     # day it is *unresolved* and needs review.
     break_events: list[BreakEventData] = field(default_factory=list)
     day_open: bool = False
+    # UTC end of the previous date's shift punch window, when that window reaches into this
+    # date (an overnight shift). Resolved by `service.py`, and only used when this date has no
+    # shift: punches at or before it belong to the previous date, not to this one.
+    prior_day_window_end: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -658,6 +666,21 @@ def pair_punches(punches: list[PunchData]) -> PairingResult:
         orphans.append(pending_in)
 
     return PairingResult(pairs=pairs, orphans=orphans)
+
+
+def recorded_first_in(pairing: PairingResult) -> datetime | None:
+    """When the employee arrived, as stored on `attendance_day.actual_first_in`.
+
+    With a complete pair it is the first pair's IN, exactly as before. With none (checked in and
+    not yet checked out, or a forgotten checkout) it is the earliest unpaired IN: the arrival is
+    real even though the day is unfinished. This is a record only. Lateness, worked time,
+    `missing_punch` and the status still come from complete pairs, so a day still in progress is
+    not judged on half its punches. The engine has no clock; the overview decides from this and
+    the shift end whether an open IN is "present" or a missing checkout."""
+    if pairing.pairs:
+        return pairing.pairs[0][0].punch_time
+    ins = [p.punch_time for p in pairing.orphans if p.direction == "IN"]
+    return min(ins) if ins else None
 
 
 def presence_span(
@@ -1280,6 +1303,8 @@ class DayPresence:
 
     first_in: datetime | None
     last_out: datetime | None
+    #: `first_in`, or the open IN when there is no pair (see `recorded_first_in`).
+    recorded_first_in: datetime | None
     gaps: list[tuple[datetime, datetime]]
     breaks: list[MatchedBreak]
     totals: BreakTotals
@@ -1339,8 +1364,10 @@ def evaluate_presence_and_breaks(
         if first_in is not None and last_out is not None
         else 0
     )
+    recorded_in = recorded_first_in(pairing)
     snapshot["presence"] = {
-        "first_in": first_in.isoformat() if first_in else None,
+        "first_in": recorded_in.isoformat() if recorded_in else None,
+        "first_in_unpaired": first_in is None and recorded_in is not None,
         "last_out": last_out.isoformat() if last_out else None,
         "gross_minutes": gross_minutes,
         "unpaid_break_minutes": totals.unpaid_minutes,
@@ -1355,6 +1382,7 @@ def evaluate_presence_and_breaks(
     return DayPresence(
         first_in=first_in,
         last_out=last_out,
+        recorded_first_in=recorded_in,
         gaps=gaps,
         breaks=computation.breaks,
         totals=totals,
@@ -1608,6 +1636,9 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
             "roster_week_off_override": inputs.roster_week_off_override,
             "roster_holiday_working_override": inputs.roster_holiday_working_override,
             "early_departure_pre_approved": inputs.early_departure_pre_approved,
+            "prior_day_window_end": (
+                inputs.prior_day_window_end.isoformat() if inputs.prior_day_window_end else None
+            ),
             "on_duty_approved": inputs.on_duty_approved,
             "weekly_off_fraction": inputs.weekly_off_fraction,
             "pay_basis": inputs.pay_basis,
@@ -1631,6 +1662,18 @@ def evaluate_day(inputs: AttendanceCalculationInput) -> AttendanceCalculationRes
         resolve_zoneinfo(inputs.timezone)
     except TimezoneConfigurationError:
         return _terminal_result("CONFIG_ERROR", inputs, snapshot, reason="unresolvable_timezone")
+
+    # A day with no shift loads the whole local calendar day, so it also sees the morning end of
+    # the previous day's overnight shift. Those punches are already counted by that day (they
+    # fall inside its punch window); counting them here too turned a night worker's rostered
+    # week-off into INCOMPLETE with a missing punch. Done before the None checks below so
+    # replacing `inputs` does not undo their narrowing.
+    if inputs.shift is None and inputs.prior_day_window_end is not None:
+        cutoff = inputs.prior_day_window_end
+        claimed = [p for p in inputs.punches if p.punch_time <= cutoff]
+        if claimed:
+            snapshot["prior_day_claimed_punch_ids"] = [str(p.id) for p in claimed]
+            inputs = replace(inputs, punches=[p for p in inputs.punches if p.punch_time > cutoff])
 
     # §19.1 step 6 — calendar resolution failure (WD-21 fail closed)
     if inputs.calendar_day_type is None:
@@ -2014,7 +2057,7 @@ def _evaluate_no_schedule(
         window_seconds=(inputs.policy.duplicate_punch_window_seconds if inputs.policy else 60),
     )
     pairing = pair_punches(drop_stray_punches(collapsed, snapshot))
-    first_in, last_out, gross_minutes, _gaps = presence_span(
+    _first_in, last_out, gross_minutes, _gaps = presence_span(
         pairing.pairs, mode=inputs.policy.multi_punch_mode if inputs.policy else "PAIR_ALL"
     )
     snapshot["no_schedule"] = True
@@ -2027,7 +2070,7 @@ def _evaluate_no_schedule(
         scheduled_start=None,
         scheduled_end=None,
         scheduled_minutes=None,
-        actual_first_in=first_in,
+        actual_first_in=recorded_first_in(pairing),
         actual_last_out=last_out,
         worked_minutes=gross_minutes,
         unpaid_break_minutes=0,
@@ -2391,7 +2434,7 @@ def _evaluate_fixed_or_flex(
         scheduled_end=inputs.scheduled_end,
         scheduled_minutes=scheduled_minutes,
         unpaid_off_fraction=unpaid_off_fraction,
-        actual_first_in=first_in,
+        actual_first_in=presence.recorded_first_in,
         actual_last_out=last_out,
         worked_minutes=worked_minutes,
         unpaid_break_minutes=unpaid_minutes,
@@ -2570,7 +2613,7 @@ def _evaluate_split(
         scheduled_end=inputs.scheduled_end,
         scheduled_minutes=shift.required_minutes,
         unpaid_off_fraction=unpaid_off_fraction,
-        actual_first_in=first_in,
+        actual_first_in=presence.recorded_first_in,
         actual_last_out=last_out,
         worked_minutes=worked_minutes,
         unpaid_break_minutes=unpaid_minutes,

@@ -614,6 +614,70 @@ def test_evaluate_day_roster_week_off_override_with_punches_still_evaluates_pres
     assert result.attendance_status == "PRESENT"
 
 
+def _roster_week_off_after_night_shift(punches: list[PunchData]) -> AttendanceCalculationInput:
+    """Sunday 8 Nov 2026 (IST): a published roster week-off (no shift), also a holiday. The
+    previous day's 21:00-06:00 night shift loads punches up to 08:00 IST (06:00 + 2h pad)."""
+    return _base_input(
+        attendance_date=date(2026, 11, 8),
+        calendar_day_type="HOLIDAY",
+        holiday_name="Diwali",
+        shift=None,
+        scheduled_start=None,
+        scheduled_end=None,
+        roster_week_off_override=True,
+        prior_day_window_end=datetime(2026, 11, 8, 2, 30, tzinfo=UTC),
+        punches=punches,
+    )
+
+
+def _night_shift_out() -> PunchData:
+    """7 Nov's night-shift OUT at 06:23 IST on 8 Nov."""
+    return PunchData(
+        id=uuid4(), punch_time=datetime(2026, 11, 8, 0, 53, tzinfo=UTC), direction="OUT"
+    )
+
+
+def test_evaluate_day_roster_week_off_ignores_previous_night_shift_out() -> None:
+    """The night shift's OUT already belongs to 7 Nov (inside its punch window). It must not
+    make the week-off an INCOMPLETE day with a missing punch."""
+    out = _night_shift_out()
+    result = evaluate_day(_roster_week_off_after_night_shift([out]))
+    assert result.attendance_status == "NOT_EXPECTED"
+    assert result.missing_punch is False
+    assert result.snapshot["prior_day_claimed_punch_ids"] == [str(out.id)]
+
+
+def test_evaluate_day_roster_week_off_still_records_work_after_previous_night_shift() -> None:
+    """Genuine work later on the week-off still counts; only the earlier day's OUT is set aside."""
+    work = [
+        PunchData(id=uuid4(), punch_time=datetime(2026, 11, 8, 4, 30, tzinfo=UTC), direction="IN"),
+        PunchData(id=uuid4(), punch_time=datetime(2026, 11, 8, 8, 30, tzinfo=UTC), direction="OUT"),
+    ]
+    result = evaluate_day(_roster_week_off_after_night_shift([_night_shift_out(), *work]))
+    assert result.attendance_status == "PRESENT"
+    assert result.missing_punch is False
+    assert result.worked_minutes == 240
+    assert result.actual_first_in == work[0].punch_time
+
+
+def test_evaluate_day_missing_shift_ignores_previous_night_shift_out() -> None:
+    """Same rule on a plain no-shift day (no roster week-off): the earlier day's OUT is not this
+    day's punch, so the missing-shift outcome applies, not a missing punch."""
+    result = evaluate_day(
+        _base_input(
+            attendance_date=date(2026, 11, 8),
+            shift=None,
+            scheduled_start=None,
+            scheduled_end=None,
+            policy=_policy(missing_shift_behaviour="ABSENT"),
+            prior_day_window_end=datetime(2026, 11, 8, 2, 30, tzinfo=UTC),
+            punches=[_night_shift_out()],
+        )
+    )
+    assert result.attendance_status == "ABSENT"
+    assert result.missing_punch is False
+
+
 def test_evaluate_day_roster_holiday_working_override_present() -> None:
     """architecture's explicit example: assignment default is a normal shift, roster marks a
     holiday as a working day for this one employee — the calendar stays HOLIDAY, but the shift
@@ -1349,3 +1413,90 @@ def test_fixed_late_minutes_still_count_from_the_shift_start() -> None:
     )
     assert result.late_minutes == 15
     assert result.is_late is True
+
+
+# ---------------------------------------------------------------------------
+# Open IN — checked in, not yet checked out
+# ---------------------------------------------------------------------------
+
+
+def test_open_in_records_actual_first_in() -> None:
+    """A lone IN (shift still running, or a forgotten checkout) has no pair, but the employee did
+    arrive. `actual_first_in` records it so the overview can show them as checked in; the day is
+    still unfinished, so it stays INCOMPLETE with a missing punch."""
+    check_in = _punch(3, 30, "IN", day=10)
+    result = evaluate_day(_base_input(punches=[check_in]))
+    assert result.actual_first_in == check_in.punch_time
+    assert result.actual_last_out is None
+    assert result.attendance_status == "INCOMPLETE"
+    assert result.missing_punch is True
+    assert result.worked_minutes == 0
+    assert result.snapshot["presence"]["first_in"] == check_in.punch_time.isoformat()
+    assert result.snapshot["pairing"]["orphans"] == [str(check_in.id)]
+
+
+def test_open_in_does_not_change_late_or_status() -> None:
+    """Recording the open IN is display only: lateness and status still come from complete
+    pairs, so an unfinished day is not judged on half its punches."""
+    check_in = _punch(5, 0, "IN", day=10)  # 90 min after the 09:30 IST start
+    result = evaluate_day(_base_input(punches=[check_in]))
+    assert result.actual_first_in == check_in.punch_time
+    assert result.is_late is False
+    assert result.late_minutes == 0
+    assert result.attendance_status == "INCOMPLETE"
+
+
+def test_open_in_uses_earliest_in_when_no_pair() -> None:
+    first = _punch(3, 30, "IN", day=10)
+    second = _punch(7, 0, "IN", day=10)  # hours later: kept as a separate IN, still no OUT
+    result = evaluate_day(_base_input(punches=[first, second]))
+    assert result.actual_first_in == first.punch_time
+
+
+def test_open_in_after_a_pair_keeps_paired_first_in() -> None:
+    first = _punch(3, 30, "IN", day=10)
+    punches = [first, _punch(7, 30, "OUT", day=10), _punch(8, 30, "IN", day=10)]
+    result = evaluate_day(_base_input(punches=punches))
+    assert result.actual_first_in == first.punch_time
+    assert result.missing_punch is True
+
+
+def test_lone_out_records_no_first_in() -> None:
+    result = evaluate_day(_base_input(punches=[_punch(12, 30, "OUT", day=10)]))
+    assert result.actual_first_in is None
+
+
+def test_open_in_records_actual_first_in_without_schedule() -> None:
+    check_in = _punch(3, 30, "IN", day=10)
+    result = evaluate_day(
+        _base_input(shift=None, scheduled_start=None, scheduled_end=None, punches=[check_in])
+    )
+    assert result.actual_first_in == check_in.punch_time
+    assert result.attendance_status == "INCOMPLETE"
+
+
+def test_open_in_records_actual_first_in_on_split_shift() -> None:
+    shift = _shift(
+        shift_type="SPLIT",
+        duty_blocks=[
+            ShiftDutyBlockData(
+                sequence=1, start_time=time(9, 0), end_time=time(13, 0), crosses_midnight=False
+            ),
+            ShiftDutyBlockData(
+                sequence=2, start_time=time(14, 0), end_time=time(18, 0), crosses_midnight=False
+            ),
+        ],
+        required_minutes=480,
+    )
+    check_in = _punch(9, 0, "IN", day=10)
+    result = evaluate_day(
+        _base_input(
+            shift=shift,
+            punches=[check_in],
+            timezone="UTC",
+            scheduled_start=None,
+            scheduled_end=None,
+        )
+    )
+    assert result.actual_first_in == check_in.punch_time
+    assert result.missing_punch is True

@@ -203,6 +203,78 @@ async def test_roster_week_off_override_marks_not_expected(
         await _cleanup(company_id=company_id, user_id=user_id)
 
 
+async def _publish_roster(
+    client: AsyncClient, headers: dict[str, str], body: dict[str, Any]
+) -> None:
+    created = await client.post("/v1/rosters", headers=headers, json=body)
+    assert created.status_code == 201, created.text
+    published = await client.post(
+        f"/v1/rosters/{created.json()['data']['id']}/publish",
+        headers={**headers, "If-Match": "1"},
+        json={},
+    )
+    assert published.status_code == 200, published.text
+
+
+async def test_roster_week_off_after_night_shift_leaves_the_overnight_out_to_the_shift_day(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """A night shift on 10 Aug ends at 06:00 on 11 Aug, a rostered week-off with no shift. The
+    OUT belongs to 10 Aug; 11 Aug loads its whole calendar day and must not pick it up and
+    become INCOMPLETE with a missing punch."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        night_shift = await _create_night_shift(client, headers)
+        await _publish_roster(
+            client,
+            headers,
+            {
+                "employee_id": employee_id,
+                "roster_date": "2026-08-10",
+                "shift_id": night_shift["id"],
+            },
+        )
+        await _publish_roster(
+            client,
+            headers,
+            {"employee_id": employee_id, "roster_date": "2026-08-11", "is_week_off_override": True},
+        )
+        await _punch(client, headers, employee_id=employee_id, hour=21, minute=55, direction="IN")
+        await _punch(
+            client,
+            headers,
+            employee_id=employee_id,
+            hour=6,
+            minute=23,
+            direction="OUT",
+            day="2026-08-11",
+        )
+
+        shift_day = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-10"},
+        )
+        assert shift_day.status_code == 200, shift_day.text
+        assert shift_day.json()["data"]["attendance_status"] == "PRESENT"
+
+        week_off = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-11"},
+        )
+        assert week_off.status_code == 200, week_off.text
+        data = week_off.json()["data"]
+        assert data["attendance_status"] == "NOT_EXPECTED"
+        assert data["missing_punch"] is False
+        assert len(data["computation_snapshot"]["prior_day_claimed_punch_ids"]) == 1
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)
+
+
 async def test_roster_null_shift_without_override_falls_through_to_missing_shift_behaviour(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
