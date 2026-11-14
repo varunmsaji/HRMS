@@ -16,13 +16,12 @@ const SHOWN = 8;
 interface BreakdownPanelProps {
   byDepartment: GroupStat[];
   byBranch: GroupStat[];
-  /** The department / branch filter currently applied, if any. */
+  /** The department / branch filter currently applied (an id or "unassigned"), if any. */
   active: { department: string; branch: string };
-  /** Clicking a row narrows the whole dashboard to that department / branch (clicking it again clears it). */
-  onSelect: (key: BreakdownKey, name: string) => void;
+  /** Clicking a row narrows the whole dashboard to that department / branch (clicking it again
+   * clears it). `value` is the group's filter value. */
+  onSelect: (key: BreakdownKey, value: string) => void;
   focusLabel: string;
-  /** Set when the figures cover only some employees (the directory has a request ceiling). */
-  partialNote?: string | null;
 }
 
 function Row({ stat, selected, onClick, label }: { stat: GroupStat; selected: boolean; onClick: () => void; label: string }) {
@@ -60,7 +59,7 @@ function Row({ stat, selected, onClick, label }: { stat: GroupStat; selected: bo
 
 /** Attendance for each department or branch on the focus day, lowest first, so the places that need
  * a look are at the top. A row is also a filter: clicking it narrows the whole dashboard. */
-export function BreakdownPanel({ byDepartment, byBranch, active, onSelect, focusLabel, partialNote }: BreakdownPanelProps) {
+export function BreakdownPanel({ byDepartment, byBranch, active, onSelect, focusLabel }: BreakdownPanelProps) {
   const [key, setKey] = useState<BreakdownKey>("department");
   const [showAll, setShowAll] = useState(false);
   const stats = key === "department" ? byDepartment : byBranch;
@@ -105,8 +104,8 @@ export function BreakdownPanel({ byDepartment, byBranch, active, onSelect, focus
       ) : (
         <ul className="space-y-2">
           {shown.map((stat) => {
-            const selected = (key === "department" ? active.department : active.branch) === stat.name;
-            return <Row key={stat.name} stat={stat} selected={selected} label={label.one} onClick={() => onSelect(key, stat.name)} />;
+            const selected = (key === "department" ? active.department : active.branch) === stat.key;
+            return <Row key={stat.key} stat={stat} selected={selected} label={label.one} onClick={() => onSelect(key, stat.key)} />;
           })}
         </ul>
       )}
@@ -116,7 +115,6 @@ export function BreakdownPanel({ byDepartment, byBranch, active, onSelect, focus
           {showAll ? "Show fewer" : `Show all ${stats.length} ${label.many}`}
         </Button>
       ) : null}
-      {partialNote ? <p className="text-xs text-foreground-muted">{partialNote}</p> : null}
     </div>
   );
 }

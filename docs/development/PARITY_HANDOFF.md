@@ -1,10 +1,33 @@
 # Web / mobile parity: handoff
 
-Written 3 Nov 2026, updated 12 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 0.
+Written 3 Nov 2026, updated 14 Nov 2026. Say **"start this"** (or "continue the parity work from PARITY_HANDOFF.md") and begin at section 0.
 
 Read first: [MOBILE_PARITY_PLAN.md](MOBILE_PARITY_PLAN.md) (the full plan and the parity matrix G1 to G14). This file records what is done, what is left, how to run things, and the traps.
 
-## 0c. Review on 12 Nov 2026 (newest; read first)
+## 0d. Audit on 14 Nov 2026 (newest; read first)
+
+Re-checked routes and every API endpoint (227 web endpoint templates; only `/attendance-policies/form-context` and the platform console's account unlock have no mobile call), then every web change since 12 Nov. Closed on mobile:
+
+| Gap | Mobile now has | Main files (`apps/mobile/lib/`) |
+|---|---|---|
+| On-time rate | Days with a check-in but no check-out are left out of punctuality, as web has done since engine v12 (13 Nov). Before, mobile counted them as on time, so the two apps showed different rates | `features/attendance/domain/attendance_pulse.dart` |
+| Dashboard branch | Web's branch picker (shown with more than one active branch): narrows the attendance overview and every insights card | `features/dashboard/` |
+| Onboarding compensation | Removed. The API stopped reviewing `compensation_info` on 14 Oct and web stopped asking, but mobile's candidate wizard still required an annual CTC, which activation turns into the employee's compensation row | `features/onboarding/domain/onboarding_form_spec.dart` |
+| Onboarding login link | "Send login link" on an activated case (`EMPLOYEE.INVITE`), with the link to copy, as on web | `onboarding_case_detail_screen.dart` |
+| Onboarding face enrollment | Web's card: required or not, state, "requirement met" | same |
+| Onboarding review progress | Web's next step, items verified, per-section and per-document counts | same |
+
+Beyond web: when the employee record's Invite can't email, mobile now shows the link to share (it only said "share the link manually").
+
+**Candidate pay closed (API):** `compensation_info` is no longer a section. The public `PATCH` rejects it with `INVALID_SECTION`, and activation never creates compensation from the case, including old cases that already hold a candidate-entered figure. HR sets pay on the employee record. **Still open:** Settings guide, employee Home items (owner's call), the web toast for new notifications (mobile updates the badge only).
+
+**Calculated twice:** per-day attendance is computed only by the API engine, but the insights figures (rates, punctuality, weekday absence, KPIs) are aggregated separately in `web/src/lib/attendance/insights.ts` and `mobile/.../attendance_pulse.dart`. That is how the on-time gap appeared; moving these aggregates to an API endpoint would stop it recurring. **Web read only the first 500 days (fixed):** the web attendance dashboard fetched `/attendance/days` once, and the API returns at most 500 rows a page, newest first. Past about 35 employees the older days of the window silently dropped out of every trend and total. It now pages through up to 10,000 rows (mobile's ceiling) and says so when a range holds more.
+
+**Moving the totals to the API, step 1 done:** `GET /v1/attendance/summary?date_from&date_to[&compare_date&employee_id&shift_id&employee_status&department_id&branch_id]` returns the daily rate, focus-day KPIs and comparison, status distribution, punctuality (complete days only), frequent late, weekday absence and the department/branch breakdown, counted in SQL over the caller's attendance scope (window up to 92 days, `date_to` is the focus day). Code: `apps/api/src/hrms/modules/attendance/summary.py`. Department/branch follow the assignment in force on each date; `department_id`/`branch_id` also take `unassigned`. `daily` also carries remote/absent/leave/late/checked-in counts and worked minutes for the trend chart.
+
+**Step 2 done (web):** the attendance dashboard's KPIs, comparison, distribution, rate and trend, punctuality, frequent late, weekday absence and department/branch breakdown read the summary (`apps/web/src/lib/attendance/summary.ts`); the client-side counting functions are gone. The department/branch filters now carry ids (`dept=<uuid>|unassigned` in the URL; old name links are dropped), and `/employees/directory/rows` returns `department_id`/`branch_id` so the per-person lists filter by the same ids. Still row-based by design: who's in, needs attention, muster, work hours, leave & absence range counts, reports and overtime. Page tests serve the summary from `lib/attendance/__fixtures__/fake-summary.ts`, which mirrors the API's rules. **Step 3 done (mobile):** the Attendance insights screen reads the same summary (`apps/mobile/lib/features/attendance/domain/attendance_totals.dart`, `AttendanceRepository.attendanceSummary`) for its rate, KPIs (now including "no record yet"), comparison, distribution, trend, punctuality, weekday pattern and department/branch breakdown; `attendance_pulse.dart` and `buildTrend` no longer count rows, and the screen no longer loads the employee directory. A failed summary blanks only those cards. The summary schemas are in the contract fixtures (`tool/export_contract_fixtures.py` now also reads `attendance/summary_schemas.py`). Still row-based by design, as on web: needs attention, work hours, leave & absence, heatmap, reports, and the Team attendance list's own header counts.
+
+## 0c. Review on 12 Nov 2026
 
 A fresh pass over both apps after payroll was switched on for mobile (`kPayrollInRelease = true`, f99b340), so payroll was compared for the first time. Routes and API endpoints are at parity (every endpoint web calls, mobile calls; `/attendance-policies/form-context` is the known core-hours / split-shift difference). Pay run detail, the employee Salary tab and payslips match. Closed on mobile:
 
@@ -83,7 +106,7 @@ Still open:
 ## 1. The goal and the decisions already made
 
 - Goal: web and mobile do the same jobs with the same data, rules, permissions and wording. Layout may differ (grid on web, agenda on a phone).
-- **Paused by the owner:** payroll on mobile (`kPayrollInRelease = false` in `apps/mobile/lib/core/nav/nav_entries.dart`; leave it) and push notifications (no Firebase, no device tokens).
+- **Paused by the owner:** push notifications (no Firebase, no device tokens). Payroll on mobile was paused until 9 Nov and is now on (`kPayrollInRelease = true` in `apps/mobile/lib/core/nav/nav_entries.dart`).
 - **Shift swaps:** any employee may request a swap, the colleague must consent, a manager approves (decided, built).
 - **Tablet layouts:** not decided; default is skip.
 - Without push, approvers find requests in-app (the Shift swaps screen, and the pending-swaps count on the Schedule screen).

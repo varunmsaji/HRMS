@@ -31,6 +31,9 @@ class DirectoryRow(BaseModel):
     designation: str | None
     department: str | None
     branch: str | None
+    #: The current assignment's department / branch, so a filter can match by id, not by name.
+    department_id: UUID | None = None
+    branch_id: UUID | None = None
     manager_name: str | None
     shift_name: str | None
 
@@ -98,6 +101,7 @@ async def directory_rows(
             text(
                 f"""
                 SELECT e.id, dg.title AS designation, d.name AS department, b.name AS branch,
+                       d.id AS department_id, b.id AS branch_id,
                        {_NAME_SQL.format(a="m")} AS manager_name, s.name AS shift_name
                 FROM employee e
                 LEFT JOIN employee_assignment a ON a.employee_id = e.id AND a.effective_to IS NULL
@@ -118,6 +122,8 @@ async def directory_rows(
             designation=r.designation,
             department=r.department,
             branch=r.branch,
+            department_id=r.department_id,
+            branch_id=r.branch_id,
             manager_name=(r.manager_name or None),
             shift_name=r.shift_name,
         )

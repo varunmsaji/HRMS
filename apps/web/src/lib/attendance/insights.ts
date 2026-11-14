@@ -1,21 +1,10 @@
-/** Pure calculations behind the attendance dashboard's insight panels (pulse, punctuality,
- * weekday pattern, payroll readiness). Everything derives from the attendance days the page has
- * already loaded — no extra requests. A rate with no denominator is `null`, never a made-up 0%. */
+/** Types and small pure helpers behind the attendance dashboard's insight panels (pulse,
+ * punctuality, weekday pattern, payroll readiness, department / branch breakdown). The figures
+ * themselves are the backend's (`GET /v1/attendance/summary`, see `summary.ts`); nothing here
+ * re-counts attendance days. A rate with no denominator is `null`, never a made-up 0%. */
 
-import {
-  addDays,
-  bucketOf,
-  dayDiff,
-  eachDate,
-  groupName,
-  isAttending,
-  isExpectedBucket,
-  pct,
-  UNASSIGNED,
-  type DateRange,
-} from "@/lib/attendance/dashboard";
+import { addDays, dayDiff, groupName, UNASSIGNED, UNASSIGNED_KEY } from "@/lib/attendance/dashboard";
 import type { AttendancePeriod } from "@/lib/attendance-period/types";
-import type { AttendanceDay } from "@/lib/attendance/types";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -38,25 +27,6 @@ export interface RatePoint {
   rate: number | null;
   expected: number;
   present: number;
-}
-
-/** One point per calendar day in `range`, in order. */
-export function dailyAttendanceRate(rows: AttendanceDay[], range: DateRange): RatePoint[] {
-  const tallies = new Map<string, { expected: number; present: number }>();
-  for (const date of eachDate(range.from, range.to)) tallies.set(date, { expected: 0, present: 0 });
-  for (const day of rows) {
-    const tally = tallies.get(day.attendance_date);
-    if (!tally) continue;
-    const bucket = bucketOf(day);
-    if (isExpectedBucket(bucket)) tally.expected += 1;
-    if (isAttending(bucket)) tally.present += 1;
-  }
-  return Array.from(tallies.entries()).map(([date, t]) => ({
-    date,
-    rate: pct(t.present, t.expected),
-    expected: t.expected,
-    present: t.present,
-  }));
 }
 
 export interface RateComparison {
@@ -86,13 +56,6 @@ export function sameWeekdayLastWeek(date: string): string {
 // Punctuality
 // ---------------------------------------------------------------------------
 
-export const LATE_BANDS = [
-  { key: "1_15", label: "1–15 min", min: 1, max: 15 },
-  { key: "16_30", label: "16–30 min", min: 16, max: 30 },
-  { key: "31_60", label: "31–60 min", min: 31, max: 60 },
-  { key: "60_plus", label: "Over an hour", min: 61, max: Infinity },
-] as const;
-
 export interface PunctualitySummary {
   checkedIn: number;
   onTime: number;
@@ -105,62 +68,10 @@ export interface PunctualitySummary {
   bands: { key: string; label: string; count: number }[];
 }
 
-export function punctualitySummary(rows: AttendanceDay[]): PunctualitySummary {
-  let checkedIn = 0;
-  let late = 0;
-  let lateMinutes = 0;
-  const counts = new Map<string, number>(LATE_BANDS.map((b) => [b.key, 0]));
-  for (const day of rows) {
-    if (!day.actual_first_in) continue;
-    // Checked in but no complete IN/OUT pair yet (mid-shift, or a forgotten checkout): the engine
-    // records the arrival but judges lateness only on complete pairs, so leave it out rather
-    // than count it as on time.
-    if (!day.actual_last_out) continue;
-    checkedIn += 1;
-    if (!day.is_late) continue;
-    late += 1;
-    lateMinutes += day.late_minutes;
-    // A late day with no minutes recorded is still late; it lands in the smallest band.
-    const minutes = Math.max(1, day.late_minutes);
-    const band = LATE_BANDS.find((b) => minutes >= b.min && minutes <= b.max);
-    if (band) counts.set(band.key, (counts.get(band.key) ?? 0) + 1);
-  }
-  const onTime = checkedIn - late;
-  return {
-    checkedIn,
-    onTime,
-    late,
-    lateRate: pct(late, checkedIn),
-    onTimeRate: pct(onTime, checkedIn),
-    avgLateMinutes: late > 0 ? lateMinutes / late : null,
-    bands: LATE_BANDS.map((b) => ({ key: b.key, label: b.label, count: counts.get(b.key) ?? 0 })),
-  };
-}
-
 export interface FrequentLate {
   employeeId: string;
   lateDays: number;
   totalLateMinutes: number;
-}
-
-/** Employees who were late on at least `minDays` days, most first (ties: more minutes first). */
-export function frequentLateArrivals(rows: AttendanceDay[], limit = 5, minDays = 2): FrequentLate[] {
-  const byEmployee = new Map<string, FrequentLate>();
-  for (const day of rows) {
-    if (!day.is_late) continue;
-    const entry = byEmployee.get(day.employee_id) ?? {
-      employeeId: day.employee_id,
-      lateDays: 0,
-      totalLateMinutes: 0,
-    };
-    entry.lateDays += 1;
-    entry.totalLateMinutes += day.late_minutes;
-    byEmployee.set(day.employee_id, entry);
-  }
-  return Array.from(byEmployee.values())
-    .filter((e) => e.lateDays >= minDays)
-    .sort((a, b) => b.lateDays - a.lateDays || b.totalLateMinutes - a.totalLateMinutes)
-    .slice(0, limit);
 }
 
 // ---------------------------------------------------------------------------
@@ -174,20 +85,6 @@ export interface WeekdayStat {
   absent: number;
   /** Absent ÷ expected, 0–100; `null` when that weekday never had anyone expected. */
   rate: number | null;
-}
-
-/** Absence rate for each weekday over the rows given (Mon → Sun). */
-export function weekdayAbsence(rows: AttendanceDay[]): WeekdayStat[] {
-  const stats: WeekdayStat[] = WEEKDAYS.map((label, index) => ({ index, label, expected: 0, absent: 0, rate: null }));
-  for (const day of rows) {
-    const bucket = bucketOf(day);
-    if (!isExpectedBucket(bucket)) continue;
-    const stat = stats[weekdayIndex(day.attendance_date)];
-    stat.expected += 1;
-    if (bucket === "ABSENT") stat.absent += 1;
-  }
-  for (const stat of stats) stat.rate = pct(stat.absent, stat.expected);
-  return stats;
 }
 
 /** The weekday with the highest absence rate, or `null` when there's no signal worth naming
@@ -232,6 +129,8 @@ export function periodProgress(period: Pick<AttendancePeriod, "period_start" | "
 export type BreakdownKey = "department" | "branch";
 
 export interface GroupStat {
+  /** The department / branch filter value: its id, or "unassigned". */
+  key: string;
   name: string;
   /** Employees with a record on the day. */
   headcount: number;
@@ -245,45 +144,28 @@ export interface GroupStat {
   rate: number | null;
 }
 
-/** Attendance for each department (or branch) on one day. `rows` should be a single day's rows —
- * one per employee — so headcount means people, not person-days. Lowest attendance comes first,
- * groups nobody was expected in last, so the places that need a look are at the top. */
-export function breakdownBy(
-  rows: AttendanceDay[],
-  directory: Map<string, { department: string | null; branch: string | null }>,
-  key: BreakdownKey,
-): GroupStat[] {
-  const groups = new Map<string, GroupStat>();
-  for (const day of rows) {
-    const bucket = bucketOf(day);
-    const name = groupName(directory.get(day.employee_id)?.[key]);
-    const g = groups.get(name) ?? { name, headcount: 0, expected: 0, present: 0, absent: 0, leave: 0, late: 0, rate: null };
-    g.headcount += 1;
-    if (isExpectedBucket(bucket)) g.expected += 1;
-    if (isAttending(bucket)) g.present += 1;
-    if (bucket === "ABSENT") g.absent += 1;
-    if (bucket === "LEAVE") g.leave += 1;
-    if (day.is_late) g.late += 1;
-    groups.set(name, g);
-  }
-  const stats = Array.from(groups.values());
-  for (const g of stats) g.rate = pct(g.present, g.expected);
-  return stats.sort((a, b) => {
-    if (a.rate === null && b.rate === null) return a.name.localeCompare(b.name);
-    if (a.rate === null) return 1;
-    if (b.rate === null) return -1;
-    return a.rate - b.rate || b.headcount - a.headcount || a.name.localeCompare(b.name);
-  });
+export interface GroupOption {
+  /** The filter value: a department / branch id, or "unassigned". */
+  key: string;
+  name: string;
 }
 
-/** Distinct department / branch names present in the directory, A–Z, "Unassigned" last. */
-export function groupNames(
-  directory: Map<string, { department: string | null; branch: string | null }>,
+/** Departments (or branches) to filter by: everyone's current one from the employee directory, plus
+ * any the summary's breakdown names (someone's group on that day), A–Z with "Unassigned" last.
+ * Empty when nobody has one at all: a filter offering only "Unassigned" would be noise. */
+export function groupOptions(
+  directory: Iterable<{ department: string | null; branch: string | null; department_id?: string | null; branch_id?: string | null }>,
   key: BreakdownKey,
-): string[] {
-  const names = new Set<string>();
-  for (const row of directory.values()) names.add(groupName(row[key]));
-  return Array.from(names).sort((a, b) =>
-    a === UNASSIGNED ? 1 : b === UNASSIGNED ? -1 : a.localeCompare(b),
+  breakdown: GroupStat[] = [],
+): GroupOption[] {
+  const options = new Map<string, string>();
+  for (const row of directory) {
+    const id = key === "department" ? row.department_id : row.branch_id;
+    options.set(id ?? UNASSIGNED_KEY, id ? groupName(row[key]) : UNASSIGNED);
+  }
+  for (const group of breakdown) options.set(group.key, group.name);
+  if (![...options.keys()].some((k) => k !== UNASSIGNED_KEY)) return [];
+  return Array.from(options, ([k, name]) => ({ key: k, name })).sort((a, b) =>
+    a.key === UNASSIGNED_KEY ? 1 : b.key === UNASSIGNED_KEY ? -1 : a.name.localeCompare(b.name),
   );
 }

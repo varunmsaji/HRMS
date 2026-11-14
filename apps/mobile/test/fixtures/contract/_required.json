@@ -301,6 +301,39 @@
   "employee_ids",
   "task_id"
  ],
+ "attendance.AttendanceSummaryRead": [
+  "by_branch",
+  "by_department",
+  "compare",
+  "compare_date",
+  "daily",
+  "date_from",
+  "date_to",
+  "distribution",
+  "focus",
+  "focus_date",
+  "frequent_late",
+  "is_today",
+  "punctuality",
+  "row_count",
+  "weekday_absence"
+ ],
+ "attendance.BucketCount": [
+  "bucket",
+  "count"
+ ],
+ "attendance.DailyRate": [
+  "absent",
+  "checked_in",
+  "date",
+  "expected",
+  "late",
+  "leave",
+  "present",
+  "rate",
+  "remote",
+  "worked_minutes"
+ ],
  "attendance.FaceEnrollmentStatusRead": [
   "open_window",
   "profile"
@@ -343,10 +376,31 @@
   "punch",
   "similarity"
  ],
+ "attendance.FrequentLate": [
+  "employee_id",
+  "late_days",
+  "total_late_minutes"
+ ],
  "attendance.GeofenceDecisionRead": [
   "accepted",
   "mode",
   "outcome"
+ ],
+ "attendance.GroupStat": [
+  "absent",
+  "expected",
+  "headcount",
+  "id",
+  "late",
+  "leave",
+  "name",
+  "present",
+  "rate"
+ ],
+ "attendance.LateBand": [
+  "count",
+  "key",
+  "label"
  ],
  "attendance.LeaveDayProjectionRead": [
   "attendance_date",
@@ -516,6 +570,15 @@
   "reference",
   "source"
  ],
+ "attendance.Punctuality": [
+  "avg_late_minutes",
+  "bands",
+  "checked_in",
+  "late",
+  "late_rate",
+  "on_time",
+  "on_time_rate"
+ ],
  "attendance.RegularizationActionRead": [
   "action",
   "actor_employee_id",
@@ -654,6 +717,34 @@
   "version"
  ],
  "attendance.ShiftRosterUpdate": [],
+ "attendance.SummaryKpis": [
+  "absent",
+  "checked_in",
+  "exceptions",
+  "half_day",
+  "holiday",
+  "incomplete",
+  "late",
+  "leave",
+  "no_record",
+  "not_checked_in",
+  "not_employed",
+  "on_duty",
+  "overtime_employees",
+  "overtime_minutes_approved",
+  "overtime_minutes_detected",
+  "present",
+  "remote",
+  "total_employees",
+  "weekly_off"
+ ],
+ "attendance.WeekdayAbsence": [
+  "absent",
+  "expected",
+  "index",
+  "label",
+  "rate"
+ ],
  "attendance.WorkOnLeaveKeepLeaveInput": [
   "reason"
  ],
@@ -1279,9 +1370,6 @@
  "onboarding.AddressInfoSection": [],
  "onboarding.BankInfoSection": [
   "payment_mode"
- ],
- "onboarding.CompensationInfoSection": [
-  "annual_ctc_minor"
  ],
  "onboarding.EducationInfoSection": [],
  "onboarding.EducationItem": [

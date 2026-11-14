@@ -7,15 +7,10 @@ import { PunctualityPanel, WeekdayPanel } from "@/components/attendance/dashboar
 import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
 import { PayrollReadiness } from "@/components/attendance/dashboard/payroll-readiness";
 import { TodayPulse } from "@/components/attendance/dashboard/today-pulse";
-import { DEFAULT_FILTERS, computeKpis, statusDistribution, type AttentionItem } from "@/lib/attendance/dashboard";
-import { makeAbsentDay, makeDay } from "@/lib/attendance/__fixtures__/day";
-import {
-  compareRates,
-  dailyAttendanceRate,
-  punctualitySummary,
-  frequentLateArrivals,
-  weekdayAbsence,
-} from "@/lib/attendance/insights";
+import { DEFAULT_FILTERS, type AttentionItem } from "@/lib/attendance/dashboard";
+import { makeKpis, makeSummary, makeSummaryDay, makeWeekdays } from "@/lib/attendance/__fixtures__/summary";
+import { compareRates } from "@/lib/attendance/insights";
+import { toDistribution, toKpiSet, toPunctuality, toRatePoints } from "@/lib/attendance/summary";
 import type { AttendancePeriod } from "@/lib/attendance-period/types";
 
 // 2026-10-12 is a Monday; 2026-10-05 the Monday before.
@@ -51,15 +46,18 @@ describe("DeltaChip", () => {
 });
 
 describe("TodayPulse", () => {
-  const rows = [
-    makeDay({ employee_id: "a", attendance_date: LAST_WEEK }),
-    makeAbsentDay({ employee_id: "b", attendance_date: LAST_WEEK }),
-    makeDay({ employee_id: "a", attendance_date: TODAY }),
-    makeDay({ employee_id: "b", attendance_date: TODAY }),
-    makeAbsentDay({ employee_id: "c", attendance_date: TODAY }),
-  ];
-  const points = dailyAttendanceRate(rows, { from: LAST_WEEK, to: TODAY });
-  const todayRows = rows.filter((r) => r.attendance_date === TODAY);
+  // Last Monday one of two attended; today two of three, with one absent.
+  const summary = makeSummary(LAST_WEEK, TODAY, {
+    days: [
+      makeSummaryDay(LAST_WEEK, { expected: 2, present: 1, absent: 1 }),
+      makeSummaryDay(TODAY, { expected: 3, present: 2, absent: 1 }),
+    ],
+    distribution: [
+      { bucket: "PRESENT", count: 2 },
+      { bucket: "ABSENT", count: 1 },
+    ],
+  });
+  const points = toRatePoints(summary.daily);
 
   function renderPulse(onDrill = vi.fn()) {
     render(
@@ -68,7 +66,7 @@ describe("TodayPulse", () => {
         focusDate={TODAY}
         focusLabel="today"
         comparison={compareRates(points, TODAY, LAST_WEEK)}
-        distribution={statusDistribution(todayRows)}
+        distribution={toDistribution(summary.distribution)}
         filters={DEFAULT_FILTERS}
         onDrill={onDrill}
       />,
@@ -94,7 +92,7 @@ describe("TodayPulse", () => {
   it("shows a dash, not 0%, when nobody was expected", () => {
     render(
       <TodayPulse
-        points={dailyAttendanceRate([], { from: LAST_WEEK, to: TODAY })}
+        points={toRatePoints(makeSummary(LAST_WEEK, TODAY).daily)}
         focusDate={TODAY}
         focusLabel="today"
         comparison={{ delta: null, baselineDate: LAST_WEEK, baselineRate: null }}
@@ -109,8 +107,8 @@ describe("TodayPulse", () => {
 });
 
 describe("KpiGrid comparison", () => {
-  const now = computeKpis([makeDay({ employee_id: "a" }), makeDay({ employee_id: "b" }), makeAbsentDay({ employee_id: "c" })]);
-  const before = computeKpis([makeDay({ employee_id: "a" }), makeAbsentDay({ employee_id: "b" }), makeAbsentDay({ employee_id: "c" })]);
+  const now = toKpiSet(makeKpis({ total_employees: 3, present: 2, absent: 1, checked_in: 2, not_checked_in: 1 }));
+  const before = toKpiSet(makeKpis({ total_employees: 3, present: 1, absent: 2, checked_in: 1, not_checked_in: 2 }));
 
   it("shows how present and absent moved, and says it in the accessible name", () => {
     render(<KpiGrid kpi={now} filters={DEFAULT_FILTERS} focusLabel="today" compare={{ kpi: before, label: "last Mon" }} onDrill={vi.fn()} />);
@@ -129,15 +127,24 @@ describe("KpiGrid comparison", () => {
 
 describe("PunctualityPanel", () => {
   const employees = new Map([["a", { id: "a", first_name: "Asha", last_name: "Rao", employee_code: "E-1" }]]);
-  const late = (date: string, minutes: number) => makeDay({ employee_id: "a", attendance_date: date, is_late: true, late_minutes: minutes });
-  const rows = [late("2026-10-05", 10), late("2026-10-06", 40), makeDay({ employee_id: "b", attendance_date: "2026-10-05" })];
+  // Asha late twice (10 and 40 minutes), one on-time day: 1 of 3 on time.
+  const punctual = (checked: number, late: number, minutes: number) =>
+    toPunctuality({
+      ...makeSummary(TODAY, TODAY).punctuality,
+      checked_in: checked,
+      late,
+      on_time: checked - late,
+      late_rate: checked ? (late / checked) * 100 : null,
+      on_time_rate: checked ? ((checked - late) / checked) * 100 : null,
+      avg_late_minutes: late ? minutes / late : null,
+    });
 
   it("reports the on-time rate, average lateness and repeat late-comers, and drills into late arrivals", async () => {
     const onViewLate = vi.fn();
     render(
       <PunctualityPanel
-        summary={punctualitySummary(rows)}
-        frequent={frequentLateArrivals(rows)}
+        summary={punctual(3, 2, 50)}
+        frequent={[{ employeeId: "a", lateDays: 2, totalLateMinutes: 50 }]}
         employeesById={employees}
         onViewLate={onViewLate}
       />,
@@ -152,10 +159,10 @@ describe("PunctualityPanel", () => {
 
   it("says so when nobody checked in, and congratulates a fully punctual range", () => {
     const { rerender } = render(
-      <PunctualityPanel summary={punctualitySummary([makeAbsentDay()])} frequent={[]} employeesById={employees} onViewLate={vi.fn()} />,
+      <PunctualityPanel summary={punctual(0, 0, 0)} frequent={[]} employeesById={employees} onViewLate={vi.fn()} />,
     );
     expect(screen.getByText(/nobody has checked in/i)).toBeInTheDocument();
-    rerender(<PunctualityPanel summary={punctualitySummary([makeDay()])} frequent={[]} employeesById={employees} onViewLate={vi.fn()} />);
+    rerender(<PunctualityPanel summary={punctual(1, 0, 0)} frequent={[]} employeesById={employees} onViewLate={vi.fn()} />);
     expect(screen.getByText("Everyone who checked in was on time.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /view all late/i })).not.toBeInTheDocument();
   });
@@ -163,20 +170,15 @@ describe("PunctualityPanel", () => {
 
 describe("WeekdayPanel", () => {
   it("names the weekday with the highest absence", () => {
-    const rows = [
-      makeAbsentDay({ employee_id: "a", attendance_date: "2026-10-05" }),
-      makeDay({ employee_id: "b", attendance_date: "2026-10-05" }),
-      makeDay({ employee_id: "a", attendance_date: "2026-10-06" }),
-    ];
-    render(<WeekdayPanel stats={weekdayAbsence(rows)} />);
+    render(<WeekdayPanel stats={makeWeekdays({ 0: [2, 1], 1: [1, 0] })} />);
     expect(screen.getByText(/Mons have the highest absence — 50.0% of expected days/)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Absence rate by weekday" })).toBeInTheDocument();
   });
 
   it("does not invent a pattern when there are no absences, or no working days at all", () => {
-    const { rerender } = render(<WeekdayPanel stats={weekdayAbsence([makeDay({ attendance_date: "2026-10-05" }), makeDay({ attendance_date: "2026-10-06" })])} />);
+    const { rerender } = render(<WeekdayPanel stats={makeWeekdays({ 0: [1, 0], 1: [1, 0] })} />);
     expect(screen.getByText(/no weekday stands out/i)).toBeInTheDocument();
-    rerender(<WeekdayPanel stats={weekdayAbsence([])} />);
+    rerender(<WeekdayPanel stats={makeWeekdays()} />);
     expect(screen.getByText("No expected working days in this range.")).toBeInTheDocument();
   });
 });

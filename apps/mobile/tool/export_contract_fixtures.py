@@ -27,6 +27,8 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "apps" / "api" / "src"))
 
 MODULES = ["attendance", "employee", "identity", "leave", "onboarding", "organisation", "payroll", "account_invite", "employee_import"]
+#: Schema files other than `<module>.schemas`; their fixtures are named after the module all the same.
+EXTRA_SCHEMA_FILES = [("attendance", "summary_schemas")]
 OUT = Path(__file__).resolve().parents[1] / "test" / "fixtures" / "contract"
 
 
@@ -88,8 +90,8 @@ def main() -> None:
         old.unlink()
     written = 0
     required: dict[str, list[str]] = {}
-    for module in MODULES:
-        schemas = importlib.import_module(f"hrms.modules.{module}.schemas")
+    for module, file in [(m, "schemas") for m in MODULES] + EXTRA_SCHEMA_FILES:
+        schemas = importlib.import_module(f"hrms.modules.{module}.{file}")
         for name, cls in vars(schemas).items():
             if not (inspect.isclass(cls) and issubclass(cls, BaseModel) and cls.__module__ == schemas.__name__):
                 continue

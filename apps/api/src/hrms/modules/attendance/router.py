@@ -172,6 +172,8 @@ from hrms.modules.attendance.service import (
     RegularizationRequestService,
     ShiftRosterService,
 )
+from hrms.modules.attendance.summary import AttendanceSummaryService, SummaryFilters
+from hrms.modules.attendance.summary_schemas import AttendanceSummaryRead
 from hrms.modules.identity.schemas import build_meta
 from hrms.modules.organisation.permissions import DASHBOARD_COMPANY_VIEW
 from hrms.shared.if_match import parse_if_match
@@ -1081,6 +1083,58 @@ async def list_attendance_days(
         pagination=build_pagination_meta(page, total=total),
         meta=build_meta(current_request_id() or "unknown"),
     )
+
+
+@router.get("/attendance/summary", status_code=status.HTTP_200_OK)
+async def get_attendance_summary(
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
+    scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_VIEW))],
+    date_from: Annotated[date, Query()],
+    date_to: Annotated[date, Query(description="Also the focus date of the KPIs and breakdown")],
+    compare_date: Annotated[
+        date | None, Query(description="Day to compare the focus date with; default a week earlier")
+    ] = None,
+    employee_id: Annotated[UUID | None, Query()] = None,
+    shift_id: Annotated[UUID | None, Query()] = None,
+    employee_status: Annotated[str | None, Query(max_length=25)] = None,
+    department_id: Annotated[
+        UUID | Literal["unassigned"] | None,
+        Query(description='A department id, or "unassigned" for days with no department'),
+    ] = None,
+    branch_id: Annotated[
+        UUID | Literal["unassigned"] | None,
+        Query(description='A branch id, or "unassigned" for days with no branch'),
+    ] = None,
+) -> DataEnvelope[AttendanceSummaryRead]:
+    """The attendance dashboard's totals for a window of up to 92 days, counted from the persisted
+    attendance days over the employees the caller's attendance scope can see. Web and mobile both
+    read these instead of adding up the rows themselves."""
+    from hrms.modules.employee.service import EmployeeService
+    from hrms.modules.organisation.service import OrganisationService
+    from hrms.shared.business_time import business_today
+
+    company = await OrganisationService(session).get_company_profile(tenant.company_id)
+    visible_ids = await EmployeeService(session).resolve_visible_employee_ids(
+        tenant.company_id, scope, user.employee_id
+    )
+    data = await AttendanceSummaryService(session).summary(
+        tenant.company_id,
+        date_from=date_from,
+        date_to=date_to,
+        today=business_today(company.timezone),
+        compare_date=compare_date,
+        filters=SummaryFilters(
+            visible_employee_ids=visible_ids,
+            employee_id=employee_id,
+            shift_id=shift_id,
+            employee_status=employee_status,
+            department_id=department_id,
+            branch_id=branch_id,
+        ),
+    )
+    return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
 
 @router.get("/attendance/days/{attendance_day_id}", status_code=status.HTTP_200_OK)

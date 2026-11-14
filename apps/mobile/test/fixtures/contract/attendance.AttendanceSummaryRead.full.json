@@ -1,0 +1,127 @@
+{
+ "by_branch": [
+  {
+   "absent": 1,
+   "expected": 1,
+   "headcount": 1,
+   "id": "00000000-0000-0000-0000-000000001234",
+   "late": 1,
+   "leave": 1,
+   "name": "x",
+   "present": 1,
+   "rate": 1.5
+  }
+ ],
+ "by_department": [
+  {
+   "absent": 1,
+   "expected": 1,
+   "headcount": 1,
+   "id": "00000000-0000-0000-0000-000000001234",
+   "late": 1,
+   "leave": 1,
+   "name": "x",
+   "present": 1,
+   "rate": 1.5
+  }
+ ],
+ "compare": {
+  "absent": 1,
+  "checked_in": 1,
+  "exceptions": 1,
+  "half_day": 1,
+  "holiday": 1,
+  "incomplete": 1,
+  "late": 1,
+  "leave": 1,
+  "no_record": 1,
+  "not_checked_in": 1,
+  "not_employed": 1,
+  "on_duty": 1,
+  "overtime_employees": 1,
+  "overtime_minutes_approved": 1,
+  "overtime_minutes_detected": 1,
+  "present": 1,
+  "remote": 1,
+  "total_employees": 1,
+  "weekly_off": 1
+ },
+ "compare_date": "2026-01-15",
+ "daily": [
+  {
+   "absent": 1,
+   "checked_in": 1,
+   "date": "2026-01-15",
+   "expected": 1,
+   "late": 1,
+   "leave": 1,
+   "present": 1,
+   "rate": 1.5,
+   "remote": 1,
+   "worked_minutes": 1
+  }
+ ],
+ "date_from": "2026-01-15",
+ "date_to": "2026-01-15",
+ "distribution": [
+  {
+   "bucket": "x",
+   "count": 1
+  }
+ ],
+ "focus": {
+  "absent": 1,
+  "checked_in": 1,
+  "exceptions": 1,
+  "half_day": 1,
+  "holiday": 1,
+  "incomplete": 1,
+  "late": 1,
+  "leave": 1,
+  "no_record": 1,
+  "not_checked_in": 1,
+  "not_employed": 1,
+  "on_duty": 1,
+  "overtime_employees": 1,
+  "overtime_minutes_approved": 1,
+  "overtime_minutes_detected": 1,
+  "present": 1,
+  "remote": 1,
+  "total_employees": 1,
+  "weekly_off": 1
+ },
+ "focus_date": "2026-01-15",
+ "frequent_late": [
+  {
+   "employee_id": "00000000-0000-0000-0000-000000001234",
+   "late_days": 1,
+   "total_late_minutes": 1
+  }
+ ],
+ "is_today": true,
+ "punctuality": {
+  "avg_late_minutes": 1.5,
+  "bands": [
+   {
+    "count": 1,
+    "key": "x",
+    "label": "x"
+   }
+  ],
+  "checked_in": 1,
+  "late": 1,
+  "late_rate": 1.5,
+  "on_time": 1,
+  "on_time_rate": 1.5
+ },
+ "row_count": 1,
+ "weekday_absence": [
+  {
+   "absent": 1,
+   "expected": 1,
+   "index": 1,
+   "label": "x",
+   "rate": 1.5
+  }
+ ]
+}

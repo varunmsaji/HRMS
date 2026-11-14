@@ -1,0 +1,11 @@
+{
+ "absent": 1,
+ "expected": 1,
+ "headcount": 1,
+ "id": null,
+ "late": 1,
+ "leave": 1,
+ "name": "x",
+ "present": 1,
+ "rate": null
+}

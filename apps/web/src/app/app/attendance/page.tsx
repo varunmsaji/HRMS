@@ -37,7 +37,6 @@ import {
   applyPopulationFilters,
   buildAttentionItems,
   buildMuster,
-  computeKpis,
   dailyHours,
   employeesWithoutRecord,
   formatShortDate,
@@ -50,7 +49,6 @@ import {
   rowsInRange,
   rowsOn,
   serializeFilters,
-  statusDistribution,
   summarizeOvertime,
   summarizeWorkHours,
   windowRange,
@@ -61,17 +59,15 @@ import {
 } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
 import { HR_CALENDAR_PERMISSIONS } from "@/lib/attendance/hr-calendar";
+import { compareRates, groupOptions, weekdayShort } from "@/lib/attendance/insights";
 import {
-  breakdownBy,
-  compareRates,
-  dailyAttendanceRate,
-  frequentLateArrivals,
-  groupNames,
-  punctualitySummary,
-  sameWeekdayLastWeek,
-  weekdayAbsence,
-  weekdayShort,
-} from "@/lib/attendance/insights";
+  toDistribution,
+  toFrequentLate,
+  toGroupStats,
+  toKpiSet,
+  toPunctuality,
+  toRatePoints,
+} from "@/lib/attendance/summary";
 import { useAuth } from "@/lib/auth/auth-context";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/lib/auth/use-permissions";
@@ -90,10 +86,12 @@ function parseView(value: string | null): DashboardView {
   return (VIEWS as string[]).includes(value ?? "") ? (value as DashboardView) : "today";
 }
 
-/** Attendance command centre. Every number comes from `GET /v1/attendance/days` (and the
- * overtime / regularization / period endpoints), which are DataScope-filtered server-side — the
- * page adds display logic only, never access control. Filters live in the URL so a view can be
- * shared; the focus date is the end of the selected range. */
+/** Attendance command centre. The totals and charts come from `GET /v1/attendance/summary`, which
+ * the backend counts over every attendance day in the window; the per-person lists and the muster
+ * read `GET /v1/attendance/days` (plus the overtime / regularization / period endpoints). All of
+ * them are DataScope-filtered server-side — the page adds display logic only, never access
+ * control. Filters live in the URL so a view can be shared; the focus date is the end of the
+ * selected range. */
 function AttendanceDashboard() {
   const { user } = useAuth();
   const { can, canAny } = usePermissions();
@@ -147,6 +145,7 @@ function AttendanceDashboard() {
   const data = useDashboardData({
     window: win,
     range: win,
+    filters,
     legalEntityId: filters.legalEntityId,
     canListEmployees: can("EMPLOYEE.VIEW_ALL"),
     canListShifts: can("ORG.SHIFT.MANAGE"),
@@ -170,6 +169,32 @@ function AttendanceDashboard() {
         ? "team"
         : "self";
 
+  // Every total and chart on the page: counted by the backend, only reshaped here.
+  const summary = data.summary.data;
+  const totals = useMemo(() => {
+    if (!summary) return null;
+    const ratePoints = toRatePoints(summary.daily);
+    return {
+      daily: summary.daily,
+      kpi: toKpiSet(summary.focus),
+      kpiCompare: summary.compare
+        ? { kpi: toKpiSet(summary.compare), label: `last ${weekdayShort(summary.compare_date)}` }
+        : null,
+      distribution: toDistribution(summary.distribution),
+      ratePoints,
+      rateComparison: compareRates(ratePoints, summary.focus_date, summary.compare_date),
+      // Punctuality and weekday patterns need more than one day to mean anything, so they cover
+      // the whole trend window (never shorter than two weeks) rather than a single-day range.
+      punctuality: toPunctuality(summary.punctuality),
+      frequentLate: toFrequentLate(summary.frequent_late),
+      weekdayStats: summary.weekday_absence,
+      // The breakdown compares departments / branches with each other, so the backend ignores the
+      // department and branch filters for it (otherwise picking one would leave nothing to compare).
+      byDepartment: toGroupStats(summary.by_department),
+      byBranch: toGroupStats(summary.by_branch),
+    };
+  }, [summary]);
+
   const employees = data.employees.data?.items;
   const employeesById = useMemo(() => indexEmployees(employees ?? []), [employees]);
   const shiftNames = useMemo(() => new Map((data.shifts.data ?? []).map((s) => [s.id, s.name])), [data.shifts.data]);
@@ -180,25 +205,16 @@ function AttendanceDashboard() {
       shifts: (data.shifts.data ?? []).map((s) => ({ id: s.id, name: s.name })),
       entities: (data.entities.data ?? []).map((e) => ({ id: e.id, name: e.name })),
       employeeStatuses: Array.from(new Set((employees ?? []).map((e) => e.status).filter((s): s is string => !!s))).sort(),
-      departments: directoryMap ? groupNames(directoryMap, "department") : [],
-      branches: directoryMap ? groupNames(directoryMap, "branch") : [],
+      departments: groupOptions(directoryMap?.values() ?? [], "department", totals?.byDepartment),
+      branches: groupOptions(directoryMap?.values() ?? [], "branch", totals?.byBranch),
     }),
-    [employees, data.shifts.data, data.entities.data, directoryMap],
+    [employees, data.shifts.data, data.entities.data, directoryMap, totals],
   );
 
   const population = useMemo(
     () => applyPopulationFilters(allDays ?? [], filters, employeesById, directoryMap),
     [allDays, filters, employeesById, directoryMap],
   );
-  // The breakdown compares departments / branches with each other, so it ignores the department
-  // and branch filters themselves (otherwise picking one would leave nothing to compare).
-  const peerFocusRows = useMemo(() => {
-    if (!directoryMap) return [];
-    const peers = applyPopulationFilters(allDays ?? [], { ...filters, department: "", branch: "" }, employeesById, directoryMap);
-    return rowsOn(peers, range.to);
-  }, [allDays, filters, employeesById, directoryMap, range.to]);
-  const byDepartment = useMemo(() => (directoryMap ? breakdownBy(peerFocusRows, directoryMap, "department") : []), [peerFocusRows, directoryMap]);
-  const byBranch = useMemo(() => (directoryMap ? breakdownBy(peerFocusRows, directoryMap, "branch") : []), [peerFocusRows, directoryMap]);
   const hasDirectoryFilter = Boolean(filters.department || filters.branch);
   const rangeRows = useMemo(() => rowsInRange(population, range), [population, range]);
   const focusRows = useMemo(() => rowsOn(population, range.to), [population, range.to]);
@@ -207,8 +223,6 @@ function AttendanceDashboard() {
       focusIsToday && employees ? employeesWithoutRecord(focusRows, employees, filters, range.to, directoryMap) : [],
     [focusIsToday, employees, focusRows, filters, range.to, directoryMap],
   );
-  const kpi = useMemo(() => computeKpis(focusRows, noRecord.length), [focusRows, noRecord.length]);
-  const distribution = useMemo(() => statusDistribution(focusRows), [focusRows]);
 
   // Needs Attention's whole-range items ("27 days · 22 employees") must drill into the same
   // `rangeRows` population that produced their count — not `focusRows` (the focus date only), or
@@ -282,21 +296,7 @@ function AttendanceDashboard() {
     [population, win, employeesById],
   );
 
-  // --- insight panels (all derived from the days already loaded) ------------------------------
-  const ratePoints = useMemo(() => dailyAttendanceRate(population, win), [population, win]);
-  const compareDate = sameWeekdayLastWeek(range.to);
-  const rateComparison = useMemo(() => compareRates(ratePoints, range.to, compareDate), [ratePoints, range.to, compareDate]);
-  const kpiCompare = useMemo(() => {
-    const rows = rowsOn(population, compareDate);
-    return rows.length > 0 ? { kpi: computeKpis(rows, 0), label: `last ${weekdayShort(compareDate)}` } : null;
-  }, [population, compareDate]);
-  // Punctuality and weekday patterns need more than one day to mean anything, so they read the
-  // whole trend window (never shorter than two weeks) rather than a single-day range.
-  const windowRows = useMemo(() => rowsInRange(population, win), [population, win]);
   const winLabel = `${formatShortDate(win.from)} – ${formatShortDate(win.to)}`;
-  const punctuality = useMemo(() => punctualitySummary(windowRows), [windowRows]);
-  const frequentLate = useMemo(() => frequentLateArrivals(windowRows), [windowRows]);
-  const weekdayStats = useMemo(() => weekdayAbsence(windowRows), [windowRows]);
   const readinessPeriod = useMemo(
     () => pickDefaultPeriod((data.periods.data ?? []).filter((p) => p.status === "OPEN"), today),
     [data.periods.data, today],
@@ -384,23 +384,35 @@ function AttendanceDashboard() {
 
       {hasDirectoryFilter && !directoryMap && (directory.status === "error" || !canListEmployees) ? (
         <p role="note" className="text-xs text-foreground-muted">
-          The department / branch filter isn&apos;t applied: department data couldn&apos;t be loaded for your account.
+          The department / branch filter applies to the totals but not to the employee lists: department data couldn&apos;t be loaded for your account.
         </p>
       ) : null}
 
-      {!allDays && data.days.status === "error" ? (
+      {(!allDays && data.days.status === "error") || (!totals && data.summary.status === "error") ? (
         <ErrorState
           message={
-            data.days.error?.status === 403
+            data.days.error?.status === 403 || data.summary.error?.status === 403
               ? "You do not have permission to view attendance."
               : "Attendance couldn't be loaded. Please try again."
           }
-          onRetry={data.days.error?.status === 403 ? undefined : data.days.retry}
+          onRetry={
+            data.days.error?.status === 403 || data.summary.error?.status === 403
+              ? undefined
+              : () => {
+                  if (data.days.status === "error") data.days.retry();
+                  if (data.summary.status === "error") data.summary.retry();
+                }
+          }
         />
-      ) : !allDays || (hasDirectoryFilter && directoryPending) ? (
+      ) : !allDays || !totals || (hasDirectoryFilter && directoryPending) ? (
         <AttendanceDashboardSkeleton />
       ) : (
         <>
+          {data.daysCoverage?.truncated ? (
+            <p role="note" className="text-xs text-foreground-muted">
+              {`Totals and charts count every attendance record, but the employee lists and heatmap show the most recent ${data.daysCoverage.loaded.toLocaleString()} of ${data.daysCoverage.total.toLocaleString()} in this range. Choose a shorter range to list them all.`}
+            </p>
+          ) : null}
           {data.employees.status === "error" || (data.employees.data?.truncated ?? false) ? (
             <p role="note" className="text-xs text-foreground-muted">
               {data.employees.data?.truncated
@@ -445,16 +457,16 @@ function AttendanceDashboard() {
           {view === "today" ? (
             <div role="tabpanel" id="att-panel-today" aria-labelledby="att-tab-today" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
           <TodayPulse
-            points={ratePoints}
+            points={totals.ratePoints}
             focusDate={range.to}
             focusLabel={focusLabel}
-            comparison={rateComparison}
-            distribution={distribution}
+            comparison={totals.rateComparison}
+            distribution={totals.distribution}
             filters={filters}
             onDrill={(bucket) => drill({ bucket })}
           />
 
-          <KpiGrid kpi={kpi} filters={filters} focusLabel={focusLabel} compare={kpiCompare} onDrill={drill} />
+          <KpiGrid kpi={totals.kpi} filters={filters} focusLabel={focusLabel} compare={totals.kpiCompare} onDrill={drill} />
 
           <div className="grid items-start gap-6 lg:grid-cols-3">
             <SectionCard
@@ -504,29 +516,20 @@ function AttendanceDashboard() {
 
           {view === "trends" ? (
             <div role="tabpanel" id="att-panel-trends" aria-labelledby="att-tab-trends" className="animate-in fade-in-0 slide-in-from-bottom-1 space-y-6 duration-motion-base">
-          {canListEmployees ? (
-            <SectionCard
-              id="att-breakdown"
-              title="Departments & branches"
-              description="Who is in, and who is missing, in each part of the company. Click a row to filter the whole dashboard."
-              status={directory.status === "idle" ? "loading" : directory.status}
-              error={directory.error}
-              onRetry={directory.retry}
-            >
-              <BreakdownPanel
-                byDepartment={byDepartment}
-                byBranch={byBranch}
-                active={{ department: filters.department, branch: filters.branch }}
-                onSelect={(key, name) => updateFilters({ [key]: filters[key] === name ? "" : name })}
-                focusLabel={focusLabel}
-                partialNote={
-                  directory.data?.truncated
-                    ? `Department and branch figures cover the first ${directory.data.covered.toLocaleString()} of ${directory.data.total.toLocaleString()} employees.`
-                    : null
-                }
-              />
-            </SectionCard>
-          ) : null}
+          <SectionCard
+            id="att-breakdown"
+            title="Departments & branches"
+            description="Who is in, and who is missing, in each part of the company. Click a row to filter the whole dashboard."
+            status="ready"
+          >
+            <BreakdownPanel
+              byDepartment={totals.byDepartment}
+              byBranch={totals.byBranch}
+              active={{ department: filters.department, branch: filters.branch }}
+              onSelect={(key, value) => updateFilters({ [key]: filters[key] === value ? "" : value })}
+              focusLabel={focusLabel}
+            />
+          </SectionCard>
 
           <div className="grid gap-6 lg:grid-cols-3">
             <SectionCard
@@ -536,16 +539,16 @@ function AttendanceDashboard() {
               status="ready"
               className="lg:col-span-2"
             >
-              <TrendChart rows={population} range={win} />
+              <TrendChart days={totals.daily} range={win} />
             </SectionCard>
             <SectionCard
               id="att-status"
               title="Status distribution"
               description={`${focusIsToday ? "Today" : formatShortDate(range.to)} — click a status to list those employees.`}
               status="ready"
-              empty={focusRows.length === 0 ? { title: "No attendance records for this date.", icon: CalendarClock } : null}
+              empty={totals.distribution.every((d) => d.count === 0) ? { title: "No attendance records for this date.", icon: CalendarClock } : null}
             >
-              <StatusChart distribution={distribution} filters={filters} onDrill={(bucket) => drill({ bucket })} />
+              <StatusChart distribution={totals.distribution} filters={filters} onDrill={(bucket) => drill({ bucket })} />
             </SectionCard>
           </div>
 
@@ -557,8 +560,8 @@ function AttendanceDashboard() {
               status="ready"
             >
               <PunctualityPanel
-                summary={punctuality}
-                frequent={frequentLate}
+                summary={totals.punctuality}
+                frequent={totals.frequentLate}
                 employeesById={employeesById}
                 onViewLate={() => drill({ flag: "late", scope: "range" })}
               />
@@ -569,7 +572,7 @@ function AttendanceDashboard() {
               description={`${winLabel} — share of expected days missed, per weekday.`}
               status="ready"
             >
-              <WeekdayPanel stats={weekdayStats} />
+              <WeekdayPanel stats={totals.weekdayStats} />
             </SectionCard>
           </div>
 
@@ -602,7 +605,7 @@ function AttendanceDashboard() {
               status="ready"
             >
               <AbsenceInsights
-                kpi={kpi}
+                kpi={totals.kpi}
                 focusLabel={focusLabel}
                 rangeAbsentDays={absentRangeDays}
                 rangeLeaveDays={leaveRangeDays}

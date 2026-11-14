@@ -32,6 +32,7 @@ import AttendanceDashboardPage from "@/app/app/attendance/page";
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import { makeAbsentDay, makeDay } from "@/lib/attendance/__fixtures__/day";
+import { fakeSummary, type FakeOrg } from "@/lib/attendance/__fixtures__/fake-summary";
 import { addDays, type EmployeeLite } from "@/lib/attendance/dashboard";
 import { businessToday } from "@/lib/attendance/format";
 import type { AttendanceDay } from "@/lib/attendance/types";
@@ -81,14 +82,18 @@ interface Overrides {
   periods?: unknown[];
   regularizations?: unknown[];
   summary?: unknown[];
-  /** Department / branch rows from the employee directory; omitted = the request fails. */
-  directory?: unknown[] | Error;
+  /** Department / branch rows from the employee directory; omitted = the request fails. The
+   * fake summary groups by the same rows (everyone is Unassigned without them). */
+  directory?: ReturnType<typeof dirRow>[] | Error;
+  /** What the backend knows of everyone's department / branch, when it differs from `directory`. */
+  orgs?: ReturnType<typeof dirRow>[];
+  /** Makes `GET /attendance/summary` fail with this error. */
+  summaryError?: Error;
 }
 
 function mockApi(o: Overrides = {}) {
   const days = o.days ?? [];
   mockedGet.mockImplementation((path: string) => {
-    if (path.startsWith("/attendance/days?")) return days instanceof Error ? Promise.reject(days) : Promise.resolve(days);
     if (path.startsWith("/regularizations")) return Promise.resolve(o.regularizations ?? []);
     if (path.startsWith("/overtime")) {
       return o.overtime instanceof Error ? Promise.reject(o.overtime) : Promise.resolve(o.overtime ?? []);
@@ -102,12 +107,32 @@ function mockApi(o: Overrides = {}) {
       ]);
     }
     if (path === "/shifts") return Promise.resolve([{ id: "shift-1", name: "General" }]);
+    if (path.startsWith("/attendance/summary")) {
+      if (o.summaryError) return Promise.reject(o.summaryError);
+      if (days instanceof Error) return Promise.reject(days);
+      const known = o.orgs ?? (Array.isArray(o.directory) ? o.directory : []);
+      const orgs = new Map<string, FakeOrg>(known.map((r) => [r.employee_id, r]));
+      const query = new URLSearchParams(path.split("?")[1] ?? "");
+      return Promise.resolve(fakeSummary(query, days, o.employees ?? EMPLOYEES, (id) => orgs.get(id), TODAY));
+    }
     if (path.startsWith("/employees/directory/rows") && o.directory !== undefined) {
       return o.directory instanceof Error ? Promise.reject(o.directory) : Promise.resolve(o.directory);
     }
     return Promise.reject(new Error(`Unexpected GET ${path}`));
   });
-  mockedGetList.mockImplementation((path: string) => {
+  mockedGetList.mockImplementation((path: string, query?: Record<string, unknown>) => {
+    if (path === "/attendance/days") {
+      if (days instanceof Error) return Promise.reject(days);
+      // Pages like the API: `per_page` rows at a time, newest first is irrelevant to the totals.
+      const perPage = Number(query?.per_page ?? 500);
+      const page = Number(query?.page ?? 1);
+      const totalPages = Math.max(1, Math.ceil(days.length / perPage));
+      return Promise.resolve({
+        data: days.slice((page - 1) * perPage, page * perPage),
+        pagination: { page, per_page: perPage, total: days.length, total_pages: totalPages },
+        meta: { request_id: "r1" },
+      });
+    }
     if (path === "/employees") {
       const data = o.employees ?? EMPLOYEES;
       return Promise.resolve({
@@ -120,14 +145,27 @@ function mockApi(o: Overrides = {}) {
   });
 }
 
-const dirRow = (employee_id: string, department: string | null, branch: string | null) => ({
-  employee_id,
-  designation: null,
-  department,
-  branch,
-  manager_name: null,
-  shift_name: null,
-});
+/** Department / branch ids, as the API would give them (filters and URLs carry ids). */
+const GROUP_IDS: Record<string, string> = {
+  Engineering: "00000000-0000-4000-8000-00000000000e",
+  Sales: "00000000-0000-4000-8000-00000000000a",
+  Pune: "00000000-0000-4000-8000-0000000000b1",
+  Mumbai: "00000000-0000-4000-8000-0000000000b2",
+};
+const ENG = GROUP_IDS.Engineering;
+
+function dirRow(employee_id: string, department: string | null, branch: string | null) {
+  return {
+    employee_id,
+    designation: null,
+    department,
+    branch,
+    department_id: department ? GROUP_IDS[department] : null,
+    branch_id: branch ? GROUP_IDS[branch] : null,
+    manager_name: null,
+    shift_name: null,
+  };
+}
 
 /** Asha and Ben in Engineering / Pune, Chitra in Sales / Mumbai. */
 const DIRECTORY = [
@@ -466,12 +504,14 @@ describe("AttendanceDashboardPage", () => {
       await findKpi(/^Absent: 1\./);
       await user.click(screen.getByRole("button", { name: "This month" }));
       await waitFor(() => {
-        const calls = mockedGet.mock.calls.map((c) => c[0]).filter((p) => p.startsWith("/attendance/days?"));
+        const calls = mockedGetList.mock.calls
+          .filter((c) => c[0] === "/attendance/days")
+          .map((c) => c[1] as { date_from: string; date_to: string });
         // The fetch window is the range widened to ≥14 days of trend context, so it starts on or
         // before the first of the month and always ends today.
-        const wide = calls.filter((p) => new URLSearchParams(p.split("?")[1]).get("date_from")! <= `${TODAY.slice(0, 7)}-01`);
+        const wide = calls.filter((q) => q.date_from <= `${TODAY.slice(0, 7)}-01`);
         expect(wide.length).toBeGreaterThan(0);
-        expect(wide.every((p) => new URLSearchParams(p.split("?")[1]).get("date_to") === TODAY)).toBe(true);
+        expect(wide.every((q) => q.date_to === TODAY)).toBe(true);
       });
       await user.click(screen.getByRole("button", { name: "Custom" }));
       expect(screen.getByLabelText("From")).toBeInTheDocument();
@@ -509,7 +549,7 @@ describe("AttendanceDashboardPage", () => {
       render(<AttendanceDashboardPage />);
       const salesRow = await screen.findByRole("button", { name: /^Sales: .*Show only this department/ });
       await user.click(salesRow);
-      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith("/app/attendance?dept=Sales&view=trends", { scroll: false }));
+      await waitFor(() => expect(replaceMock).toHaveBeenLastCalledWith(`/app/attendance?dept=${GROUP_IDS.Sales}&view=trends`, { scroll: false }));
       expect(await screen.findByRole("button", { name: /remove filter department: sales/i })).toBeInTheDocument();
       await user.click(screen.getByRole("tab", { name: "Today" }));
       expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
@@ -522,7 +562,7 @@ describe("AttendanceDashboardPage", () => {
     });
 
     it("restores a department filter from a shared link", async () => {
-      searchParams = new URLSearchParams("dept=Engineering");
+      searchParams = new URLSearchParams(`dept=${ENG}`);
       mockApi({ days: sampleDays(), directory: DIRECTORY });
       render(<AttendanceDashboardPage />);
       expect(await findKpi(/^Total employees: 2\./)).toBeInTheDocument();
@@ -547,18 +587,20 @@ describe("AttendanceDashboardPage", () => {
       expect(await screen.findByRole("button", { name: /^Unassigned:/ })).toBeInTheDocument();
     });
 
-    it("says so, and ignores the filter, when the directory can't be loaded", async () => {
-      searchParams = new URLSearchParams("dept=Sales");
-      mockApi({ days: sampleDays(), directory: new ApiError({ status: 500, code: "BOOM", message: "x" }) });
+    it("still filters the totals, and says the lists aren't filtered, when the directory can't be loaded", async () => {
+      searchParams = new URLSearchParams(`dept=${GROUP_IDS.Sales}`);
+      mockApi({ days: sampleDays(), directory: new ApiError({ status: 500, code: "BOOM", message: "x" }), orgs: DIRECTORY });
       render(<AttendanceDashboardPage />);
-      expect(await screen.findByText(/department \/ branch filter isn't applied/i)).toBeInTheDocument();
-      expect(await findKpi(/^Total employees: 3\./)).toBeInTheDocument();
+      expect(await screen.findByText(/applies to the totals but not to the employee lists/i)).toBeInTheDocument();
+      // The backend applies the filter: only Chitra is in Sales.
+      expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
+      expect(inList().getAllByText("Asha Rao").length).toBeGreaterThan(0);
     });
 
     it("shows a department filter's loading skeleton, not unfiltered numbers, while the directory loads", async () => {
-      searchParams = new URLSearchParams("dept=Sales");
+      searchParams = new URLSearchParams(`dept=${GROUP_IDS.Sales}`);
       let release!: (rows: unknown) => void;
-      mockApi({ days: sampleDays(), directory: [] });
+      mockApi({ days: sampleDays(), directory: [], orgs: DIRECTORY });
       const base = mockedGet.getMockImplementation()!;
       mockedGet.mockImplementation((path: string) =>
         path.startsWith("/employees/directory/rows")
@@ -575,13 +617,12 @@ describe("AttendanceDashboardPage", () => {
       expect(await findKpi(/^Total employees: 1\./)).toBeInTheDocument();
     });
 
-    it("does not ask for departments without permission to list employees", async () => {
+    it("compares departments from the summary alone, without permission to list employees", async () => {
       authUser = { ...authUser, permissions: ADMIN_PERMISSIONS.filter((p) => p !== "EMPLOYEE.VIEW_ALL") };
       searchParams = new URLSearchParams("view=trends");
-      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      mockApi({ days: sampleDays(), orgs: DIRECTORY });
       render(<AttendanceDashboardPage />);
-      await screen.findByRole("heading", { name: /attendance trend/i });
-      expect(screen.queryByRole("heading", { name: /departments & branches/i })).not.toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /^Sales: 0\.0% present/ })).toBeInTheDocument();
       expect(mockedGet.mock.calls.some((c) => String(c[0]).startsWith("/employees/directory"))).toBe(false);
     });
 
@@ -755,8 +796,8 @@ describe("AttendanceDashboardPage", () => {
       expect(screen.getByRole("heading", { name: /needs attention/i })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /attendance periods/i })).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Company (periods)")).not.toBeInTheDocument();
-      // No pointless lookups the manager can't make.
-      expect(mockedGetList).not.toHaveBeenCalled();
+      // No pointless lookups the manager can't make (the days themselves are the only list read).
+      expect(mockedGetList.mock.calls.map((c) => c[0]).filter((p) => p !== "/attendance/days")).toEqual([]);
     });
 
     it("only offers Record punch to a caller who can punch", async () => {
@@ -916,9 +957,55 @@ describe("AttendanceDashboardPage", () => {
         const total = mockedGet.mock.calls.length + mockedGetList.mock.calls.length;
         expect(total).toBeLessThanOrEqual(10);
       });
-      // Exactly one request for the attendance days — every KPI/chart/list derives from it.
-      const dayCalls = mockedGet.mock.calls.filter((c) => c[0].startsWith("/attendance/days?"));
+      // One request for the totals (counted by the backend) and one for the attendance days the
+      // lists need, when they fit on a page.
+      const dayCalls = mockedGetList.mock.calls.filter((c) => c[0] === "/attendance/days");
       expect(dayCalls).toHaveLength(1);
+      expect(mockedGet.mock.calls.filter((c) => String(c[0]).startsWith("/attendance/summary"))).toHaveLength(1);
+    });
+
+    it("asks the backend for the totals over the fetch window and the population filters", async () => {
+      searchParams = new URLSearchParams(`employee=emp-2&shift=shift-1&estatus=ACTIVE&dept=${ENG}&branch=unassigned&bucket=ABSENT`);
+      mockApi({ days: sampleDays(), directory: DIRECTORY });
+      render(<AttendanceDashboardPage />);
+      await waitFor(() => expect(mockedGet.mock.calls.some((c) => String(c[0]).startsWith("/attendance/summary"))).toBe(true));
+      const path = String(mockedGet.mock.calls.find((c) => String(c[0]).startsWith("/attendance/summary"))![0]);
+      const query = Object.fromEntries(new URLSearchParams(path.split("?")[1]));
+      expect(query).toEqual({
+        date_from: addDays(TODAY, -13),
+        date_to: TODAY,
+        employee_id: "emp-2",
+        shift_id: "shift-1",
+        employee_status: "ACTIVE",
+        department_id: ENG,
+        branch_id: "unassigned",
+      });
+    });
+
+    it("shows a retryable error, not made-up zeros, when the totals can't be loaded", async () => {
+      mockApi({ days: sampleDays(), summaryError: new ApiError({ status: 500, code: "BOOM", message: "db down" }) });
+      render(<AttendanceDashboardPage />);
+      expect(await screen.findByText("Attendance couldn't be loaded. Please try again.")).toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Attendance summary" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/db down/)).not.toBeInTheDocument();
+      mockApi({ days: sampleDays() });
+      await userEvent.setup().click(screen.getByRole("button", { name: /try again|retry/i }));
+      expect(await findKpi(/^Present: 2\./)).toBeInTheDocument();
+    });
+
+    it("reads every page of attendance days, so older days of the range still count", async () => {
+      const one = sampleDays();
+      // 600 rows: more than one 500-row page. Only the first page used to be read.
+      const many = Array.from({ length: 600 }, (_, i) => ({ ...one[i % one.length], id: `bulk-${i}` }));
+      mockApi({ days: many });
+      render(<AttendanceDashboardPage />);
+      await waitFor(() => {
+        const pages = mockedGetList.mock.calls
+          .filter((c) => c[0] === "/attendance/days")
+          .map((c) => (c[1] as { page: number }).page);
+        expect(pages).toEqual([1, 2]);
+      });
+      expect(screen.queryByText(/Totals cover the most recent/)).not.toBeInTheDocument();
     });
   });
 });

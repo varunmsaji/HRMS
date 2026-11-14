@@ -62,7 +62,8 @@ bool hasAttendanceException(AttendanceDay d) =>
     d.raw['is_pending_approval'] == true ||
     (d.raw['work_on_leave_flagged'] == true && d.raw['work_on_leave_resolution'] == null);
 
-/// KPI set for one day's rows — mirrors web `computeKpis` / `statusDistribution`.
+/// Counts for the one day's rows the Team attendance list has loaded (the header of that list,
+/// like web's "who's in"). The dashboard totals come from `GET /v1/attendance/summary` instead.
 class AttendanceSummary {
   AttendanceSummary.compute(List<AttendanceDay> rows) {
     for (final d in rows) {

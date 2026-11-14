@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
 import '../../../core/providers.dart';
+import '../domain/attendance_totals.dart';
 import '../domain/day_timeline.dart';
 import '../domain/punch_location.dart';
 
@@ -363,6 +364,13 @@ class AttendanceRepository {
     }
     return (items: items, total: total);
   }
+
+  /// The dashboard totals for [dateFrom]…[dateTo] (at most 92 days; [dateTo] is the focus day),
+  /// counted by the backend over every attendance day the caller may see.
+  Future<AttendanceTotals> attendanceSummary({required String dateFrom, required String dateTo}) => _client.get(
+        '/attendance/summary?${Uri(queryParameters: {'date_from': dateFrom, 'date_to': dateTo}).query}',
+        parse: (d) => AttendanceTotals.fromJson(d as Map<String, dynamic>),
+      );
 
   /// Pages through every result (capped at 50 pages) so day-level summaries are not truncated.
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async {

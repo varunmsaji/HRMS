@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiClient } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/errors";
 import type { AttendancePeriod, AttendancePeriodSummaryRow } from "@/lib/attendance-period/types";
 import type { AttendanceDay } from "@/lib/attendance/types";
-import type { DateRange, EmployeeLite } from "@/lib/attendance/dashboard";
+import type { DashboardFilters, DateRange, EmployeeLite } from "@/lib/attendance/dashboard";
+import { summaryQuery, type AttendanceSummary } from "@/lib/attendance/summary";
 import { directoryRowsPath, type DirectoryRow } from "@/lib/employee/directory";
 import type { LegalEntity } from "@/lib/legal-entity/types";
 import type { OvertimeRecord } from "@/lib/overtime/types";
@@ -90,9 +91,48 @@ async function loadEmployees(): Promise<EmployeeDirectory> {
   };
 }
 
+/** The API returns at most this many attendance days per page. */
+const DAYS_PAGE_SIZE = 500;
+/** 10,000 rows (the same ceiling the mobile app uses); beyond it the dashboard says it is partial. */
+const DAYS_MAX_PAGES = 20;
+
+export interface DaysCoverage {
+  loaded: number;
+  total: number;
+  truncated: boolean;
+}
+
+interface DayList {
+  items: AttendanceDay[];
+  coverage: DaysCoverage;
+}
+
+/** Every attendance day in `window`, across all pages. The list is newest first, so reading only
+ * the first page silently dropped the older days of the window from every trend and total once
+ * a company had more than about 35 employees. */
+export async function loadDays(window: DateRange): Promise<DayList> {
+  const query = { date_from: window.from, date_to: window.to, per_page: DAYS_PAGE_SIZE };
+  const first = await apiClient.getList<AttendanceDay>("/attendance/days", { ...query, page: 1 });
+  const items = [...first.data];
+  const totalPages = first.pagination?.total_pages ?? 1;
+  const lastPage = Math.min(totalPages, DAYS_MAX_PAGES);
+  if (lastPage > 1) {
+    const rest = await Promise.all(
+      Array.from({ length: lastPage - 1 }, (_, i) =>
+        apiClient.getList<AttendanceDay>("/attendance/days", { ...query, page: i + 2 }),
+      ),
+    );
+    for (const page of rest) items.push(...page.data);
+  }
+  const total = first.pagination?.total ?? items.length;
+  return { items, coverage: { loaded: items.length, total, truncated: totalPages > DAYS_MAX_PAGES } };
+}
+
 export interface DashboardDataInput {
   window: DateRange;
   range: DateRange;
+  /** The population filters the summary's totals are counted over. */
+  filters: DashboardFilters;
   legalEntityId: string;
   canListEmployees: boolean;
   canListShifts: boolean;
@@ -102,7 +142,11 @@ export interface DashboardDataInput {
 }
 
 export interface DashboardData {
+  /** The window's totals, counted by the backend (KPIs, rates, trend, punctuality, breakdown). */
+  summary: Section<AttendanceSummary>;
   days: Section<AttendanceDay[]>;
+  /** How many of the window's attendance days were loaded; `null` until they have. */
+  daysCoverage: DaysCoverage | null;
   employees: Section<EmployeeDirectory>;
   regularizations: Section<RegularizationRequest[]>;
   overtime: Section<OvertimeRecord[]>;
@@ -111,20 +155,30 @@ export interface DashboardData {
   shifts: Section<Shift[]>;
 }
 
-/** Request plan — deliberately small. Primary (parallel): attendance days for the whole window
- * (every KPI, chart, list and the muster derive from this one response) and the employee
- * directory. Secondary (after the primary days land): pending regularizations, overtime records,
- * attendance periods, and the two optional lookups. About 7 requests, never one per employee. */
+/** Request plan — deliberately small. Primary (parallel): the summary (every total and chart,
+ * counted by the backend; re-read when a population filter changes), the attendance days for the
+ * whole window (the per-person lists and the muster) and the employee directory. Secondary (after
+ * the primary days land): pending regularizations, overtime records, attendance periods, and the
+ * two optional lookups. About 8 requests, never one per employee. */
 export function useDashboardData(input: DashboardDataInput): DashboardData {
   const { window, range, legalEntityId } = input;
 
-  const days = useSection<AttendanceDay[]>(
-    () =>
-      apiClient.get<AttendanceDay[]>(
-        `/attendance/days?${new URLSearchParams({ date_from: window.from, date_to: window.to }).toString()}`,
-      ),
-    `${window.from}|${window.to}`,
+  const query = summaryQuery(window, input.filters);
+  const summary = useSection<AttendanceSummary>(
+    () => apiClient.get<AttendanceSummary>(`/attendance/summary?${new URLSearchParams(query).toString()}`),
+    `summary|${new URLSearchParams(query).toString()}`,
     true,
+  );
+
+  const dayList = useSection<DayList>(() => loadDays(window), `${window.from}|${window.to}`, true);
+  const days = useMemo<Section<AttendanceDay[]>>(
+    () => ({
+      status: dayList.status,
+      data: dayList.data?.items ?? null,
+      error: dayList.error,
+      retry: dayList.retry,
+    }),
+    [dayList.status, dayList.data, dayList.error, dayList.retry],
   );
   const employees = useSection<EmployeeDirectory>(loadEmployees, "employees", input.canListEmployees);
 
@@ -168,7 +222,17 @@ export function useDashboardData(input: DashboardDataInput): DashboardData {
     coreSettled && input.canListShifts,
   );
 
-  return { days, employees, regularizations, overtime, periods, entities, shifts };
+  return {
+    summary,
+    days,
+    daysCoverage: dayList.data?.coverage ?? null,
+    employees,
+    regularizations,
+    overtime,
+    periods,
+    entities,
+    shifts,
+  };
 }
 
 export function usePeriodSummary(periodId: string | null): Section<AttendancePeriodSummaryRow[]> {

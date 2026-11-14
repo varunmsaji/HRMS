@@ -14,6 +14,9 @@ export interface DirectoryRow {
   designation: string | null;
   department: string | null;
   branch: string | null;
+  /** The current assignment's department / branch ids (what the dashboard filters match). */
+  department_id?: string | null;
+  branch_id?: string | null;
   manager_name: string | null;
   shift_name: string | null;
 }

@@ -1,10 +1,12 @@
 /** Pure view-model logic for the Attendance command-center dashboard.
  *
- * Everything here only *aggregates and classifies values the backend already computed*
+ * The dashboard's totals (KPIs, distribution, rates, trend, punctuality, weekday pattern,
+ * department / branch breakdown) are the backend's, from `GET /v1/attendance/summary` (see
+ * `summary.ts`). What remains here classifies and lists individual rows for the per-person views
+ * (who's in, needs attention, muster, work hours, reports) — values the backend already computed
  * (`AttendanceDay`, `OvertimeRecord`, `RegularizationRequest`, `AttendancePeriod*`). Nothing
- * recalculates an attendance rule, an overtime amount or a payable day — a count is a count of
- * rows, a sum is a sum of the backend's own minutes. Percentages are always derived from the rows
- * in hand, never invented, and are `null` when the denominator is zero. */
+ * recalculates an attendance rule, an overtime amount or a payable day. Percentages are `null`
+ * when the denominator is zero. */
 
 import type { DirectoryRow } from "@/lib/employee/directory";
 import type { AttendancePeriod, AttendancePeriodSummaryRow } from "@/lib/attendance-period/types";
@@ -12,6 +14,7 @@ import { employeeFullName } from "@/lib/employee/names";
 import type { OvertimeRecord } from "@/lib/overtime/types";
 import type { RegularizationRequest } from "@/lib/regularization/types";
 
+import type { SummaryDay } from "./summary";
 import type { AttendanceDay } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -110,8 +113,9 @@ export interface DashboardFilters {
   employeeStatus: string;
   /** Scopes the attendance-period panels only — attendance days carry no company. */
   legalEntityId: string;
-  /** Department / branch *names* from the employee directory (attendance days carry neither).
-   * "Unassigned" matches employees with no department / branch. */
+  /** Department / branch *ids*, or `UNASSIGNED_KEY` for employees with none. The summary matches
+   * the assignment in force on each day; the per-person lists match the employee's current one
+   * (from the employee directory — attendance days carry neither). */
   department: string;
   branch: string;
 }
@@ -155,6 +159,13 @@ export function windowRange(range: DateRange): DateRange {
 
 type ParamReader = { get(name: string): string | null };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** An id or "unassigned"; anything else (an old link that named the department) is dropped. */
+function groupFilterParam(value: string | null): string {
+  return value && (value === UNASSIGNED_KEY || UUID.test(value)) ? value : "";
+}
+
 export function parseFilters(params: ParamReader): DashboardFilters {
   const preset = params.get("range");
   const bucket = params.get("bucket");
@@ -172,8 +183,8 @@ export function parseFilters(params: ParamReader): DashboardFilters {
     shiftId: params.get("shift") ?? "",
     employeeStatus: params.get("estatus") ?? "",
     legalEntityId: params.get("entity") ?? "",
-    department: params.get("dept") ?? "",
-    branch: params.get("branch") ?? "",
+    department: groupFilterParam(params.get("dept")),
+    branch: groupFilterParam(params.get("branch")),
   };
 }
 
@@ -453,6 +464,15 @@ export function indexEmployees(employees: EmployeeLite[]): Map<string, EmployeeL
 
 /** The label for employees with no department / branch recorded. */
 export const UNASSIGNED = "Unassigned";
+/** The department / branch filter value for "no department (branch)". */
+export const UNASSIGNED_KEY = "unassigned";
+
+type GroupIds = Pick<DirectoryRow, "department_id" | "branch_id">;
+
+/** The filter value an employee's current department / branch matches. */
+function groupFilterKey(row: GroupIds | undefined, key: "department" | "branch"): string {
+  return (key === "department" ? row?.department_id : row?.branch_id) ?? UNASSIGNED_KEY;
+}
 
 export function groupName(value: string | null | undefined): string {
   return value && value.trim() ? value.trim() : UNASSIGNED;
@@ -466,11 +486,11 @@ export function applyPopulationFilters(
   employeesById: Map<string, EmployeeLite>,
   /** Department / branch per employee. Pass it only once it has loaded — without it the
    * department and branch filters are skipped rather than guessed at. */
-  directory?: Map<string, Pick<DirectoryRow, "department" | "branch">>,
+  directory?: Map<string, GroupIds>,
 ): AttendanceDay[] {
   return days.filter((day) => {
-    if (directory && filters.department && groupName(directory.get(day.employee_id)?.department) !== filters.department) return false;
-    if (directory && filters.branch && groupName(directory.get(day.employee_id)?.branch) !== filters.branch) return false;
+    if (directory && filters.department && groupFilterKey(directory.get(day.employee_id), "department") !== filters.department) return false;
+    if (directory && filters.branch && groupFilterKey(directory.get(day.employee_id), "branch") !== filters.branch) return false;
     if (filters.employeeId && day.employee_id !== filters.employeeId) return false;
     if (filters.shiftId && day.shift_id !== filters.shiftId) return false;
     if (filters.employeeStatus) {
@@ -520,7 +540,7 @@ export function employeesWithoutRecord(
   filters: DashboardFilters,
   date: string,
   /** Department / branch per employee — the same map the population filter used. */
-  directory?: Map<string, Pick<DirectoryRow, "department" | "branch">>,
+  directory?: Map<string, GroupIds>,
 ): EmployeeLite[] {
   const seen = new Set(rowsOnFocus.map((day) => day.employee_id));
   return employees.filter((employee) => {
@@ -533,8 +553,8 @@ export function employeesWithoutRecord(
     if (filters.shiftId) return false;
     // Without this, everyone the department / branch filter just removed from the list would
     // come straight back as "no record yet".
-    if (directory && filters.department && groupName(directory.get(employee.id)?.department) !== filters.department) return false;
-    if (directory && filters.branch && groupName(directory.get(employee.id)?.branch) !== filters.branch) return false;
+    if (directory && filters.department && groupFilterKey(directory.get(employee.id), "department") !== filters.department) return false;
+    if (directory && filters.branch && groupFilterKey(directory.get(employee.id), "branch") !== filters.branch) return false;
     return true;
   });
 }
@@ -567,59 +587,6 @@ export interface KpiSet {
   notEmployed: number;
 }
 
-export function computeKpis(rowsOnFocus: AttendanceDay[], noRecord = 0): KpiSet {
-  const kpi: KpiSet = {
-    totalEmployees: 0,
-    noRecord,
-    present: 0,
-    remote: 0,
-    onDuty: 0,
-    absent: 0,
-    leave: 0,
-    halfDay: 0,
-    holiday: 0,
-    weeklyOff: 0,
-    incomplete: 0,
-    late: 0,
-    notCheckedIn: noRecord,
-    checkedIn: 0,
-    exceptions: 0,
-    overtimeEmployees: 0,
-    overtimeMinutesDetected: 0,
-    overtimeMinutesApproved: 0,
-    notEmployed: 0,
-  };
-  let employed = 0;
-  for (const day of rowsOnFocus) {
-    const bucket = bucketOf(day);
-    if (bucket === "NOT_EMPLOYED") {
-      kpi.notEmployed += 1;
-      continue;
-    }
-    employed += 1;
-    if (bucket === "PRESENT") kpi.present += 1;
-    if (bucket === "REMOTE") kpi.remote += 1;
-    if (bucket === "ON_DUTY") kpi.onDuty += 1;
-    if (bucket === "ABSENT") kpi.absent += 1;
-    if (bucket === "LEAVE") kpi.leave += 1;
-    if (bucket === "HALF_DAY") kpi.halfDay += 1;
-    if (bucket === "HOLIDAY") kpi.holiday += 1;
-    if (bucket === "WEEKLY_OFF") kpi.weeklyOff += 1;
-    if (bucket === "INCOMPLETE") kpi.incomplete += 1;
-    if (day.actual_first_in) kpi.checkedIn += 1;
-    if (day.is_late) kpi.late += 1;
-    if (isNotCheckedIn(day)) kpi.notCheckedIn += 1;
-    if (hasException(day)) kpi.exceptions += 1;
-    if (day.ot_minutes_detected > 0) {
-      kpi.overtimeEmployees += 1;
-      kpi.overtimeMinutesDetected += day.ot_minutes_detected;
-      kpi.overtimeMinutesApproved += day.ot_minutes_approved;
-    }
-  }
-  kpi.totalEmployees = employed + noRecord;
-  return kpi;
-}
-
 /** Present as the dashboard defines it: office + remote + on-duty (an employee who is working). */
 export function presentTotal(kpi: KpiSet): number {
   return kpi.present + kpi.remote + kpi.onDuty;
@@ -629,19 +596,6 @@ export interface DistributionEntry {
   bucket: DayBucket;
   label: string;
   count: number;
-}
-
-export function statusDistribution(rowsOnFocus: AttendanceDay[]): DistributionEntry[] {
-  const counts = new Map<DayBucket, number>();
-  for (const day of rowsOnFocus) {
-    const bucket = bucketOf(day);
-    counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
-  }
-  return DAY_BUCKETS.map((bucket) => ({
-    bucket,
-    label: BUCKET_LABELS[bucket],
-    count: counts.get(bucket) ?? 0,
-  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -693,18 +647,15 @@ function emptyTally(): DayTally {
   return { expected: 0, present: 0, remote: 0, absent: 0, leave: 0, late: 0, checkedIn: 0, workedMinutes: 0 };
 }
 
-function tallyInto(tally: DayTally, day: AttendanceDay): void {
-  const bucket = bucketOf(day);
-  if (!NOT_EXPECTED_BUCKETS.has(bucket)) tally.expected += 1;
-  if (ATTENDING.has(bucket)) tally.present += 1;
-  if (bucket === "REMOTE") tally.remote += 1;
-  if (bucket === "ABSENT") tally.absent += 1;
-  if (bucket === "LEAVE") tally.leave += 1;
-  if (day.actual_first_in) {
-    tally.checkedIn += 1;
-    tally.workedMinutes += day.worked_minutes;
-  }
-  if (day.is_late) tally.late += 1;
+function tallyInto(tally: DayTally, day: SummaryDay): void {
+  tally.expected += day.expected;
+  tally.present += day.present;
+  tally.remote += day.remote;
+  tally.absent += day.absent;
+  tally.leave += day.leave;
+  tally.late += day.late;
+  tally.checkedIn += day.checked_in;
+  tally.workedMinutes += day.worked_minutes;
 }
 
 function metricOf(tally: DayTally, metric: TrendMetric): Pick<TrendPoint, "value" | "numerator" | "denominator"> {
@@ -728,12 +679,9 @@ function metricOf(tally: DayTally, metric: TrendMetric): Pick<TrendPoint, "value
   }
 }
 
-export function buildTrend(
-  days: AttendanceDay[],
-  range: DateRange,
-  metric: TrendMetric,
-  granularity: TrendGranularity,
-): TrendPoint[] {
+/** The trend series from the summary's per-day counts. Weekly points add the days' numerators and
+ * denominators, so a week's rate is never an average of daily rates. */
+export function buildTrend(days: SummaryDay[], range: DateRange, metric: TrendMetric, granularity: TrendGranularity): TrendPoint[] {
   const tallies = new Map<string, DayTally>();
   const keyFor = (date: string) => (granularity === "weekly" ? weekStart(date) : date);
   for (const date of eachDate(range.from, range.to)) {
@@ -741,8 +689,9 @@ export function buildTrend(
     if (!tallies.has(key)) tallies.set(key, emptyTally());
   }
   for (const day of days) {
-    if (day.attendance_date < range.from || day.attendance_date > range.to) continue;
-    tallyInto(tallies.get(keyFor(day.attendance_date)) ?? emptyTally(), day);
+    if (day.date < range.from || day.date > range.to) continue;
+    const tally = tallies.get(keyFor(day.date));
+    if (tally) tallyInto(tally, day);
   }
   return Array.from(tallies.entries()).map(([key, tally]) => ({
     key,

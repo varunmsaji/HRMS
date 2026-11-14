@@ -5,8 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import { Collapse } from "@/components/common/collapse";
 import { KpiGrid } from "@/components/attendance/dashboard/kpi-grid";
-import { DEFAULT_FILTERS, computeKpis } from "@/lib/attendance/dashboard";
-import { makeDay } from "@/lib/attendance/__fixtures__/day";
+import { DEFAULT_FILTERS } from "@/lib/attendance/dashboard";
+import { makeKpis } from "@/lib/attendance/__fixtures__/summary";
+import { toKpiSet } from "@/lib/attendance/summary";
 
 function Demo() {
   const [open, setOpen] = useState(false);
@@ -45,7 +46,7 @@ describe("Collapse", () => {
 
 describe("KpiGrid more statuses", () => {
   it("expands and collapses the rarer statuses", async () => {
-    render(<KpiGrid kpi={computeKpis([makeDay()])} filters={DEFAULT_FILTERS} focusLabel="today" onDrill={() => {}} />);
+    render(<KpiGrid kpi={toKpiSet(makeKpis({ total_employees: 1, present: 1, checked_in: 1 }))} filters={DEFAULT_FILTERS} focusLabel="today" onDrill={() => {}} />);
     expect(screen.queryByRole("button", { name: /^Half day:/ })).not.toBeInTheDocument();
     const toggle = screen.getByRole("button", { name: /more statuses/i });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
