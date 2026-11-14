@@ -1,0 +1,15 @@
+{
+ "avg_late_minutes": 1.5,
+ "bands": [
+  {
+   "count": 1,
+   "key": "x",
+   "label": "x"
+  }
+ ],
+ "checked_in": 1,
+ "late": 1,
+ "late_rate": 1.5,
+ "on_time": 1,
+ "on_time_rate": 1.5
+}

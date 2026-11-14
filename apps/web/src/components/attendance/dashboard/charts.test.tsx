@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { makeAbsentDay, makeDay } from "@/lib/attendance/__fixtures__/day";
+import { makeSummaryDay } from "@/lib/attendance/__fixtures__/summary";
 import { buildMuster, indexEmployees } from "@/lib/attendance/dashboard";
 
 import { ColumnChart, LineChart, ProportionBar } from "./charts";
@@ -67,14 +68,12 @@ describe("ColumnChart / ProportionBar", () => {
 
 describe("TrendChart", () => {
   const range = { from: "2026-10-01", to: "2026-10-14" };
-  const rows = [
-    makeDay({ employee_id: "e1", attendance_date: "2026-10-01" }),
-    makeAbsentDay({ employee_id: "e2", attendance_date: "2026-10-01" }),
-  ];
+  // The summary's count for 1 Oct: one of two expected employees present (9 hours worked), one absent.
+  const days = [makeSummaryDay("2026-10-01", { expected: 2, present: 1, absent: 1, checked_in: 1, worked_minutes: 540 })];
 
-  it("maps rows to the chosen metric and switches with the selector", async () => {
+  it("maps the daily counts to the chosen metric and switches with the selector", async () => {
     const user = userEvent.setup();
-    render(<TrendChart rows={rows} range={range} />);
+    render(<TrendChart days={days} range={range} />);
     const table = () => screen.getByRole("table", { name: /present %, daily/i });
     expect(within(table()).getAllByText("50.0%").length).toBeGreaterThan(0);
 
@@ -87,12 +86,12 @@ describe("TrendChart", () => {
 
   it("offers weekly aggregation only when the range is long enough, and says when there's no data", async () => {
     const user = userEvent.setup();
-    const { rerender } = render(<TrendChart rows={rows} range={{ from: "2026-10-01", to: "2026-10-05" }} />);
+    const { rerender } = render(<TrendChart days={days} range={{ from: "2026-10-01", to: "2026-10-05" }} />);
     expect(screen.queryByRole("group", { name: "Granularity" })).not.toBeInTheDocument();
-    rerender(<TrendChart rows={rows} range={range} />);
+    rerender(<TrendChart days={days} range={range} />);
     await user.click(screen.getByRole("button", { name: "weekly" }));
     expect(screen.getByRole("img", { name: /present %, weekly/i })).toBeInTheDocument();
-    rerender(<TrendChart rows={[]} range={range} />);
+    rerender(<TrendChart days={[]} range={range} />);
     expect(screen.getByText(/no attendance recorded in this range to chart/i)).toBeInTheDocument();
   });
 });

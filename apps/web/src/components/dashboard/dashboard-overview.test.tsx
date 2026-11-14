@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth/use-permissions", () => ({
@@ -7,8 +7,11 @@ vi.mock("@/lib/auth/use-permissions", () => ({
 vi.mock("@/lib/employee/use-employee-names", () => ({
   useEmployeeNames: () => () => "Asha Rao",
 }));
+const overviewCalls: Array<{ branchId: string }> = [];
+const resourcePaths: string[] = [];
+
 vi.mock("@/components/dashboard/use-workforce-overview", () => ({
-  useWorkforceOverview: () => ({
+  useWorkforceOverview: (opts: { branchId: string }) => (overviewCalls.push(opts), {
     data: {
       attendance_date: "2026-10-31",
       total: 45,
@@ -42,8 +45,14 @@ vi.mock("@/components/dashboard/use-pending-approvals", () => ({
     },
   }),
 }));
+const BRANCHES = [
+  { id: "br-blr", name: "Bengaluru HQ", is_active: true },
+  { id: "br-mum", name: "Mumbai Office", is_active: true },
+  { id: "br-old", name: "Closed Office", is_active: false },
+];
+
 vi.mock("@/hooks/use-api-resource", () => ({
-  useApiResource: () => ({
+  useApiResource: (path: string) => (resourcePaths.push(path), path === "/branches" ? { loading: false, error: null, data: BRANCHES } : {
     loading: false,
     error: null,
     data: {
@@ -108,5 +117,26 @@ describe("DashboardOverview", () => {
       "/app/payroll/pay-runs",
     );
     expect(screen.getByRole("link", { name: /Manage Employees/ })).toHaveAttribute("href", "/app/employees");
+  });
+
+  it("starts on all branches and narrows every card to the picked branch", () => {
+    overviewCalls.length = 0;
+    resourcePaths.length = 0;
+    render(<DashboardOverview today="2026-10-31" />);
+
+    const picker = screen.getByRole("combobox", { name: "Branch" });
+    expect(picker).toHaveValue("");
+    // Inactive branches are not offered.
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
+      expect.arrayContaining(["All branches", "Bengaluru HQ", "Mumbai Office"]),
+    );
+    expect(screen.queryByRole("option", { name: "Closed Office" })).not.toBeInTheDocument();
+    expect(overviewCalls.at(-1)?.branchId).toBe("");
+    expect(resourcePaths.filter((p) => p.startsWith("/dashboards")).at(-1)).not.toContain("branch_id");
+
+    fireEvent.change(picker, { target: { value: "br-mum" } });
+
+    expect(overviewCalls.at(-1)?.branchId).toBe("br-mum");
+    expect(resourcePaths.filter((p) => p.startsWith("/dashboards")).at(-1)).toContain("branch_id=br-mum");
   });
 });

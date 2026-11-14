@@ -523,3 +523,37 @@ async def test_calculate_date_omitted_defaults_to_business_today(
     finally:
         await _cleanup_attendance_day(company_id=company_id)
         await _cleanup(company_id=company_id, user_id=user_id)
+
+
+async def test_open_check_in_records_actual_first_in(
+    client: AsyncClient, seeded_plan_catalogue: None
+) -> None:
+    """Checked in, not yet checked out: the real punch route plus the calculate endpoint must
+    leave `actual_first_in` on the day, which is what the company attendance overview reads to
+    count a mid-shift employee as present rather than "not checked in"."""
+    headers, company_id, user_id = await _register_tenant(client)
+    try:
+        wired = await _build_wired_employee(client, headers)
+        employee_id = wired["employee"]["id"]
+        punch = await _punch(
+            client, headers, employee_id=employee_id, hour=9, minute=0, direction="IN"
+        )
+
+        response = await client.post(
+            "/v1/attendance/days/calculate",
+            headers=headers,
+            params={"employee_id": employee_id, "date": "2026-08-10"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["attendance_status"] == "INCOMPLETE"
+        assert data["missing_punch"] is True
+        assert data["actual_first_in"] is not None
+        assert datetime.fromisoformat(data["actual_first_in"]) == datetime.fromisoformat(
+            punch["punch_time"]
+        )
+        assert data["actual_last_out"] is None
+        assert data["computation_snapshot"]["presence"]["first_in"] is not None
+    finally:
+        await _cleanup_attendance_day(company_id=company_id)
+        await _cleanup(company_id=company_id, user_id=user_id)

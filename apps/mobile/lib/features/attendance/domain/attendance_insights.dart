@@ -1,9 +1,11 @@
 import '../data/attendance_repository.dart';
 import '../presentation/attendance_summary.dart' show attendanceBucketOf;
+import 'attendance_totals.dart' show TotalsDay;
 
-/// Pure view-model logic for the Attendance Insights screen — mirrors the aggregation half of
-/// `apps/web/src/lib/attendance/dashboard.ts`. Like the web, it only counts and sums values the
-/// backend already computed; percentages are `null` when the denominator is zero.
+/// Pure view-model logic for the Attendance Insights screen — mirrors
+/// `apps/web/src/lib/attendance/dashboard.ts`. The trend reads the backend's per-day counts
+/// (`GET /v1/attendance/summary`); the per-person panels (work hours, needs attention, repeat
+/// absences, muster) read the attendance days. Percentages are `null` when the denominator is zero.
 
 // ---- dates (ISO `YYYY-MM-DD`, pure UTC arithmetic) -------------------------------------------
 
@@ -55,8 +57,6 @@ const insightsRangeLabels = {
 
 // ---- row helpers -------------------------------------------------------------------------------
 
-const _attending = {'PRESENT', 'REMOTE', 'ON_DUTY'};
-const _notExpected = {'NOT_EMPLOYED', 'HOLIDAY', 'WEEKLY_OFF', 'NON_WORKING'};
 const _worked = {'PRESENT', 'REMOTE', 'ON_DUTY', 'HALF_DAY', 'INCOMPLETE'};
 
 int _int(AttendanceDay d, String key) => (d.raw[key] as num?)?.toInt() ?? 0;
@@ -92,18 +92,15 @@ class TrendPoint {
 class _Tally {
   int expected = 0, present = 0, remote = 0, absent = 0, leave = 0, late = 0, checkedIn = 0, workedMin = 0;
 
-  void add(AttendanceDay d) {
-    final b = attendanceBucketOf(d);
-    if (!_notExpected.contains(b)) expected++;
-    if (_attending.contains(b)) present++;
-    if (b == 'REMOTE') remote++;
-    if (b == 'ABSENT') absent++;
-    if (b == 'LEAVE') leave++;
-    if (d.actualFirstIn != null) {
-      checkedIn++;
-      workedMin += workedMinutes(d);
-    }
-    if (isLate(d)) late++;
+  void add(TotalsDay d) {
+    expected += d.expected;
+    present += d.present;
+    remote += d.remote;
+    absent += d.absent;
+    leave += d.leave;
+    late += d.late;
+    checkedIn += d.checkedIn;
+    workedMin += d.workedMinutes;
   }
 
   double? value(TrendMetric m) => switch (m) {
@@ -116,15 +113,17 @@ class _Tally {
       };
 }
 
-List<TrendPoint> buildTrend(List<AttendanceDay> days, String from, String to, TrendMetric metric, {required bool weekly}) {
+/// The trend from the summary's per-day counts. A week adds its days' numerators and denominators,
+/// so a weekly rate is never an average of daily rates.
+List<TrendPoint> buildTrend(List<TotalsDay> days, String from, String to, TrendMetric metric, {required bool weekly}) {
   String keyFor(String date) => weekly ? weekStartIso(date) : date;
   final tallies = <String, _Tally>{};
   for (final date in eachDateIso(from, to)) {
     tallies.putIfAbsent(keyFor(date), _Tally.new);
   }
   for (final d in days) {
-    if (d.attendanceDate.compareTo(from) < 0 || d.attendanceDate.compareTo(to) > 0) continue;
-    tallies.putIfAbsent(keyFor(d.attendanceDate), _Tally.new).add(d);
+    if (d.date.compareTo(from) < 0 || d.date.compareTo(to) > 0) continue;
+    tallies.putIfAbsent(keyFor(d.date), _Tally.new).add(d);
   }
   return [for (final e in tallies.entries) TrendPoint(e.key, weekly ? 'Wk ${shortDate(e.key)}' : shortDate(e.key), e.value.value(metric))];
 }

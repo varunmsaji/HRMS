@@ -48,7 +48,6 @@ class PublicOnboardingCase {
     'emergency_contact',
     'bank_info',
     'statutory_info',
-    'compensation_info',
     'previous_employment_info',
     'education_info',
     'nominee_info',

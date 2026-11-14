@@ -17,6 +17,7 @@ import 'package:hrms_mobile/features/organisation/domain/org_resources.dart';
 import 'package:hrms_mobile/features/payroll/domain/payroll_resources.dart';
 import 'package:hrms_mobile/core/auth/auth_types.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
+import 'package:hrms_mobile/features/attendance/domain/attendance_totals.dart';
 import 'package:hrms_mobile/features/attendance/data/policy_repository.dart';
 import 'package:hrms_mobile/features/auth/data/auth_repository.dart';
 import 'package:hrms_mobile/features/dashboard/data/dashboard_repository.dart';
@@ -43,6 +44,7 @@ final Map<String, _Parser> _models = {
   // attendance
   'organisation.ShiftRead': Shift.fromJson,
   'attendance.AttendanceDayRead': AttendanceDay.fromJson,
+  'attendance.AttendanceSummaryRead': AttendanceTotals.fromJson,
   'organisation.HolidayCalendarRead': HolidayCalendar.fromJson,
   'organisation.HolidayRead': Holiday.fromJson,
   'organisation.WeeklyOffPatternRead': WeeklyOffPattern.fromJson,
@@ -150,7 +152,6 @@ void main() {
       'emergency_contact': 'onboarding.EmergencyContactSection',
       'bank_info': 'onboarding.BankInfoSection',
       'statutory_info': 'onboarding.StatutoryInfoSection',
-      'compensation_info': 'onboarding.CompensationInfoSection',
       'previous_employment_info': 'onboarding.PreviousEmploymentItem',
       'education_info': 'onboarding.EducationItem',
       'nominee_info': 'onboarding.NomineeItem',

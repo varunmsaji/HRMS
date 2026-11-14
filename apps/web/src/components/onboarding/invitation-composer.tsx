@@ -250,17 +250,31 @@ function ComposerSession({
                 </FormField>
                 <div className="space-y-1.5">
                   <label htmlFor="invitationBody" className="text-sm font-medium">Message</label>
-                  <textarea
-                    id="invitationBody"
-                    value={body}
-                    rows={18}
-                    maxLength={compose.body_max_length}
-                    onChange={(e) => setBody(e.target.value)}
-                    className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
-                  />
+                  <div className="overflow-hidden rounded-md border border-border bg-surface focus-within:border-primary focus-within:ring-2 focus-within:ring-ring/20">
+                    {/* The sent email opens with this logo above the greeting (added by the server). */}
+                    <div className="border-b border-border bg-white px-3 py-2.5">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- mirrors the email's own <img> */}
+                      <img
+                        src="/brand/krewoxa-logo-email.png"
+                        alt="Krewoxa"
+                        width={120}
+                        height={26}
+                        className="h-[26px] w-auto"
+                      />
+                    </div>
+                    <textarea
+                      id="invitationBody"
+                      value={body}
+                      rows={18}
+                      maxLength={compose.body_max_length}
+                      onChange={(e) => setBody(e.target.value)}
+                      className="block w-full resize-y border-0 bg-transparent px-3 py-2 text-sm text-foreground focus-visible:outline-none"
+                    />
+                  </div>
                   <p className="text-xs text-foreground-muted">
-                    This is the email as the candidate will see it. Keep {"{{onboarding_url}}"} where the
-                    secure link should go; it is replaced with their personal link when you send.
+                    This is the email as the candidate will see it, with the Krewoxa logo above the
+                    greeting. Keep {"{{onboarding_url}}"} where the secure link should go; it is replaced
+                    with their personal link when you send.
                   </p>
                 </div>
                 {fieldError ? <p role="alert" className="text-sm text-destructive">{fieldError}</p> : null}

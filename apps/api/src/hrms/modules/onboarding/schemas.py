@@ -66,9 +66,10 @@ ONBOARDING_SECTION_NAMES = (
     "education_info",
     "nominee_info",
 )
-# `compensation_info` is deliberately NOT in `ONBOARDING_SECTION_NAMES` (candidates no longer
-# enter or get reviewed on CTC during onboarding). Its column and `SECTION_SCHEMAS` entry stay so
-# a value written some other way is still turned into an `employee_compensation` row at activation.
+# `compensation_info` is not a section at all: a candidate must never set their own pay. The
+# public `PATCH` rejects it (it is not in `SECTION_SCHEMAS`), and activation never reads the old
+# column, so pay is only ever entered by HR on the employee record. The column stays only so cases
+# from before the change still read back.
 
 # Human-readable labels for the five reviewable sections — used in the "changes requested" email
 # (O6) and available for any admin-UI rendering that wants one canonical mapping. Plan §4.4's own
@@ -84,7 +85,6 @@ ONBOARDING_SECTION_LABELS = {
     "emergency_contact": "Emergency Contact",
     "bank_info": "Bank Details",
     "statutory_info": "Statutory Details",
-    "compensation_info": "Compensation",
     "previous_employment_info": "Previous Employment",
     "education_info": "Education",
     "nominee_info": "Nominees & Family Details",
@@ -298,21 +298,6 @@ class StatutoryInfoSection(BaseModel):
     is_international_worker: bool = False
 
 
-class CompensationInfoSection(BaseModel):
-    """Subset of `CompensationCreate` — excludes `effective_from` (computed at activation from
-    `proposed_joining_date`) and `revision_type`/`revision_reason` (activation always fills
-    these in as `"JOINING"`/a fixed reason string, exactly like `StatutoryInfoSection` already
-    omits `revision_reason` for the same reason). Closes the gap `OnboardingActivationService`'s
-    own class docstring named: Compensation was listed among the services it composes, but there
-    was no section to source CTC from until now (E-02, market-parity onboarding-data pass)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    annual_ctc_minor: int = Field(gt=0)
-    # Omitted -> the company's own configured currency, filled in when the section is saved.
-    currency: str | None = Field(min_length=3, max_length=3, default=None)
-
-
 class PreviousEmploymentItem(BaseModel):
     """Mirrors `EmployeeExperienceCreate` field-for-field (minus `document_id`, which the
     candidate has no way to set from the wizard — proof-of-employment is uploaded separately
@@ -448,7 +433,6 @@ SECTION_SCHEMAS: dict[str, type[BaseModel]] = {
     "emergency_contact": EmergencyContactSection,
     "bank_info": BankInfoSection,
     "statutory_info": StatutoryInfoSection,
-    "compensation_info": CompensationInfoSection,
     "previous_employment_info": PreviousEmploymentSection,
     "education_info": EducationInfoSection,
     "nominee_info": NomineeInfoSection,

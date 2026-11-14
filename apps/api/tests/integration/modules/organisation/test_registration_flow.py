@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hrms.core.audit.models import AuditLog
@@ -69,6 +69,10 @@ async def _cleanup(*, company_id: UUID | None, user_id: UUID | None) -> None:
             # an RLS bug. Setting it explicitly here avoids `invalid input syntax for type
             # uuid: ""` on this unscoped raw cleanup query once the suite has run a few tests.
             await set_rls_company_id(session, str(company_id))
+            # Workflow actions (leave, regularization, swaps, ...) create in-app notifications.
+            await session.execute(
+                text("DELETE FROM notification WHERE company_id = :cid"), {"cid": company_id}
+            )
             await session.execute(
                 AuditLog.__table__.delete().where(AuditLog.company_id == company_id)
             )

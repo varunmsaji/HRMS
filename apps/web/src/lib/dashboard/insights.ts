@@ -54,8 +54,11 @@ export interface CompanyDashboardInsights {
   recent_activities: RecentActivity[];
 }
 
-export function insightsPath(growthMonths: number, leaveScope: "month" | "year"): string {
-  return `/dashboards/company/insights?growth_months=${growthMonths}&leave_scope=${leaveScope}`;
+/** Company-wide when `branchId` is empty; otherwise every card counts only that branch's people. */
+export function insightsPath(growthMonths: number, leaveScope: "month" | "year", branchId = ""): string {
+  const params = new URLSearchParams({ growth_months: String(growthMonths), leave_scope: leaveScope });
+  if (branchId) params.set("branch_id", branchId);
+  return `/dashboards/company/insights?${params.toString()}`;
 }
 
 /** "10 mins ago", "2 hours ago", "3 days ago" — falls back to a date past a month. */

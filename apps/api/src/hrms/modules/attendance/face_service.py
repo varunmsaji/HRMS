@@ -121,8 +121,14 @@ from hrms.modules.attendance.service import (
     _ensure_employee_visible,
     _resolve_visible_employee_ids,
 )
+from hrms.modules.notification.producer import employee_user_id, notify
 from hrms.modules.notification.service import NotificationService
-from hrms.modules.notification.types import FACE_ENROLLMENT_REQUESTED, FACE_SETUP_PATH
+from hrms.modules.notification.types import (
+    ATTENDANCE_PATH,
+    FACE_ENROLLMENT_REQUESTED,
+    FACE_PROFILE_DECIDED,
+    FACE_SETUP_PATH,
+)
 from hrms.shared.pagination import PageParams
 
 _logger = get_logger(__name__)
@@ -570,6 +576,35 @@ class FaceEnrollmentService:
                 )
         except Exception as exc:  # noqa: BLE001 - the window is the source of truth
             safe_log(_logger.warning, "face.enrollment.in_app_notify_failed", **safe_error(exc))
+
+    async def _notify_profile_decided(
+        self,
+        company_id: UUID,
+        employee_id: UUID,
+        profile_id: UUID,
+        outcome: str,
+        actor_user_id: UUID | None,
+    ) -> None:
+        """Tells the employee their face profile was reviewed. Never biometric content."""
+        approved = outcome == "approved"
+        await notify(
+            self._session,
+            company_id=company_id,
+            recipients=[await employee_user_id(self._session, company_id, employee_id)],
+            exclude=[actor_user_id],
+            type=FACE_PROFILE_DECIDED,
+            title=f"Your face enrollment was {outcome}",
+            body=(
+                "You can now mark attendance with face check-in."
+                if approved
+                else "HR could not approve your face enrollment. Please enroll again."
+            ),
+            dedupe_key=f"{FACE_PROFILE_DECIDED.code}:{profile_id}:{outcome}",
+            entity_type="face_profile",
+            entity_id=profile_id,
+            action_url=ATTENDANCE_PATH if approved else FACE_SETUP_PATH,
+            action_label="Open attendance" if approved else "Enroll again",
+        )
 
     async def _queue_requested_email(
         self, company_id: UUID, employee_id: UUID, window: FaceEnrollmentWindow
@@ -1285,6 +1320,9 @@ class FaceEnrollmentService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        await self._notify_profile_decided(
+            company_id, employee_id, row.id, "approved", actor_user_id
+        )
         return face_profile_to_read(row)
 
     async def reject(
@@ -1337,6 +1375,9 @@ class FaceEnrollmentService:
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+        )
+        await self._notify_profile_decided(
+            company_id, employee_id, row.id, "rejected", actor_user_id
         )
         return face_profile_to_read(row)
 

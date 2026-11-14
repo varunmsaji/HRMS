@@ -4,17 +4,15 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/api/api_client.dart';
 import '../../../core/api/api_error.dart';
-import '../../../core/auth/permissions.dart';
 import '../../../core/forms/choice_sources.dart';
 import '../../../core/forms/form_spec.dart' show Choice;
 import '../../../core/providers.dart';
 import '../../../core/time.dart';
 import '../../auth/state/auth_controller.dart';
-import '../../employees/domain/employee_directory.dart';
-import '../../profile/presentation/profile_screen.dart' show employeeRepositoryProvider;
 import '../data/attendance_repository.dart';
 import '../domain/attendance_insights.dart';
 import '../domain/attendance_pulse.dart';
+import '../domain/attendance_totals.dart';
 import 'attendance_period_detail_screen.dart';
 import 'attendance_reports_screen.dart';
 import '../domain/attendance_reports.dart' show reportLabels;
@@ -40,9 +38,11 @@ String _msg(Object e) => e is ApiError ? (e.status == 403 ? "You don't have perm
 /// Mirrors `apps/web/src/app/app/attendance/page.tsx` (the organisation view) in its order: today's
 /// rate and KPIs, needs attention, payroll readiness, the department / branch breakdown, trend,
 /// punctuality, weekday pattern, work hours, overtime, leave & absence, the muster heatmap, period
-/// status and the monthly summary. As on web, the days are fetched over the range widened to at
-/// least 14 days ([windowRangeIso]); range panels read only the range, trends read the window.
-/// Web's "who's in" list is the Team attendance screen here, so the pulse links to it.
+/// status and the monthly summary. As on web, everything covers the range widened to at least 14
+/// days ([windowRangeIso]); range panels read only the range, trends read the window. The totals
+/// (rate, KPIs, distribution, trend, punctuality, weekday pattern, department / branch breakdown)
+/// are the backend's (`GET /v1/attendance/summary`); the per-person panels read the attendance
+/// days. Web's "who's in" list is the Team attendance screen here, so the pulse links to it.
 class AttendanceInsightsScreen extends ConsumerStatefulWidget {
   const AttendanceInsightsScreen({super.key});
 
@@ -64,8 +64,8 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   _Loaded<List<_Rec>> _regularizations = _Loaded.ok(const []);
   _Loaded<List<_Rec>> _periods = _Loaded.ok(const []);
 
-  /// Department and branch per employee; null when the caller cannot read the directory.
-  _Loaded<Map<String, DirectoryRow>>? _directory;
+  /// The window's totals, counted by the backend; null until loaded.
+  _Loaded<AttendanceTotals>? _totals;
   bool _byBranch = false;
 
   /// The period the monthly summary shows (null = the default one) and its summary rows.
@@ -78,7 +78,6 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   ({String from, String to}) get _bounds => resolveInsightsRange(_range, _today);
   ({String from, String to}) get _window => windowRangeIso(_bounds.from, _bounds.to);
   List<AttendanceDay> get _rangeDays => rowsBetween(_days, _bounds.from, _bounds.to);
-  bool _can(String code) => ref.read(authControllerProvider).user?.permissions.contains(code) ?? false;
 
   @override
   void initState() {
@@ -97,11 +96,13 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     return out;
   }
 
-  Future<_Loaded<List<_Rec>>> _section(Future<List<_Rec>> Function() load) async {
+  Future<_Loaded<List<_Rec>>> _section(Future<List<_Rec>> Function() load) => _loaded(load);
+
+  Future<_Loaded<T>> _loaded<T>(Future<T> Function() load) async {
     try {
-      return _Loaded.ok(await load());
+      return _Loaded<T>.ok(await load());
     } catch (e) {
-      return _Loaded.fail(_msg(e));
+      return _Loaded<T>.fail(_msg(e));
     }
   }
 
@@ -112,22 +113,19 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     });
     final w = _window;
     try {
-      final daysFuture = ref.read(attendanceRepositoryProvider).listAttendanceDays(dateFrom: w.from, dateTo: w.to);
+      final repo = ref.read(attendanceRepositoryProvider);
+      final daysFuture = repo.listAttendanceDays(dateFrom: w.from, dateTo: w.to);
+      final totalsFuture = _loaded(() => repo.attendanceSummary(dateFrom: w.from, dateTo: w.to));
       final namesFuture = loadChoices(ref.read(apiClientProvider), const ['employees']).then((c) => {for (final e in c['employees'] ?? const <Choice>[]) e.value: e.label}).catchError((_) => <String, String>{});
       final otFuture = _section(() => _all('/overtime', filters: {'date_from': w.from, 'date_to': w.to}));
       final regFuture = _section(() => _all('/regularizations', filters: {'request_status': 'SUBMITTED'}));
       final periodFuture = _section(() => _all('/attendance-periods'));
       final days = await daysFuture;
-      // Attendance days carry no department or branch: look up only the people in them, batched.
-      final ids = {for (final d in days) d.employeeId}.toList();
-      final directoryFuture = !_can(employeeViewAll) || ids.isEmpty
-          ? Future.value(null)
-          : ref.read(employeeRepositoryProvider).directoryRows(ids).then<_Loaded<Map<String, DirectoryRow>>>(_Loaded.ok, onError: (Object e) => _Loaded.fail(_msg(e)));
+      final totals = await totalsFuture;
       final names = await namesFuture;
       final ot = await otFuture;
       final regs = await regFuture;
       final periods = await periodFuture;
-      final directory = await directoryFuture;
       if (!mounted) return;
       setState(() {
         _days = days;
@@ -135,7 +133,7 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
         _overtime = ot;
         _regularizations = regs;
         _periods = periods;
-        _directory = directory;
+        _totals = totals;
       });
       _loadSummary();
     } catch (e) {
@@ -247,9 +245,15 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
     );
   }
 
+  /// The totals, or a card saying why they are missing (that card only, not the whole screen).
+  AttendanceTotals? get _t => _totals?.data;
+  Widget _totalsUnavailable(String title) => _card(title, _sectionError(_totals?.error ?? 'Attendance totals could not be loaded.'));
+
   Widget _trend() {
+    final t = _t;
+    if (t == null) return _totalsUnavailable('Attendance trend');
     final w = _window;
-    final points = buildTrend(_days, w.from, w.to, _metric, weekly: _weekly);
+    final points = buildTrend(t.daily, w.from, w.to, _metric, weekly: _weekly);
     final isHours = _metric == TrendMetric.avgHours;
     return _card(
       'Attendance trend',
@@ -433,15 +437,14 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   // ---- today ---------------------------------------------------------------------------------
 
   Widget _pulse() {
-    final today = _bounds.to;
-    final w = _window;
-    final points = dailyAttendanceRate(_days, w.from, w.to);
-    final focus = points.lastWhere((p) => p.date == today, orElse: () => RatePoint(today, null, 0, 0));
-    final spark = points.where((p) => p.date.compareTo(today) <= 0).toList();
+    final t = _t;
+    if (t == null) return _totalsUnavailable('Attendance at a glance');
+    final focus = t.focusDay;
+    final spark = t.daily.where((p) => p.date.compareTo(t.focusDate) <= 0).toList();
     final recent = spark.sublist(spark.length > minContextDays ? spark.length - minContextDays : 0);
-    final distribution = statusDistribution(rowsOn(_days, today));
+    final distribution = [for (final e in t.distribution) (label: dayBucketLabels[e.bucket] ?? e.bucket, count: e.count)];
     final total = distribution.fold<int>(0, (a, e) => a + e.count);
-    final delta = _delta(rateDelta(points, today, sameWeekdayLastWeek(today)), unit: ' pts', decimals: 1);
+    final delta = _delta(t.rateDelta, unit: ' pts', decimals: 1);
     final theme = Theme.of(context);
     return _card(
       'Attendance at a glance',
@@ -480,11 +483,11 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   }
 
   Widget _kpis() {
-    final today = _bounds.to;
-    final k = computeKpis(rowsOn(_days, today));
-    final compareRows = rowsOn(_days, sameWeekdayLastWeek(today));
-    final before = compareRows.isEmpty ? null : computeKpis(compareRows);
-    final total = k.employed;
+    final t = _t;
+    if (t == null) return _totalsUnavailable('Today');
+    final k = t.focus;
+    final before = t.compare;
+    final total = k.totalEmployees;
     String ofWorkforce(int n) => total > 0 ? '${formatPct(pct(n, total))} of workforce' : 'No employees in scope';
     String hint(String base, int now, int? then) => [base, if (then != null) _delta(now - then)].whereType<String>().join(' · ');
     final present = k.presentTotal;
@@ -492,12 +495,12 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
       'Today',
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 8, runSpacing: 8, children: [
-          _stat('Total employees', '$total', 'Employed on today'),
+          _stat('Total employees', '$total', k.noRecord > 0 ? '${k.noRecord} with no record yet' : 'Employed on today'),
           _stat('Present', '$present', hint(ofWorkforce(present), present, before?.presentTotal)),
           _stat('Absent', '${k.absent}', hint(ofWorkforce(k.absent), k.absent, before?.absent)),
           _stat('On leave', '${k.leave}', hint(ofWorkforce(k.leave), k.leave, before?.leave)),
           _stat('Late', '${k.late}', hint(k.checkedIn > 0 ? '${formatPct(pct(k.late, k.checkedIn))} of checked-in employees' : 'Nobody checked in yet', k.late, before?.late)),
-          _stat('Not checked in', '${k.notCheckedIn}', 'Expected to work, no IN punch'),
+          _stat('Not checked in', '${k.notCheckedIn}', k.noRecord > 0 ? 'No IN punch, or no record yet' : 'Expected to work, no IN punch'),
           _stat('Remote (WFH)', '${k.remote}', present > 0 ? '${formatPct(pct(k.remote, present))} of those present' : 'Nobody present'),
           _stat(
             'Overtime',
@@ -583,16 +586,14 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   static const _breakdownShown = 8;
   bool _breakdownAll = false;
 
-  /// Shown only to callers who may read the employee directory, as on web.
+  /// Each department / branch on the focus day, by the assignment in force that day.
   Widget _breakdown() {
-    final directory = _directory;
-    if (directory == null) return const SizedBox.shrink();
     const title = 'Departments & branches';
-    if (directory.error != null) return _card(title, _sectionError(directory.error!));
-    final rows = directory.data ?? const <String, DirectoryRow>{};
+    final t = _t;
+    if (t == null) return _totalsUnavailable(title);
     final one = _byBranch ? 'branch' : 'department';
     final many = _byBranch ? 'branches' : 'departments';
-    final stats = breakdownBy(rowsOn(_days, _bounds.to), (id) => _byBranch ? rows[id]?.branch : rows[id]?.department);
+    final stats = _byBranch ? t.byBranch : t.byDepartment;
     final shown = _breakdownAll ? stats : stats.take(_breakdownShown).toList();
     return _card(
       title,
@@ -634,10 +635,11 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   // ---- patterns ------------------------------------------------------------------------------
 
   Widget _punctuality() {
-    final rows = rowsBetween(_days, _window.from, _window.to);
-    final s = punctualitySummary(rows);
-    final frequent = frequentLateArrivals(rows);
     const title = 'Punctuality';
+    final t = _t;
+    if (t == null) return _totalsUnavailable(title);
+    final s = t.punctuality;
+    final frequent = t.frequentLate;
     final subtitle = '$_windowLabel — how punctual people are, and who is late again and again.';
     if (s.checkedIn == 0) return _card(title, subtitle: subtitle, const Text('Nobody has checked in during this range, so there is no punctuality to report.'));
     final maxBand = s.bands.fold<int>(1, (m, b) => b.count > m ? b.count : m);
@@ -677,8 +679,10 @@ class _AttendanceInsightsScreenState extends ConsumerState<AttendanceInsightsScr
   }
 
   Widget _weekdays() {
-    final stats = weekdayAbsence(rowsBetween(_days, _window.from, _window.to));
     const title = 'Absence by weekday';
+    final t = _t;
+    if (t == null) return _totalsUnavailable(title);
+    final stats = t.weekdayAbsence;
     final subtitle = '$_windowLabel — share of expected days missed, per weekday.';
     if (stats.every((s) => s.expected == 0)) return _card(title, subtitle: subtitle, const Text('No expected working days in this range.'));
     final worst = worstWeekday(stats);

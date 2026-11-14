@@ -14,10 +14,11 @@ import {
   type TrendGranularity,
   type TrendMetric,
 } from "@/lib/attendance/dashboard";
-import type { AttendanceDay } from "@/lib/attendance/types";
+import type { SummaryDay } from "@/lib/attendance/summary";
 
 interface TrendChartProps {
-  rows: AttendanceDay[];
+  /** The summary's per-day counts for `range`. */
+  days: SummaryDay[];
   range: DateRange;
 }
 
@@ -27,12 +28,12 @@ export function formatTrendValue(metric: TrendMetric, value: number): string {
 
 /** One metric at a time (selector) rather than a tangle of lines. Percentages use expected
  * working days as the denominator, so weekends and holidays don't read as absence. */
-export function TrendChart({ rows, range }: TrendChartProps) {
+export function TrendChart({ days, range }: TrendChartProps) {
   const [metric, setMetric] = useState<TrendMetric>("present_pct");
   const [granularity, setGranularity] = useState<TrendGranularity>("daily");
   const canWeek = dayDiff(range.from, range.to) >= 13;
   const effective: TrendGranularity = canWeek ? granularity : "daily";
-  const points = useMemo(() => buildTrend(rows, range, metric, effective), [rows, range, metric, effective]);
+  const points = useMemo(() => buildTrend(days, range, metric, effective), [days, range, metric, effective]);
   const hasData = points.some((p) => p.value !== null);
 
   return (

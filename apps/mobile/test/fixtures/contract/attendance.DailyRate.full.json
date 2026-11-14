@@ -1,0 +1,12 @@
+{
+ "absent": 1,
+ "checked_in": 1,
+ "date": "2026-01-15",
+ "expected": 1,
+ "late": 1,
+ "leave": 1,
+ "present": 1,
+ "rate": 1.5,
+ "remote": 1,
+ "worked_minutes": 1
+}

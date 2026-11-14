@@ -4,9 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/domain/attendance_insights.dart';
+import 'package:hrms_mobile/features/attendance/domain/attendance_totals.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_insights_screen.dart';
 
 import 'support/fake_api_client.dart';
+import 'support/totals_fixture.dart';
 import 'support/fake_auth.dart';
 
 AttendanceDay day(String id, String emp, String date, String status, {String? firstIn, String? lastOut, int worked = 0, Map<String, dynamic> extra = const {}}) => AttendanceDay(
@@ -30,10 +32,10 @@ void main() {
     });
 
     test('trend percentages use expected days as the denominator and gap when it is zero', () {
-      final days = [
-        day('1', 'a', '2026-10-12', 'PRESENT', firstIn: 't', worked: 480),
-        day('2', 'b', '2026-10-12', 'ABSENT'),
-        day('3', 'a', '2026-10-13', 'NOT_EXPECTED', extra: {'calendar_day_type': 'WEEKLY_OFF'}),
+      // The summary's per-day counts: one of two attended on the 12th (8 hours), nobody expected on the 13th.
+      const days = [
+        TotalsDay(date: '2026-10-12', expected: 2, present: 1, rate: 50, absent: 1, checkedIn: 1, workedMinutes: 480),
+        TotalsDay(date: '2026-10-13', expected: 0, present: 0, rate: null),
       ];
       final t = buildTrend(days, '2026-10-12', '2026-10-13', TrendMetric.presentPct, weekly: false);
       expect(t[0].value, 50);
@@ -122,7 +124,7 @@ void main() {
     expect(find.text('Overtime'), findsWidgets);
     expect(find.text('Something went wrong.'), findsOneWidget); // overtime section only
     expect(find.text('Attendance heatmap'), findsOneWidget);
-    expect(find.text('Departments & branches'), findsNothing, reason: 'no directory grant');
+    expect(find.text('Departments & branches'), findsOneWidget, reason: 'from the summary, no directory grant needed');
   });
 }
 
@@ -132,6 +134,10 @@ class _Repo implements AttendanceRepository {
 
   @override
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async => days;
+
+  @override
+  Future<AttendanceTotals> attendanceSummary({required String dateFrom, required String dateTo}) async =>
+      AttendanceTotals.fromJson(totalsJson(dateTo, addDaysIso(dateTo, -7)));
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

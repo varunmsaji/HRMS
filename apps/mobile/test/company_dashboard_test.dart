@@ -12,12 +12,15 @@ import 'support/fake_auth.dart';
 /// The company dashboard — web `components/dashboard/dashboard-overview.tsx`.
 
 class _Repo implements DashboardRepository {
-  _Repo({this.overview = const {'total': 12, 'present': 8, 'on_leave': 1, 'absent': 1, 'not_checked_in': 2}, this.insights = const {}, this.queues = const {}, this.onboarding = const {}});
+  _Repo({this.overview = const {'total': 12, 'present': 8, 'on_leave': 1, 'absent': 1, 'not_checked_in': 2}, this.insights = const {}, this.queues = const {}, this.onboarding = const {}, this.branches = const []});
   final Map<String, dynamic> overview;
   final Map<String, dynamic> insights;
   final Map<String, PendingQueue> queues;
   final Map<String, int> onboarding;
+  final List<({String id, String name})> branches;
   final insightScopes = <String>[];
+  final insightBranches = <String?>[];
+  final overviewBranches = <String?>[];
 
   @override
   Future<CompanyDashboardSummary> getCompanyDashboard() async => CompanyDashboardSummary.fromJson({
@@ -29,11 +32,18 @@ class _Repo implements DashboardRepository {
   Future<CompanyProfileSummary> getCompanyProfile() async => CompanyProfileSummary(id: 'c-1', name: 'Acme', status: 'ACTIVE');
 
   @override
-  Future<AttendanceOverviewSummary> getAttendanceOverview() async => AttendanceOverviewSummary.fromJson(overview);
+  Future<AttendanceOverviewSummary> getAttendanceOverview({String? branchId}) async {
+    overviewBranches.add(branchId);
+    return AttendanceOverviewSummary.fromJson(branchId == null ? overview : {...overview, 'present': 3});
+  }
 
   @override
-  Future<CompanyInsights> getInsights({String leaveScope = 'month'}) async {
+  Future<List<({String id, String name})>> activeBranches() async => branches;
+
+  @override
+  Future<CompanyInsights> getInsights({String leaveScope = 'month', String? branchId}) async {
     insightScopes.add(leaveScope);
+    insightBranches.add(branchId);
     return CompanyInsights.fromJson({...insights, if (leaveScope == 'year') 'leave_statistics': {'total_days': 0, 'by_type': []}});
   }
 
@@ -65,6 +75,33 @@ Future<_Repo> _pump(WidgetTester tester, List<String> permissions, [_Repo? r]) a
 }
 
 void main() {
+  group('branch picker', () {
+    testWidgets('hidden with one branch or none, as on web', (tester) async {
+      await _pump(tester, const [dashboardCompanyView, attendanceView], _Repo(branches: const [(id: 'b-1', name: 'Kochi')]));
+      expect(find.byKey(const Key('dashboard-branch')), findsNothing);
+    });
+
+    testWidgets('narrows the attendance overview and insights to one branch', (tester) async {
+      final repo = await _pump(
+        tester,
+        const [dashboardCompanyView, attendanceView],
+        _Repo(branches: const [(id: 'b-1', name: 'Kochi'), (id: 'b-2', name: 'Pune')]),
+      );
+      expect(find.text('All branches'), findsOneWidget);
+      expect(repo.overviewBranches, [null]);
+      expect(repo.insightBranches, [null]);
+
+      await tester.tap(find.byKey(const Key('dashboard-branch')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pune').last);
+      await tester.pumpAndSettle();
+
+      expect(repo.overviewBranches, [null, 'b-2']);
+      expect(repo.insightBranches, [null, 'b-2']);
+      expect(find.text('3'), findsWidgets, reason: "Pune's present count replaces the company's");
+    });
+  });
+
   group('shortcut tiles', () {
     testWidgets('offer only what the viewer can open, as the menu does', (tester) async {
       await _pump(tester, const [dashboardCompanyView, employeeViewAll]);

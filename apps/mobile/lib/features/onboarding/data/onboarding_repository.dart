@@ -44,14 +44,26 @@ class OnboardingCaseDetail extends OnboardingCase {
     this.employeeId,
     this.personalMobile,
     this.sections = const {},
+    this.faceEnrollmentRequired = false,
+    this.faceEnrollmentState,
+    this.faceRequirementMet = false,
   });
   final String? tokenStatus;
+
+  /// The company requires face enrollment as part of onboarding.
+  final bool faceEnrollmentRequired;
+
+  /// Present once activated: the employee's enrollment state (`NOT_ENROLLED`, `ENROLLED`, …).
+  final String? faceEnrollmentState;
+
+  /// Not required, or HR has approved the enrollment.
+  final bool faceRequirementMet;
   final String? tokenExpiresAt;
   final String? employeeId;
   final String? personalMobile;
   final List<Map<String, dynamic>> sectionReviews;
 
-  /// The nine section JSON blobs, keyed by wire name.
+  /// The eight reviewable section JSON blobs, keyed by wire name.
   final Map<String, Map<String, dynamic>> sections;
 
   String reviewStatus(String section) {
@@ -79,6 +91,9 @@ class OnboardingCaseDetail extends OnboardingCase {
         tokenExpiresAt: json['token_expires_at'] as String?,
         employeeId: json['employee_id'] as String?,
         personalMobile: json['personal_mobile'] as String?,
+        faceEnrollmentRequired: json['face_enrollment_required'] == true,
+        faceEnrollmentState: (json['face_enrollment'] as Map?)?['state'] as String?,
+        faceRequirementMet: (json['face_enrollment'] as Map?)?['requirement_met'] == true,
         sectionReviews: (json['section_reviews'] as List? ?? []).cast<Map<String, dynamic>>(),
         sections: {
           for (final n in const [
@@ -87,7 +102,6 @@ class OnboardingCaseDetail extends OnboardingCase {
             'emergency_contact',
             'bank_info',
             'statutory_info',
-            'compensation_info',
             'previous_employment_info',
             'education_info',
             'nominee_info',

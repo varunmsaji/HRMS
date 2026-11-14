@@ -23,6 +23,7 @@ import {
   type EmployeeLite,
   type RangePreset,
 } from "@/lib/attendance/dashboard";
+import type { GroupOption } from "@/lib/attendance/insights";
 import { cn } from "@/lib/utils";
 
 export interface FilterLookups {
@@ -30,9 +31,9 @@ export interface FilterLookups {
   shifts: { id: string; name: string }[];
   entities: { id: string; name: string }[];
   employeeStatuses: string[];
-  /** Names from the employee directory; empty until it has loaded (or without permission). */
-  departments: string[];
-  branches: string[];
+  /** Filter values (id or "unassigned") with their names; empty until known. */
+  departments: GroupOption[];
+  branches: GroupOption[];
 }
 
 interface ToolbarProps {
@@ -69,8 +70,14 @@ function activeChips(f: DashboardFilters, range: DateRange, lookups: FilterLooku
     chips.push({ key: "shift", label: `Shift: ${lookups.shifts.find((s) => s.id === f.shiftId)?.name ?? "selected"}`, clear: { shiftId: "" } });
   }
   if (f.employeeStatus) chips.push({ key: "estatus", label: `Employment: ${f.employeeStatus}`, clear: { employeeStatus: "" } });
-  if (f.department) chips.push({ key: "department", label: `Department: ${f.department}`, clear: { department: "" } });
-  if (f.branch) chips.push({ key: "branch", label: `Branch: ${f.branch}`, clear: { branch: "" } });
+  if (f.department) {
+    const name = lookups.departments.find((d) => d.key === f.department)?.name ?? "selected";
+    chips.push({ key: "department", label: `Department: ${name}`, clear: { department: "" } });
+  }
+  if (f.branch) {
+    const name = lookups.branches.find((b) => b.key === f.branch)?.name ?? "selected";
+    chips.push({ key: "branch", label: `Branch: ${name}`, clear: { branch: "" } });
+  }
   if (f.legalEntityId) {
     chips.push({
       key: "entity",
@@ -154,9 +161,9 @@ function FilterFields({
         <Field id={`${idPrefix}-department`} label="Department">
           <NativeSelect id={`${idPrefix}-department`} value={filters.department} onChange={(e) => onChange({ department: e.target.value })}>
             <option value="">All departments</option>
-            {lookups.departments.map((name) => (
-              <option key={name} value={name}>
-                {name}
+            {lookups.departments.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.name}
               </option>
             ))}
           </NativeSelect>
@@ -166,9 +173,9 @@ function FilterFields({
         <Field id={`${idPrefix}-branch`} label="Branch">
           <NativeSelect id={`${idPrefix}-branch`} value={filters.branch} onChange={(e) => onChange({ branch: e.target.value })}>
             <option value="">All branches</option>
-            {lookups.branches.map((name) => (
-              <option key={name} value={name}>
-                {name}
+            {lookups.branches.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.name}
               </option>
             ))}
           </NativeSelect>

@@ -92,6 +92,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   /// Web's Leave Statistics switch: 'month' or 'year'.
   String _leaveScope = 'month';
+
+  /// Web's branch picker: null = all branches. Narrows the attendance overview and the insights.
+  String? _branchId;
+  List<({String id, String name})> _branches = const [];
   bool _insightsLoading = false;
   ApiError? _error;
 
@@ -141,11 +145,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       return parts.every((p) => p == null) ? null : parts.fold<int>(0, (sum, p) => sum + (p ?? 0));
     }
 
+    final branchId = _branchId;
+    // Best-effort, as on web: without it the picker is simply not shown. Started alongside the
+    // rest (a record `.wait` takes at most nine futures).
+    final branchesFuture = quiet(repository.activeBranches);
     final (dashboard, profile, overview, insights, leave, attendance, overtime, onboardingHr, onboardingCandidate) = await (
       fetch(repository.getCompanyDashboard),
       fetch(repository.getCompanyProfile),
-      permissions.contains(attendanceView) ? quiet(repository.getAttendanceOverview) : Future<AttendanceOverviewSummary?>.value(null),
-      quiet(() => repository.getInsights(leaveScope: _leaveScope)),
+      permissions.contains(attendanceView) ? quiet(() => repository.getAttendanceOverview(branchId: branchId)) : Future<AttendanceOverviewSummary?>.value(null),
+      quiet(() => repository.getInsights(leaveScope: _leaveScope, branchId: branchId)),
       queue(permissions.contains(_leaveApprove), 'leave', '/leave-applications', {'application_status': 'SUBMITTED'}),
       queue(permissions.contains(_regularizationApprove), 'regularization', '/regularizations', {'request_status': 'SUBMITTED'}),
       queue(permissions.contains(_overtimeApprove), 'overtime', '/overtime', {'record_status': 'PENDING'}, timeField: 'created_at'),
@@ -153,6 +161,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       onboardingCount(_onboardingCandidateStatuses),
     ).wait;
 
+    final branches = await branchesFuture;
     if (!mounted) return;
     final pending = _Pending(leave: leave, attendance: attendance, overtime: overtime, onboardingHr: onboardingHr, onboardingCandidate: onboardingCandidate);
     setState(() {
@@ -160,6 +169,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       _profile = profile.data;
       _overview = overview;
       _insights = insights;
+      _branches = branches ?? const [];
       _pending = pending;
       _error = dashboard.error ?? profile.error;
       _loading = false;
@@ -176,13 +186,43 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     });
     CompanyInsights? insights;
     try {
-      insights = await ref.read(dashboardRepositoryProvider).getInsights(leaveScope: scope);
+      insights = await ref.read(dashboardRepositoryProvider).getInsights(leaveScope: scope, branchId: _branchId);
     } catch (_) {
       // Keep the figures already shown; the switch shows the period they cover.
     }
     if (!mounted || scope != _leaveScope) return;
     setState(() {
       if (insights != null) _insights = insights;
+      _insightsLoading = false;
+    });
+  }
+
+  /// Re-reads only what the branch narrows (attendance overview and insights), as web does.
+  Future<void> _setBranch(String? branchId) async {
+    if (branchId == _branchId) return;
+    setState(() {
+      _branchId = branchId;
+      _insightsLoading = true;
+    });
+    final repository = ref.read(dashboardRepositoryProvider);
+    final canAttendance = ref.read(authControllerProvider).user?.permissions.contains(attendanceView) ?? false;
+    Future<T?> quiet<T>(Future<T> Function() call) async {
+      try {
+        return await call();
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final (overview, insights) = await (
+      canAttendance ? quiet(() => repository.getAttendanceOverview(branchId: branchId)) : Future<AttendanceOverviewSummary?>.value(null),
+      quiet(() => repository.getInsights(leaveScope: _leaveScope, branchId: branchId)),
+    ).wait;
+    if (!mounted || branchId != _branchId) return;
+    setState(() {
+      // A failed read keeps nothing stale for the new branch: it is omitted, like on first load.
+      _overview = overview;
+      _insights = insights;
       _insightsLoading = false;
     });
   }
@@ -266,6 +306,28 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               trailing: const MoreAction(onDark: true),
             ),
             const SizedBox(height: 16),
+            if (_branches.length > 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Row(children: [
+                  Icon(Icons.apartment_outlined, size: 18, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 8),
+                  const Text('Branch', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButton<String?>(
+                      key: const Key('dashboard-branch'),
+                      isExpanded: true,
+                      value: _branchId,
+                      onChanged: _setBranch,
+                      items: [
+                        const DropdownMenuItem<String?>(value: null, child: Text('All branches')),
+                        for (final b in _branches) DropdownMenuItem<String?>(value: b.id, child: Text(b.name, overflow: TextOverflow.ellipsis)),
+                      ],
+                    ),
+                  ),
+                ]),
+              ),
             if (!dashboard.setupProgress.isComplete)
               Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: _SetupProgressCard(progress: dashboard.setupProgress, companyName: companyName)),
             StatGrid(tiles: [

@@ -1,6 +1,7 @@
 """`body` / `body_doc` request contract and service wiring (no database)."""
 
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -51,7 +52,8 @@ def test_client_cannot_supply_link_token_or_html(field: str) -> None:
 
 
 def _service() -> OnboardingInvitationService:
-    return OnboardingInvitationService.__new__(OnboardingInvitationService)
+    settings = SimpleNamespace(web_app_base_url="https://app.example.com")
+    return OnboardingInvitationService(cast(Any, None), cast(Any, settings))
 
 
 def test_service_render_routes_to_the_matching_renderer() -> None:

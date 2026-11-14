@@ -132,6 +132,7 @@ from hrms.modules.leave.schemas import (
     statutory_leave_minimum_to_read,
 )
 from hrms.modules.leave.year import LeaveYearSettingData, is_leave_year_start
+from hrms.modules.notification.approvals import LEAVE_FLOW, notify_approval_change
 from hrms.shared.auto_code import next_auto_code
 from hrms.shared.business_time import business_month_start, business_today
 from hrms.shared.pagination import PageParams
@@ -3344,6 +3345,13 @@ class LeaveApplicationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await notify_approval_change(
+            self._session,
+            LEAVE_FLOW,
+            company_id=company_id,
+            entity_id=application_id,
+            actor_user_id=actor_user_id,
+        )
 
         if approval_chain == "AUTO":
             read = await self._approve_internal(
@@ -3494,6 +3502,13 @@ class LeaveApplicationService:
             after=leave_application_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            LEAVE_FLOW,
+            company_id=company_id,
+            entity_id=application_id,
+            actor_user_id=actor_user_id,
         )
         return read
 
@@ -3655,6 +3670,13 @@ class LeaveApplicationService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await notify_approval_change(
+            self._session,
+            LEAVE_FLOW,
+            company_id=company_id,
+            entity_id=application_id,
+            actor_user_id=actor_user_id,
+        )
         return read
 
     async def _approve_internal(
@@ -3744,6 +3766,13 @@ class LeaveApplicationService:
                 ip=ip_address,
                 user_agent=user_agent,
             )
+            await notify_approval_change(
+                self._session,
+                LEAVE_FLOW,
+                company_id=company_id,
+                entity_id=row.id,
+                actor_user_id=actor_user_id,
+            )
             return read
 
         await self._record_action(
@@ -3767,6 +3796,13 @@ class LeaveApplicationService:
             after=leave_application_to_audit_dict(approved_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            LEAVE_FLOW,
+            company_id=company_id,
+            entity_id=row.id,
+            actor_user_id=actor_user_id,
         )
 
         return await self._apply_approval(
@@ -4059,6 +4095,13 @@ class LeaveApplicationService:
             after=leave_application_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            LEAVE_FLOW,
+            company_id=company_id,
+            entity_id=application_id,
+            actor_user_id=actor_user_id,
         )
         return read
 

@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/api/api_error.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/core/time.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
 import 'package:hrms_mobile/features/attendance/domain/attendance_insights.dart';
 import 'package:hrms_mobile/features/attendance/domain/attendance_pulse.dart';
+import 'package:hrms_mobile/features/attendance/domain/attendance_totals.dart';
 import 'package:hrms_mobile/features/attendance/presentation/attendance_insights_screen.dart';
 
 import 'support/fake_api_client.dart';
+import 'support/totals_fixture.dart';
 import 'support/fake_auth.dart';
 
 AttendanceDay day(String emp, String date, String status, {String? firstIn, int? late, Map<String, dynamic> extra = const {}}) => AttendanceDay(
@@ -18,101 +21,52 @@ AttendanceDay day(String emp, String date, String status, {String? firstIn, int?
       attendanceDate: date,
       attendanceStatus: status,
       actualFirstIn: firstIn,
+      // A check-in in these fixtures is a complete IN/OUT pair.
+      actualLastOut: firstIn,
       lateMinutes: late,
       isLocked: false,
       raw: {if (late != null) 'is_late': late > 0, ...extra},
     );
 
 void main() {
-  group('pulse logic (ported from web insights.ts / dashboard.ts)', () {
+  group('insights helpers and the summary response', () {
     test('the window is the range widened to at least 14 days', () {
       expect(windowRangeIso('2026-11-02', '2026-11-04'), (from: '2026-10-22', to: '2026-11-04'));
       expect(windowRangeIso('2026-10-01', '2026-11-04'), (from: '2026-10-01', to: '2026-11-04'));
     });
 
-    test('the daily rate is present over expected, and compares with the same weekday last week', () {
-      final rows = [
-        day('a', '2026-11-04', 'PRESENT', firstIn: 't'),
-        day('b', '2026-11-04', 'WFH', firstIn: 't'),
-        day('c', '2026-11-04', 'ABSENT'),
-        day('d', '2026-11-04', 'NOT_EXPECTED', extra: {'calendar_day_type': 'WEEKLY_OFF'}),
-        day('a', '2026-10-28', 'PRESENT', firstIn: 't'),
-        day('c', '2026-10-28', 'ABSENT'),
-      ];
-      final points = dailyAttendanceRate(rows, '2026-10-28', '2026-11-04');
-      final today = points.last;
-      expect(today.expected, 3, reason: 'a weekly off is not expected');
-      expect(today.present, 2, reason: 'WFH counts as attending');
-      expect(today.rate, closeTo(66.67, 0.01));
-      expect(points.first.rate, 50);
-      expect(rateDelta(points, '2026-11-04', sameWeekdayLastWeek('2026-11-04')), closeTo(16.67, 0.01));
-      expect(points[1].rate, isNull, reason: 'nobody expected that day');
+    test('the summary response is read as the backend counted it', () {
+      final t = AttendanceTotals.fromJson(totalsJson('2026-11-04', '2026-10-28'));
+      expect(t.focusDay.rate, closeTo(66.67, 0.01));
+      expect((t.focusDay.present, t.focusDay.expected), (2, 3));
+      expect(t.rateDelta, closeTo(16.67, 0.01), reason: 'against the same weekday last week');
+      expect(t.focus.presentTotal, 2, reason: 'office + remote + on duty');
+      expect(t.focus.noRecord, 1);
+      expect(t.compare?.absent, 1);
+      expect([for (final d in t.distribution) '${d.bucket}=${d.count}'], ['PRESENT=1', 'REMOTE=1', 'ABSENT=1']);
+      expect(t.punctuality.onTimeRate, 75);
+      expect([for (final b in t.punctuality.bands) b.count], [1, 0, 0, 0]);
+      expect(t.frequentLate.single.employeeId, 'e1');
+      expect([for (final g in t.byDepartment) '${g.name}:${g.rate}'], ['Ops:0.0', 'Sales:100.0', 'Unassigned:null']);
+      expect(t.byDepartment.last.id, isNull);
       expect(weekdayShort('2026-11-04'), 'Wed');
     });
 
-    test('KPIs skip people not yet employed and count not-checked-in, late and exceptions', () {
-      final k = computeKpis([
-        day('a', '2026-11-04', 'PRESENT', firstIn: 't', late: 12, extra: {'ot_minutes_detected': 30, 'ot_minutes_approved': 10}),
-        day('b', '2026-11-04', 'ABSENT'),
-        day('c', '2026-11-04', 'INCOMPLETE', extra: {'missing_punch': true}),
-        day('d', '2026-11-04', 'NOT_JOINED'),
-        day('e', '2026-11-04', 'LEAVE'),
-      ]);
-      expect(k.employed, 4);
-      expect(k.presentTotal, 1);
-      expect(k.late, 1);
-      expect(k.checkedIn, 1);
-      expect(k.notCheckedIn, 2, reason: 'zero-punch absent and incomplete with no IN');
-      expect(k.exceptions, 1);
-      expect(k.overtimeEmployees, 1);
-      expect(k.overtimeMinutesApproved, 10);
+    test('no comparison and no rate when the summary has nothing to divide by', () {
+      final json = totalsJson('2026-11-04', '2026-10-28');
+      json['compare'] = null;
+      final daily = json['daily'] as List;
+      daily[0] = <String, dynamic>{...daily[0] as Map<String, dynamic>, 'rate': null};
+      final t = AttendanceTotals.fromJson(json);
+      expect(t.compare, isNull);
+      expect(t.rateDelta, isNull);
     });
 
-    test('distribution keeps web order and wording, and only buckets that occur', () {
-      final d = statusDistribution([day('a', 'x', 'LEAVE'), day('b', 'x', 'PRESENT'), day('c', 'x', 'PRESENT')]);
-      expect([for (final e in d) '${e.label}=${e.count}'], ['Present=2', 'On leave=1']);
-    });
-
-    test('punctuality bands lateness and finds repeat late arrivals', () {
-      final rows = [
-        day('a', '2026-11-03', 'PRESENT', firstIn: 't', late: 5),
-        day('a', '2026-11-04', 'PRESENT', firstIn: 't', late: 40),
-        day('b', '2026-11-04', 'PRESENT', firstIn: 't', late: 0),
-        day('c', '2026-11-04', 'PRESENT', firstIn: 't', extra: {'is_late': true}),
-        day('d', '2026-11-04', 'ABSENT'),
-      ];
-      final s = punctualitySummary(rows);
-      expect(s.checkedIn, 4);
-      expect(s.late, 3);
-      expect(s.onTimeRate, 25);
-      expect([for (final b in s.bands) b.count], [2, 0, 1, 0], reason: 'a late day with no minutes lands in the smallest band');
-      final f = frequentLateArrivals(rows);
-      expect(f.single.employeeId, 'a');
-      expect(f.single.totalLateMinutes, 45);
-    });
-
-    test('weekday absence names the worst weekday only when there is something to compare', () {
-      final stats = weekdayAbsence([
-        day('a', '2026-11-02', 'ABSENT'), // Mon
-        day('b', '2026-11-02', 'PRESENT'),
-        day('a', '2026-11-03', 'PRESENT'), // Tue
-      ]);
-      expect(stats[0].rate, 50);
-      expect(stats[1].rate, 0);
-      expect(worstWeekday(stats)?.label, 'Mon');
-      expect(worstWeekday(weekdayAbsence([day('a', '2026-11-02', 'ABSENT')])), isNull);
-    });
-
-    test('the breakdown puts the lowest attendance first and unexpected groups last', () {
-      final groups = {'a': 'Sales', 'b': 'Sales', 'c': 'Ops', 'd': null, 'e': 'Ops'};
-      final stats = breakdownBy([
-        day('a', 'x', 'PRESENT'),
-        day('b', 'x', 'ABSENT'),
-        day('c', 'x', 'PRESENT'),
-        day('d', 'x', 'NOT_EXPECTED', extra: {'calendar_day_type': 'HOLIDAY'}),
-        day('e', 'x', 'PRESENT'),
-      ], (id) => groups[id]);
-      expect([for (final g in stats) '${g.name}:${g.rate}'], ['Sales:50.0', 'Ops:100.0', 'Unassigned:null']);
+    test('the worst weekday is named only when there is something to compare', () {
+      WeekdayStat w(String label, int expected, int absent) => WeekdayStat(label: label, expected: expected, absent: absent, rate: expected > 0 ? absent / expected * 100 : null);
+      expect(worstWeekday([w('Mon', 2, 1), w('Tue', 1, 0)])?.label, 'Mon');
+      expect(worstWeekday([w('Mon', 2, 1), w('Tue', 0, 0)]), isNull, reason: 'one weekday with data');
+      expect(worstWeekday([w('Mon', 2, 0), w('Tue', 1, 0)]), isNull, reason: 'no absences');
     });
 
     test('periods: the default covers today, progress and countdown match web', () {
@@ -173,7 +127,7 @@ void main() {
     );
     await tester.pumpWidget(ProviderScope(
       overrides: [
-        attendanceRepositoryProvider.overrideWithValue(_Repo(days)),
+        attendanceRepositoryProvider.overrideWithValue(_Repo(days, totals: totalsJson(today, lastWeek))),
         apiClientProvider.overrideWithValue(api),
         fakeAuth(const [employeeViewAll, attendanceViewAll]),
       ],
@@ -181,10 +135,12 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    // Every total is the summary's, not a count of the two rows above.
     expect(find.text('Attendance at a glance'), findsOneWidget);
-    expect(find.text('50.0%'), findsWidgets);
-    expect(find.text('1 of 2 expected employees attended.'), findsOneWidget);
-    expect(find.textContaining('−50.0 pts vs last'), findsOneWidget);
+    expect(find.text('66.7%'), findsWidgets);
+    expect(find.text('2 of 3 expected employees attended.'), findsOneWidget);
+    expect(find.textContaining('+16.7 pts vs last'), findsOneWidget);
+    expect(find.text('1 with no record yet'), findsOneWidget);
     expect(find.text("See who's in →"), findsOneWidget);
 
     expect(find.text('Not checked in'), findsOneWidget);
@@ -195,7 +151,8 @@ void main() {
     expect(find.text('Departments & branches'), findsOneWidget);
     expect(find.text('Ops'), findsOneWidget);
     expect(find.text('Sales'), findsOneWidget);
-    expect(api.rowRequests, 1, reason: 'one batched directory request');
+    expect(api.rowRequests, 0, reason: 'the breakdown comes with the summary');
+    expect(find.text('Weds have the highest absence — 40.0% of expected days.'), findsNothing, reason: 'one weekday is nothing to compare');
 
     expect(find.text('Punctuality'), findsOneWidget);
     expect(find.text('Absence by weekday'), findsOneWidget);
@@ -213,21 +170,23 @@ void main() {
     expect(find.text('$inRange rows'), findsOneWidget);
   });
 
-  testWidgets('without the directory grant there is no department panel and no directory request', (tester) async {
+  testWidgets('the department panel needs no directory grant, and a failed summary blanks only the totals', (tester) async {
     tester.view.physicalSize = const Size(800, 12000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final api = _Api(lists: const {'/attendance-periods': []});
     await tester.pumpWidget(ProviderScope(
       overrides: [
-        attendanceRepositoryProvider.overrideWithValue(_Repo([day('e1', businessToday('Asia/Kolkata'), 'PRESENT', firstIn: 't')])),
+        attendanceRepositoryProvider.overrideWithValue(_Repo([day('e1', businessToday('Asia/Kolkata'), 'PRESENT', firstIn: 't')], totals: null)),
         apiClientProvider.overrideWithValue(api),
         fakeAuth(const [attendanceViewAll]),
       ],
       child: const MaterialApp(home: AttendanceInsightsScreen()),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('Departments & branches'), findsNothing);
+    expect(find.text('Departments & branches'), findsOneWidget);
+    expect(find.text('The summary is down.'), findsNWidgets(6), reason: 'pulse, KPIs, breakdown, trend, punctuality and weekdays');
+    expect(find.text('Work hours'), findsOneWidget, reason: 'the per-person panels still render');
     expect(api.rowRequests, 0);
     expect(find.text('Payroll readiness'), findsNothing, reason: 'no open period');
     expect(find.text('No attendance period to summarise. Open a period for a company first.'), findsOneWidget);
@@ -253,8 +212,17 @@ class _Api extends FakeApiClient {
 }
 
 class _Repo implements AttendanceRepository {
-  _Repo(this.days);
+  _Repo(this.days, {required this.totals});
   final List<AttendanceDay> days;
+
+  /// The summary to serve; null makes it fail.
+  final Map<String, dynamic>? totals;
+
+  @override
+  Future<AttendanceTotals> attendanceSummary({required String dateFrom, required String dateTo}) async {
+    if (totals == null) throw ApiError(status: 500, code: 'BOOM', message: 'The summary is down.');
+    return AttendanceTotals.fromJson(totals!);
+  }
 
   @override
   Future<List<AttendanceDay>> listAttendanceDays({String? employeeId, required String dateFrom, required String dateTo, String? attendanceStatus}) async => days;

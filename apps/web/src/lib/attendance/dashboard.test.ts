@@ -13,7 +13,6 @@ import {
   buildAttentionItems,
   buildMuster,
   buildTrend,
-  computeKpis,
   dailyHours,
   employeeName,
   employeesWithoutRecord,
@@ -31,7 +30,6 @@ import {
   repeatAbsences,
   resolveRange,
   serializeFilters,
-  statusDistribution,
   sumPeriodSummary,
   summarizeMonth,
   summarizeOvertime,
@@ -41,6 +39,7 @@ import {
   type EmployeeLite,
 } from "./dashboard";
 import { makeAbsentDay, makeDay } from "./__fixtures__/day";
+import { makeSummaryDay } from "./__fixtures__/summary";
 
 const TODAY = "2026-10-07"; // a Wednesday
 
@@ -147,57 +146,6 @@ describe("bucketOf", () => {
     expect(bucketOf(makeDay({ attendance_status: "NOT_EXPECTED", calendar_day_type: "HOLIDAY" }))).toBe("HOLIDAY");
     expect(bucketOf(makeDay({ attendance_status: "NOT_EXPECTED", calendar_day_type: "WEEKLY_OFF" }))).toBe("WEEKLY_OFF");
     expect(bucketOf(makeDay({ attendance_status: "NOT_EXPECTED", calendar_day_type: "SHUTDOWN" }))).toBe("NON_WORKING");
-  });
-});
-
-describe("computeKpis", () => {
-  const rows = [
-    makeDay({ employee_id: "e1" }),
-    makeDay({ employee_id: "e2", is_late: true, late_minutes: 12 }),
-    makeDay({ employee_id: "e3", attendance_status: "WFH" }),
-    makeAbsentDay({ employee_id: "e4" }),
-    makeDay({ employee_id: "e5", attendance_status: "LEAVE", actual_first_in: null, actual_last_out: null, worked_minutes: 0 }),
-    makeDay({ employee_id: "e6", attendance_status: "NOT_EXPECTED", calendar_day_type: "WEEKLY_OFF", actual_first_in: null, actual_last_out: null, worked_minutes: 0 }),
-    makeDay({ employee_id: "e7", attendance_status: "NOT_JOINED", actual_first_in: null, actual_last_out: null, worked_minutes: 0 }),
-    makeDay({ employee_id: "e8", ot_minutes_detected: 90, ot_minutes_approved: 60, is_overtime: true }),
-    makeDay({ employee_id: "e9", attendance_status: "INCOMPLETE", missing_punch: true, actual_last_out: null }),
-  ];
-
-  it("counts employed employees and excludes not-employed rows from the workforce", () => {
-    const kpi = computeKpis(rows);
-    expect(kpi.totalEmployees).toBe(8); // 9 rows, one NOT_JOINED
-    expect(kpi.notEmployed).toBe(1);
-    expect(kpi.present).toBe(3); // PRESENT e1, e2, e8
-    expect(kpi.remote).toBe(1);
-    expect(kpi.absent).toBe(1);
-    expect(kpi.leave).toBe(1);
-    expect(kpi.weeklyOff).toBe(1);
-  });
-
-  it("derives late %, overtime and exceptions from the rows themselves", () => {
-    const kpi = computeKpis(rows);
-    expect(kpi.late).toBe(1);
-    expect(kpi.checkedIn).toBe(5); // e1, e2, e3, e8, e9 have an IN punch
-    expect(pct(kpi.late, kpi.checkedIn)).toBeCloseTo((1 / kpi.checkedIn) * 100);
-    expect(kpi.overtimeEmployees).toBe(1);
-    expect(kpi.overtimeMinutesDetected).toBe(90);
-    expect(kpi.overtimeMinutesApproved).toBe(60);
-    expect(kpi.exceptions).toBe(1); // only e9 (missing punch)
-  });
-
-  it("counts a zero-punch absence as not checked in, plus employees with no record yet", () => {
-    expect(computeKpis(rows).notCheckedIn).toBe(1);
-    const withMissing = computeKpis(rows, 3);
-    expect(withMissing.notCheckedIn).toBe(4);
-    expect(withMissing.totalEmployees).toBe(11);
-    expect(withMissing.noRecord).toBe(3);
-  });
-
-  it("statusDistribution counts every bucket exactly once", () => {
-    const dist = statusDistribution(rows);
-    expect(dist.reduce((acc, d) => acc + d.count, 0)).toBe(rows.length);
-    expect(dist.find((d) => d.bucket === "NOT_EMPLOYED")?.count).toBe(1);
-    expect(dist.find((d) => d.bucket === "ABSENT")?.count).toBe(1);
   });
 });
 
@@ -357,13 +305,12 @@ describe("filters", () => {
 
 describe("buildTrend", () => {
   const range = { from: "2026-10-05", to: "2026-10-07" };
+  // The summary's per-day counts (9 hours worked per checked-in day).
   const rows = [
-    makeDay({ employee_id: "e1", attendance_date: "2026-10-05" }),
-    makeAbsentDay({ employee_id: "e2", attendance_date: "2026-10-05" }),
-    makeDay({ employee_id: "e1", attendance_date: "2026-10-06", is_late: true }),
-    makeDay({ employee_id: "e2", attendance_date: "2026-10-06" }),
-    // 2026-10-07: only a weekly-off row → no expected workers
-    makeDay({ employee_id: "e1", attendance_date: "2026-10-07", attendance_status: "NOT_EXPECTED", calendar_day_type: "WEEKLY_OFF", actual_first_in: null, actual_last_out: null, worked_minutes: 0 }),
+    makeSummaryDay("2026-10-05", { expected: 2, present: 1, absent: 1, checked_in: 1, worked_minutes: 540 }),
+    makeSummaryDay("2026-10-06", { expected: 2, present: 2, late: 1, checked_in: 2, worked_minutes: 1080 }),
+    // 2026-10-07: only a weekly off → nobody expected
+    makeSummaryDay("2026-10-07"),
   ];
 
   it("computes present % over employees expected to work", () => {
@@ -382,7 +329,7 @@ describe("buildTrend", () => {
     expect(buildTrend(rows, range, "avg_hours", "daily")[0].value).toBe(9);
   });
 
-  it("aggregates weekly from the same rows by summing numerators and denominators", () => {
+  it("aggregates weekly from the same days by summing numerators and denominators", () => {
     const weekly = buildTrend(rows, range, "present_pct", "weekly");
     expect(weekly).toHaveLength(1);
     expect(weekly[0].numerator).toBe(3);
@@ -605,37 +552,44 @@ describe("department and branch filters", () => {
     makeDay({ employee_id: "b", attendance_date: TODAY }),
     makeDay({ employee_id: "c", attendance_date: TODAY }),
   ];
+  const ENG = "11111111-1111-4111-8111-111111111111";
+  const SALES = "22222222-2222-4222-8222-222222222222";
+  const PUNE = "33333333-3333-4333-8333-333333333333";
   const directory = new Map([
-    ["a", { department: "Engineering", branch: "Pune" }],
-    ["b", { department: "Sales", branch: "Pune" }],
-    ["c", { department: null, branch: null }],
+    ["a", { department_id: ENG, branch_id: PUNE }],
+    ["b", { department_id: SALES, branch_id: PUNE }],
+    ["c", { department_id: null, branch_id: null }],
   ]);
   const none = new Map();
 
-  it("round-trips through the URL under short names", () => {
-    const filters = { ...DEFAULT_FILTERS, department: "Sales", branch: "Pune" };
+  it("round-trips ids (and \"unassigned\") through the URL under short names", () => {
+    const filters = { ...DEFAULT_FILTERS, department: SALES, branch: "unassigned" };
     const params = serializeFilters(filters);
-    expect(params.get("dept")).toBe("Sales");
-    expect(params.get("branch")).toBe("Pune");
+    expect(params.get("dept")).toBe(SALES);
+    expect(params.get("branch")).toBe("unassigned");
     expect(parseFilters(params)).toEqual(filters);
     expect(parseFilters(new URLSearchParams())).toEqual(DEFAULT_FILTERS);
+  });
+
+  it("drops an old link that named the department instead of giving its id", () => {
+    expect(parseFilters(new URLSearchParams("dept=Sales&branch=Pune"))).toEqual(DEFAULT_FILTERS);
   });
 
   it("keeps only the employees in that department or branch", () => {
     const ids = (f: Partial<typeof DEFAULT_FILTERS>) =>
       applyPopulationFilters(days, { ...DEFAULT_FILTERS, ...f }, none, directory).map((d) => d.employee_id);
-    expect(ids({ department: "Engineering" })).toEqual(["a"]);
-    expect(ids({ branch: "Pune" })).toEqual(["a", "b"]);
-    expect(ids({ department: "Sales", branch: "Pune" })).toEqual(["b"]);
-    expect(ids({ department: "Unassigned" })).toEqual(["c"]);
+    expect(ids({ department: ENG })).toEqual(["a"]);
+    expect(ids({ branch: PUNE })).toEqual(["a", "b"]);
+    expect(ids({ department: SALES, branch: PUNE })).toEqual(["b"]);
+    expect(ids({ department: "unassigned" })).toEqual(["c"]);
   });
 
   it("skips the filter, rather than hiding everyone, when there is no directory yet", () => {
-    expect(applyPopulationFilters(days, { ...DEFAULT_FILTERS, department: "Sales" }, none)).toHaveLength(3);
+    expect(applyPopulationFilters(days, { ...DEFAULT_FILTERS, department: SALES }, none)).toHaveLength(3);
   });
 
   it("counts as an active filter", () => {
-    expect(hasActiveFilters({ ...DEFAULT_FILTERS, department: "Sales" })).toBe(true);
+    expect(hasActiveFilters({ ...DEFAULT_FILTERS, department: SALES })).toBe(true);
   });
 
   it("does not bring filtered-out employees back as 'no record yet'", () => {
@@ -643,7 +597,7 @@ describe("department and branch filters", () => {
       { id: "a", first_name: "A", last_name: null, employee_code: null, status: "ACTIVE", is_active: true, employment_joining_date: "2020-01-01", employment_last_working_day: null },
       { id: "b", first_name: "B", last_name: null, employee_code: null, status: "ACTIVE", is_active: true, employment_joining_date: "2020-01-01", employment_last_working_day: null },
     ];
-    const filters = { ...DEFAULT_FILTERS, department: "Engineering" };
+    const filters = { ...DEFAULT_FILTERS, department: ENG };
     // Neither has a row yet; only A is in Engineering.
     const missing = employeesWithoutRecord([], employees, filters, TODAY, directory);
     expect(missing.map((e) => e.id)).toEqual(["a"]);
