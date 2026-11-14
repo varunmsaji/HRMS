@@ -154,8 +154,8 @@ class FakeFaceProvider:
 async def fake_face_provider(
     fake_liveness_engine: FakeLivenessEngine,
 ) -> AsyncIterator[FakeFaceProvider]:
-    """Also installs `fake_liveness_engine` (LIVE by default): face punching and enrollment
-    fail closed without a liveness engine."""
+    """Also installs `fake_liveness_engine` (LIVE by default): face punching fails closed
+    without a liveness engine."""
     from entrypoints.api import app
 
     from hrms.modules.attendance.dependencies import get_face_provider

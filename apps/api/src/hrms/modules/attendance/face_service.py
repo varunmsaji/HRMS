@@ -13,6 +13,7 @@ action can be retried (provider deletion is idempotent)."""
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import time
@@ -159,35 +160,53 @@ def sniff_face_image(
     raise FaceImageInvalidError(f"The {field} photo must be a JPEG or PNG image", field=target)
 
 
-def _dump_debug_captures(settings: Any, employee_id: UUID, images: dict[str, bytes]) -> None:
-    """Development only: when HRMS_DEBUG_FACE_DUMP_DIR is set, writes the received enrollment
-    photos to `<dir>/<employee_id>/<angle>.jpg` so a capture can be inspected. A later enrollment
-    of the same employee replaces the previous files. Never active outside development."""
+def _dump_debug_captures(
+    settings: Any, employee_id: UUID, kind: str, images: dict[str, bytes]
+) -> Path | None:
+    """Development only: when HRMS_DEBUG_FACE_DUMP_DIR is set, writes the received photos of
+    one attempt to `<dir>/<employee_id>/<UTC time>-<kind>-<id>/<name>.jpg` and returns that
+    folder (scores are added to it later by `_dump_debug_result`). Every attempt gets its own
+    folder, so earlier captures are kept for comparison. Never active outside development. A
+    folder that cannot be written is logged, not raised: debugging must never break a punch."""
     directory = os.environ.get("HRMS_DEBUG_FACE_DUMP_DIR")
     if not directory or settings.environment != "development":
+        return None
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    target = Path(directory) / str(employee_id) / f"{stamp}-{kind}-{uuid4().hex[:8]}"
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        for name, data in images.items():
+            (target / f"{name}.jpg").write_bytes(data)
+    except OSError as exc:
+        safe_log(_logger.warning, "face_debug_dump_failed", error_type=type(exc).__name__)
+        return None
+    return target
+
+
+def _debug_scores(assessment: LivenessAssessment) -> dict[str, Any]:
+    return {
+        "decision": assessment.decision,
+        "reason": assessment.reason,
+        "frames": [
+            {
+                "decision": f.decision,
+                "reason": f.reason,
+                "live": None if f.live_score is None else str(f.live_score),
+                "spoof": None if f.spoof_score is None else str(f.spoof_score),
+            }
+            for f in assessment.frames
+        ],
+    }
+
+
+def _dump_debug_result(target: Path | None, result: dict[str, Any]) -> None:
+    """Writes (or rewrites) `result.json` beside an attempt's photos. No-op without a folder."""
+    if target is None:
         return
     try:
-        target = Path(directory) / str(employee_id)
-        target.mkdir(parents=True, exist_ok=True)
-        for angle, data in images.items():
-            (target / f"{angle}.jpg").write_bytes(data)
-    except OSError:
-        pass
-
-
-def _log_debug_liveness(settings: Any, angle: str, assessment: LivenessAssessment) -> None:
-    if settings.environment != "development":
-        return
-    frame = assessment.frames[0] if assessment.frames else None
-    safe_log(
-        _logger.info,
-        "face_liveness_debug_score",
-        angle=angle,
-        decision=assessment.decision,
-        reason=assessment.reason,
-        live=str(frame.live_score if frame else None),
-        spoof=str(frame.spoof_score if frame else None),
-    )
+        (target / "result.json").write_text(json.dumps(result, indent=2, default=str))
+    except OSError as exc:
+        safe_log(_logger.warning, "face_debug_dump_failed", error_type=type(exc).__name__)
 
 
 async def assess_liveness(
@@ -259,13 +278,11 @@ class FaceEnrollmentService:
         provider: FaceVerificationProvider | None,
         settings: Settings,
         storage: FacePhotoStorage,
-        liveness: LivenessEngine | None = None,
     ) -> None:
         self._session = session
         self._provider = provider
         self._settings = settings
         self._storage = storage
-        self._liveness = liveness
         self._profiles = FaceProfileRepository()
         self._windows = FaceEnrollmentWindowRepository()
         self._enrollment_attempts = FaceEnrollmentAttemptRepository()
@@ -719,7 +736,7 @@ class FaceEnrollmentService:
         1. reserve — one short transaction takes `FOR UPDATE` on the window and profile, checks
            everything (open, not already enrolled, attempt limit, no live reservation) and
            commits a lease on the window (`submission_token`);
-        2. work — server-side liveness on every capture, then the ~18 sequential Face++ calls
+        2. work — the ~18 sequential Face++ calls (no liveness here: HR reviews the photo)
            under one wall-clock budget, holding no connection and no row lock;
         3. finalize — one short transaction re-locks the window and profile, proves the lease is
            still this submission's (HR may have cancelled or reopened the window meanwhile) and
@@ -730,8 +747,6 @@ class FaceEnrollmentService:
         if not consent_confirmed:
             raise FaceConsentRequiredError()
         provider = self._require_provider()
-        if self._liveness is None:
-            raise FaceLivenessUnavailableError()
         content_types = {
             angle: sniff_face_image(images[angle], field=angle) for angle in FACE_ENROLLMENT_ANGLES
         }
@@ -747,7 +762,6 @@ class FaceEnrollmentService:
                 employee_id,
                 reservation,
                 provider=provider,
-                liveness_engine=self._liveness,
                 images=images,
                 content_types=content_types,
                 actor_user_id=actor_user_id,
@@ -820,7 +834,6 @@ class FaceEnrollmentService:
         reservation: "_SubmissionReservation",
         *,
         provider: FaceVerificationProvider,
-        liveness_engine: LivenessEngine,
         images: dict[str, bytes],
         content_types: dict[str, str],
         actor_user_id: UUID | None,
@@ -830,41 +843,11 @@ class FaceEnrollmentService:
         window_id = reservation.window_id
         front, front_type = images["front"], content_types["front"]
 
-        # Server-side liveness on EVERY capture, one engine call each so a rejection names the
-        # angle. The front is what Face++ enrolls and HR reviews; the turned captures are what
-        # later punches are matched against too, so none may be a photo of a photo. Single
-        # frame, no challenge: enrollment is gated by the HR-opened window, the attempt limit and
-        # HR's own review, so this is one layer among several. Client-side checks are never
-        # substituted for this.
-        _dump_debug_captures(self._settings, employee_id, images)
-        for angle in FACE_ENROLLMENT_ANGLES:
-            try:
-                assessment = await assess_liveness(liveness_engine, [images[angle]], field=angle)
-                _log_debug_liveness(self._settings, angle, assessment)
-            except FaceImageInvalidError:
-                await self._reject_enrollment(
-                    company_id, employee_id, window_id, "INVALID_IMAGE", angle, actor_user_id
-                )
-                raise
-            except (FaceLivenessTimeoutError, FaceLivenessUnavailableError):
-                await self._reject_enrollment(
-                    company_id, employee_id, window_id, "LIVENESS_ERROR", angle, actor_user_id
-                )
-                raise
-            rejection = liveness_rejection(assessment)
-            # The single-frame anti-spoofing model is trained on frontal faces: on a head that is
-            # turned or tilted it answers NO_FACE, LOW_CONFIDENCE and even SPOOF_SUSPECTED for
-            # genuine people (measured: real turned captures scoring 0.31-0.36 live). So the
-            # liveness gate applies to the front capture, the one HR reviews and the identity is
-            # enrolled from. Turned/tilted captures are scored for diagnostics only; the
-            # provider's same-person check still has to pass for every angle.
-            if angle != "front":
-                rejection = None
-            if rejection is not None:
-                await self._reject_enrollment(
-                    company_id, employee_id, window_id, rejection[0], angle, actor_user_id
-                )
-                raise rejection[1]
+        # No liveness check at enrollment: HR reviews the front photo before the profile is
+        # switched on, and enrollment is already gated by the HR-opened window and the attempt
+        # limit. Liveness is enforced where it matters, on every face punch. The provider's
+        # same-person check below still has to pass for every angle.
+        _dump_debug_captures(self._settings, employee_id, "enroll", images)
 
         review_key = f"face-review/{company_id}/{employee_id}/{uuid4()}"
         person_id: str | None = None
@@ -1750,8 +1733,22 @@ class FacePunchService:
         # still produce one punch (the unique index remains the backstop).
         await _release_request_connection(self._session)
 
+        debug_dir = _dump_debug_captures(
+            self._settings,
+            employee_id,
+            "punch",
+            {f"frame_{i}": frame for i, frame in enumerate(frames)},
+        )
         try:
             assessment = await assess_liveness(liveness_engine, frames)
+            _dump_debug_result(
+                debug_dir,
+                {
+                    "kind": "punch",
+                    "live_threshold": self._settings.face_liveness_live_threshold,
+                    **_debug_scores(assessment),
+                },
+            )
         except FaceImageInvalidError:
             await self._record_rejection(
                 company_id,

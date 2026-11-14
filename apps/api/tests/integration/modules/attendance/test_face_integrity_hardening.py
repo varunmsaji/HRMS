@@ -2,7 +2,8 @@
 fake liveness engine — nothing here contacts Face++ or runs the real model):
 
 * every punch frame is identity-checked against the *expected employee's* FaceSet;
-* enrollment attempt limits, rejection records and per-angle liveness;
+* enrollment attempt limits and rejection records (enrollment runs no liveness check: HR
+  reviews the photo; liveness is enforced on every face punch);
 * no provider body is persisted.
 """
 
@@ -16,14 +17,12 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from tests.integration.modules.attendance.conftest import (
-    LIVE_PROBS,
     SPOOF_PROBS,
     FakeFaceProvider,
     FakeLivenessEngine,
     FakePhotoStorage,
 )
 from tests.integration.modules.attendance.test_face_enrollment import (
-    ANGLES,
     _employee,
     _open,
     _self_headers,
@@ -41,7 +40,11 @@ from tests.integration.modules.attendance.test_face_punch import (
 )
 
 from hrms.core.db.session import get_session_factory, set_rls_company_id
-from hrms.modules.attendance.face_verification import FaceMatchResult, FaceProviderError
+from hrms.modules.attendance.face_verification import (
+    FaceMatchResult,
+    FaceProviderError,
+    FaceProviderNoFaceError,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -355,7 +358,7 @@ async def test_attempt_rows_hold_only_minimal_typed_evidence(
             assert forbidden not in text_form
 
 
-# --- Phase 3: enrollment attempt limits, records, per-angle liveness ------------------------
+# --- Phase 3: enrollment attempt limits and rejection records ------------------------------
 
 
 async def _enrollment_attempts(company_id: UUID) -> list[dict[str, Any]]:
@@ -379,19 +382,18 @@ async def test_rejected_enrollment_is_recorded_without_any_biometric_content(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
-    fake_liveness_engine: FakeLivenessEngine,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     admin, me, employee_id, company_id = await _enrolling(client, face_tenant)
-    fake_liveness_engine.probs = [SPOOF_PROBS]
+    fake_face_provider.fail_with["enroll"] = FaceProviderNoFaceError("no face")
     capsys.readouterr()
 
     response = await _submit(client, me)
 
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "FACE_SPOOF_SUSPECTED"
+    assert response.json()["error"]["code"] == "FACE_NOT_DETECTED"
     (row,) = await _enrollment_attempts(company_id)
-    assert (row["decision"], row["angle"]) == ("SPOOF_SUSPECTED", "front")
+    assert (row["decision"], row["angle"]) == ("NO_FACE", "front")
     assert str(row["employee_id"]) == employee_id
     status = await _status(client, admin, employee_id)
     assert str(row["enrollment_window_id"]) == status["open_window"]["id"]
@@ -399,32 +401,29 @@ async def test_rejected_enrollment_is_recorded_without_any_biometric_content(
     events = [line for line in out.splitlines() if "security.face_enrollment.rejected" in line]
     assert len(events) == 1
     event = json.loads(events[0])
-    assert event["reason"] == "SPOOF_SUSPECTED"
+    assert event["reason"] == "NO_FACE"
     assert event["angle"] == "front"
-    assert "0.07" not in events[0]
-    assert fake_face_provider.calls == []
+    assert fake_face_provider.names() == ["enroll"]
 
 
 async def test_enrollment_is_limited_per_window_and_a_new_window_resets_it(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
-    fake_liveness_engine: FakeLivenessEngine,
 ) -> None:
     admin, me, employee_id, company_id = await _enrolling(client, face_tenant)
-    fake_liveness_engine.probs = [SPOOF_PROBS]
+    fake_face_provider.fail_with["enroll"] = FaceProviderNoFaceError("no face")
 
     for _ in range(5):
         assert (await _submit(client, me)).status_code == 422
-    fake_liveness_engine.calls.clear()
-    fake_liveness_engine.probs = [LIVE_PROBS]  # even a perfect submission is now refused
+    fake_face_provider.calls.clear()
+    fake_face_provider.fail_with.clear()  # even a perfect submission is now refused
 
     blocked = await _submit(client, me)
 
     assert blocked.status_code == 429
     assert blocked.json()["error"]["code"] == "FACE_ENROLLMENT_ATTEMPTS_EXCEEDED"
-    # Refused before any engine or provider work, and without writing another row.
-    assert fake_liveness_engine.calls == []
+    # Refused before any provider work, and without writing another row.
     assert fake_face_provider.calls == []
     assert len(await _enrollment_attempts(company_id)) == 5
 
@@ -440,10 +439,10 @@ async def test_enrollment_is_limited_per_window_and_a_new_window_resets_it(
 
 
 async def test_concurrent_failing_submissions_cannot_overshoot_the_limit(
-    client: AsyncClient, face_tenant: Tenant, fake_liveness_engine: FakeLivenessEngine
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
     _, me, _, company_id = await _enrolling(client, face_tenant)
-    fake_liveness_engine.probs = [SPOOF_PROBS]
+    fake_face_provider.fail_with["enroll"] = FaceProviderNoFaceError("no face")
 
     results = await asyncio.gather(*[_submit(client, me) for _ in range(9)])
 
@@ -498,93 +497,42 @@ async def test_failed_angle_is_recorded_with_its_name_and_provider_person_discar
     assert fake_face_provider.names()[-1] == "delete_person"
 
 
-@pytest.mark.parametrize("angle", ["left", "right", "up", "down"])
-async def test_spoof_verdict_on_a_turned_capture_is_not_a_liveness_rejection(
-    client: AsyncClient,
-    face_tenant: Tenant,
-    fake_face_provider: FakeFaceProvider,
-    fake_liveness_engine: FakeLivenessEngine,
-    fake_photo_storage: FakePhotoStorage,
-    angle: str,
-) -> None:
-    """The anti-spoofing model cannot judge turned or tilted heads (genuine ones score as spoof),
-    so only the front capture is liveness-gated; the provider same-person check covers the rest."""
-    _, me, _, _ = await _enrolling(client, face_tenant)
-    fake_liveness_engine.per_call = [[SPOOF_PROBS] if a == angle else [LIVE_PROBS] for a in ANGLES]
-
-    response = await _submit(client, me)
-
-    assert response.status_code == 201, response.text
-    # Every capture was still scored (diagnostics), but only the front decides.
-    assert len(fake_liveness_engine.calls) == len(ANGLES)
-
-
-async def test_faceless_front_capture_is_a_rejection(
+async def test_enrollment_runs_no_liveness_check(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
     fake_liveness_engine: FakeLivenessEngine,
 ) -> None:
-    """The front capture is the strict liveness gate: no face in it ends the submission."""
-    _, me, _, company_id = await _enrolling(client, face_tenant)
-    fake_liveness_engine.per_call = ["NO_FACE"]
-
-    response = await _submit(client, me)
-
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "FACE_NOT_DETECTED"
-    (row,) = await _enrollment_attempts(company_id)
-    assert (row["decision"], row["angle"]) == ("NO_FACE", "front")
-    assert fake_face_provider.calls == []
-
-
-async def test_faceless_turned_capture_is_tolerated(
-    client: AsyncClient,
-    face_tenant: Tenant,
-    fake_face_provider: FakeFaceProvider,
-    fake_liveness_engine: FakeLivenessEngine,
-) -> None:
-    """The anti-spoofing model cannot judge a turned or tilted head: a NO_FACE / inconclusive
-    answer on a non-front capture is not a rejection (only a spoof verdict is); the provider's
-    same-person check still has to pass for every angle."""
-    _, me, _, _ = await _enrolling(client, face_tenant)
-    fake_liveness_engine.per_call = [[LIVE_PROBS], "NO_FACE"]
-
-    response = await _submit(client, me)
-
-    assert response.status_code == 201, response.text
-
-
-async def test_engine_failure_during_enrollment_is_recorded_and_not_counted(
-    client: AsyncClient, face_tenant: Tenant, fake_liveness_engine: FakeLivenessEngine
-) -> None:
+    """HR reviews the enrollment photo, so enrollment never calls the liveness engine: a spoof
+    verdict cannot reject it and an unavailable engine cannot block it. Face punches still
+    require liveness (see test_face_punch.py)."""
     from hrms.modules.attendance.liveness import LivenessUnavailableError
 
     _, me, _, company_id = await _enrolling(client, face_tenant)
+    fake_liveness_engine.probs = [SPOOF_PROBS]
     fake_liveness_engine.fail_with = LivenessUnavailableError("model missing")
 
-    for _ in range(6):
-        assert (await _submit(client, me)).status_code == 503
-    assert {r["decision"] for r in await _enrollment_attempts(company_id)} == {"LIVENESS_ERROR"}
+    response = await _submit(client, me)
 
-    fake_liveness_engine.fail_with = None
-    assert (await _submit(client, me)).status_code == 201
+    assert response.status_code == 201, response.text
+    assert fake_liveness_engine.calls == []
+    assert await _enrollment_attempts(company_id) == []
 
 
 async def test_another_employees_failures_do_not_count_against_you(
-    client: AsyncClient, face_tenant: Tenant, fake_liveness_engine: FakeLivenessEngine
+    client: AsyncClient, face_tenant: Tenant, fake_face_provider: FakeFaceProvider
 ) -> None:
     admin, asha_me, _, company_id = await _enrolling(client, face_tenant, "Asha")
     ben_id = await _employee(client, admin, "Ben")
     assert (await _open(client, admin, ben_id)).status_code == 201
     ben_me = await _self_headers(company_id, ben_id)
 
-    fake_liveness_engine.probs = [SPOOF_PROBS]
+    fake_face_provider.fail_with["enroll"] = FaceProviderNoFaceError("no face")
     for _ in range(5):
         assert (await _submit(client, asha_me)).status_code == 422
     assert (await _submit(client, asha_me)).status_code == 429
 
-    fake_liveness_engine.probs = [LIVE_PROBS]
+    fake_face_provider.fail_with.clear()
     assert (await _submit(client, ben_me)).status_code == 201
 
 

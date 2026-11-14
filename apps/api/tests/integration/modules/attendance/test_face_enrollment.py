@@ -164,10 +164,10 @@ async def test_full_self_enrollment_with_hr_approval(
     assert profile["has_review_photo"] is True
     assert "provider_person_id" not in profile and "review_photo_key" not in profile
 
-    # Every capture must pass server-side liveness (our own engine, not the vendor), one call
-    # per image; the front is the anchor and the four turned angles are each checked against it
-    # before any is added. The vendor only ever sees the employee UUID.
-    assert fake_liveness_engine.calls == [[IMAGES[angle]] for angle in ANGLES]
+    # Enrollment runs no liveness check (HR reviews the photo; punches are liveness-checked).
+    # The front is the anchor and the four turned angles are each checked against it before
+    # any is added. The vendor only ever sees the employee UUID.
+    assert fake_liveness_engine.calls == []
     expected = ["enroll"] + ["verify"] * 4 + ["add_reference_photo"] * 4
     assert fake_face_provider.names() == expected
     assert fake_face_provider.calls[0][1]["label"] == employee_id
@@ -331,13 +331,14 @@ async def test_all_five_angles_are_required_and_must_be_images(
     assert fake_face_provider.calls == []
 
 
-async def test_spoofed_front_is_rejected_and_window_stays_open(
+async def test_spoof_verdict_does_not_block_enrollment(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
     fake_liveness_engine: FakeLivenessEngine,
-    fake_photo_storage: FakePhotoStorage,
 ) -> None:
+    """HR reviews the photo before face punching is switched on, so enrollment is not
+    liveness-gated: even a capture the engine would call a spoof goes to HR for review."""
     admin, company_id = face_tenant
     employee_id = await _employee(client, admin)
     await _open(client, admin, employee_id)
@@ -346,13 +347,9 @@ async def test_spoofed_front_is_rejected_and_window_stays_open(
 
     response = await _submit(client, me)
 
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "FACE_SPOOF_SUSPECTED"
-    # Rejected before anything reaches (or is enrolled at) the vendor.
-    assert fake_face_provider.names() == []
-    assert fake_photo_storage.objects == {}
-    # A failed attempt does not burn the window — the employee can retry.
-    assert (await _status(client, admin, employee_id))["open_window"] is not None
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["status"] == "PENDING_APPROVAL"
+    assert fake_liveness_engine.calls == []
 
 
 async def test_mismatched_angle_discards_everything(
