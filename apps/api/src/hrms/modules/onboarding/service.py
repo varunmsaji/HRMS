@@ -25,6 +25,8 @@ from hrms.core.observability.logging import get_logger, safe_error, safe_log
 from hrms.core.observability.operations import logged_operation
 from hrms.core.storage import DocumentStorageService
 from hrms.modules.attendance.face_policy import FacePolicyService
+from hrms.modules.notification.producer import notify
+from hrms.modules.notification.types import ONBOARDING_PATH, ONBOARDING_SUBMITTED
 from hrms.modules.onboarding.document_validation import (
     content_disposition_attachment,
     safe_document_object_key,
@@ -671,6 +673,23 @@ class OnboardingCaseService:
             action="ONBOARDING_CASE_SUBMITTED",
             entity_type="onboarding_case",
             entity_id=case_id,
+        )
+        candidate = " ".join(
+            part for part in (case.candidate_first_name, case.candidate_last_name) if part
+        )
+        await notify(
+            self._session,
+            company_id=company_id,
+            recipients=[case.created_by_user_id],
+            type=ONBOARDING_SUBMITTED,
+            title="Onboarding form submitted",
+            body=f"{candidate} submitted their onboarding details for review.",
+            # A case sent back for changes can be submitted again: one notification per round.
+            dedupe_key=f"{ONBOARDING_SUBMITTED.code}:{case_id}:{now.isoformat()}",
+            entity_type="onboarding_case",
+            entity_id=case_id,
+            action_url=f"{ONBOARDING_PATH}/{case_id}",
+            action_label="Review",
         )
         reviews = await self._section_review_repo.list_for_case(
             self._session, company_id=company_id, case_id=case_id

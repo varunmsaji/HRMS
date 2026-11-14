@@ -33,6 +33,8 @@ from hrms.core.db.locks import (
 from hrms.core.errors.base import NotFoundError
 from hrms.core.observability.operations import logged_operation
 from hrms.core.rbac.types import DataScope
+from hrms.modules.notification.producer import employee_user_ids, notify
+from hrms.modules.notification.types import MY_PAYSLIPS_PATH, PAYSLIP_AVAILABLE
 from hrms.modules.payroll.breakup import (
     ARREARS_PREFIX,
     Breakup,
@@ -3350,6 +3352,23 @@ class PayRunService:
             actor_user_id=actor_user_id,
             ip_address=ip_address,
             user_agent=user_agent,
+        )
+        # The payslips are visible to employees from this point (`list_final_for_employee`).
+        month = updated.period_month.strftime("%B %Y")
+        await notify(
+            self._session,
+            company_id=company_id,
+            recipients=await employee_user_ids(
+                self._session, company_id, (e.employee_id for e in employees)
+            ),
+            type=PAYSLIP_AVAILABLE,
+            title=f"Your payslip for {month} is ready",
+            body="Open it to see your earnings, deductions and net pay.",
+            dedupe_key=f"{PAYSLIP_AVAILABLE.code}:{run_id}",
+            entity_type="pay_run",
+            entity_id=run_id,
+            action_url=f"{MY_PAYSLIPS_PATH}/{run_id}",
+            action_label="View payslip",
         )
         return after
 

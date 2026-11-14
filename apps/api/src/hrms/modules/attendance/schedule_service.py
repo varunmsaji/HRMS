@@ -7,6 +7,7 @@ assignment (department / branch). Nothing is computed from constants.
 
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
@@ -17,12 +18,26 @@ from hrms.core.audit.service import AuditService
 from hrms.core.errors.base import ConflictError, NotFoundError, ValidationError
 from hrms.core.rbac.types import DataScope
 from hrms.modules.attendance.models import ShiftRoster, ShiftSwapRequest
+from hrms.modules.attendance.permissions import ATTENDANCE_ROSTER_MANAGE
 from hrms.modules.attendance.service import (
     _ensure_date_open,
     _ensure_employee_visible,
     _resolve_visible_employee_ids,
 )
 from hrms.modules.employee.models import Employee, EmployeeAssignment
+from hrms.modules.notification.approvals import fmt_date
+from hrms.modules.notification.producer import (
+    employee_name,
+    employee_user_id,
+    notify,
+    permission_holder_user_ids,
+    settle,
+)
+from hrms.modules.notification.types import (
+    SHIFT_SWAP_DECIDED,
+    SHIFT_SWAP_REQUESTED,
+    SHIFT_SWAPS_PATH,
+)
 from hrms.modules.organisation.models import Department, Shift, ShiftVersion
 
 _LIVE_STATUSES = ("ACTIVE", "PROBATION", "ON_NOTICE")
@@ -699,6 +714,7 @@ class RosterScheduleService:
             entity_id=swap.id,
             after={"reference": swap.reference, "swap_date": swap.swap_date.isoformat()},
         )
+        await self._notify_swap(company_id, swap, "REQUESTED", actor_user_id)
         return await self._read(company_id, swap)
 
     async def decide(
@@ -766,6 +782,9 @@ class RosterScheduleService:
             entity_id=swap.id,
             after={"reference": swap.reference, "status": swap.status},
         )
+        await self._notify_swap(
+            company_id, swap, "APPROVED" if approve else "DECLINED", actor_user_id
+        )
         return await self._read(company_id, swap)
 
     async def _own_pending(self, company_id: UUID, swap_id: UUID) -> ShiftSwapRequest:
@@ -806,7 +825,76 @@ class RosterScheduleService:
             entity_id=swap.id,
             after={"reference": swap.reference},
         )
+        await self._notify_swap(company_id, swap, "CONSENTED", actor_user_id)
         return await self._read(company_id, swap)
+
+    async def _notify_swap(
+        self, company_id: UUID, swap: ShiftSwapRequest, event: str, actor_user_id: UUID | None
+    ) -> None:
+        """In-app notifications for a swap's lifecycle: the colleague is asked first, roster
+        managers once the colleague has agreed, and both employees hear the outcome."""
+        requester = await employee_user_id(self._session, company_id, swap.requester_employee_id)
+        counterpart = await employee_user_id(
+            self._session, company_id, swap.counterpart_employee_id
+        )
+        on = fmt_date(swap.swap_date)
+        common: dict[str, Any] = {
+            "company_id": company_id,
+            "exclude": [actor_user_id],
+            "entity_type": "shift_swap_request",
+            "entity_id": swap.id,
+            "action_url": SHIFT_SWAPS_PATH,
+        }
+        await settle(
+            self._session,
+            company_id=company_id,
+            entity_type="shift_swap_request",
+            entity_id=swap.id,
+            types=(SHIFT_SWAP_REQUESTED,),
+        )
+        if event in ("REQUESTED", "CONSENTED"):
+            name = await employee_name(self._session, company_id, swap.requester_employee_id)
+            if not swap.counterpart_consented:
+                await notify(
+                    self._session,
+                    **common,
+                    recipients=[counterpart],
+                    type=SHIFT_SWAP_REQUESTED,
+                    title="Shift swap request",
+                    body=f"{name} would like to swap shifts with you on {on}.",
+                    dedupe_key=f"{SHIFT_SWAP_REQUESTED.code}:{swap.id}:COLLEAGUE",
+                    action_label="Respond",
+                )
+            else:
+                await notify(
+                    self._session,
+                    **common,
+                    recipients=await permission_holder_user_ids(
+                        self._session, company_id, ATTENDANCE_ROSTER_MANAGE
+                    ),
+                    type=SHIFT_SWAP_REQUESTED,
+                    title="Shift swap awaiting your approval",
+                    body=f"{name} and a colleague agreed to swap shifts on {on}.",
+                    dedupe_key=f"{SHIFT_SWAP_REQUESTED.code}:{swap.id}:MANAGER",
+                    action_label="Review",
+                )
+            return
+        outcome = {
+            "APPROVED": "approved",
+            "DECLINED": "declined",
+            "WITHDRAWN": "withdrawn",
+            "REFUSED": "declined by your colleague",
+        }[event]
+        await notify(
+            self._session,
+            **common,
+            recipients=[requester, counterpart],
+            type=SHIFT_SWAP_DECIDED,
+            title=f"Shift swap {outcome}",
+            body=f"The shift swap {swap.reference} for {on} was {outcome}.",
+            dedupe_key=f"{SHIFT_SWAP_DECIDED.code}:{swap.id}",
+            action_label="View schedule",
+        )
 
     async def withdraw(
         self,
@@ -839,5 +927,8 @@ class RosterScheduleService:
             entity_type="shift_swap_request",
             entity_id=swap.id,
             after={"reference": swap.reference, "status": swap.status},
+        )
+        await self._notify_swap(
+            company_id, swap, "WITHDRAWN" if is_requester else "REFUSED", actor_user_id
         )
         return await self._read(company_id, swap)

@@ -125,6 +125,18 @@ void main() {
     expect(safeNotificationPath(null), isNull);
   });
 
+  test('web detail paths open the matching mobile screen', () {
+    expect(safeNotificationPath('/app/leave-applications/abc'), '/app/leave-applications');
+    expect(safeNotificationPath('/app/regularizations/abc'), '/app/regularizations');
+    expect(safeNotificationPath('/app/overtime/abc'), '/app/overtime');
+    expect(safeNotificationPath('/app/onboarding/abc'), '/app/onboarding');
+    expect(safeNotificationPath('/app/me/payslips/run-1'), '/app/me/payslips');
+    expect(safeNotificationPath('/app/rosters/schedule'), '/app/shift-swaps');
+    // Paths the app already has are left alone, as are deeper ones it does not know about.
+    expect(safeNotificationPath('/app/leave-applications'), '/app/leave-applications');
+    expect(safeNotificationPath('/app/overtime-policies/abc'), '/app/overtime-policies/abc');
+  });
+
   test('notificationAge', () {
     final now = DateTime.utc(2026, 11, 1, 12);
     expect(notificationAge('2026-11-01T11:59:50Z', now: now), 'just now');

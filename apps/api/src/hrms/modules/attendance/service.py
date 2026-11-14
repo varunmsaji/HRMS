@@ -223,6 +223,11 @@ from hrms.modules.attendance.shift_window import (
     combine_shift_window_decisions,
     evaluate_shift_window,
 )
+from hrms.modules.notification.approvals import (
+    OVERTIME_FLOW,
+    REGULARIZATION_FLOW,
+    notify_approval_change,
+)
 from hrms.shared.auto_code import next_auto_code
 from hrms.shared.business_time import business_today
 from hrms.shared.pagination import PageParams
@@ -5444,6 +5449,13 @@ class RegularizationRequestService:
             ip=ip_address,
             user_agent=user_agent,
         )
+        await notify_approval_change(
+            self._session,
+            REGULARIZATION_FLOW,
+            company_id=company_id,
+            entity_id=request_id,
+            actor_user_id=actor_user_id,
+        )
 
         if existing_day is not None:
             await self._day_repo.set_pending_approval(
@@ -5530,6 +5542,13 @@ class RegularizationRequestService:
             after=regularization_request_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            REGULARIZATION_FLOW,
+            company_id=company_id,
+            entity_id=request_id,
+            actor_user_id=actor_user_id,
         )
         if row.attendance_day_id is not None:
             await self._day_repo.set_pending_approval(
@@ -5628,6 +5647,13 @@ class RegularizationRequestService:
             after=regularization_request_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            REGULARIZATION_FLOW,
+            company_id=company_id,
+            entity_id=request_id,
+            actor_user_id=actor_user_id,
         )
         # A rejected request cannot be treated as approved (Phase 5): no correction is applied,
         # and any earlier pending-approval flag on the day is cleared without touching
@@ -5748,6 +5774,13 @@ class RegularizationRequestService:
                 ip=ip_address,
                 user_agent=user_agent,
             )
+            await notify_approval_change(
+                self._session,
+                REGULARIZATION_FLOW,
+                company_id=company_id,
+                entity_id=row.id,
+                actor_user_id=actor_user_id,
+            )
             return read
 
         await self._record_action(
@@ -5771,6 +5804,13 @@ class RegularizationRequestService:
             after=regularization_request_to_audit_dict(approved_read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            REGULARIZATION_FLOW,
+            company_id=company_id,
+            entity_id=row.id,
+            actor_user_id=actor_user_id,
         )
 
         return await self._apply_correction(
@@ -6354,6 +6394,13 @@ class OvertimeRecordService:
                 ip=ip_address,
                 user_agent=user_agent,
             )
+            await notify_approval_change(
+                self._session,
+                OVERTIME_FLOW,
+                company_id=company_id,
+                entity_id=record_id,
+                actor_user_id=actor_user_id,
+            )
             return read
 
         await self._record_action(
@@ -6385,6 +6432,13 @@ class OvertimeRecordService:
             after=overtime_record_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            OVERTIME_FLOW,
+            company_id=company_id,
+            entity_id=record_id,
+            actor_user_id=actor_user_id,
         )
         if updated.comp_off_minutes > 0:
             await self._audit.record(
@@ -6487,6 +6541,13 @@ class OvertimeRecordService:
             after=overtime_record_to_audit_dict(read),
             ip=ip_address,
             user_agent=user_agent,
+        )
+        await notify_approval_change(
+            self._session,
+            OVERTIME_FLOW,
+            company_id=company_id,
+            entity_id=record_id,
+            actor_user_id=actor_user_id,
         )
         return read
 

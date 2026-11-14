@@ -1,7 +1,7 @@
 "use client";
 
 import { CircleCheck, Info, TriangleAlert, X } from "lucide-react";
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -43,8 +43,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [dismiss],
   );
 
+  // Stable, so consumers can depend on it in effects without re-running them on every toast.
+  const value = useMemo(() => ({ toast }), [toast]);
+
   return (
-    <ToastContext.Provider value={{ toast }}>
+    <ToastContext.Provider value={value}>
       {children}
       <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2 px-4 sm:inset-x-auto sm:right-4 sm:items-end">
         {toasts.map((item) => (
@@ -102,4 +105,9 @@ export function useToast(): ToastContextValue {
   const ctx = useContext(ToastContext);
   if (!ctx) throw new Error("useToast must be used within a ToastProvider");
   return ctx;
+}
+
+/** For components that may render outside a `ToastProvider` (e.g. in isolated tests): no-op then. */
+export function useOptionalToast(): ToastContextValue | null {
+  return useContext(ToastContext);
 }

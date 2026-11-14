@@ -12,6 +12,7 @@ vi.mock("@/lib/auth/auth-context", () => ({
 
 vi.mock("@/components/common/toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
+  useOptionalToast: () => null,
 }));
 
 vi.mock("@/lib/api/client", () => ({
