@@ -14,6 +14,9 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 
+from hrms.core.config.settings import get_settings
+from hrms.modules.onboarding.invitation_compose import brand_logo_url, with_brand_header
+
 from .test_invitation_compose import (  # noqa: F401 - fixtures are collected by name
     GOOD_BODY,
     _counts,
@@ -79,9 +82,17 @@ class _Audit(HTMLParser):
                 self.bad.append(f"href={value}")
 
 
+def _without_brand_header(html_body: str) -> str:
+    """Every invitation opens with the system's own logo header (not HR-authored content). It must
+    be exactly that header, and the rest of the body is what the allowlist audits."""
+    header = with_brand_header("", brand_logo_url(get_settings().web_app_base_url))
+    assert html_body.startswith(header)
+    return html_body[len(header) :]
+
+
 def _assert_allowlisted(html_body: str) -> None:
     audit = _Audit()
-    audit.feed(html_body)
+    audit.feed(_without_brand_header(html_body))
     assert audit.bad == []
 
 
@@ -284,7 +295,8 @@ async def test_special_characters_in_case_data_are_escaped_in_every_context(
         r = await _preview(client, headers, case["id"], subject=SUBJECT, body_doc=doc)
         assert r.status_code == 200, r.text
         html_body = r.json()["data"]["html_body"]
-        assert "<img" not in html_body and "&lt;img src=x onerror=alert(1)&gt;" in html_body
+        authored = _without_brand_header(html_body)
+        assert "<img" not in authored and "&lt;img src=x onerror=alert(1)&gt;" in authored
         _assert_allowlisted(html_body)
     finally:
         await _teardown_with_tokens(company_id=company_id, user_id=user_id)
