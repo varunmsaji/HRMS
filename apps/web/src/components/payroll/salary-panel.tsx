@@ -52,6 +52,8 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
   const [history, setHistory] = useState<EmployeeSalary[]>([]);
   const [structures, setStructures] = useState<SalaryStructure[]>([]);
   const [loading, setLoading] = useState(true);
+  // The editor opens on "Edit salary"; with no salary saved yet it opens straight away.
+  const [editing, setEditing] = useState(false);
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [basis, setBasis] = useState<"STRUCTURE" | "DAILY">("STRUCTURE");
@@ -155,6 +157,9 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
     }
   }
 
+  const showEditor =
+    canEditSetup && (editing || (!loading && history.length === 0));
+
   const currentCard = (
     <Card>
       <CardContent className="space-y-4 pt-6">
@@ -166,7 +171,11 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
               onChange={(e) => setAsOf(e.target.value)}
             />
           </FormField>
-          {canAssign ? (
+          {canEditSetup && breakup && breakup.pay_basis !== "DAILY_WAGE" ? (
+            <Button type="button" onClick={() => setEditing(true)}>
+              Edit salary
+            </Button>
+          ) : canAssign ? (
             <Button
               type="button"
               onClick={() => {
@@ -205,11 +214,15 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
 
   return (
     <div className="space-y-4">
-      {canEditSetup ? (
+      {showEditor ? (
         <SalarySetupEditor
           employeeId={employeeId}
           today={today}
-          onSaved={() => void load()}
+          onSaved={() => {
+            setEditing(false);
+            void load();
+          }}
+          onCancel={history.length > 0 ? () => setEditing(false) : undefined}
           fallback={currentCard}
         />
       ) : (

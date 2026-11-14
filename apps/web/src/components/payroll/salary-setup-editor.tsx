@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import {
@@ -19,6 +20,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
@@ -27,6 +36,7 @@ import { REVISION_TYPE_VALUES, type RevisionType } from "@/lib/employee/types";
 import { REVISION_TYPE_LABELS } from "@/lib/employee/validate-compensation";
 import {
   currentVersion,
+  draftVersion,
   formatInr,
   rupeesToMinor,
   type EmployeeSalarySetup,
@@ -36,6 +46,16 @@ import {
 } from "@/lib/payroll/types";
 
 const PREVIEW_DELAY_MS = 400;
+/** A company template applies to every date, like the ones every company starts with. */
+const NEW_TEMPLATE_EFFECTIVE_FROM = "2000-01-01";
+
+function codeFromName(name: string): string {
+  return name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 30);
+}
 
 function templateRows(structure: SalaryStructure | undefined): LineRow[] {
   return structure ? (currentVersion(structure)?.lines.map(toRow) ?? []) : [];
@@ -80,11 +100,14 @@ export function SalarySetupEditor({
   employeeId,
   today,
   onSaved,
+  onCancel,
   fallback,
 }: {
   employeeId: string;
   today: string;
   onSaved: () => void;
+  /** When given, a Cancel button returns to the read-only salary card without saving. */
+  onCancel?: () => void;
   /** Shown instead for a daily-wage employee, or one not employed today. */
   fallback: ReactNode;
 }) {
@@ -108,6 +131,12 @@ export function SalarySetupEditor({
   // Set when Save is pressed with something missing: from then on the missing fields are marked.
   const [showMissing, setShowMissing] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCode, setNewCode] = useState("");
+  const [newError, setNewError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const apply = useCallback(
     (data: EmployeeSalarySetup, structures: SalaryStructure[]) => {
@@ -279,6 +308,42 @@ export function SalarySetupEditor({
     }
   }
 
+  async function handleCreateTemplate() {
+    const name = newName.trim();
+    const code = (newCode || codeFromName(name)).trim().toUpperCase();
+    if (!name || !code) {
+      setNewError("Enter a name for the structure.");
+      return;
+    }
+    setCreating(true);
+    setNewError(null);
+    try {
+      const created = await apiClient.post<SalaryStructure>(
+        "/payroll/salary-structures",
+        { code, name, lines: lineInputs },
+      );
+      const draft = draftVersion(created);
+      if (!draft) throw new Error("The new structure has no draft to publish.");
+      const published = await apiClient.post<SalaryStructure>(
+        `/payroll/salary-structures/${created.id}/versions/${draft.id}/publish`,
+        { effective_from: NEW_TEMPLATE_EFFECTIVE_FROM },
+        { ifMatch: String(draft.version) },
+      );
+      setTemplates((current) => [...current, published]);
+      setTemplateId(published.id);
+      setNewOpen(false);
+      toast({
+        title: "Structure created",
+        description: `${published.name} is now available for every employee.`,
+        variant: "success",
+      });
+    } catch (err) {
+      setNewError(describeApiError(err));
+    } finally {
+      setCreating(false);
+    }
+  }
+
   if (loadError) return <p className="text-sm text-danger">{loadError}</p>;
   if (!setup) return <LoadingState label="Loading salary…" />;
   if (setup.pay_basis !== "MONTHLY") return <>{fallback}</>;
@@ -322,15 +387,30 @@ export function SalarySetupEditor({
               <label htmlFor="setup-template" className={label}>
                 Structure
               </label>
-              {customised ? (
+              <span className="flex gap-3">
+                {customised ? (
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => setRows(templateRows(template))}
+                  >
+                    Reset to {template?.name}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="text-xs text-primary hover:underline"
-                  onClick={() => setRows(templateRows(template))}
+                  className="text-xs text-primary hover:underline disabled:opacity-50"
+                  disabled={!complete}
+                  onClick={() => {
+                    setNewName("");
+                    setNewCode("");
+                    setNewError(null);
+                    setNewOpen(true);
+                  }}
                 >
-                  Reset to {template?.name}
+                  Save as new structure
                 </button>
-              ) : null}
+              </span>
             </div>
             <NativeSelect
               id="setup-template"
@@ -440,6 +520,16 @@ export function SalarySetupEditor({
               onChange={(e) => setReason(e.target.value)}
             />
           </div>
+          {onCancel ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+          ) : null}
           <Button
             type="button"
             onClick={() => void handleSave()}
@@ -454,6 +544,64 @@ export function SalarySetupEditor({
           </p>
         ) : null}
       </CardContent>
+      <Dialog
+        open={newOpen}
+        onOpenChange={(next) => !creating && setNewOpen(next)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save as new structure</DialogTitle>
+            <DialogDescription>
+              Creates a company salary structure from the lines above, for any
+              employee to use. It does not change this employee&apos;s salary —
+              press Save salary for that.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <FormField id="new-structure-name" label="Name" required>
+              <Input
+                value={newName}
+                maxLength={150}
+                placeholder="e.g. Senior engineer"
+                onChange={(e) => setNewName(e.target.value)}
+              />
+            </FormField>
+            <FormField
+              id="new-structure-code"
+              label="Code"
+              description="Capital letters, digits and underscores. Filled in from the name if left empty."
+            >
+              <Input
+                value={newCode || codeFromName(newName)}
+                maxLength={30}
+                onChange={(e) => setNewCode(e.target.value.toUpperCase())}
+              />
+            </FormField>
+            {newError ? (
+              <p role="alert" className="text-sm text-danger">
+                {newError}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setNewOpen(false)}
+              disabled={creating}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleCreateTemplate()}
+              disabled={creating}
+            >
+              {creating ? "Creating…" : "Create structure"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

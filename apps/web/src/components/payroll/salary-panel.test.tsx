@@ -81,6 +81,28 @@ describe("SalaryPanel", () => {
     expect(screen.getByRole("button", { name: /assign salary/i })).toBeInTheDocument();
   });
 
+  it("shows the salary card first and opens the editor only on Edit", async () => {
+    permissions.codes = ["PAYROLL.SETUP_MANAGE", "EMPLOYEE.UPDATE_COMPENSATION"];
+    const row = {
+      id: "s-1", salary_structure_id: "st-1", daily_rate_minor: null,
+      effective_from: "2026-01-01", effective_to: null, reason: "Joining",
+    };
+    mockedGet.mockImplementation((path: string) => {
+      if (path.includes("/breakup")) return Promise.resolve(breakup);
+      if (path.endsWith("/salary")) return Promise.resolve([row]);
+      if (path.includes("/salary/setup")) return new Promise(() => {});
+      return Promise.resolve([]);
+    });
+    render(<SalaryPanel employeeId="emp-1" />);
+
+    expect(await screen.findByText("Basic")).toBeInTheDocument();
+    expect(screen.queryByText("Salary setup")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /edit salary/i }));
+    expect(await screen.findByText(/loading salary/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /edit salary/i })).not.toBeInTheDocument();
+  });
+
   it("the Assign dialog says what is missing instead of silently refusing", async () => {
     // Assign only, without the compensation permission, so the plain dialog is used.
     permissions.codes = ["PAYROLL.SETUP_MANAGE"];
