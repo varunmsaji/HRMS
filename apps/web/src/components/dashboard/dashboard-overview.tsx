@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Banknote,
   BarChart3,
+  Building2,
   CalendarCheck,
   CalendarDays,
   CalendarOff,
@@ -39,6 +40,7 @@ import { useWorkforceOverview } from "@/components/dashboard/use-workforce-overv
 import { NativeSelect } from "@/components/ui/native-select";
 import { useApiResource } from "@/hooks/use-api-resource";
 import { usePermissions } from "@/lib/auth/use-permissions";
+import type { Branch } from "@/lib/branch/types";
 import { attendanceHref, type AttendanceOverview } from "@/lib/dashboard/overview";
 import {
   insightsPath,
@@ -342,15 +344,21 @@ export function DashboardOverview({ today }: Props) {
 
   const [growthMonths, setGrowthMonths] = useState(6);
   const [leaveScope, setLeaveScope] = useState<"month" | "year">("month");
+  // "" = all branches (the default). Picking one narrows the attendance overview and every
+  // insights card to that branch's people. The list is best-effort: if it can't be read, the
+  // picker is simply not shown and the dashboard stays company-wide.
+  const [branchId, setBranchId] = useState("");
+  const branchList = useApiResource<Branch[]>("/branches");
+  const branches = Array.isArray(branchList.data) ? branchList.data.filter((b) => b.is_active) : [];
 
-  const overview = useWorkforceOverview({ date: "", departmentId: "", branchId: "", enabled: canAttendance });
+  const overview = useWorkforceOverview({ date: "", departmentId: "", branchId, enabled: canAttendance });
   const pending = usePendingApprovals({
     leave: canLeave,
     regularization: canReg,
     overtime: canOt,
     onboarding: canOnboarding,
   });
-  const insights = useApiResource<CompanyDashboardInsights>(insightsPath(growthMonths, leaveScope));
+  const insights = useApiResource<CompanyDashboardInsights>(insightsPath(growthMonths, leaveScope, branchId));
 
   const d = overview.data;
   const ins = insights.data;
@@ -387,8 +395,29 @@ export function DashboardOverview({ today }: Props) {
 
   return (
     <div className="space-y-5">
-      {ins ? (
-        <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {branches.length > 1 ? (
+          <label className="inline-flex items-center gap-2 text-sm font-medium text-foreground">
+            <Building2 className="h-4 w-4 text-primary" aria-hidden="true" />
+            <span className="sr-only sm:not-sr-only">Branch</span>
+            <NativeSelect
+              value={branchId}
+              onChange={(e) => setBranchId(e.target.value)}
+              className="h-9 w-48 py-0 text-sm"
+              aria-label="Branch"
+            >
+              <option value="">All branches</option>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </label>
+        ) : (
+          <span />
+        )}
+        {ins ? (
           <span
             className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium text-foreground shadow-elevation-1"
             title="Period covered by the leave statistics card"
@@ -396,8 +425,8 @@ export function DashboardOverview({ today }: Props) {
             <CalendarDays className="h-4 w-4 text-primary" aria-hidden="true" />
             {periodLabel(ins.leave_statistics.period_start, ins.leave_statistics.period_end)}
           </span>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {canAttendance ? (
           <>

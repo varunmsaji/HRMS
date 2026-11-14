@@ -99,6 +99,23 @@ def leave_period(today: date, scope: LeaveScope) -> tuple[date, date]:
     return start, end
 
 
+def _in_branch(employee_col: str, on_date: str, branch_id: UUID | None) -> str:
+    """An extra `AND` clause keeping only employees whose assignment on `on_date` places them in
+    the requested branch, or "" when no branch is requested. Same rule as the attendance
+    overview's branch filter: the assignment in effect on that day, so a transfer only moves
+    someone's figures from the day it took effect. Both arguments are trusted SQL fragments
+    written in this module; the branch id itself is always bound as `:bid`."""
+    if branch_id is None:
+        return ""
+    return f"""
+        AND EXISTS (
+          SELECT 1 FROM employee_assignment ba
+          WHERE ba.employee_id = {employee_col} AND ba.company_id = :cid
+            AND ba.deleted_at IS NULL AND ba.branch_id = :bid
+            AND ba.effective_from <= {on_date}
+            AND (ba.effective_to IS NULL OR ba.effective_to >= {on_date}))"""
+
+
 def _next_birthday(dob: date, today: date) -> date:
     def on_year(year: int) -> date:
         try:
@@ -116,10 +133,16 @@ async def build_company_insights(
     *,
     growth_months: int = 6,
     leave_scope: LeaveScope = "month",
+    branch_id: UUID | None = None,
     birthday_limit: int = 5,
     activity_limit: int = 6,
 ) -> CompanyDashboardInsights:
-    params = {"cid": company_id}
+    """With `branch_id`, every figure only counts people placed in that branch on the date the
+    figure is about. Recent activity then also drops company-level entries that name no employee
+    (payroll runs), since those do not belong to any one branch."""
+    params: dict[str, object] = {"cid": company_id}
+    if branch_id is not None:
+        params["bid"] = branch_id
 
     today = (
         await session.execute(
@@ -132,10 +155,11 @@ async def build_company_insights(
     ).scalar_one_or_none() or date.today()
 
     # -- headcount at each of the last N month-ends (the current month ends today) -----------
+    month_end = "least((m + interval '1 month - 1 day')::date, CAST(:today AS date))"
     trend_rows = (
         await session.execute(
             text(
-                """
+                f"""
                 WITH months AS (
                   SELECT date_trunc('month', CAST(:today AS date)) - (g * interval '1 month') AS m
                   FROM generate_series(0, :n - 1) AS g
@@ -143,12 +167,10 @@ async def build_company_insights(
                 SELECT to_char(m, 'YYYY-MM') AS month,
                        (SELECT count(*) FROM employment em
                          WHERE em.company_id = :cid AND em.deleted_at IS NULL
-                           AND em.joining_date <= least((m + interval '1 month - 1 day')::date,
-                                                        CAST(:today AS date))
+                           AND em.joining_date <= {month_end}
                            AND (em.last_working_day IS NULL
-                                OR em.last_working_day >
-                                   least((m + interval '1 month - 1 day')::date,
-                                         CAST(:today AS date)))) AS headcount
+                                OR em.last_working_day > {month_end})
+                           {_in_branch("em.employee_id", month_end, branch_id)}) AS headcount
                 FROM months ORDER BY m
                 """
             ),
@@ -162,13 +184,14 @@ async def build_company_insights(
     leave_rows = (
         await session.execute(
             text(
-                """
+                f"""
                 SELECT lt.id, lt.name, lt.code,
                        coalesce(sum(la.total_days), 0) AS days, count(la.id) AS applications
                 FROM leave_application la
                 JOIN leave_type lt ON lt.id = la.leave_type_id
                 WHERE la.company_id = :cid AND la.status = 'APPROVED'
                   AND la.start_date BETWEEN :start AND :end
+                  {_in_branch("la.employee_id", "la.start_date", branch_id)}
                 GROUP BY lt.id, lt.name, lt.code
                 ORDER BY days DESC, lt.name
                 """
@@ -207,9 +230,10 @@ async def build_company_insights(
                 LEFT JOIN designation d ON d.id = a.designation_id
                 WHERE e.company_id = :cid AND e.deleted_at IS NULL AND e.is_active
                   AND e.status IN ('ACTIVE', 'PROBATION') AND e.date_of_birth IS NOT NULL
+                  {_in_branch("e.id", "CAST(:today AS date)", branch_id)}
                 """
             ),
-            params,
+            {**params, "today": today},
         )
     ).all()
     birthdays = sorted(
@@ -253,6 +277,7 @@ async def build_company_insights(
                                    WHEN 'attendance_regularization_request' THEN rr.employee_id
                                  END
                 WHERE al.company_id = :cid AND al.action = ANY(:actions)
+                  {_in_branch("e.id", "CAST(al.occurred_at AS date)", branch_id)}
                 ) ranked
                 WHERE rn <= 2
                 ORDER BY occurred_at DESC
@@ -279,11 +304,12 @@ async def build_company_insights(
     headcount_prev = (
         await session.execute(
             text(
-                """
+                f"""
                 SELECT count(*) FROM employment em
                 WHERE em.company_id = :cid AND em.deleted_at IS NULL
                   AND em.joining_date <= :d
                   AND (em.last_working_day IS NULL OR em.last_working_day > :d)
+                  {_in_branch("em.employee_id", "CAST(:d AS date)", branch_id)}
                 """
             ),
             {**params, "d": prev_month_end},
@@ -292,11 +318,12 @@ async def build_company_insights(
     day_row = (
         await session.execute(
             text(
-                """
+                f"""
                 SELECT count(*) FILTER (WHERE attendance_status = ANY(:present)) AS present,
                        count(*) FILTER (WHERE attendance_status = 'LEAVE') AS on_leave
-                FROM attendance_day
-                WHERE company_id = :cid AND attendance_date = :d
+                FROM attendance_day ad
+                WHERE ad.company_id = :cid AND ad.attendance_date = :d
+                  {_in_branch("ad.employee_id", "CAST(:d AS date)", branch_id)}
                 """
             ),
             {**params, "d": yesterday, "present": list(_PRESENT_STATUSES)},

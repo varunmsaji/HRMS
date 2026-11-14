@@ -16,6 +16,10 @@ describe("dashboard insight helpers", () => {
   it("builds the company insights path from the controls", () => {
     expect(insightsPath(6, "month")).toBe("/dashboards/company/insights?growth_months=6&leave_scope=month");
     expect(insightsPath(12, "year")).toBe("/dashboards/company/insights?growth_months=12&leave_scope=year");
+    expect(insightsPath(6, "month", "")).toBe("/dashboards/company/insights?growth_months=6&leave_scope=month");
+    expect(insightsPath(6, "month", "b-1")).toBe(
+      "/dashboards/company/insights?growth_months=6&leave_scope=month&branch_id=b-1",
+    );
   });
 
   it("formats recent activity relative to now", () => {

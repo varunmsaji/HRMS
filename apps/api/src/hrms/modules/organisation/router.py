@@ -271,12 +271,15 @@ async def get_company_dashboard_insights(
     service: Annotated[OrganisationService, Depends(get_organisation_service)],
     growth_months: Annotated[int, Query(ge=3, le=12)] = 6,
     leave_scope: LeaveScope = "month",
+    branch_id: Annotated[UUID | None, Query()] = None,
 ) -> DataEnvelope[CompanyDashboardInsights]:
+    """Company-wide by default; `branch_id` narrows every card to the people in that branch."""
     data = await build_company_insights(
         service._session,  # noqa: SLF001 - read-only aggregation on the request's session
         tenant.company_id,
         growth_months=growth_months,
         leave_scope=leave_scope,
+        branch_id=branch_id,
     )
     return DataEnvelope(data=data, meta=build_meta(current_request_id() or "unknown"))
 
