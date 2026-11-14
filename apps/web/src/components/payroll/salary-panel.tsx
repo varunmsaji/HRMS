@@ -7,7 +7,7 @@ import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import { SalaryBreakupTable } from "@/components/payroll/salary-breakup-table";
-import { SalarySetupEditor } from "@/components/payroll/salary-setup-editor";
+import { joinList, SalarySetupEditor } from "@/components/payroll/salary-setup-editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -60,6 +60,8 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
   const [effectiveFrom, setEffectiveFrom] = useState(today);
   const [reason, setReason] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  // Set when Assign is pressed with something missing: from then on the missing fields are marked.
+  const [showMissing, setShowMissing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -105,15 +107,37 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
     (id ? "Customised structure" : "—");
   const assignable = structures.filter((s) => s.is_active && currentVersion(s));
 
+  const dailyMinor = basis === "DAILY" ? rupeesToMinor(dailyRate) : null;
+  // What still has to be filled in before the salary can be assigned, in form order.
+  const missing = {
+    structure: basis === "STRUCTURE" && !structureId,
+    dailyRate: basis === "DAILY" && !dailyMinor,
+    effectiveFrom: !effectiveFrom,
+    reason: !reason.trim(),
+  };
+  const missingLabels = [
+    missing.structure && "a structure",
+    missing.dailyRate && "the daily rate in rupees",
+    missing.effectiveFrom && "the effective-from date",
+    missing.reason && "a reason",
+  ].filter((label): label is string => Boolean(label));
+  const flag = (isMissing: boolean) =>
+    showMissing && isMissing ? "Required" : undefined;
+  // Live: shrinks as each missing field is filled in, and disappears once nothing is missing.
+  const shownError =
+    showMissing && missingLabels.length > 0
+      ? `Before assigning, add ${joinList(missingLabels)}.`
+      : formError;
+
   async function handleAssign() {
+    if (missingLabels.length > 0) {
+      setShowMissing(true);
+      setFormError(null);
+      return;
+    }
     setSaving(true);
     setFormError(null);
     try {
-      const dailyMinor = basis === "DAILY" ? rupeesToMinor(dailyRate) : null;
-      if (basis === "DAILY" && !dailyMinor) {
-        setFormError("Enter the daily rate in rupees.");
-        return;
-      }
       await apiClient.post<EmployeeSalary>(`/employees/${employeeId}/salary`, {
         ...(basis === "STRUCTURE"
           ? { salary_structure_id: structureId }
@@ -149,6 +173,7 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
                 setStructureId(assignable[0]?.id ?? "");
                 setReason("");
                 setFormError(null);
+                setShowMissing(false);
                 setAssignOpen(true);
               }}
             >
@@ -260,7 +285,17 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
               </NativeSelect>
             </FormField>
             {basis === "STRUCTURE" ? (
-              <FormField id="salary-structure" label="Structure">
+              <FormField
+                id="salary-structure"
+                label="Structure"
+                required
+                error={
+                  flag(missing.structure) &&
+                  (assignable.length === 0
+                    ? "No active salary structure exists yet. Create one under Payroll first."
+                    : "Required")
+                }
+              >
                 <NativeSelect
                   value={structureId}
                   onChange={(e) => setStructureId(e.target.value)}
@@ -273,30 +308,45 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
                 </NativeSelect>
               </FormField>
             ) : (
-              <FormField id="salary-daily-rate" label="Daily rate (₹)">
+              <FormField
+                id="salary-daily-rate"
+                label="Daily rate (₹)"
+                required
+                error={flag(missing.dailyRate)}
+              >
                 <Input
                   value={dailyRate}
                   onChange={(e) => setDailyRate(e.target.value)}
                 />
               </FormField>
             )}
-            <FormField id="salary-effective-from" label="Effective from">
+            <FormField
+              id="salary-effective-from"
+              label="Effective from"
+              required
+              error={flag(missing.effectiveFrom)}
+            >
               <Input
                 type="date"
                 value={effectiveFrom}
                 onChange={(e) => setEffectiveFrom(e.target.value)}
               />
             </FormField>
-            <FormField id="salary-reason" label="Reason" required>
+            <FormField
+              id="salary-reason"
+              label="Reason"
+              required
+              error={flag(missing.reason)}
+            >
               <Input
                 value={reason}
                 maxLength={500}
                 onChange={(e) => setReason(e.target.value)}
               />
             </FormField>
-            {formError ? (
+            {shownError ? (
               <p role="alert" className="text-sm text-danger">
-                {formError}
+                {shownError}
               </p>
             ) : null}
           </div>
@@ -312,12 +362,7 @@ export function SalaryPanel({ employeeId }: { employeeId: string }) {
             <Button
               type="button"
               onClick={() => void handleAssign()}
-              disabled={
-                saving ||
-                !reason.trim() ||
-                !effectiveFrom ||
-                (basis === "STRUCTURE" && !structureId)
-              }
+              disabled={saving}
             >
               {saving ? "Saving…" : "Assign"}
             </Button>

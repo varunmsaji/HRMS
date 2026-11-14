@@ -70,6 +70,12 @@ function rupees(minor: number | null): string {
  * percentage for this employee, and every component's amount fills in as you type. Saving
  * records the CTC (when it changed) and the structure from one effective date; changed lines
  * become this employee's own structure and the template is left as it is. */
+/** "a", "a and b", "a, b and c". */
+export function joinList(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 export function SalarySetupEditor({
   employeeId,
   today,
@@ -99,6 +105,8 @@ export function SalarySetupEditor({
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // Set when Save is pressed with something missing: from then on the missing fields are marked.
+  const [showMissing, setShowMissing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const apply = useCallback(
@@ -117,6 +125,7 @@ export function SalarySetupEditor({
       setRevisionType(data.annual_ctc_minor === null ? "JOINING" : "ANNUAL");
       setReason("");
       setFormError(null);
+      setShowMissing(false);
     },
     [],
   );
@@ -211,11 +220,40 @@ export function SalarySetupEditor({
     return result;
   }, [components, preview]);
 
+  // What still has to be filled in before the salary can be saved, in form order.
+  const missing = {
+    ctc: annualMinor === null,
+    template: !templateId,
+    lines: !complete,
+    effectiveFrom: !effectiveFrom,
+    reason: !reason.trim(),
+  };
+  const missingLabels = [
+    missing.ctc && "the annual CTC",
+    missing.template && "a structure",
+    missing.lines && "a component on every pay line",
+    missing.effectiveFrom && "the effective-from date",
+    missing.reason && "a reason",
+  ].filter((label): label is string => Boolean(label));
+  const flag = (isMissing: boolean) => showMissing && isMissing;
+  // Live: shrinks as each missing field is filled in, and disappears once nothing is missing.
+  const shownError =
+    showMissing && missingLabels.length > 0
+      ? `Before saving, add ${joinList(missingLabels)}.`
+      : formError;
+
   async function handleSave() {
-    if (annualMinor === null) {
-      setFormError("Enter the annual CTC in rupees.");
+    if (missingLabels.length > 0) {
+      setShowMissing(true);
+      setFormError(null);
       return;
     }
+    if (!dirty) {
+      setFormError("Nothing has changed yet. Edit the CTC, the structure or a pay line first.");
+      return;
+    }
+    if (annualMinor === null) return;
+    setShowMissing(false);
     setSaving(true);
     setFormError(null);
     try {
@@ -273,6 +311,7 @@ export function SalarySetupEditor({
             <Input
               id="setup-ctc"
               className="h-9"
+              aria-invalid={flag(missing.ctc)}
               inputMode="decimal"
               value={ctc}
               onChange={(e) => setCtc(e.target.value)}
@@ -296,6 +335,7 @@ export function SalarySetupEditor({
             <NativeSelect
               id="setup-template"
               className="h-9"
+              aria-invalid={flag(missing.template)}
               value={templateId}
               onChange={(e) => {
                 setTemplateId(e.target.value);
@@ -337,6 +377,7 @@ export function SalarySetupEditor({
           components={components}
           amounts={amounts}
           breakup={breakup}
+          highlightMissing={showMissing}
         />
         {previewError ? (
           <p role="alert" className="text-sm text-danger">
@@ -359,6 +400,7 @@ export function SalarySetupEditor({
               id="setup-effective-from"
               type="date"
               className="h-9"
+              aria-invalid={flag(missing.effectiveFrom)}
               value={effectiveFrom}
               onChange={(e) => setEffectiveFrom(e.target.value)}
             />
@@ -391,6 +433,7 @@ export function SalarySetupEditor({
             <Input
               id="setup-reason"
               className="h-9"
+              aria-invalid={flag(missing.reason)}
               placeholder="e.g. Annual review"
               value={reason}
               maxLength={500}
@@ -400,21 +443,14 @@ export function SalarySetupEditor({
           <Button
             type="button"
             onClick={() => void handleSave()}
-            disabled={
-              saving ||
-              !dirty ||
-              !reason.trim() ||
-              !effectiveFrom ||
-              !templateId ||
-              !complete
-            }
+            disabled={saving}
           >
             {saving ? "Saving…" : "Save salary"}
           </Button>
         </div>
-        {formError ? (
+        {shownError ? (
           <p role="alert" className="text-sm text-danger">
-            {formError}
+            {shownError}
           </p>
         ) : null}
       </CardContent>

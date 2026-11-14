@@ -272,6 +272,76 @@ describe("SalarySetupEditor", () => {
     expect(onSaved).toHaveBeenCalled();
   });
 
+  it("says what is missing instead of silently refusing to save", async () => {
+    render(
+      <SalarySetupEditor
+        employeeId="emp-1"
+        today="2026-09-24"
+        onSaved={vi.fn()}
+        fallback={null}
+      />,
+    );
+    await screen.findByText("Same as Standard");
+    fireEvent.change(screen.getByLabelText(/annual ctc/i), {
+      target: { value: "1500000" },
+    });
+
+    const save = screen.getByRole("button", { name: /save salary/i });
+    expect(save).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(save);
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Before saving, add a reason.",
+    );
+    expect(screen.getByLabelText(/reason/i)).toHaveAttribute("aria-invalid", "true");
+    expect(
+      mockedPost.mock.calls.some(([path]) => path === "/employees/emp-1/salary/setup"),
+    ).toBe(false);
+
+    // The warning goes away as soon as the missing field is filled in.
+    fireEvent.change(screen.getByLabelText(/reason/i), {
+      target: { value: "Annual review" },
+    });
+    expect(screen.queryByText(/Before saving/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/reason/i)).toHaveAttribute("aria-invalid", "false");
+  });
+
+  it("says when there is nothing to save", async () => {
+    // Already on Standard with its exact lines: nothing differs until HR edits something.
+    const assigned = { ...setup, template_structure_id: "st-1", lines: templateLines };
+    mockedGet.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes("/salary/setup")
+          ? assigned
+          : path.includes("salary-structures")
+            ? [standard]
+            : components,
+      ),
+    );
+    render(
+      <SalarySetupEditor
+        employeeId="emp-1"
+        today="2026-09-24"
+        onSaved={vi.fn()}
+        fallback={null}
+      />,
+    );
+    await screen.findByText("Same as Standard");
+    fireEvent.change(screen.getByLabelText(/reason/i), {
+      target: { value: "Annual review" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save salary/i }));
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Nothing has changed yet");
+    expect(
+      mockedPost.mock.calls.some(([path]) => path === "/employees/emp-1/salary/setup"),
+    ).toBe(false);
+  });
+
   it("shows the fallback for a daily-wage employee", async () => {
     mockedGet.mockImplementation((path: string) =>
       Promise.resolve(

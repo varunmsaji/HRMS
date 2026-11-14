@@ -97,19 +97,22 @@ const COLUMNS_NO_AMOUNTS =
 /** Editable structure lines as one compact table: what each component is, how it is calculated
  * and its value on one row; its cap and "applies when" behind the row's settings toggle. With
  * `amounts` (monthly paise by component id) each row shows what it pays, and with `breakup` the
- * table ends in gross, employer contributions and CTC totals. */
+ * table ends in gross, employer contributions and CTC totals. With `highlightMissing`, a row
+ * whose component is not chosen yet is marked invalid. */
 export function StructureLinesEditor({
   rows,
   onChange,
   components,
   amounts,
   breakup,
+  highlightMissing = false,
 }: {
   rows: LineRow[];
   onChange: (rows: LineRow[]) => void;
   components: SalaryComponent[];
   amounts?: Record<string, number>;
   breakup?: SalaryBreakup | null;
+  highlightMissing?: boolean;
 }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
   const usable = components.filter(
@@ -183,6 +186,7 @@ export function StructureLinesEditor({
             ) : (
               <NativeSelect
                 aria-label="Component"
+                aria-invalid={highlightMissing && !row.componentId}
                 className="h-8"
                 value={row.componentId}
                 onChange={(e) =>
