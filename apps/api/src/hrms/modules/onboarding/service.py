@@ -61,6 +61,7 @@ from hrms.modules.onboarding.exceptions import (
     OnboardingTokenInvalidError,
     UnsupportedDocumentContentError,
 )
+from hrms.modules.onboarding.invitation_compose import brand_logo_url, with_brand_header
 from hrms.modules.onboarding.repository import (
     OnboardingCaseRepository,
     OnboardingDocumentRepository,
@@ -1297,6 +1298,7 @@ class OnboardingReviewService:
             company_name=company.name,
             rejected_items=rejected_items,
         )
+        html_body = with_brand_header(html_body, brand_logo_url(self._settings.web_app_base_url))
         try:
             await queue_email_after_commit(
                 self._session,
@@ -1723,6 +1725,7 @@ class OnboardingActivationService:
             company_name=company.name,
             employee_code=employee.employee_code,
         )
+        html_body = with_brand_header(html_body, brand_logo_url(self._settings.web_app_base_url))
         # Delivered only after the activation commits (B12 / DEF-B11-04): a failure anywhere
         # below - the audit write included - rolls the activation back and sends nothing.
         try:

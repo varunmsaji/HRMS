@@ -4,6 +4,7 @@ The send itself stays in `OnboardingTokenService.send_invite` (token lifecycle +
 the helpers here, so preview and send share `resolve_values` and `render_invitation`.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -23,10 +24,12 @@ from hrms.modules.onboarding.invitation_compose import (
     SUBJECT_MAX_LENGTH,
     InvitationValues,
     RenderedInvitation,
+    brand_logo_url,
     format_date,
     format_expiry,
     render_editable_body,
     render_invitation,
+    with_brand_header,
 )
 from hrms.modules.onboarding.invitation_rich_text import render_invitation_document
 from hrms.modules.onboarding.invitation_schemas import (
@@ -123,20 +126,24 @@ class OnboardingInvitationService:
         if body_doc is not None:
             if body is not None:
                 raise ValueError("body and body_doc are mutually exclusive")
-            return render_invitation_document(
+            rendered = render_invitation_document(
                 subject_template=DEFAULT_SUBJECT if subject is None else subject,
                 body_doc=body_doc,
                 values=values,
                 onboarding_url=onboarding_url,
                 mobile_url=mobile_url,
             )
-        return render_invitation(
-            subject_template=DEFAULT_SUBJECT if subject is None else subject,
-            body_template=DEFAULT_BODY if body is None else body,
-            values=values,
-            onboarding_url=onboarding_url,
-            mobile_url=mobile_url,
-        )
+        else:
+            rendered = render_invitation(
+                subject_template=DEFAULT_SUBJECT if subject is None else subject,
+                body_template=DEFAULT_BODY if body is None else body,
+                values=values,
+                onboarding_url=onboarding_url,
+                mobile_url=mobile_url,
+            )
+        # Preview and send both come through here, so HR sees the logo exactly as it's sent.
+        logo_url = brand_logo_url(self._settings.web_app_base_url)
+        return replace(rendered, html_body=with_brand_header(rendered.html_body, logo_url))
 
     def redacted_text(
         self,

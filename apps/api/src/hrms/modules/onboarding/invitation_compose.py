@@ -250,6 +250,29 @@ def call_to_action_html(onboarding_url: str) -> str:
     )
 
 
+#: Served by the web app from `public/`. A PNG, not the SVG: Gmail and Outlook don't render SVG.
+BRAND_LOGO_PATH = "/brand/krewoxa-logo-email.png"
+BRAND_NAME = "Krewoxa"
+_BRAND_LOGO_WIDTH = 180
+_BRAND_LOGO_HEIGHT = 39  # the PNG is 480x103; keep the aspect ratio
+
+
+def brand_logo_url(web_app_base_url: str) -> str:
+    return f"{web_app_base_url}{BRAND_LOGO_PATH}"
+
+
+def with_brand_header(html_body: str, logo_url: str) -> str:
+    """Puts the Krewoxa logo above the greeting. HTML part only: the plain-text part is unchanged.
+    The `alt` text keeps the brand visible when a mail client blocks remote images."""
+    return (
+        f'<div style="margin:0 0 24px">'
+        f'<img src="{html.escape(logo_url, quote=True)}" alt="{BRAND_NAME}" '
+        f'width="{_BRAND_LOGO_WIDTH}" height="{_BRAND_LOGO_HEIGHT}" '
+        f'style="display:block;border:0;outline:none;height:auto;max-width:{_BRAND_LOGO_WIDTH}px">'
+        f"</div>{html_body}"
+    )
+
+
 def append_mobile_and_footer(
     text_body: str, html_body: str, mobile_url: str | None
 ) -> tuple[str, str]:
