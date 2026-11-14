@@ -812,7 +812,8 @@ describe("AttendanceDashboardPage", () => {
       mockApi({ days: [] });
       const user = userEvent.setup();
       render(<AttendanceDashboardPage />);
-      await screen.findByText(/no attendance days match these filters/i);
+      // No days yet today: the list shows everyone without a record rather than an empty message.
+      expect((await screen.findAllByText("No record")).length).toBeGreaterThan(0);
       await user.click(screen.getByRole("button", { name: /record punch/i }));
       expect(await screen.findByLabelText(/punch time/i)).toBeInTheDocument();
     });
