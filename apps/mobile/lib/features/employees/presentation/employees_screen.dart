@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../core/widgets/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -494,7 +495,34 @@ class _EmployeeDetailScreenState extends ConsumerState<EmployeeDetailScreen> {
     setState(() => _busy = true);
     try {
       final r = await _repo.inviteEmployee(_employee.id);
-      _toast(r.emailSent ? 'Invite sent to ${r.email}.' : 'Invite created for ${r.email}, but the email could not be delivered — share the link manually.');
+      final url = r.inviteUrl;
+      if (r.emailSent || url == null) {
+        _toast(r.emailSent ? 'Invite sent to ${r.email}.' : 'Invite created for ${r.email}, but the email could not be delivered.');
+      } else if (mounted) {
+        // The email didn't go out: hand HR the link to share, instead of only saying so.
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Share the login link'),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('The invite for ${r.email} was created, but the email could not be delivered. Send them this link to set a password:'),
+              const SizedBox(height: 12),
+              SelectableText(url, key: const Key('employee-invite-link'), style: const TextStyle(fontSize: 12.5)),
+            ]),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: url));
+                  if (ctx.mounted) Navigator.of(ctx).pop();
+                  _toast('Link copied.');
+                },
+                child: const Text('Copy link'),
+              ),
+              FilledButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Done')),
+            ],
+          ),
+        );
+      }
     } on ApiError catch (e) {
       _toast(e.status == 409
           ? 'This employee already has a login account.'

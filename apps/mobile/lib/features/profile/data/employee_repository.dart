@@ -138,13 +138,14 @@ class EmployeeRepository {
         parse: (data) => Employee.fromJson(data as Map<String, dynamic>),
       );
 
-  /// `POST /employees/{id}/invite` — emails the employee a login invite.
-  Future<({String email, bool emailSent})> inviteEmployee(String employeeId) => _client.post(
+  /// `POST /employees/{id}/invite` — emails the employee a login invite. [inviteUrl] is the
+  /// one-time link itself, shown to HR as well because email delivery isn't set up everywhere.
+  Future<({String email, bool emailSent, String? inviteUrl})> inviteEmployee(String employeeId) => _client.post(
         '/employees/$employeeId/invite',
         body: const {},
         parse: (data) {
           final m = data as Map<String, dynamic>;
-          return (email: m['email'] as String, emailSent: m['email_sent'] == true);
+          return (email: m['email'] as String, emailSent: m['email_sent'] == true, inviteUrl: m['invite_url'] as String?);
         },
       );
 

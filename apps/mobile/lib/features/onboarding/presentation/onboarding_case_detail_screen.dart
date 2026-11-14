@@ -36,6 +36,30 @@ class OnboardingCaseDetailScreen extends ConsumerStatefulWidget {
 const _invitableStatuses = ['DRAFT', 'EXPIRED', 'INVITED', 'IN_PROGRESS', 'ACTIVATED'];
 const _reviewableStatuses = ['SUBMITTED', 'UNDER_REVIEW'];
 
+/// Web's "Next step" line for each case status (`onboarding/[id]/page.tsx` `NEXT_STEP`).
+const _nextStep = {
+  'DRAFT': 'Compose and send the invitation so the candidate can start filling in their details.',
+  'INVITED': 'Waiting for the candidate to open the link and start the form.',
+  'IN_PROGRESS': 'The candidate is filling in the form. Review opens once they submit.',
+  'SUBMITTED': 'Review each section and document. Verify it, or reject it with a reason.',
+  'UNDER_REVIEW': 'Review each section and document. Verify it, or reject it with a reason.',
+  'CHANGES_REQUESTED': 'Waiting for the candidate to fix the rejected items and resubmit.',
+  'VERIFIED': 'Everything is verified. Activate the case to create the employee record.',
+  'ACTIVATED': 'The employee record has been created.',
+  'EXPIRED': 'The onboarding link expired before the candidate submitted.',
+  'CANCELLED': 'This onboarding case was cancelled.',
+};
+
+/// Web's `FACE_ENROLLMENT_STATE_LABEL`.
+const _faceStateLabel = {
+  'NOT_ENROLLED': 'Not enrolled',
+  'ENROLLMENT_AVAILABLE': 'Enrollment open',
+  'PENDING_APPROVAL': 'Awaiting approval',
+  'ENROLLED': 'Enrolled',
+  'REJECTED': 'Rejected',
+  'REVOKED': 'Revoked',
+};
+
 class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetailScreen> {
   bool _loading = true;
   ApiError? _error;
@@ -43,6 +67,7 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
   List<OnboardingDocument>? _documents;
   bool _busy = false;
   String? _inviteUrl;
+  String? _loginLinkUrl;
   int _historyKey = 0;
 
   OnboardingRepository get _repo => ref.read(onboardingRepositoryProvider);
@@ -125,6 +150,126 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
         final result = await _repo.sendInvite(_id);
         setState(() => _inviteUrl = result['invite_url'] as String?);
       }, success: 'Invite ready.');
+
+  /// Employee login setup, as on web: `POST /employees/{id}/invite` emails a one-time link where the
+  /// new employee chooses a password. The link is shown too, because email delivery isn't set up
+  /// in every environment.
+  Future<void> _sendLoginLink(String employeeId) async {
+    setState(() => _busy = true);
+    try {
+      final r = await ref.read(employeeRepositoryProvider).inviteEmployee(employeeId);
+      if (!mounted) return;
+      setState(() => _loginLinkUrl = r.inviteUrl);
+      _toast(r.emailSent
+          ? 'Login link sent to ${r.email}. They can set a password from the email and sign in.'
+          : "Login link created. The link is ready to copy — email delivery isn't configured in this environment.");
+    } catch (e) {
+      _toast(e is ApiError ? (e.status == 403 ? "You don't have permission to do that." : e.message) : 'Something went wrong.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _copyableLink(String label, String url) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: scheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(12)),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12.5)),
+              const SizedBox(height: 2),
+              SelectableText(url, style: const TextStyle(fontSize: 12)),
+            ]),
+          ),
+          IconButton(
+            tooltip: 'Copy link',
+            icon: const Icon(Icons.copy, size: 18),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: url));
+              _toast('Link copied.');
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  /// Web's review progress card: next step, items verified, and per-kind counts.
+  Widget _reviewProgress(OnboardingCaseDetail detail) {
+    final scheme = Theme.of(context).colorScheme;
+    final names = [for (final s in onboardingSections) s.name];
+    final sectionsVerified = names.where((n) => detail.reviewStatus(n) == 'VERIFIED').length;
+    final sectionsRejected = names.where((n) => detail.reviewStatus(n) == 'REJECTED').length;
+    final docs = _documents ?? const <OnboardingDocument>[];
+    final docsVerified = docs.where((d) => d.status == 'VERIFIED').length;
+    final docsRejected = docs.where((d) => d.status == 'REJECTED').length;
+    final total = names.length + docs.length;
+    final done = sectionsVerified + docsVerified;
+    return AppCard(
+      key: const Key('onboarding-review-progress'),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Next step', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 2),
+              Text(_nextStep[detail.status] ?? '', style: TextStyle(color: scheme.onSurfaceVariant)),
+            ]),
+          ),
+          const SizedBox(width: 12),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('$done/$total', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+            Text('items verified', style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant)),
+          ]),
+        ]),
+        const SizedBox(height: 10),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(value: total == 0 ? 0 : done / total, minHeight: 6, semanticsLabel: 'Review progress'),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Sections: $sectionsVerified of ${names.length} verified${sectionsRejected > 0 ? ', $sectionsRejected rejected' : ''}',
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
+        Text(
+          'Documents: $docsVerified of ${docs.length} verified${docsRejected > 0 ? ', $docsRejected rejected' : ''}',
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
+      ]),
+    );
+  }
+
+  /// Web's face enrollment card, shown when the company requires it during onboarding.
+  Widget _faceEnrollmentCard(OnboardingCaseDetail detail) {
+    final scheme = Theme.of(context).colorScheme;
+    final state = detail.faceEnrollmentState;
+    return AppCard(
+      key: const Key('onboarding-face-enrollment'),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(Icons.face_retouching_natural, color: detail.faceRequirementMet ? Colors.green.shade700 : scheme.onSurfaceVariant),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Face enrollment', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text('Your company requires face enrollment as part of onboarding.', style: TextStyle(color: scheme.onSurfaceVariant)),
+            const SizedBox(height: 4),
+            Text(
+              state == null
+                  ? 'Available after the employee is activated.'
+                  : 'Status: ${_faceStateLabel[state] ?? state}'
+                      '${detail.faceRequirementMet ? ' — requirement met' : ' — onboarding is not complete until HR approves the enrollment'}',
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
 
   /// "Queued" is all the API can say at this point, never "sent" or "delivered".
   Future<void> _compose({bool justCreated = false}) async {
@@ -333,32 +478,21 @@ class _OnboardingCaseDetailScreenState extends ConsumerState<OnboardingCaseDetai
               if (canReview && status == 'UNDER_REVIEW' && hasRejection)
                 OutlinedButton(onPressed: _busy ? null : () => _run(() => _repo.requestChanges(_id), success: 'Changes requested.'), child: const Text('Request changes')),
               if (canActivate && status == 'VERIFIED') FilledButton(onPressed: _busy ? null : _activate, child: const Text('Activate employee')),
+              if (status == 'ACTIVATED' && detail.employeeId != null && permissions.contains(employeeInvite))
+                FilledButton(onPressed: _busy ? null : () => _sendLoginLink(detail.employeeId!), child: const Text('Send login link')),
               if (status == 'ACTIVATED' && detail.employeeId != null)
                 OutlinedButton(onPressed: () => _openEmployee(detail.employeeId!), child: const Text('View employee')),
               if (permissions.contains(onboardingCancel) && onboardingCancellableStatuses.contains(status))
                 OutlinedButton(onPressed: _busy ? null : () => _cancelCase(detail), child: const Text('Cancel onboarding')),
             ]),
-            if (_inviteUrl != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(color: scheme.surfaceContainerHigh, borderRadius: BorderRadius.circular(12)),
-                child: Row(children: [
-                  Expanded(child: SelectableText(_inviteUrl!, style: const TextStyle(fontSize: 12))),
-                  IconButton(
-                    tooltip: 'Copy link',
-                    icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: _inviteUrl!));
-                      _toast('Link copied.');
-                    },
-                  ),
-                ]),
-              ),
-            ],
+            if (_inviteUrl != null) _copyableLink('Invite link', _inviteUrl!),
+            if (_loginLinkUrl != null) _copyableLink('Login setup link', _loginLinkUrl!),
             const SizedBox(height: 12),
             InvitationHistory(caseId: _id, refreshKey: _historyKey, canResend: canInvite && _invitableStatuses.contains(status) && status != 'ACTIVATED', onResend: _compose),
             const SizedBox(height: 20),
+            _reviewProgress(detail),
+            if (detail.faceEnrollmentRequired) ...[const SizedBox(height: 12), _faceEnrollmentCard(detail)],
+            const SizedBox(height: 12),
             for (final spec in onboardingSections) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),

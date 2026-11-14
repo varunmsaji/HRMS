@@ -282,16 +282,32 @@ class DashboardRepository {
         parse: (data) => CompanyDashboardSummary.fromJson(data as Map<String, dynamic>),
       );
 
-  Future<AttendanceOverviewSummary> getAttendanceOverview() => _client.get(
-        '/dashboards/company/attendance-overview',
+  /// Company-wide, or only [branchId]'s people (web's dashboard branch picker).
+  Future<AttendanceOverviewSummary> getAttendanceOverview({String? branchId}) => _client.get(
+        '/dashboards/company/attendance-overview${branchId == null ? '' : '?branch_id=${Uri.encodeQueryComponent(branchId)}'}',
         parse: (data) => AttendanceOverviewSummary.fromJson(data as Map<String, dynamic>),
       );
 
   /// [leaveScope] is 'month' or 'year', web's "This Month" / "This Year" on Leave Statistics.
-  Future<CompanyInsights> getInsights({String leaveScope = 'month'}) => _client.get(
-        '/dashboards/company/insights?growth_months=6&leave_scope=$leaveScope',
+  /// With [branchId], every figure counts only that branch's people.
+  Future<CompanyInsights> getInsights({String leaveScope = 'month', String? branchId}) => _client.get(
+        '/dashboards/company/insights?growth_months=6&leave_scope=$leaveScope'
+        '${branchId == null ? '' : '&branch_id=${Uri.encodeQueryComponent(branchId)}'}',
         parse: (data) => CompanyInsights.fromJson(data as Map<String, dynamic>),
       );
+
+  /// Active branches for the dashboard's branch picker, in the API's order.
+  Future<List<({String id, String name})>> activeBranches() async {
+    final env = await _client.getList<Map<String, dynamic>>(
+      '/branches',
+      query: PageQuery(page: 1, perPage: 100),
+      parseItem: (item) => item as Map<String, dynamic>,
+    );
+    return [
+      for (final b in env.data)
+        if (b['is_active'] != false) (id: b['id'] as String, name: b['name'] as String? ?? ''),
+    ];
+  }
 
   /// How many records of [path] match [filters] right now, from the list's own `pagination.total`
   /// (which already applies the caller's data scope).
