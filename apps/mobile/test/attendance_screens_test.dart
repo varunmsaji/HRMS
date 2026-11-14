@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hrms_mobile/core/api/api_client.dart';
 import 'package:hrms_mobile/core/auth/permissions.dart';
 import 'package:hrms_mobile/core/providers.dart';
 import 'package:hrms_mobile/features/attendance/data/attendance_repository.dart';
@@ -290,6 +291,8 @@ void main() {
 
 // ---- HR face-enrollment admin ----------------------------------------------------------------
 
+const _onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
 class _FakeFaceRepo implements AttendanceRepository {
   _FakeFaceRepo(this.status);
   final Map<String, dynamic> status;
@@ -312,6 +315,17 @@ class _FakeFaceRepo implements AttendanceRepository {
 
   @override
   Future<void> cancelFaceEnrollmentWindow(String employeeId) async => calls.add('cancel');
+
+  /// Angles this fake has no photo for (an older, front-only enrollment) answer like a 404.
+  Set<String> missingAngles = {};
+  final photoAngles = <String>[];
+
+  @override
+  Future<DownloadedFile> downloadFaceReviewPhoto(String employeeId, {String angle = 'front'}) async {
+    photoAngles.add(angle);
+    if (missingAngles.contains(angle)) throw Exception('not found');
+    return DownloadedFile(bytes: base64Decode(_onePixelPng), filename: null);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -384,6 +398,43 @@ void faceAdminTests() {
       await tester.tap(find.widgetWithText(FilledButton, 'Revoke'));
       await tester.pumpAndSettle();
       expect(repo.calls, ['revoke']);
+    });
+
+    testWidgets('a pending submission shows all five photos', (tester) async {
+      final repo = await pumpFace(tester, {
+        'profile': {'status': 'PENDING_APPROVAL', 'enrolled_at': '2026-10-01T03:30:00Z', 'has_review_photo': true},
+        'open_window': null,
+      });
+      expect(repo.photoAngles, ['front', 'left', 'right', 'up', 'down']);
+      for (final label in ['Straight on', 'Turned left', 'Turned right', 'Looking up', 'Looking down']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.byType(Image), findsNWidgets(5));
+
+      await tester.tap(find.text('Turned left'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+    });
+
+    testWidgets('an older front-only submission shows just the front photo', (tester) async {
+      tester.view.physicalSize = const Size(800, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final repo = _FakeFaceRepo({
+        'profile': {'status': 'PENDING_APPROVAL', 'enrolled_at': '2026-10-01T03:30:00Z', 'has_review_photo': true},
+        'open_window': null,
+      })..missingAngles = {'left', 'right', 'up', 'down'};
+      await tester.pumpWidget(ProviderScope(
+        overrides: [attendanceRepositoryProvider.overrideWithValue(repo), fakeAuth(const [])],
+        child: const MaterialApp(home: Scaffold(body: SingleChildScrollView(child: FaceEnrollmentAdminCard(employeeId: 'emp-1', employeeLabel: 'Asha Rao')))),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('Straight on'), findsOneWidget);
+      expect(find.text('Turned left'), findsNothing);
+      expect(find.byType(Image), findsOneWidget);
     });
 
     testWidgets('a rejected profile shows the reason and offers a retry', (tester) async {

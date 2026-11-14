@@ -13,6 +13,17 @@ import '../../../core/widgets/ui.dart';
 /// open a one-time self-enrollment window (the employee captures their face in the app), then
 /// approve or reject what they submitted, or revoke an enrolled profile. Shown only to callers
 /// holding `ATTENDANCE.FACE_ENROLLMENT_MANAGE`; the server still enforces scope.
+/// The five captures the employee submits, in the order they take them.
+const _reviewAngles = [
+  (angle: 'front', label: 'Straight on'),
+  (angle: 'left', label: 'Turned left'),
+  (angle: 'right', label: 'Turned right'),
+  (angle: 'up', label: 'Looking up'),
+  (angle: 'down', label: 'Looking down'),
+];
+
+typedef _ReviewPhoto = ({String label, Uint8List bytes});
+
 class FaceEnrollmentAdminCard extends ConsumerStatefulWidget {
   const FaceEnrollmentAdminCard({super.key, required this.employeeId, required this.employeeLabel});
 
@@ -29,7 +40,8 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
   String? _loadError;
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _window;
-  Uint8List? _reviewPhoto;
+  /// Null while loading; an angle that could not be fetched is left out.
+  List<_ReviewPhoto>? _reviewPhotos;
 
   AttendanceRepository get _repo => ref.read(attendanceRepositoryProvider);
   String get _tz => ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
@@ -44,7 +56,7 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
     setState(() {
       _loading = true;
       _loadError = null;
-      _reviewPhoto = null;
+      _reviewPhotos = null;
     });
     try {
       final status = await _repo.getFaceProfileStatus(widget.employeeId);
@@ -57,10 +69,15 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
         });
       }
       if (profile?['status'] == 'PENDING_APPROVAL' && profile?['has_review_photo'] == true) {
-        try {
-          final file = await _repo.downloadFaceReviewPhoto(widget.employeeId);
-          if (mounted) setState(() => _reviewPhoto = Uint8List.fromList(file.bytes));
-        } catch (_) {}
+        final photos = await Future.wait(_reviewAngles.map((a) async {
+          try {
+            final file = await _repo.downloadFaceReviewPhoto(widget.employeeId, angle: a.angle);
+            return (label: a.label, bytes: Uint8List.fromList(file.bytes));
+          } catch (_) {
+            return null;
+          }
+        }));
+        if (mounted) setState(() => _reviewPhotos = photos.whereType<_ReviewPhoto>().toList());
       }
     } catch (e) {
       if (mounted) setState(() => _loadError = e is ApiError ? e.message : 'Something went wrong.');
@@ -119,6 +136,63 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
       ),
     );
     if (ok == true) await _act(() => _repo.revokeFaceProfile(widget.employeeId), 'Face profile revoked.', 'Could not revoke.');
+  }
+
+  /// Three photos per row; tap one to see it full size.
+  Widget _reviewGrid(BuildContext context, List<_ReviewPhoto> photos) {
+    final scheme = Theme.of(context).colorScheme;
+    return LayoutBuilder(builder: (context, constraints) {
+      const spacing = 8.0;
+      final width = (constraints.maxWidth - spacing * 2) / 3;
+      return Wrap(
+        spacing: spacing,
+        runSpacing: spacing,
+        children: [
+          for (final photo in photos)
+            SizedBox(
+              width: width,
+              child: Semantics(
+                button: true,
+                label: 'Face submitted for ${widget.employeeLabel}, ${photo.label.toLowerCase()}',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => _showPhoto(photo),
+                  child: Column(children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: AspectRatio(
+                        aspectRatio: 3 / 4,
+                        child: Image.memory(photo.bytes, fit: BoxFit.cover, gaplessPlayback: true),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(photo.label, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                  ]),
+                ),
+              ),
+            ),
+        ],
+      );
+    });
+  }
+
+  void _showPhoto(_ReviewPhoto photo) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        clipBehavior: Clip.antiAlias,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Flexible(child: InteractiveViewer(child: Image.memory(photo.bytes, fit: BoxFit.contain))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+            child: Row(children: [
+              Expanded(child: Text(photo.label, style: Theme.of(ctx).textTheme.titleSmall)),
+              TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
+            ]),
+          ),
+        ]),
+      ),
+    );
   }
 
   @override
@@ -187,10 +261,14 @@ class _FaceEnrollmentAdminCardState extends ConsumerState<FaceEnrollmentAdminCar
         Text(_loading ? 'Loading…' : (_loadError ?? description), style: TextStyle(color: scheme.onSurfaceVariant)),
         if (!_loading && _loadError == null && pending) ...[
           const SizedBox(height: 8),
-          if (_reviewPhoto != null)
-            ClipRRect(borderRadius: BorderRadius.circular(8), child: Image.memory(_reviewPhoto!, height: 220, fit: BoxFit.contain))
+          if (profile?['has_review_photo'] != true)
+            const SizedBox.shrink()
+          else if (_reviewPhotos == null)
+            Text('Loading submitted photos…', style: TextStyle(color: scheme.onSurfaceVariant))
+          else if (_reviewPhotos!.isEmpty)
+            Text('The submitted photos could not be loaded.', style: TextStyle(color: scheme.onSurfaceVariant))
           else
-            Text('Loading submitted photo…', style: TextStyle(color: scheme.onSurfaceVariant)),
+            _reviewGrid(context, _reviewPhotos!),
         ],
         if (!_loading && _loadError == null) ...[
           const SizedBox(height: 10),
