@@ -164,14 +164,15 @@ async def test_full_self_enrollment_with_hr_approval(
     assert profile["has_review_photo"] is True
     assert "provider_person_id" not in profile and "review_photo_key" not in profile
 
-    # Every capture must pass server-side liveness (our own engine, not the vendor), one call
-    # per image; the front is the anchor and the four turned angles are each checked against it
-    # before any is added. The vendor only ever sees the employee UUID.
-    assert fake_liveness_engine.calls == [[IMAGES[angle]] for angle in ANGLES]
+    # Enrollment runs no liveness check (HR reviews the photo; punches are liveness-checked).
+    # The front is the anchor and the four turned angles are each checked against it before
+    # any is added. The vendor only ever sees the employee UUID.
+    assert fake_liveness_engine.calls == []
     expected = ["enroll"] + ["verify"] * 4 + ["add_reference_photo"] * 4
     assert fake_face_provider.names() == expected
     assert fake_face_provider.calls[0][1]["label"] == employee_id
-    assert list(fake_photo_storage.objects.values()) == [IMAGES["front"]]
+    # Every angle is kept for HR's review.
+    assert sorted(fake_photo_storage.objects.values()) == sorted(IMAGES[a] for a in ANGLES)
 
     # The window is single-use.
     status = await _status(client, admin, employee_id)
@@ -194,6 +195,21 @@ async def test_full_self_enrollment_with_hr_approval(
     assert photo.content == IMAGES["front"]
     assert photo.headers["content-type"] == "image/jpeg"
     assert "no-store" in photo.headers["cache-control"]
+    # HR can see every angle the employee submitted, not just the front.
+    for angle in ANGLES[1:]:
+        turned = await client.get(
+            f"/v1/attendance/face-profiles/{employee_id}/review-photo",
+            headers=admin,
+            params={"angle": angle},
+        )
+        assert turned.status_code == 200, turned.text
+        assert turned.content == IMAGES[angle]
+    unknown = await client.get(
+        f"/v1/attendance/face-profiles/{employee_id}/review-photo",
+        headers=admin,
+        params={"angle": "back"},
+    )
+    assert unknown.status_code == 422
 
     approved = await client.post(
         f"/v1/attendance/face-profiles/{employee_id}/approve", headers=admin
@@ -203,7 +219,8 @@ async def test_full_self_enrollment_with_hr_approval(
     assert approved.json()["data"]["has_review_photo"] is False
     # Nothing external is touched by the approval itself: the photo is deleted by the
     # post-commit worker from the outbox row the approval queued.
-    assert list(fake_photo_storage.objects.values()) == [IMAGES["front"]]
+    assert len(fake_photo_storage.objects) == len(ANGLES)
+    # One queued row for the set; the worker deletes every angle with it.
     report = await run_deletion_worker(company_id, fake_face_provider, fake_photo_storage)
     assert (report.claimed, report.done) == (1, 1)
     assert fake_photo_storage.objects == {}
@@ -211,9 +228,33 @@ async def test_full_self_enrollment_with_hr_approval(
     assert await _audit_actions(company_id) == [
         "FACE_ENROLLMENT_OPENED",
         "FACE_PROFILE_SUBMITTED",
-        "FACE_REVIEW_PHOTO_VIEWED",
+        *["FACE_REVIEW_PHOTO_VIEWED"] * len(ANGLES),
         "FACE_PROFILE_APPROVED",
     ]
+
+
+async def test_profile_with_only_a_front_photo_serves_front_and_404s_other_angles(
+    client: AsyncClient,
+    face_tenant: Tenant,
+    fake_face_provider: FakeFaceProvider,
+    fake_photo_storage: FakePhotoStorage,
+) -> None:
+    """Profiles submitted before every angle was kept have only the front photo stored."""
+    admin, company_id = face_tenant
+    employee_id = await _employee(client, admin)
+    await _open(client, admin, employee_id)
+    me = await _self_headers(company_id, employee_id)
+    assert (await _submit(client, me)).status_code == 201
+    for key in [k for k in fake_photo_storage.objects if "." in k.rsplit("/", 1)[-1]]:
+        del fake_photo_storage.objects[key]
+    url = f"/v1/attendance/face-profiles/{employee_id}/review-photo"
+
+    front = await client.get(url, headers=admin)
+    left = await client.get(url, headers=admin, params={"angle": "left"})
+
+    assert front.status_code == 200 and front.content == IMAGES["front"]
+    assert left.status_code == 404
+    assert left.json()["error"]["code"] == "FACE_REVIEW_PHOTO_NOT_FOUND"
 
 
 async def test_submit_without_window_is_rejected(
@@ -331,13 +372,14 @@ async def test_all_five_angles_are_required_and_must_be_images(
     assert fake_face_provider.calls == []
 
 
-async def test_spoofed_front_is_rejected_and_window_stays_open(
+async def test_spoof_verdict_does_not_block_enrollment(
     client: AsyncClient,
     face_tenant: Tenant,
     fake_face_provider: FakeFaceProvider,
     fake_liveness_engine: FakeLivenessEngine,
-    fake_photo_storage: FakePhotoStorage,
 ) -> None:
+    """HR reviews the photo before face punching is switched on, so enrollment is not
+    liveness-gated: even a capture the engine would call a spoof goes to HR for review."""
     admin, company_id = face_tenant
     employee_id = await _employee(client, admin)
     await _open(client, admin, employee_id)
@@ -346,13 +388,9 @@ async def test_spoofed_front_is_rejected_and_window_stays_open(
 
     response = await _submit(client, me)
 
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "FACE_SPOOF_SUSPECTED"
-    # Rejected before anything reaches (or is enrolled at) the vendor.
-    assert fake_face_provider.names() == []
-    assert fake_photo_storage.objects == {}
-    # A failed attempt does not burn the window — the employee can retry.
-    assert (await _status(client, admin, employee_id))["open_window"] is not None
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["status"] == "PENDING_APPROVAL"
+    assert fake_liveness_engine.calls == []
 
 
 async def test_mismatched_angle_discards_everything(
@@ -450,7 +488,7 @@ async def test_reject_deletes_biometrics_and_allows_retry(
     assert data["review_note"] == "Not the employee in the photo"
     # Deferred until after commit: the request itself deletes nothing outside the database.
     assert "delete_person" not in fake_face_provider.names()
-    assert len(fake_photo_storage.objects) == 1
+    assert len(fake_photo_storage.objects) == len(ANGLES)
     await run_deletion_worker(company_id, fake_face_provider, fake_photo_storage)
     assert fake_face_provider.names()[-1] == "delete_person"
     assert fake_photo_storage.objects == {}

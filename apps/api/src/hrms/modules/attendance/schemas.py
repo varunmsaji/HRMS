@@ -2477,9 +2477,23 @@ def leave_day_projection_to_audit_dict(read: LeaveDayProjectionRead) -> dict[str
 # ---------------------------------------------------------------------------
 
 FACE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
-#: Self-enrollment captures, in order. "front" is the anchor: it must pass liveness and every
-#: other angle must match it.
+#: Self-enrollment captures, in order. "front" is the anchor: every other angle must match it.
 FACE_ENROLLMENT_ANGLES = ("front", "left", "right", "up", "down")
+FaceEnrollmentAngle = Literal["front", "left", "right", "up", "down"]
+
+
+def review_photo_key_for(base_key: str, angle: str) -> str:
+    """Storage key of one angle's review photo. The front keeps the profile's own
+    `review_photo_key` (so profiles stored before every angle was kept still work); the turned
+    angles sit beside it as `<key>.<angle>`, so one key on the profile locates all five."""
+    return base_key if angle == "front" else f"{base_key}.{angle}"
+
+
+def review_photo_keys(base_key: str) -> list[str]:
+    """Every angle's key for one review photo set — what approval, rejection and clean-up delete."""
+    return [review_photo_key_for(base_key, angle) for angle in FACE_ENROLLMENT_ANGLES]
+
+
 #: Face-punch liveness frames: per-frame byte cap and the most frames one punch may carry
 #: (`Settings.face_liveness_frames` is bounded by the latter). A 720px JPEG is ~100-250 KB.
 FACE_LIVENESS_FRAME_MAX_BYTES = 1024 * 1024

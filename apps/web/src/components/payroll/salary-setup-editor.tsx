@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { FormField } from "@/components/common/form-field";
 import { LoadingState } from "@/components/common/loading-state";
 import { useToast } from "@/components/common/toast";
 import {
@@ -19,6 +20,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { apiClient } from "@/lib/api/client";
@@ -27,6 +36,7 @@ import { REVISION_TYPE_VALUES, type RevisionType } from "@/lib/employee/types";
 import { REVISION_TYPE_LABELS } from "@/lib/employee/validate-compensation";
 import {
   currentVersion,
+  draftVersion,
   formatInr,
   rupeesToMinor,
   type EmployeeSalarySetup,
@@ -36,6 +46,16 @@ import {
 } from "@/lib/payroll/types";
 
 const PREVIEW_DELAY_MS = 400;
+/** A company template applies to every date, like the ones every company starts with. */
+const NEW_TEMPLATE_EFFECTIVE_FROM = "2000-01-01";
+
+function codeFromName(name: string): string {
+  return name
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 30);
+}
 
 function templateRows(structure: SalaryStructure | undefined): LineRow[] {
   return structure ? (currentVersion(structure)?.lines.map(toRow) ?? []) : [];
@@ -70,15 +90,24 @@ function rupees(minor: number | null): string {
  * percentage for this employee, and every component's amount fills in as you type. Saving
  * records the CTC (when it changed) and the structure from one effective date; changed lines
  * become this employee's own structure and the template is left as it is. */
+/** "a", "a and b", "a, b and c". */
+export function joinList(items: string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 export function SalarySetupEditor({
   employeeId,
   today,
   onSaved,
+  onCancel,
   fallback,
 }: {
   employeeId: string;
   today: string;
   onSaved: () => void;
+  /** When given, a Cancel button returns to the read-only salary card without saving. */
+  onCancel?: () => void;
   /** Shown instead for a daily-wage employee, or one not employed today. */
   fallback: ReactNode;
 }) {
@@ -99,7 +128,15 @@ export function SalarySetupEditor({
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // Set when Save is pressed with something missing: from then on the missing fields are marked.
+  const [showMissing, setShowMissing] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [newOpen, setNewOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCode, setNewCode] = useState("");
+  const [newError, setNewError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const apply = useCallback(
     (data: EmployeeSalarySetup, structures: SalaryStructure[]) => {
@@ -117,6 +154,7 @@ export function SalarySetupEditor({
       setRevisionType(data.annual_ctc_minor === null ? "JOINING" : "ANNUAL");
       setReason("");
       setFormError(null);
+      setShowMissing(false);
     },
     [],
   );
@@ -211,11 +249,40 @@ export function SalarySetupEditor({
     return result;
   }, [components, preview]);
 
+  // What still has to be filled in before the salary can be saved, in form order.
+  const missing = {
+    ctc: annualMinor === null,
+    template: !templateId,
+    lines: !complete,
+    effectiveFrom: !effectiveFrom,
+    reason: !reason.trim(),
+  };
+  const missingLabels = [
+    missing.ctc && "the annual CTC",
+    missing.template && "a structure",
+    missing.lines && "a component on every pay line",
+    missing.effectiveFrom && "the effective-from date",
+    missing.reason && "a reason",
+  ].filter((label): label is string => Boolean(label));
+  const flag = (isMissing: boolean) => showMissing && isMissing;
+  // Live: shrinks as each missing field is filled in, and disappears once nothing is missing.
+  const shownError =
+    showMissing && missingLabels.length > 0
+      ? `Before saving, add ${joinList(missingLabels)}.`
+      : formError;
+
   async function handleSave() {
-    if (annualMinor === null) {
-      setFormError("Enter the annual CTC in rupees.");
+    if (missingLabels.length > 0) {
+      setShowMissing(true);
+      setFormError(null);
       return;
     }
+    if (!dirty) {
+      setFormError("Nothing has changed yet. Edit the CTC, the structure or a pay line first.");
+      return;
+    }
+    if (annualMinor === null) return;
+    setShowMissing(false);
     setSaving(true);
     setFormError(null);
     try {
@@ -238,6 +305,42 @@ export function SalarySetupEditor({
       setFormError(describeApiError(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleCreateTemplate() {
+    const name = newName.trim();
+    const code = (newCode || codeFromName(name)).trim().toUpperCase();
+    if (!name || !code) {
+      setNewError("Enter a name for the structure.");
+      return;
+    }
+    setCreating(true);
+    setNewError(null);
+    try {
+      const created = await apiClient.post<SalaryStructure>(
+        "/payroll/salary-structures",
+        { code, name, lines: lineInputs },
+      );
+      const draft = draftVersion(created);
+      if (!draft) throw new Error("The new structure has no draft to publish.");
+      const published = await apiClient.post<SalaryStructure>(
+        `/payroll/salary-structures/${created.id}/versions/${draft.id}/publish`,
+        { effective_from: NEW_TEMPLATE_EFFECTIVE_FROM },
+        { ifMatch: String(draft.version) },
+      );
+      setTemplates((current) => [...current, published]);
+      setTemplateId(published.id);
+      setNewOpen(false);
+      toast({
+        title: "Structure created",
+        description: `${published.name} is now available for every employee.`,
+        variant: "success",
+      });
+    } catch (err) {
+      setNewError(describeApiError(err));
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -273,6 +376,7 @@ export function SalarySetupEditor({
             <Input
               id="setup-ctc"
               className="h-9"
+              aria-invalid={flag(missing.ctc)}
               inputMode="decimal"
               value={ctc}
               onChange={(e) => setCtc(e.target.value)}
@@ -283,19 +387,35 @@ export function SalarySetupEditor({
               <label htmlFor="setup-template" className={label}>
                 Structure
               </label>
-              {customised ? (
+              <span className="flex gap-3">
+                {customised ? (
+                  <button
+                    type="button"
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => setRows(templateRows(template))}
+                  >
+                    Reset to {template?.name}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="text-xs text-primary hover:underline"
-                  onClick={() => setRows(templateRows(template))}
+                  className="text-xs text-primary hover:underline disabled:opacity-50"
+                  disabled={!complete}
+                  onClick={() => {
+                    setNewName("");
+                    setNewCode("");
+                    setNewError(null);
+                    setNewOpen(true);
+                  }}
                 >
-                  Reset to {template?.name}
+                  Save as new structure
                 </button>
-              ) : null}
+              </span>
             </div>
             <NativeSelect
               id="setup-template"
               className="h-9"
+              aria-invalid={flag(missing.template)}
               value={templateId}
               onChange={(e) => {
                 setTemplateId(e.target.value);
@@ -337,6 +457,7 @@ export function SalarySetupEditor({
           components={components}
           amounts={amounts}
           breakup={breakup}
+          highlightMissing={showMissing}
         />
         {previewError ? (
           <p role="alert" className="text-sm text-danger">
@@ -359,6 +480,7 @@ export function SalarySetupEditor({
               id="setup-effective-from"
               type="date"
               className="h-9"
+              aria-invalid={flag(missing.effectiveFrom)}
               value={effectiveFrom}
               onChange={(e) => setEffectiveFrom(e.target.value)}
             />
@@ -391,33 +513,95 @@ export function SalarySetupEditor({
             <Input
               id="setup-reason"
               className="h-9"
+              aria-invalid={flag(missing.reason)}
               placeholder="e.g. Annual review"
               value={reason}
               maxLength={500}
               onChange={(e) => setReason(e.target.value)}
             />
           </div>
+          {onCancel ? (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+          ) : null}
           <Button
             type="button"
             onClick={() => void handleSave()}
-            disabled={
-              saving ||
-              !dirty ||
-              !reason.trim() ||
-              !effectiveFrom ||
-              !templateId ||
-              !complete
-            }
+            disabled={saving}
           >
             {saving ? "Saving…" : "Save salary"}
           </Button>
         </div>
-        {formError ? (
+        {shownError ? (
           <p role="alert" className="text-sm text-danger">
-            {formError}
+            {shownError}
           </p>
         ) : null}
       </CardContent>
+      <Dialog
+        open={newOpen}
+        onOpenChange={(next) => !creating && setNewOpen(next)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save as new structure</DialogTitle>
+            <DialogDescription>
+              Creates a company salary structure from the lines above, for any
+              employee to use. It does not change this employee&apos;s salary —
+              press Save salary for that.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <FormField id="new-structure-name" label="Name" required>
+              <Input
+                value={newName}
+                maxLength={150}
+                placeholder="e.g. Senior engineer"
+                onChange={(e) => setNewName(e.target.value)}
+              />
+            </FormField>
+            <FormField
+              id="new-structure-code"
+              label="Code"
+              description="Capital letters, digits and underscores. Filled in from the name if left empty."
+            >
+              <Input
+                value={newCode || codeFromName(newName)}
+                maxLength={30}
+                onChange={(e) => setNewCode(e.target.value.toUpperCase())}
+              />
+            </FormField>
+            {newError ? (
+              <p role="alert" className="text-sm text-danger">
+                {newError}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setNewOpen(false)}
+              disabled={creating}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleCreateTemplate()}
+              disabled={creating}
+            >
+              {creating ? "Creating…" : "Create structure"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

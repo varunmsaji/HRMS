@@ -25,6 +25,17 @@ interface FaceEnrollmentCardProps {
   employeeLabel: string;
 }
 
+/** The five captures the employee submits, in the order they take them. */
+const REVIEW_ANGLES = [
+  { angle: "front", label: "Straight on" },
+  { angle: "left", label: "Turned left" },
+  { angle: "right", label: "Turned right" },
+  { angle: "up", label: "Looking up" },
+  { angle: "down", label: "Looking down" },
+] as const;
+
+type ReviewPhotos = { angle: string; label: string; url: string }[];
+
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -47,7 +58,7 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [reviewPhoto, setReviewPhoto] = useState<string | null>(null);
+  const [reviewPhotos, setReviewPhotos] = useState<ReviewPhotos | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [initiateOpen, setInitiateOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -74,20 +85,22 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
   const pending = profile?.status === "PENDING_APPROVAL";
 
   useEffect(() => {
-    setReviewPhoto(null);
+    setReviewPhotos(null);
     if (!pending || !profile?.has_review_photo) return;
     let cancelled = false;
-    // Fetched through the API (auth + no-store) and shown as a data: URL — the CSP allows
-    // `img-src 'self' data:` only, and the photo is never given a URL of its own.
-    apiClient
-      .download(`${base}/review-photo`)
-      .then((file) => blobToDataUrl(file.blob))
-      .then((url) => {
-        if (!cancelled) setReviewPhoto(url);
-      })
-      .catch(() => {
-        if (!cancelled) setReviewPhoto(null);
-      });
+    // Fetched through the API (auth + no-store) and shown as data: URLs — the CSP allows
+    // `img-src 'self' data:` only, and the photos are never given a URL of their own. An angle
+    // that fails (enrollments from before every angle was kept have only the front) is skipped.
+    void Promise.allSettled(
+      REVIEW_ANGLES.map(async ({ angle, label }) => {
+        const path = angle === "front" ? `${base}/review-photo` : `${base}/review-photo?angle=${angle}`;
+        const file = await apiClient.download(path);
+        return { angle, label, url: await blobToDataUrl(file.blob) };
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setReviewPhotos(results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])));
+    });
     return () => {
       cancelled = true;
     };
@@ -231,15 +244,26 @@ export function FaceEnrollmentCard({ employeeId, employeeLabel }: FaceEnrollment
       </div>
 
       {pending ? (
-        reviewPhoto ? (
-          // eslint-disable-next-line @next/next/no-img-element -- data URL of the photo under review
-          <img
-            src={reviewPhoto}
-            alt={`Face submitted for ${employeeLabel}`}
-            className="max-h-56 rounded-md border border-border object-contain"
-          />
+        reviewPhotos === null ? (
+          <p className="text-sm text-foreground-muted">Loading submitted photos…</p>
+        ) : reviewPhotos.length === 0 ? (
+          <p className="text-sm text-foreground-muted">The submitted photos could not be loaded.</p>
         ) : (
-          <p className="text-sm text-foreground-muted">Loading submitted photo…</p>
+          <ul aria-label="Submitted face photos" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {reviewPhotos.map(({ angle, label, url }) => (
+              <li key={angle}>
+                <figure className="space-y-1">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- data URL of a photo under review */}
+                  <img
+                    src={url}
+                    alt={`Face submitted for ${employeeLabel}, ${label.toLowerCase()}`}
+                    className="aspect-[3/4] w-full rounded-md border border-border bg-surface-secondary object-cover"
+                  />
+                  <figcaption className="text-center text-xs text-foreground-secondary">{label}</figcaption>
+                </figure>
+              </li>
+            ))}
+          </ul>
         )
       ) : null}
 

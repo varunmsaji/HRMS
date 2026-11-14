@@ -46,6 +46,7 @@ from hrms.modules.attendance.repository import (
     FaceExternalDeletionRepository,
     FaceProfileRepository,
 )
+from hrms.modules.attendance.schemas import review_photo_keys
 
 _logger = get_logger(__name__)
 
@@ -192,7 +193,10 @@ async def _process_one(
             assert provider is not None
             await provider.delete_person(person_id=item.resource_ref)
         else:
-            await storage.delete_object(key=item.resource_ref)
+            # A review-photo row names the set (the front's key); every angle goes with it.
+            # Deleting a key that was never written is a no-op, so older one-photo sets are fine.
+            for key in review_photo_keys(item.resource_ref):
+                await storage.delete_object(key=key)
     except Exception as exc:  # noqa: BLE001 - one bad row must not stop the rest of the batch
         report.failed += 1
         persistent = item.attempts >= settings.face_deletion_alert_after_attempts

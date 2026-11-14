@@ -47,6 +47,10 @@ String _iso(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toStr
 /// change any percentage for this employee, and every component's amount fills in as you type.
 /// Saving records the CTC (when it changed) and the structure from one effective date; changed
 /// lines become this employee's own structure, the template is left as it is.
+/// "a", "a and b", "a, b and c".
+String joinList(List<String> items) =>
+    items.length <= 1 ? items.join() : '${items.sublist(0, items.length - 1).join(', ')} and ${items.last}';
+
 class SalarySetupScreen extends ConsumerStatefulWidget {
   const SalarySetupScreen({super.key, required this.employeeId, required this.today});
   final String employeeId;
@@ -71,6 +75,8 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
   Rec? _preview;
   String? _previewError;
   String? _formError;
+  /// Set when Save is pressed with something missing: from then on the missing fields are marked.
+  bool _showMissing = false;
   bool _saving = false;
   Timer? _debounce;
   int _previewSeq = 0;
@@ -144,6 +150,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
       _revisionType = ctc == null ? 'JOINING' : 'ANNUAL';
       _reason.clear();
       _formError = null;
+      _showMissing = false;
     });
     _schedulePreview();
   }
@@ -200,9 +207,35 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
     };
   }
 
+  bool get _ctcMissing => _annualMinor == null;
+  bool get _reasonMissing => _reason.text.trim().isEmpty;
+
+  /// What still has to be filled in before the salary can be saved, in form order.
+  List<String> get _missing => [
+        if (_ctcMissing) 'the annual CTC',
+        if (_templateId.isEmpty) 'a structure',
+        if (!_complete) 'at least one pay line',
+        if (_reasonMissing) 'a reason',
+      ];
+
+  /// Live: shrinks as each missing field is filled in, and disappears once nothing is missing.
+  String? get _shownError {
+    final missing = _missing;
+    if (_showMissing && missing.isNotEmpty) return 'Before saving, add ${joinList(missing)}.';
+    return _formError;
+  }
+
   Future<void> _save() async {
     final annual = _annualMinor;
-    if (annual == null) return setState(() => _formError = 'Enter the annual CTC in rupees.');
+    if (_missing.isNotEmpty || annual == null) {
+      return setState(() {
+        _showMissing = true;
+        _formError = null;
+      });
+    }
+    if (!_dirty) {
+      return setState(() => _formError = 'Nothing has changed yet. Edit the CTC, the structure or a pay line first.');
+    }
     setState(() {
       _saving = true;
       _formError = null;
@@ -265,7 +298,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
       final template = _template;
       final annual = _annualMinor;
       final breakup = _preview?['breakup'] as Rec?;
-      final canSave = !_saving && _dirty && _reason.text.trim().isNotEmpty && _templateId.isNotEmpty && _complete;
+      final shownError = _shownError;
       const dense = InputDecoration(isDense: true, border: OutlineInputBorder());
       final border = BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: BorderRadius.circular(12));
       body = ListView(
@@ -283,7 +316,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
                       child: TextField(
                         controller: _ctc,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: dense.copyWith(labelText: 'Annual CTC (₹)'),
+                        decoration: dense.copyWith(labelText: 'Annual CTC (₹)', errorText: _showMissing && _ctcMissing ? 'Required' : null),
                         onChanged: (_) => _changed(),
                       ),
                     ),
@@ -292,7 +325,7 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
                       child: DropdownButtonFormField<String>(
                         value: _templateId.isEmpty ? null : _templateId,
                         isExpanded: true,
-                        decoration: dense.copyWith(labelText: 'Structure'),
+                        decoration: dense.copyWith(labelText: 'Structure', errorText: _showMissing && _templateId.isEmpty ? 'Required' : null),
                         items: [for (final s in _templates) DropdownMenuItem(value: s['id'] as String, child: Text('${s['name']}', overflow: TextOverflow.ellipsis))],
                         onChanged: (v) {
                           if (v == null) return;
@@ -375,10 +408,15 @@ class _SalarySetupScreenState extends ConsumerState<SalarySetupScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          TextField(controller: _reason, maxLength: 500, decoration: dense.copyWith(labelText: 'Reason', hintText: 'e.g. Annual review', counterText: ''), onChanged: (_) => setState(() {})),
-          if (_formError != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_formError!, style: TextStyle(color: scheme.error))),
+          TextField(
+            controller: _reason,
+            maxLength: 500,
+            decoration: dense.copyWith(labelText: 'Reason', hintText: 'e.g. Annual review', counterText: '', errorText: _showMissing && _reasonMissing ? 'Required' : null),
+            onChanged: (_) => setState(() {}),
+          ),
+          if (shownError != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(shownError, style: TextStyle(color: scheme.error))),
           const SizedBox(height: 12),
-          FilledButton(onPressed: canSave ? _save : null, child: Text(_saving ? 'Saving…' : 'Save salary')),
+          FilledButton(onPressed: _saving ? null : _save, child: Text(_saving ? 'Saving…' : 'Save salary')),
         ],
       );
     }

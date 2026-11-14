@@ -107,9 +107,8 @@ def get_face_enrollment_service(
     session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     provider: Annotated[FaceVerificationProvider | None, Depends(get_face_provider)],
     storage: Annotated[FacePhotoStorage, Depends(get_face_photo_storage)],
-    liveness: Annotated[LivenessEngine | None, Depends(get_face_liveness_engine)],
 ) -> FaceEnrollmentService:
-    return FaceEnrollmentService(session, provider, get_settings(), storage, liveness)
+    return FaceEnrollmentService(session, provider, get_settings(), storage)
 
 
 def get_face_punch_service(

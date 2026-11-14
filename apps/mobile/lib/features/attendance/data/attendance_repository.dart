@@ -536,8 +536,11 @@ class AttendanceRepository {
       _client.post('${_face(employeeId)}/reject', body: {'note': (note == null || note.isEmpty) ? null : note}, parse: (_) {});
   Future<void> revokeFaceProfile(String employeeId) => _client.delete(_face(employeeId), parse: (_) {});
 
-  /// The photo under review, fetched through the API (auth + no-store) — it never has a URL of its own.
-  Future<DownloadedFile> downloadFaceReviewPhoto(String employeeId) => _client.download('${_face(employeeId)}/review-photo');
+  /// One of the five photos under review (`front`, `left`, `right`, `up`, `down`), fetched through
+  /// the API (auth + no-store) — they never have a URL of their own. Enrollments from before every
+  /// angle was kept have only the front; the other angles answer 404.
+  Future<DownloadedFile> downloadFaceReviewPhoto(String employeeId, {String angle = 'front'}) =>
+      _client.download(angle == 'front' ? '${_face(employeeId)}/review-photo' : '${_face(employeeId)}/review-photo?angle=$angle');
 
   Future<FaceEnrollmentStatus> getMyFaceEnrollment() => _client.get(
         '/attendance/face-enrollment/me',

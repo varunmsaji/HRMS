@@ -154,8 +154,8 @@ class FakeFaceProvider:
 async def fake_face_provider(
     fake_liveness_engine: FakeLivenessEngine,
 ) -> AsyncIterator[FakeFaceProvider]:
-    """Also installs `fake_liveness_engine` (LIVE by default): face punching and enrollment
-    fail closed without a liveness engine."""
+    """Also installs `fake_liveness_engine` (LIVE by default): face punching fails closed
+    without a liveness engine."""
     from entrypoints.api import app
 
     from hrms.modules.attendance.dependencies import get_face_provider
@@ -164,6 +164,14 @@ async def fake_face_provider(
     app.dependency_overrides[get_face_provider] = lambda: provider
     yield provider
     app.dependency_overrides.pop(get_face_provider, None)
+
+
+class MissingObjectError(KeyError):
+    """Shaped like botocore's `ClientError` for a missing key (`response["Error"]["Code"]`)."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.response = {"Error": {"Code": "NoSuchKey"}}
 
 
 @dataclass
@@ -177,6 +185,8 @@ class FakePhotoStorage:
         self.objects[key] = body
 
     async def get_object(self, *, key: str) -> bytes:
+        if key not in self.objects:
+            raise MissingObjectError(key)
         return self.objects[key]
 
     async def delete_object(self, *, key: str) -> None:

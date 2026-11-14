@@ -45,7 +45,7 @@ final _preview = {
   },
 };
 
-FakeApiClient _api({String payBasis = 'MONTHLY'}) => FakeApiClient(
+FakeApiClient _api({String payBasis = 'MONTHLY', Map<String, dynamic> setup = const {}}) => FakeApiClient(
       lists: {
         '/payroll/salary-structures': [_standard],
         '/payroll/salary-components': [_component('c-basic', 'BASIC', 'Basic'), _component('c-hra', 'HRA', 'HRA'), _component('c-sa', 'SPECIAL_ALLOWANCE', 'Special Allowance')],
@@ -55,6 +55,7 @@ FakeApiClient _api({String payBasis = 'MONTHLY'}) => FakeApiClient(
           'employee_id': 'emp-1', 'as_of': '2026-09-24', 'pay_basis': payBasis, 'annual_ctc_minor': 120000000,
           'pf_applicable': false, 'esi_applicable': false, 'assignment': null, 'salary_structure_id': null,
           'salary_structure_name': null, 'template_structure_id': null, 'is_customised': false, 'lines': <dynamic>[],
+          ...setup,
         },
         '/employees/emp-1/salary/setup/preview': _preview,
       },
@@ -114,6 +115,43 @@ void main() {
     expect(body['template_structure_id'], 'st-1');
     expect(body['effective_from'], '2026-09-24');
     expect(((body['lines'] as List).firstWhere((l) => l['salary_component_id'] == 'c-basic') as Map)['percentage'], '45');
+  });
+
+  testWidgets('says what is missing instead of silently refusing to save', (tester) async {
+    final api = _api();
+    await _pump(tester, api, const SalarySetupScreen(employeeId: 'emp-1', today: '2026-09-24'));
+    await tester.enterText(find.widgetWithText(TextField, 'Annual CTC (₹)'), '1500000');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    final save = find.widgetWithText(FilledButton, 'Save salary');
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Before saving, add a reason.'), findsOneWidget);
+    expect(find.text('Required'), findsOneWidget);
+    expect(api.calls.where((c) => c.path == '/employees/emp-1/salary/setup'), isEmpty);
+
+    // The warning goes away as soon as the missing field is filled in.
+    await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Annual review');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Before saving'), findsNothing);
+    expect(find.text('Required'), findsNothing);
+  });
+
+  testWidgets('says when there is nothing to save', (tester) async {
+    // Already on Standard with its exact lines: nothing differs until HR edits something.
+    final api = _api(setup: {'template_structure_id': 'st-1', 'lines': _templateLines});
+    await _pump(tester, api, const SalarySetupScreen(employeeId: 'emp-1', today: '2026-09-24'));
+    await tester.enterText(find.widgetWithText(TextField, 'Reason'), 'Annual review');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Save salary'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Nothing has changed yet'), findsOneWidget);
+    expect(api.calls.where((c) => c.path == '/employees/emp-1/salary/setup'), isEmpty);
   });
 
   testWidgets('a daily-wage employee is pointed to the daily rate instead', (tester) async {
