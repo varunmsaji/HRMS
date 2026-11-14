@@ -119,6 +119,7 @@ from hrms.modules.attendance.schemas import (
     AttendancePolicyVersionUpdate,
     AttendanceRangeCalculateInput,
     AttendanceRangeCalculateQueued,
+    FaceEnrollmentAngle,
     FaceEnrollmentStatusRead,
     FaceEnrollmentWindowRead,
     FaceLivenessSessionCreate,
@@ -2118,14 +2119,16 @@ async def get_face_review_photo(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     scope: Annotated[DataScope, Depends(require_permission(ATTENDANCE_FACE_ENROLLMENT_MANAGE))],
     service: Annotated[FaceEnrollmentService, Depends(get_face_enrollment_service)],
+    angle: FaceEnrollmentAngle = "front",
 ) -> Response:
-    """The straight-on capture of a profile awaiting approval — the only face image the system
-    keeps, and only until HR decides."""
+    """One of the five captures (`?angle=front|left|right|up|down`, default front) of a profile
+    awaiting approval. The system keeps these only until HR decides."""
     image, content_type = await service.get_review_photo(
         tenant.company_id,
         employee_id,
         scope=scope,
         caller_employee_id=user.employee_id,
+        angle=angle,
         actor_user_id=tenant.user_id,
         **_client_meta(request),
     )

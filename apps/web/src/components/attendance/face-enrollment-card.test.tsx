@@ -135,7 +135,7 @@ describe("FaceEnrollmentCard", () => {
     expect(await screen.findByRole("button", { name: "Initiate face enrollment" })).toBeInTheDocument();
   });
 
-  it("shows the submitted photo and approves it", async () => {
+  it("shows every submitted photo and approves them", async () => {
     statusSequence(
       { profile: PROFILE, open_window: null },
       { profile: { ...PROFILE, status: "ENROLLED", has_review_photo: false, reviewed_at: "2026-10-01T03:00:00Z" }, open_window: null },
@@ -146,15 +146,36 @@ describe("FaceEnrollmentCard", () => {
     renderCard();
 
     expect(await screen.findByText("Awaiting approval")).toBeInTheDocument();
-    const photo = await screen.findByAltText("Face submitted for Priya Sharma");
-    expect(photo.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+    const photos = await screen.findAllByAltText(/^Face submitted for Priya Sharma/);
+    expect(photos).toHaveLength(5);
+    for (const photo of photos) expect(photo.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+    for (const label of ["Straight on", "Turned left", "Turned right", "Looking up", "Looking down"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
     expect(mockedDownload).toHaveBeenCalledWith(`${BASE}/review-photo`);
+    for (const angle of ["left", "right", "up", "down"]) {
+      expect(mockedDownload).toHaveBeenCalledWith(`${BASE}/review-photo?angle=${angle}`);
+    }
 
     await user.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(mockedPost).toHaveBeenCalledWith(`${BASE}/approve`);
     expect(await screen.findByText("Enrolled")).toBeInTheDocument();
-    expect(screen.queryByAltText("Face submitted for Priya Sharma")).not.toBeInTheDocument();
+    expect(screen.queryAllByAltText(/^Face submitted for Priya Sharma/)).toHaveLength(0);
+  });
+
+  it("shows only the front photo for an enrollment that kept no other angles", async () => {
+    statusSequence({ profile: PROFILE, open_window: null });
+    const jpeg = { blob: new Blob([new Uint8Array([0xff, 0xd8])], { type: "image/jpeg" }), filename: null };
+    mockedDownload.mockImplementation((path: string) =>
+      path.includes("?angle=") ? Promise.reject(new Error("not found")) : Promise.resolve(jpeg),
+    );
+    renderCard();
+
+    const photo = await screen.findByAltText("Face submitted for Priya Sharma, straight on");
+    expect(photo).toBeInTheDocument();
+    expect(screen.getAllByAltText(/^Face submitted for Priya Sharma/)).toHaveLength(1);
+    expect(screen.queryByText("Turned left")).not.toBeInTheDocument();
   });
 
   it("rejects with a reason", async () => {

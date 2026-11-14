@@ -106,6 +106,7 @@ from hrms.modules.attendance.schemas import (
     FACE_ENROLLMENT_ANGLES,
     FACE_IMAGE_MAX_BYTES,
     FACE_LIVENESS_FRAME_MAX_BYTES,
+    FaceEnrollmentAngle,
     FaceEnrollmentStatusRead,
     FaceEnrollmentWindowRead,
     FaceLivenessSessionRead,
@@ -116,6 +117,8 @@ from hrms.modules.attendance.schemas import (
     face_profile_to_read,
     face_window_to_read,
     punch_to_read,
+    review_photo_key_for,
+    review_photo_keys,
 )
 from hrms.modules.attendance.service import (
     PunchService,
@@ -267,6 +270,14 @@ class FacePhotoStorage(Protocol):
     async def delete_object(self, *, key: str) -> None: ...
 
 
+def _is_missing_object(exc: Exception) -> bool:
+    """True for the object store's "no such key" answer (botocore `ClientError`), read
+    structurally so this module does not depend on botocore."""
+    error = getattr(exc, "response", None)
+    code = error.get("Error", {}).get("Code") if isinstance(error, dict) else None
+    return code in ("NoSuchKey", "404", "NotFound")
+
+
 def _dump(row: EmployeeFaceProfile | None) -> dict[str, Any] | None:
     return face_profile_to_read(row).model_dump(mode="json") if row is not None else None
 
@@ -382,15 +393,17 @@ class FaceEnrollmentService:
         *,
         scope: DataScope,
         caller_employee_id: UUID | None,
+        angle: FaceEnrollmentAngle = "front",
         actor_user_id: UUID | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> tuple[bytes, str]:
-        """Serves the one stored biometric image. Every successful read leaves an audit record
-        (who, which profile, when, request id — never the bytes); the record is written before
-        the image is returned and in the request transaction, so if it cannot be written the
-        image is not served. A refused read (no such photo) is a security event, not an audit
-        row: the request transaction rolls back with the error."""
+        """Serves one angle of the photos awaiting HR review. Every successful read leaves an
+        audit record (who, which profile, when, request id — never the bytes); the
+        record is written before the image is returned and in the request transaction, so if it
+        cannot be written the image is not served. A refused read (no such photo) is a security
+        event, not an audit row: the request transaction rolls back with the error. Profiles
+        submitted before every angle was kept have only the front photo; the others are 404."""
         await _ensure_employee_visible(
             self._session, company_id, employee_id, scope, caller_employee_id
         )
@@ -406,7 +419,13 @@ class FaceEnrollmentService:
                 actor_user_id=str(actor_user_id) if actor_user_id else None,
             )
             raise FaceReviewPhotoNotFoundError()
-        image = await self._storage.get_object(key=profile.review_photo_key)
+        key = review_photo_key_for(profile.review_photo_key, angle)
+        try:
+            image = await self._storage.get_object(key=key)
+        except Exception as exc:
+            if angle == "front" or not _is_missing_object(exc):
+                raise
+            raise FaceReviewPhotoNotFoundError() from exc
         content_type = sniff_face_image(image)
         await self._audit.record(
             self._session,
@@ -865,8 +884,15 @@ class FaceEnrollmentService:
                 # and skip it if a profile does reference it by then.
                 await self._guard_provider_person(company_id, provider.provider_name, person_id)
                 await self._verify_and_add_angles(provider, person_id, images, content_types)
-                await self._storage.put_object(key=review_key, body=front, content_type=front_type)
+                # Every angle is kept for HR's review (deleted again once HR decides). Marked
+                # stored first, so a failure part-way still cleans up the ones already written.
                 photo_stored = True
+                for angle in FACE_ENROLLMENT_ANGLES:
+                    await self._storage.put_object(
+                        key=review_photo_key_for(review_key, angle),
+                        body=images[angle],
+                        content_type=content_types[angle],
+                    )
         except FaceProviderNoFaceError as exc:
             await self._reject_enrollment(
                 company_id, employee_id, window_id, "NO_FACE", "front", actor_user_id
@@ -1207,8 +1233,11 @@ class FaceEnrollmentService:
             )
 
     async def _delete_review_photo(self, company_id: UUID, key: str) -> None:
+        """Deletes every angle of the review photo set `key` names; on failure the whole set is
+        queued (the worker deletes all of its angles)."""
         try:
-            await self._storage.delete_object(key=key)
+            for angle_key in review_photo_keys(key):
+                await self._storage.delete_object(key=angle_key)
         except Exception as exc:  # noqa: BLE001 - cleanup must never mask the real outcome
             # LOG-09 — the object key (company/employee UUIDs + a random id, no personal data)
             # is what locates the orphaned face photo for deletion.
@@ -1287,6 +1316,7 @@ class FaceEnrollmentService:
         row.review_photo_key = None
         await self._session.flush()
         if review_key:
+            # One row for the whole set: the worker deletes every angle's photo for it.
             await self._queue_deletion(
                 self._session,
                 company_id,
@@ -1343,6 +1373,7 @@ class FaceEnrollmentService:
             provider=row.provider,
         )
         if review_key:
+            # One row for the whole set: the worker deletes every angle's photo for it.
             await self._queue_deletion(
                 self._session,
                 company_id,

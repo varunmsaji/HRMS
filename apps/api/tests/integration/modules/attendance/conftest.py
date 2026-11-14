@@ -166,6 +166,14 @@ async def fake_face_provider(
     app.dependency_overrides.pop(get_face_provider, None)
 
 
+class MissingObjectError(KeyError):
+    """Shaped like botocore's `ClientError` for a missing key (`response["Error"]["Code"]`)."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.response = {"Error": {"Code": "NoSuchKey"}}
+
+
 @dataclass
 class FakePhotoStorage:
     objects: dict[str, bytes] = field(default_factory=dict)
@@ -177,6 +185,8 @@ class FakePhotoStorage:
         self.objects[key] = body
 
     async def get_object(self, *, key: str) -> bytes:
+        if key not in self.objects:
+            raise MissingObjectError(key)
         return self.objects[key]
 
     async def delete_object(self, *, key: str) -> None:
