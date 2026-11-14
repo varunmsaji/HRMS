@@ -16,7 +16,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 
-from hrms.core.db.session import get_session_factory
+from hrms.core.db.session import get_session_factory, set_rls_company_id
 
 from .test_onboarding_case import (
     _case_payload,
@@ -272,16 +272,12 @@ async def test_activate_success_creates_full_employee_graph(
         assert len(statutories) == 1
         assert statutories[0]["tax_regime"] == "NEW"
 
-        # E-02 part 3 — closes the gap `OnboardingActivationService`'s own docstring named:
-        # Compensation was listed among the services composed here, but no call was ever wired
-        # up; before this change, no `EmployeeCompensation` row could ever exist post-activation.
+        # A candidate never sets their own pay: activation creates no compensation row; HR adds
+        # one on the employee record.
         compensations = (
             await client.get(f"/v1/employees/{employee_id}/compensation", headers=headers)
         ).json()["data"]
-        assert len(compensations) == 1
-        assert compensations[0]["annual_ctc_minor"] == 60000000
-        assert compensations[0]["currency"] == "INR"
-        assert compensations[0]["revision_type"] == "JOINING"
+        assert compensations == []
 
         # Employee Document module — this case never uploaded any documents, so activation must
         # migrate zero rows, not error.
@@ -445,10 +441,6 @@ async def test_activate_decrypts_bank_info_and_reencrypts_for_employee_bank(
             },
         )
         await client.patch(
-            f"/v1/public/onboarding/{token}/sections/compensation_info",
-            json={"annual_ctc_minor": 60000000, "currency": "INR"},
-        )
-        await client.patch(
             f"/v1/public/onboarding/{token}/sections/previous_employment_info",
             json={"items": []},
         )
@@ -578,10 +570,6 @@ async def test_activate_persists_pan_aadhaar_uan_and_fathers_name(
                 "tax_regime": "NEW",
                 "uan_number": "100200300400",
             },
-        )
-        await client.patch(
-            f"/v1/public/onboarding/{token}/sections/compensation_info",
-            json={"annual_ctc_minor": 60000000, "currency": "INR"},
         )
         await client.patch(
             f"/v1/public/onboarding/{token}/sections/previous_employment_info",
@@ -718,10 +706,6 @@ async def test_activate_persists_distinct_permanent_address(
             },
         )
         await client.patch(
-            f"/v1/public/onboarding/{token}/sections/compensation_info",
-            json={"annual_ctc_minor": 60000000, "currency": "INR"},
-        )
-        await client.patch(
             f"/v1/public/onboarding/{token}/sections/previous_employment_info",
             json={"items": []},
         )
@@ -798,10 +782,6 @@ async def test_activate_creates_one_experience_row_per_previous_employer(
                 "is_lwf_applicable": False,
                 "tax_regime": "NEW",
             },
-        )
-        await client.patch(
-            f"/v1/public/onboarding/{token}/sections/compensation_info",
-            json={"annual_ctc_minor": 60000000, "currency": "INR"},
         )
         previous_employment = await client.patch(
             f"/v1/public/onboarding/{token}/sections/previous_employment_info",
@@ -909,10 +889,6 @@ async def test_activate_creates_one_education_row_per_qualification(
             },
         )
         await client.patch(
-            f"/v1/public/onboarding/{token}/sections/compensation_info",
-            json={"annual_ctc_minor": 60000000, "currency": "INR"},
-        )
-        await client.patch(
             f"/v1/public/onboarding/{token}/sections/previous_employment_info",
             json={"items": []},
         )
@@ -1006,10 +982,6 @@ async def test_activate_creates_one_dependent_row_per_nominee(
                 "is_lwf_applicable": False,
                 "tax_regime": "NEW",
             },
-        )
-        await client.patch(
-            f"/v1/public/onboarding/{token}/sections/compensation_info",
-            json={"annual_ctc_minor": 60000000, "currency": "INR"},
         )
         await client.patch(
             f"/v1/public/onboarding/{token}/sections/previous_employment_info",
@@ -1190,37 +1162,50 @@ async def test_activate_cross_tenant_isolation(
         await _full_teardown(company_id=company_id_b, user_id=user_id_b)
 
 
-async def test_onboarding_compensation_currency_is_validated_when_saved(
+async def test_candidate_cannot_set_their_own_compensation(
     client: AsyncClient, seeded_plan_catalogue: None
 ) -> None:
-    """The company's currency is checked at section-save time, not first at activation. A
-    foreign currency is rejected outright (no conversion); an omitted one takes the company's."""
+    """The public link rejects a compensation section, and a value already stored on a case
+    (written before the section was removed) is never turned into the employee's pay."""
     headers, company_id, user_id = await _register_tenant(client)
     try:
         case = await _create_case(client, headers)
         token = await _issue_token(company_id=company_id, case_id=UUID(case["id"]))
-        url = f"/v1/public/onboarding/{token}/sections/compensation_info"
 
-        company_currency = (await client.get("/v1/companies/current", headers=headers)).json()[
-            "data"
-        ]["currency"]
-        foreign = "USD" if company_currency != "USD" else "EUR"
-
-        rejected = await client.patch(url, json={"annual_ctc_minor": 60000000, "currency": foreign})
+        rejected = await client.patch(
+            f"/v1/public/onboarding/{token}/sections/compensation_info",
+            json={"annual_ctc_minor": 999999900, "currency": "INR"},
+        )
         assert rejected.status_code == 422, rejected.text
-        error = rejected.json()["error"]
-        assert error["code"] == "COMPENSATION_CURRENCY_MISMATCH"
-        assert company_currency in error["message"]
-        # nothing was stored
+        assert rejected.json()["error"]["code"] == "INVALID_SECTION"
         read = await client.get(f"/v1/public/onboarding/{token}")
         assert read.json()["data"]["compensation_info"] == {}
 
-        accepted = await client.patch(
-            url, json={"annual_ctc_minor": 60000000, "currency": company_currency}
+        # A case filled in before the change can still carry a candidate-entered figure.
+        verified = await _verified_case(client, headers, company_id, with_org=True)
+        async with get_session_factory()() as session:
+            await set_rls_company_id(session, str(company_id))
+            await session.execute(
+                text(
+                    "UPDATE onboarding_case SET compensation_info = CAST(:v AS jsonb) "
+                    "WHERE id = :id AND company_id = :cid"
+                ),
+                {
+                    "v": '{"annual_ctc_minor": 999999900, "currency": "INR"}',
+                    "id": verified["id"],
+                    "cid": company_id,
+                },
+            )
+            await session.commit()
+
+        activated = await client.post(
+            f"/v1/onboarding-cases/{verified['id']}/activate", headers=headers
         )
-        assert accepted.status_code == 200, accepted.text
-        defaulted = await client.patch(url, json={"annual_ctc_minor": 70000000})
-        assert defaulted.status_code == 200, defaulted.text
-        assert defaulted.json()["data"]["compensation_info"]["currency"] == company_currency
+        assert activated.status_code == 200, activated.text
+        employee_id = activated.json()["data"]["employee_id"]
+        compensations = (
+            await client.get(f"/v1/employees/{employee_id}/compensation", headers=headers)
+        ).json()["data"]
+        assert compensations == []
     finally:
         await _full_teardown(company_id=company_id, user_id=user_id)

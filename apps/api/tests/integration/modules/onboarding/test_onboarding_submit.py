@@ -57,10 +57,6 @@ async def _fill_all_sections(client: AsyncClient, token: str) -> None:
         },
     )
     await client.patch(
-        f"/v1/public/onboarding/{token}/sections/compensation_info",
-        json={"annual_ctc_minor": 60000000, "currency": "INR"},
-    )
-    await client.patch(
         f"/v1/public/onboarding/{token}/sections/previous_employment_info",
         json={"items": []},
     )

@@ -5,14 +5,13 @@ import 'package:hrms_mobile/features/onboarding/domain/onboarding_form_spec.dart
 FormSpec _spec(String name) => onboardingSections.firstWhere((s) => s.name == name);
 
 void main() {
-  test('covers the same nine sections as the web wizard, in order', () {
+  test('covers the same eight sections as the web wizard and the API, in order', () {
     expect(onboardingSections.map((s) => s.name), [
       'personal_info',
       'address_info',
       'emergency_contact',
       'bank_info',
       'statutory_info',
-      'compensation_info',
       'previous_employment_info',
       'education_info',
       'nominee_info',
@@ -44,14 +43,8 @@ void main() {
     expect(rowToPayload(spec, values)['permanent_city'], 'Pune');
   });
 
-  test('compensation: CTC converts to minor units and back', () {
-    final spec = _spec('compensation_info');
-    final values = rowFromWire(spec, {'annual_ctc_minor': 1250050, 'currency': 'INR'});
-    expect(values['annual_ctc_minor'], '12500.5');
-    expect(rowToPayload(spec, values)['annual_ctc_minor'], 1250050);
-    values['currency'] = 'RU';
-    expect(validateRow(spec, values).keys, ['currency']);
-    expect(validateRow(spec, rowFromWire(spec, {})).keys, contains('annual_ctc_minor'));
+  test('candidates are never asked for their pay (the API stopped reviewing it on 14 Oct)', () {
+    expect(onboardingSections.map((s) => s.name), isNot(contains('compensation_info')));
   });
 
   test('bank and statutory require their enum choices', () {

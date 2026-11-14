@@ -549,21 +549,6 @@ class OnboardingCaseService:
         if existing_review is not None and existing_review.status == "VERIFIED":
             raise OnboardingSectionAlreadyVerifiedError()
 
-        if section == "compensation_info":
-            # Compensation is recorded only in the company's configured currency (never
-            # converted), so a mismatch is rejected here rather than at activation.
-            from hrms.modules.employee.exceptions import CompensationCurrencyMismatchError
-            from hrms.modules.organisation.service import OrganisationService
-
-            profile = await OrganisationService(self._session, self._settings).get_company_profile(
-                company_id
-            )
-            data = dict(data)
-            if data.get("currency") is None:
-                data["currency"] = profile.currency
-            elif data["currency"] != profile.currency:
-                raise CompensationCurrencyMismatchError(company_currency=profile.currency)
-
         # DATA-01 (plan §2.4/§2.5) — encrypt the one sensitive key *before* the JSONB dict is
         # persisted. `case.id` (not a freshly-generated id — this is an update to an existing
         # row) is what AAD binds to; a wizard resubmission overwrites the value under the same
@@ -1357,15 +1342,15 @@ class OnboardingActivationService:
     """O7 — the transaction that turns a fully-verified onboarding case into a real employee.
     Composes the employee module's own already-validated services
     (`EmployeeService`/`EmploymentService`/`EmployeeAssignmentService`/`EmployeeBankService`/
-    `EmployeeStatutoryService`/`EmployeeCompensationService`/`EmployeeExperienceService`/
+    `EmployeeStatutoryService`/`EmployeeExperienceService`/
     `EmployeeEducationService`) rather than writing to
     `hrms.modules.employee.repository`/`.models` directly (Module Standard §2) —
     every field-level rule those services already enforce (seat limits, employee codes, the
-    assignment/employment/statutory/bank/compensation overlap constraints,
+    assignment/employment/statutory/bank overlap constraints,
     `AssignmentFieldsRequiredError` for a missing branch/department/designation) is inherited
-    for free, not re-implemented here (plan §8.6's own point). Compensation was listed here from
-    the start but had no section to source CTC from until E-02 (market-parity onboarding-data
-    pass, part 3) added `compensation_info`; Experience is new as of part 4
+    for free, not re-implemented here (plan §8.6's own point). Compensation is deliberately not
+    created here: the candidate is the only one who could have filled it in, and a candidate must
+    not set their own pay. Experience is new as of part 4
     (`previous_employment_info`) — unlike every other sub-resource composed here, it may create
     zero, one, or several rows per activation, one per listed past employer.
 
@@ -1473,7 +1458,6 @@ class OnboardingActivationService:
         from hrms.modules.employee.schemas import (
             AssignmentCreate,
             BankCreate,
-            CompensationCreate,
             EmployeeCreate,
             EmployeeDependentCreate,
             EmployeeEducationCreate,
@@ -1485,7 +1469,6 @@ class OnboardingActivationService:
         from hrms.modules.employee.service import (
             EmployeeAssignmentService,
             EmployeeBankService,
-            EmployeeCompensationService,
             EmployeeDependentService,
             EmployeeEducationService,
             EmployeeExperienceService,
@@ -1498,7 +1481,6 @@ class OnboardingActivationService:
         employment_service = EmploymentService(self._session, self._settings)
         assignment_service = EmployeeAssignmentService(self._session, self._settings)
         bank_service = EmployeeBankService(self._session, self._settings)
-        compensation_service = EmployeeCompensationService(self._session, self._settings)
         statutory_service = EmployeeStatutoryService(self._session, self._settings)
         experience_service = EmployeeExperienceService(self._session, self._settings)
         education_service = EmployeeEducationService(self._session, self._settings)
@@ -1642,32 +1624,14 @@ class OnboardingActivationService:
                 user_agent=user_agent,
             )
 
-        # E-02 (market-parity onboarding-data pass, part 3) — closes the gap this class's own
-        # docstring named: `EmployeeCompensation` was listed among the services composed here,
-        # but no call was ever wired up. Same guarded-optional-section shape as bank/statutory
-        # above; `revision_type`/`revision_reason` are activation's own fixed values, mirroring
-        # how `StatutoryCreate.revision_reason` is filled in above rather than sourced from the
-        # candidate.
-        if case.compensation_info:
-            await compensation_service.create_compensation(
-                company_id,
-                employee.id,
-                CompensationCreate(
-                    effective_from=case.proposed_joining_date,
-                    revision_type="JOINING",
-                    revision_reason="Initial compensation captured during onboarding",
-                    **case.compensation_info,
-                ),
-                expected_version=None,
-                actor_user_id=actor_user_id,
-                ip_address=ip_address,
-                user_agent=user_agent,
-            )
+        # Pay is never created at activation. `case.compensation_info` could only ever be written
+        # through the candidate's public link, so copying it would let a candidate choose their own
+        # salary. HR sets compensation on the employee record after activation.
 
         # Market-parity onboarding-data pass, part 4 — one `EmployeeExperience` row per past
         # employer the candidate listed. `previous_employment_info` is `{"items": [...]}` (see
         # `PreviousEmploymentSection`'s docstring); an empty or never-filled-in list yields zero
-        # rows, the same "optional section" posture as bank/statutory/compensation above.
+        # rows, the same "optional section" posture as bank/statutory above.
         for item in case.previous_employment_info.get("items", []):
             await experience_service.create_experience(
                 company_id,

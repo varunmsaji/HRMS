@@ -105,16 +105,6 @@ const onboardingSections = <FormSpec>[
     ],
   ),
   FormSpec(
-    name: 'compensation_info',
-    label: 'Compensation',
-    description: 'Your agreed compensation for this role.',
-    defaults: {'currency': 'INR'},
-    fields: [
-      FieldSpec('annual_ctc_minor', 'Annual CTC', kind: FieldKind.money, required: true),
-      FieldSpec('currency', 'Currency (3-letter code)', kind: FieldKind.upper, required: true, exactLength: 3),
-    ],
-  ),
-  FormSpec(
     name: 'previous_employment_info',
     label: 'Previous Employment',
     description: 'Help HR carry forward your PF account from a past employer, if any.',
@@ -214,7 +204,7 @@ List<(String, String)> displayRows(FormSpec spec, Map<String, dynamic> wire) {
 }
 
 /// HR starts an onboarding case — `OnboardingCaseCreate` (and the web `OnboardingCaseForm`). The
-/// candidate then fills in the nine sections themselves from their invite link.
+/// candidate then fills in the eight sections themselves from their invite link.
 const onboardingCaseSpec = FormSpec(name: 'onboarding_case', label: 'Onboarding case', fields: [
   FieldSpec('candidate_first_name', 'First name', required: true),
   FieldSpec('candidate_last_name', 'Last name'),

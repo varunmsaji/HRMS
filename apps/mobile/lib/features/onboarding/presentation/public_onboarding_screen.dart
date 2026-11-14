@@ -21,7 +21,7 @@ class _Row {
 }
 
 /// Candidate-facing onboarding wizard — mirrors `apps/web/src/app/onboarding/[token]/page.tsx`:
-/// welcome → nine data sections → documents → review & submit, driven by the invite token.
+/// welcome → eight data sections → documents → review & submit, driven by the invite token.
 class PublicOnboardingScreen extends ConsumerStatefulWidget {
   const PublicOnboardingScreen({super.key, required this.token});
 

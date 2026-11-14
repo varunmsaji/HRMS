@@ -3,7 +3,7 @@
 
 The invariant under test is a DATABASE invariant, not "one response was 200": after any number of
 concurrent or repeated activations of one VERIFIED case, the tenant holds exactly the rows one
-activation creates (employee, employment, assignment, bank, statutory, compensation, one live
+activation creates (employee, employment, assignment, bank, statutory, one live
 account invite, one activation audit event) and exactly the two emails that activation owns - each
 counted straight from the tables.
 
@@ -74,7 +74,7 @@ ONE = {
     "assignment": 1,
     "bank": 1,
     "statutory": 1,
-    "compensation": 1,
+    "compensation": 0,  # pay is set by HR afterwards, never from the candidate
     "invite": 1,
     "audit_activated": 1,
     "mail_activation": 1,
