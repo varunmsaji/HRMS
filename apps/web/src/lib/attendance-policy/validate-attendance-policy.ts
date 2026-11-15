@@ -78,6 +78,8 @@ export interface AttendancePolicyVersionFormValues {
   graceInMinutes: string;
   graceOutMinutes: string;
   earlyInAllowanceMinutes: string;
+  maxEarlyPunchMinutes: string;
+  maxLatePunchMinutes: string;
   punchRounding: string;
   roundingMinutes: string;
   missingPunchBehaviour: string;
@@ -115,6 +117,8 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
   graceInMinutes: "0",
   graceOutMinutes: "0",
   earlyInAllowanceMinutes: "",
+  maxEarlyPunchMinutes: "240",
+  maxLatePunchMinutes: "720",
   punchRounding: "NONE",
   roundingMinutes: "",
   missingPunchBehaviour: "INCOMPLETE",
@@ -150,6 +154,8 @@ export const EMPTY_ATTENDANCE_POLICY_VERSION_FORM_VALUES: AttendancePolicyVersio
 export interface AttendancePolicyVersionFormErrors {
   effectiveFrom?: string;
   earlyInAllowanceMinutes?: string;
+  maxEarlyPunchMinutes?: string;
+  maxLatePunchMinutes?: string;
   geofenceMaxAccuracyM?: string;
   geofenceMaxAgeSeconds?: string;
   hourBands?: string;
@@ -184,6 +190,8 @@ export function attendancePolicyVersionToFormValues(
     graceOutMinutes: String(version.grace_out_minutes),
     earlyInAllowanceMinutes:
       version.early_in_allowance_minutes == null ? "" : String(version.early_in_allowance_minutes),
+    maxEarlyPunchMinutes: String(version.max_early_punch_minutes ?? 240),
+    maxLatePunchMinutes: String(version.max_late_punch_minutes ?? 720),
     punchRounding: version.punch_rounding,
     roundingMinutes: version.rounding_minutes === null ? "" : String(version.rounding_minutes),
     missingPunchBehaviour: version.missing_punch_behaviour,
@@ -260,18 +268,18 @@ export function buildAttendancePolicyVersionPayload(
     grace_in_minutes: intOrNull(values.graceInMinutes) ?? 0,
     grace_out_minutes: intOrNull(values.graceOutMinutes) ?? 0,
     early_in_allowance_minutes: intOrNull(values.earlyInAllowanceMinutes),
-    punch_rounding: values.punchRounding,
-    rounding_minutes: intOrNull(values.roundingMinutes),
+    max_early_punch_minutes: intOrNull(values.maxEarlyPunchMinutes) ?? 240,
+    max_late_punch_minutes: intOrNull(values.maxLatePunchMinutes) ?? 720,
+    // SH-14: punch rounding, the half-day split and `early_out_uses_core_end` are not applied by
+    // the engine and the API refuses non-default values, so they are never sent (an existing
+    // version keeps whatever it stored).
     missing_punch_behaviour: values.missingPunchBehaviour,
     auto_close_after_minutes: intOrNull(values.autoCloseAfterMinutes),
     auto_close_uses_shift_end: values.autoCloseUsesShiftEnd,
     missing_shift_behaviour: values.missingShiftBehaviour,
-    half_day_split: values.halfDaySplit,
-    half_day_boundary_minutes: intOrNull(values.halfDayBoundaryMinutes),
     multi_punch_mode: values.multiPunchMode,
     duplicate_punch_window_seconds: intOrNull(values.duplicatePunchWindowSeconds) ?? 60,
     core_hours_breach_behaviour: values.coreHoursBreachBehaviour,
-    early_out_uses_core_end: values.earlyOutUsesCoreEnd,
     split_shift_block_mandatory: values.splitShiftBlockMandatory,
     split_shift_missed_block_behaviour: values.splitShiftMissedBlockBehaviour,
     split_shift_allow_hours_compensation: values.splitShiftAllowHoursCompensation,
@@ -314,6 +322,13 @@ export function validateAttendancePolicyVersionForm(
   if (earlyIn !== null && earlyIn < 0) {
     errors.earlyInAllowanceMinutes = "Enter 0 or more minutes, or leave blank for no limit.";
   }
+  // P-13 — how far before a shift's start and after its end a punch still belongs to that day.
+  for (const key of ["maxEarlyPunchMinutes", "maxLatePunchMinutes"] as const) {
+    const minutes = intOrNull(values[key]);
+    if (minutes === null || minutes < 0 || minutes > 1440) {
+      errors[key] = "Enter 0-1440 minutes.";
+    }
+  }
 
   const accuracy = intOrNull(values.geofenceMaxAccuracyM);
   if (accuracy === null || accuracy < GEOFENCE_ACCURACY_MIN_M || accuracy > GEOFENCE_ACCURACY_MAX_M) {
@@ -349,6 +364,8 @@ export function mapAttendancePolicyVersionApiErrors(
     if (detail.field === "hour_bands") errors.hourBands = detail.message;
     if (detail.field === "effective_from") errors.effectiveFrom = detail.message;
     if (detail.field === "early_in_allowance_minutes") errors.earlyInAllowanceMinutes = detail.message;
+    if (detail.field === "max_early_punch_minutes") errors.maxEarlyPunchMinutes = detail.message;
+    if (detail.field === "max_late_punch_minutes") errors.maxLatePunchMinutes = detail.message;
     if (detail.field === "geofence_max_accuracy_m") errors.geofenceMaxAccuracyM = detail.message;
     if (detail.field === "geofence_max_age_seconds") errors.geofenceMaxAgeSeconds = detail.message;
   }

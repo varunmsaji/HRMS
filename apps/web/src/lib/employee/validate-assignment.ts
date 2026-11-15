@@ -15,6 +15,10 @@ export interface AssignmentFormValues {
   workLocationType: WorkLocationType | "";
 }
 
+/** SH-13 — the "No shift" choice. A blank shift field means "carry the current shift forward"
+ * (`shift_id: null`), so taking an employee off any shift is sent as `clear_shift`. */
+export const NO_SHIFT = "__none__";
+
 export type AssignmentFormErrors = Partial<Record<keyof AssignmentFormValues, string>>;
 
 export function emptyAssignmentFormValues(defaultChangeType: AssignmentChangeType | "" = ""): AssignmentFormValues {
@@ -54,7 +58,8 @@ export function buildAssignmentCreatePayload(
     reporting_manager_id: values.reportingManagerId || null,
     dotted_line_manager_id: values.dottedLineManagerId || null,
     cost_centre_id: values.costCentreId || null,
-    shift_id: values.shiftId || null,
+    shift_id: values.shiftId && values.shiftId !== NO_SHIFT ? values.shiftId : null,
+    ...(values.shiftId === NO_SHIFT ? { clear_shift: true } : {}),
     work_location_type: values.workLocationType || null,
   };
 }

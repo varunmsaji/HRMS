@@ -48,7 +48,6 @@ final legalEntityResource = ResourceConfig(
   manage: orgLegalEntityManage,
 );
 
-/// Built at first use: the timezone options come from the tz database.
 FormSpec branchSpec() => FormSpec(name: 'branch', label: 'Branch', fields: [
       const FieldSpec('legal_entity_id', 'Legal entity', kind: FieldKind.choice, choiceKey: 'legal_entities', required: true),
       const FieldSpec('name', 'Branch name', required: true),
@@ -57,7 +56,7 @@ FormSpec branchSpec() => FormSpec(name: 'branch', label: 'Branch', fields: [
       const FieldSpec('city', 'City'),
       const FieldSpec('state_code', 'State code'),
       const FieldSpec('pincode', 'PIN code', kind: FieldKind.pincode),
-      FieldSpec('timezone', 'Timezone', kind: FieldKind.select, options: allTimeZones(), hint: "Leave unset to inherit the company's timezone."),
+      FieldSpec('timezone', 'Timezone', kind: FieldKind.select, options: allowedTimeZones, hint: "Leave unset to inherit the company's timezone."),
       const FieldSpec('latitude', 'Latitude', kind: FieldKind.decimal),
       const FieldSpec('longitude', 'Longitude', kind: FieldKind.decimal),
       const FieldSpec('geofence_radius_m', 'Geofence radius (m)', kind: FieldKind.integer),

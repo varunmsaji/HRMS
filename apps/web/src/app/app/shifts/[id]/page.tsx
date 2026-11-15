@@ -52,7 +52,6 @@ import {
   type ShiftVersionFormErrors,
   type ShiftVersionFormValues,
 } from "@/lib/shift/validate-shift-version";
-import type { WeeklyOffPattern } from "@/lib/weekly-off-pattern/types";
 
 type TabKey = "overview" | "versions";
 const TABS: Array<{ key: TabKey; label: string }> = [
@@ -114,9 +113,6 @@ export default function ShiftDetailPage() {
   const [versionsPagination, setVersionsPagination] =
     useState<PaginationMeta | null>(null);
   const [versionsPage, setVersionsPage] = useState(1);
-  const [weeklyOffPatterns, setWeeklyOffPatterns] = useState<
-    WeeklyOffPattern[]
-  >([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [creatingDraft, setCreatingDraft] = useState(false);
 
@@ -179,16 +175,13 @@ export default function ShiftDetailPage() {
     async (targetPage: number) => {
       setVersionsLoading(true);
       try {
-        const [versionResult, patternData] = await Promise.all([
-          apiClient.getList<ShiftVersion>(`/shifts/${params.id}/versions`, {
-            page: targetPage,
-          }),
-          apiClient.get<WeeklyOffPattern[]>("/weekly-off-patterns"),
-        ]);
+        const versionResult = await apiClient.getList<ShiftVersion>(
+          `/shifts/${params.id}/versions`,
+          { page: targetPage },
+        );
         setVersions(versionResult.data);
         setVersionsPagination(versionResult.pagination);
         if (targetPage === 1) setLatestVersions(versionResult.data);
-        setWeeklyOffPatterns(patternData);
         return versionResult.data;
       } catch (err) {
         toast({
@@ -619,7 +612,6 @@ export default function ShiftDetailPage() {
                       values={editSchedule}
                       errors={editScheduleErrors}
                       onChange={setEditSchedule}
-                      weeklyOffPatterns={weeklyOffPatterns}
                     />
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -808,7 +800,6 @@ export default function ShiftDetailPage() {
                             values={draftValues}
                             errors={draftErrors}
                             onChange={setDraftValues}
-                            weeklyOffPatterns={weeklyOffPatterns}
                           />
                           <div className="flex flex-wrap gap-2">
                             {canManage ? (

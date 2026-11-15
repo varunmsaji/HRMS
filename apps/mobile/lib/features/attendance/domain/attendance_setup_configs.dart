@@ -30,6 +30,8 @@ final attendancePolicySetup = PolicySetupConfig(
   base: const {
     'grace_in_minutes': 0,
     'grace_out_minutes': 0,
+    'max_early_punch_minutes': 240,
+    'max_late_punch_minutes': 720,
     'geofence_mode': 'DISABLED',
     'geofence_max_accuracy_m': 100,
     'geofence_max_age_seconds': 60,
@@ -156,10 +158,6 @@ FormSpec _shiftRules() {
     f('timezone'),
     f('operates_on_holiday'),
     f('operates_on_weekly_off'),
-    f('weekly_off_pattern_id'),
-    f('scheduled_minutes'),
-    f('min_scheduled_minutes'),
-    f('max_scheduled_minutes'),
   ]);
 }
 

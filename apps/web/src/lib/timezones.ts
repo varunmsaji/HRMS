@@ -1,34 +1,9 @@
+import { useEffect, useState } from "react";
+
 import { apiClient } from "@/lib/api/client";
 
 /** Default zone for this product (India-first) — always offered, and always listed first. */
 export const DEFAULT_TIMEZONE = "Asia/Kolkata";
-
-const FALLBACK_TIMEZONES = [
-  "Asia/Kolkata",
-  "UTC",
-  "America/New_York",
-  "Europe/London",
-  "Asia/Singapore",
-];
-
-/** Real, always-IANA-valid list sourced from the runtime instead of a hand-maintained (and
- * potentially stale/invalid) list — the backend rejects anything not in `zoneinfo.available_timezones()`.
- * Used for `Branch`/`ShiftVersion` timezone fields, which accept any valid IANA zone (`ED-1`) —
- * NOT for company registration/profile, which is India-gated; see `fetchAllowedCompanyTimezones`. */
-export function listTimezones(): string[] {
-  let zones = FALLBACK_TIMEZONES;
-  if (typeof Intl !== "undefined" && "supportedValuesOf" in Intl) {
-    try {
-      zones = (
-        Intl as unknown as { supportedValuesOf: (key: string) => string[] }
-      ).supportedValuesOf("timeZone");
-    } catch {
-      zones = FALLBACK_TIMEZONES;
-    }
-  }
-  // Indian Standard Time on top, regardless of what the runtime lists (some omit it).
-  return [DEFAULT_TIMEZONE, ...zones.filter((tz) => tz !== DEFAULT_TIMEZONE)];
-}
 
 /** `DEC-TZ-02` (SELECTED) — the India-only registration/profile allow-list, fetched from the
  * server rather than duplicated as a second hard-coded list (execution gate §6.3: "two
@@ -45,4 +20,23 @@ export async function fetchAllowedCompanyTimezones(): Promise<string[]> {
   } catch {
     return ["Asia/Kolkata"];
   }
+}
+
+/** SH-06 — the zones a company, branch or shift may use: the same server allow-list as
+ * registration (a branch or shift zone outranks the company's, so offering every IANA zone here
+ * let a shift run 5½ hours off). Starts as `Asia/Kolkata` alone until the fetch returns. `current`
+ * (the stored value) is always kept so an older row still shows what it holds. */
+export function useAllowedTimezones(current?: string | null): string[] {
+  const [allowed, setAllowed] = useState<string[]>([DEFAULT_TIMEZONE]);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAllowedCompanyTimezones().then((zones) => {
+      if (!cancelled && zones.length > 0) setAllowed(zones);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const ordered = [DEFAULT_TIMEZONE, ...allowed.filter((tz) => tz !== DEFAULT_TIMEZONE)];
+  return current && !ordered.includes(current) ? [...ordered, current] : ordered;
 }

@@ -27,7 +27,7 @@ FormSpec companyProfileSpec({required bool currencyLocked}) => FormSpec(
         const FieldSpec('company_size', 'Company size', kind: FieldKind.select, options: companySizeBands),
         const FieldSpec('country_code', 'Country code', kind: FieldKind.upper, required: true, exactLength: 2),
         FieldSpec('currency', 'Currency', kind: FieldKind.upper, required: true, exactLength: 3, readOnlyOnEdit: currencyLocked, hint: currencyLocked ? 'Currency cannot be changed after trial.' : null),
-        FieldSpec('timezone', 'Timezone', kind: FieldKind.select, required: true, options: allTimeZones()),
+        FieldSpec('timezone', 'Timezone', kind: FieldKind.select, required: true, options: allowedTimeZones),
         const FieldSpec('contact_email', 'Contact email', kind: FieldKind.email),
         const FieldSpec('contact_phone', 'Contact phone', kind: FieldKind.phone),
         const FieldSpec('contact_website', 'Website'),

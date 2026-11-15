@@ -241,19 +241,13 @@ export function buildShiftVersionPatch(
     }
   }
 
-  if (values.scheduledMinutes.trim()) patch.scheduled_minutes = intOrNull(values.scheduledMinutes);
-  if (values.minScheduledMinutes.trim()) {
-    patch.min_scheduled_minutes = intOrNull(values.minScheduledMinutes);
-  }
-  if (values.maxScheduledMinutes.trim()) {
-    patch.max_scheduled_minutes = intOrNull(values.maxScheduledMinutes);
-  }
+  // SH-14: `scheduled_minutes`, `min_/max_scheduled_minutes` and `weekly_off_pattern_id` are
+  // not read by the engine and the API refuses them, so they are never sent.
 
   patch.is_night_shift = values.isNightShift;
   patch.is_ot_eligible = values.isOtEligible;
   patch.operates_on_holiday = values.operatesOnHoliday;
   patch.operates_on_weekly_off = values.operatesOnWeeklyOff;
-  patch.weekly_off_pattern_id = values.weeklyOffPatternId || null;
 
   const hadBreaks = (current?.breaks.length ?? 0) > 0;
   if (values.breaks.length > 0 || hadBreaks) {

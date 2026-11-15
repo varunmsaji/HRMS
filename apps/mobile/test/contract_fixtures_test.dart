@@ -489,7 +489,21 @@ void versionedFormTests() {
     ];
     for (final (label, spec, base, read, rows) in all) {
       // Not offered on the web either.
-      final notInForm = label == 'leave policy' ? const {'max_consecutive_days'} : const <String>{};
+      final notInForm = switch (label) {
+        'leave policy' => const {'max_consecutive_days'},
+        // SH-14: not applied by the engine; the API refuses non-default values.
+        'attendance policy' => const {
+            'punch_rounding',
+            'rounding_minutes',
+            'auto_close_after_minutes',
+            'auto_close_uses_shift_end',
+            'half_day_split',
+            'half_day_boundary_minutes',
+            'early_out_uses_core_end',
+          },
+        'shift' => const {'weekly_off_pattern_id', 'scheduled_minutes', 'min_scheduled_minutes', 'max_scheduled_minutes'},
+        _ => const <String>{},
+      };
       _writeFormMatches('$label version (create)', spec, '${base}Create', notInForm: notInForm);
       _writeFormMatches('$label version (update)', spec, '${base}Update', notInForm: notInForm);
       readHas(label, spec, read);

@@ -101,6 +101,8 @@ export interface AttendancePolicyVersion {
   grace_in_minutes: number;
   grace_out_minutes: number;
   early_in_allowance_minutes: number | null;
+  max_early_punch_minutes: number;
+  max_late_punch_minutes: number;
   punch_rounding: (typeof PUNCH_ROUNDING_OPTIONS)[number];
   rounding_minutes: number | null;
   missing_punch_behaviour: (typeof MISSING_PUNCH_BEHAVIOURS)[number];

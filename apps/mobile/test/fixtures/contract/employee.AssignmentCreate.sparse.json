@@ -3,6 +3,7 @@
  "change_reason": null,
  "change_type": "INITIAL",
  "clear_reporting_manager": true,
+ "clear_shift": true,
  "confirm_pending_request_impact": true,
  "cost_centre_id": null,
  "department_id": null,

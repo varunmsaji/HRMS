@@ -110,15 +110,18 @@ String wallTimeToUtcIso(String local, String zone) {
   return t.toUtc().toIso8601String();
 }
 
+/// [instant] as a date-time whose fields (hour, minute, day) are the wall clock in [zone] — for
+/// showing a server instant in the company's zone rather than the device's (SH-17).
+DateTime inZone(DateTime instant, String zone) => tz.TZDateTime.from(instant, _location(zone));
+
 /// Current wall-clock time in [zone] as `YYYY-MM-DDTHH:mm` (to seed a date-time field).
 String nowInZoneForInput(String zone, {DateTime? now}) {
   final t = tz.TZDateTime.from(now ?? DateTime.now(), _location(zone));
   return '${_date(t)}T${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 }
 
-/// Every IANA zone the tz database knows, sorted — the options for a timezone picker. (The
-/// backend validates against `zoneinfo.available_timezones()`, which this list covers.)
-List<String> allTimeZones() {
-  initTimeZones();
-  return tz.timeZoneDatabase.locations.keys.where((k) => k.contains('/') || k == 'UTC').toList()..sort();
-}
+/// The zones a company, branch or shift may use (SH-06, `DEC-TZ-02`): the server's
+/// `allowed_company_timezones` default. A branch or shift zone outranks the company's, so offering
+/// every IANA zone let a shift run 5½ hours off. The server enforces the list; a stored value
+/// outside it still displays in the dropdown.
+const List<String> allowedTimeZones = ['Asia/Kolkata'];

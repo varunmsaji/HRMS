@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/api/api_error.dart';
+import '../../../core/time.dart';
+import '../../auth/state/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/face_liveness_capture.dart';
 import 'face_enrollment_screen.dart';
@@ -53,6 +55,14 @@ class FacePunchCard extends ConsumerStatefulWidget {
 }
 
 class _FacePunchCardState extends ConsumerState<FacePunchCard> {
+  String _companyZone() {
+    try {
+      return ref.read(authControllerProvider).user?.companyTimezone ?? 'Asia/Kolkata';
+    } on Object {
+      return 'Asia/Kolkata'; // no auth state (a widget test without the API client)
+    }
+  }
+
   FaceEnrollmentStatus? _status;
   String? _loadError;
   bool _loading = true;
@@ -148,7 +158,8 @@ class _FacePunchCardState extends ConsumerState<FacePunchCard> {
     } else if (status.isPendingApproval) {
       message = 'Your face has been submitted and is waiting for HR approval.';
     } else if (status.canEnroll) {
-      final expires = status.windowExpiresAt!.toLocal();
+      // SH-17: in the company's zone, not the device's.
+      final expires = inZone(status.windowExpiresAt!, _companyZone());
       message = 'HR has opened face enrollment for you until '
           '${MaterialLocalizations.of(context).formatShortDate(expires)} '
           '${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(expires))}. '

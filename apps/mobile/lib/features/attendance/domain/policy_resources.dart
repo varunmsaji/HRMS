@@ -33,23 +33,21 @@ const geofenceModeLabels = {
   'REQUIRED': 'Required: block self-service punches outside an approved workplace',
 };
 
+/// SH-14: punch rounding, auto-close, the half-day split and `early_out_uses_core_end` are not
+/// applied by the engine (the API refuses non-default values), so the form does not offer them.
 const attendancePolicyVersionSpec = FormSpec(name: 'attendance_policy_version', label: 'Attendance policy version', fields: [
   FieldSpec('effective_from', 'Effective from', kind: FieldKind.date),
   FieldSpec('grace_in_minutes', 'Late arrival grace (minutes)', kind: FieldKind.integer),
   FieldSpec('grace_out_minutes', 'Early leaving grace (minutes)', kind: FieldKind.integer),
   FieldSpec('early_in_allowance_minutes', 'Earliest punch-in before shift start (minutes)', kind: FieldKind.integer),
-  FieldSpec('punch_rounding', 'Punch rounding', kind: FieldKind.select, options: _roundings),
-  FieldSpec('rounding_minutes', 'Rounding step (minutes)', kind: FieldKind.integer),
-  FieldSpec('missing_punch_behaviour', 'When a punch in or out is missing', kind: FieldKind.select, options: ['INCOMPLETE', 'ABSENT', 'AUTO_CLOSE', 'REQUIRE_REGULARIZATION']),
-  FieldSpec('auto_close_after_minutes', 'Auto-close after (minutes)', kind: FieldKind.integer),
-  FieldSpec('auto_close_uses_shift_end', 'Auto-close at shift end', kind: FieldKind.toggle),
+  // P-13: how far before a shift's start and after its end a punch still belongs to that day.
+  FieldSpec('max_early_punch_minutes', 'A punch belongs to the shift from this long before it starts (minutes)', kind: FieldKind.integer, hint: 'Default 240 (4 hours)'),
+  FieldSpec('max_late_punch_minutes', 'A punch belongs to the shift until this long after it ends (minutes)', kind: FieldKind.integer, hint: 'Default 720 (12 hours)'),
+  FieldSpec('missing_punch_behaviour', 'When a punch in or out is missing', kind: FieldKind.select, options: ['INCOMPLETE', 'ABSENT', 'REQUIRE_REGULARIZATION']),
   FieldSpec('missing_shift_behaviour', 'When no shift can be worked out and no punches exist', kind: FieldKind.select, options: ['INCOMPLETE', 'ABSENT']),
-  FieldSpec('half_day_split', 'Half-day split', kind: FieldKind.select, options: ['BY_HOURS', 'BY_MIDPOINT']),
-  FieldSpec('half_day_boundary_minutes', 'Half-day boundary (minutes)', kind: FieldKind.integer),
   FieldSpec('multi_punch_mode', 'When someone punches several times a day', kind: FieldKind.select, options: ['PAIR_ALL', 'FIRST_IN_LAST_OUT']),
   FieldSpec('duplicate_punch_window_seconds', 'Treat repeat punches as one within (seconds)', kind: FieldKind.integer),
   FieldSpec('core_hours_breach_behaviour', 'Flexible shifts: missing core hours', kind: FieldKind.select, options: ['IGNORE', 'FLAG', 'HALF_DAY', 'ABSENT']),
-  FieldSpec('early_out_uses_core_end', 'Early departure measured from core end', kind: FieldKind.toggle),
   FieldSpec('split_shift_block_mandatory', 'Every split-shift block is mandatory', kind: FieldKind.toggle),
   FieldSpec('split_shift_missed_block_behaviour', 'Split shifts: no punch in one block', kind: FieldKind.select, options: ['IGNORE', 'HALF_DAY', 'ABSENT', 'REQUIRE_REGULARIZATION']),
   FieldSpec('split_shift_allow_hours_compensation', 'Allow hours compensation across blocks', kind: FieldKind.toggle),
@@ -206,11 +204,10 @@ const shiftIdentitySpec = FormSpec(name: 'shift', label: 'Shift', fields: [
 /// configuration until its calculation rules are verified.
 const shiftTypeOptions = ['FIXED', 'FLEXIBLE'];
 
-/// Built at first use: the timezone options come from the tz database.
 FormSpec shiftVersionSpec() => FormSpec(name: 'shift_version', label: 'Shift version', fields: [
       const FieldSpec('effective_from', 'Effective from', kind: FieldKind.date),
       const FieldSpec('shift_type', 'Shift type', kind: FieldKind.select, options: shiftTypeOptions),
-      FieldSpec('timezone', 'Timezone', kind: FieldKind.select, options: allTimeZones()),
+      FieldSpec('timezone', 'Timezone', kind: FieldKind.select, options: allowedTimeZones),
       const FieldSpec('start_time', 'Start time', kind: FieldKind.time),
       const FieldSpec('end_time', 'End time', kind: FieldKind.time),
       const FieldSpec('window_start', 'Window start', kind: FieldKind.time),
@@ -218,14 +215,10 @@ FormSpec shiftVersionSpec() => FormSpec(name: 'shift_version', label: 'Shift ver
       const FieldSpec('core_start', 'Core hours start', kind: FieldKind.time),
       const FieldSpec('core_end', 'Core hours end', kind: FieldKind.time),
       const FieldSpec('required_minutes', 'Required minutes', kind: FieldKind.integer),
-      const FieldSpec('scheduled_minutes', 'Scheduled minutes', kind: FieldKind.integer),
-      const FieldSpec('min_scheduled_minutes', 'Min scheduled minutes', kind: FieldKind.integer),
-      const FieldSpec('max_scheduled_minutes', 'Max scheduled minutes', kind: FieldKind.integer),
       const FieldSpec('is_night_shift', 'Night shift', kind: FieldKind.toggle),
       const FieldSpec('is_ot_eligible', 'Overtime eligible', kind: FieldKind.toggle),
       const FieldSpec('operates_on_holiday', 'Operates on holidays', kind: FieldKind.toggle),
       const FieldSpec('operates_on_weekly_off', 'Operates on weekly offs', kind: FieldKind.toggle),
-      const FieldSpec('weekly_off_pattern_id', 'Shift-specific weekly-off pattern', kind: FieldKind.choice, choiceKey: 'weekly_off_patterns'),
       const FieldSpec('breaks', 'Breaks', kind: FieldKind.rows, rowNoun: 'break', orderKey: 'sort_order', rowSpec: FormSpec(name: 'shift_break', label: 'Break', defaults: {'is_mandatory': true}, fields: [
         FieldSpec('name', 'Name', required: true),
         FieldSpec('break_kind', 'Kind', kind: FieldKind.select, required: true, options: ['FIXED_WINDOW', 'FLEXIBLE_DURATION']),

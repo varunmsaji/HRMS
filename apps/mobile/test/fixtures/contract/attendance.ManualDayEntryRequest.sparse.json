@@ -1,0 +1,9 @@
+{
+ "employee_ids": [
+  "00000000-0000-0000-0000-000000001234"
+ ],
+ "idempotency_key": null,
+ "punch_in_at": "2026-01-15T10:00:00Z",
+ "punch_out_at": "2026-01-15T10:00:00Z",
+ "reason": "x"
+}

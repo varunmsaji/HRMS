@@ -53,6 +53,8 @@
  ],
  "late_count_window": "x",
  "lates_to_half_day_count": 1,
+ "max_early_punch_minutes": 1,
+ "max_late_punch_minutes": 1,
  "missing_punch_behaviour": "x",
  "missing_shift_behaviour": "x",
  "multi_punch_mode": "x",

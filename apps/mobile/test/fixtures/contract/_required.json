@@ -430,6 +430,27 @@
   "employee_id",
   "leave_application_id"
  ],
+ "attendance.ManualDayEntryRequest": [
+  "employee_ids",
+  "punch_in_at",
+  "punch_out_at",
+  "reason"
+ ],
+ "attendance.ManualDayEntryResponse": [
+  "blocked_count",
+  "punch_in_at",
+  "punch_out_at",
+  "ready_count",
+  "recorded_count",
+  "results"
+ ],
+ "attendance.ManualDayEntryResult": [
+  "employee_id",
+  "outcome"
+ ],
+ "attendance.OrphanPunchDismissInput": [
+  "reason"
+ ],
  "attendance.OvertimeActionRead": [
   "action",
   "actor_employee_id",

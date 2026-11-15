@@ -1,4 +1,5 @@
 import '../../../core/api/api_error.dart';
+import '../../../core/time.dart';
 
 const punchTooSoonCode = 'PUNCH_TOO_SOON';
 const punchAlreadyRecordedCode = 'PUNCH_ALREADY_RECORDED';
@@ -41,7 +42,8 @@ class PunchWarning {
   static String _gapText(int seconds) => seconds % 60 == 0 ? '${seconds ~/ 60} minute${seconds == 60 ? '' : 's'}' : '$seconds seconds';
 
   /// The refusal in [error], or null when it is some other error (or its details are unreadable).
-  static PunchWarning? fromError(Object error) {
+  /// [lastPunchTime] is in the company's [zone], not the device's (SH-17).
+  static PunchWarning? fromError(Object error, {String zone = 'Asia/Kolkata'}) {
     if (error is! ApiError || (error.code != punchTooSoonCode && error.code != punchAlreadyRecordedCode)) return null;
     for (final detail in error.details) {
       final c = detail.context;
@@ -50,7 +52,7 @@ class PunchWarning {
         return PunchWarning(
           kind: error.code == punchTooSoonCode ? PunchWarningKind.tooSoon : PunchWarningKind.alreadyRecorded,
           lastDirection: c['last_direction'] as String,
-          lastPunchTime: DateTime.parse(c['last_punch_time'] as String).toLocal(),
+          lastPunchTime: inZone(DateTime.parse(c['last_punch_time'] as String), zone),
           retryAfterSeconds: c['retry_after_seconds'] as int?,
           minGapSeconds: c['min_gap_seconds'] as int?,
         );
